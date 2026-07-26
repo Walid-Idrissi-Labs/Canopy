@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | none, A1 complete and awaiting PG-A1 | `feat/keys-and-profiles` | none |
+| Claude | none, A1 complete and awaiting PG-A1 | `feat/keys-tui` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -753,11 +753,60 @@ provider boundary the credential is already in scope, so the scrub is local and 
 A2-03 lands. That is intentional: it forces the limitation to be re-examined rather than quietly
 outliving the documentation that describes it.
 
+### A1-05 Key management in the TUI
+`status: review | owner: Claude | branch: feat/keys-tui | depends: A1-03`
+`scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
+
+Deliverable: add, list, test and remove credentials without leaving the interface. Reachable from
+the dashboard, and shown on first run when no credentials exist yet.
+
+Acceptance: a key can be added entirely in the TUI, with the value masked as it is typed and never
+present in any rendered frame. The provider is chosen from a list rather than typed. A base URL is
+requested only for providers that need one. Removal confirms first. On first run with no keys, the
+interface says so and offers to add one rather than presenting an empty dashboard.
+
+`verify: claude [x] 2026-07-26   codex [ ]`
+
+notes: **added 2026-07-26 at Walid's request**, after A1 was otherwise finished. Recorded as a new
+task rather than folded into A1-03 so the change is visible.
+
+`internal/tui/keys` takes a narrow `Store` interface with no method that returns a secret value, so
+no mistake in that package can render one. The test types the canary a character at a time and
+checks every intermediate frame, because the leak that matters is the one visible mid keystroke,
+not the one at the end.
+
+The name field masks itself the moment its contents look like a credential, and is cleared on
+rejection, since the likeliest explanation for a key in the name field is a paste into the wrong
+place and it should not sit on screen while the user works that out.
+
+`K` opens the screen from the dashboard. Lowercase `k` only does so when the dashboard is empty,
+because it is otherwise move-up and hijacking it would throw a navigating user onto another screen.
+
+Three bugs found by the tests rather than by luck:
+
+1. **Value receiver aliasing.** The shared text field handler took `&m.draftName` from the caller
+   while returning its own copy, so every keystroke was silently discarded. Fixed by moving the
+   handlers to pointer receivers, which removes the class rather than the instance.
+2. **The dashboard was quitting on esc while typing.** Keys were forwarded to every screen, so
+   cancelling a field exited the program. Keystrokes now go only to the screen in front, while
+   engine events still reach both, so the dashboard is not stale when you return to it.
+3. **The architecture test was too strict.** It forbade the interface importing anything but
+   `core`, which caught `app.go` composing screens. The rule was wrong, not the code: the real
+   constraint is no *engine* packages. Sibling `internal/tui/*` imports say nothing about where
+   state comes from. Narrowed deliberately rather than deleted.
+
+The CLI stays. Piping from a password manager is a real workflow and a TUI cannot replace it.
+
+The masked input field is the risk here. The value exists as a plain string in the model while
+being typed, which is the one place in this design where that is unavoidable, so it is cleared as
+soon as it reaches the store and the redaction suite from A1-04 is extended to cover the frames
+rendered while typing.
+
 ### PG-A1 Phase A1 gate
-`status: review | depends: A1-01, A1-02, A1-03, A1-04`
+`status: todo | depends: A1-01, A1-02, A1-03, A1-04, A1-05`
 
 Both supervisors add a key, restart, confirm it survived, and fail to find it anywhere in Canopy's
-own output.
+own output. Adding is done once from the command line and once from the TUI.
 
 `signed: walid [ ]   classmate [ ]`
 
