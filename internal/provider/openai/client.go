@@ -91,16 +91,23 @@ func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, err
 	httpReq.Header.Set("Accept", "text/event-stream")
 	httpReq.Header.Set("Authorization", "Bearer "+c.secret.Reveal())
 
+	// A context of the stream's own, so a watchdog can cancel a request that has gone silent
+	// without that being indistinguishable from the caller cancelling it.
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	httpReq = httpReq.WithContext(streamCtx)
+
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
+		cancelStream()
 		return nil, c.classifyTransport(err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer func() { _ = resp.Body.Close() }()
+		cancelStream()
 		return nil, c.classifyStatus(resp)
 	}
 
-	return newStream(ctx, c, resp), nil
+	return newStream(ctx, c, resp, newStallGuard(cancelStream, StallTimeout)), nil
 }
 
 // chatRequest is the wire shape.

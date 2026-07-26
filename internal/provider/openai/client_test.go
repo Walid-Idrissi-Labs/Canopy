@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -434,5 +435,54 @@ func TestCancellingMidStreamIsNotAFailure(t *testing.T) {
 	}
 	if final.StopReason.Complete() {
 		t.Error("a cancelled turn is not complete")
+	}
+}
+
+// A provider that accepts a request and then goes silent is not a hypothetical: NVIDIA NIM does it
+// under load. Without a stall timeout the turn waits on the HTTP client's own timeout, which is half
+// an hour, and an agent hung for half an hour looks like an agent thinking.
+//
+// The end to end version of this test was written and then deleted: verifying a two minute timeout
+// takes two minutes, and a suite nobody runs because it is slow catches nothing. What is tested here
+// instead is the watchdog itself, which is where the logic lives, at a millisecond.
+
+// The classification is what matters and it can be checked without waiting two minutes.
+func TestAStallIsNotACancellation(t *testing.T) {
+	cancelled := false
+	guard := newStallGuard(func() { cancelled = true }, time.Millisecond)
+
+	deadline := time.After(2 * time.Second)
+	for !guard.Fired() {
+		select {
+		case <-deadline:
+			t.Fatal("the watchdog never fired")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if !cancelled {
+		t.Error("the watchdog fired without cancelling the request, so the read would still be " +
+			"blocked")
+	}
+
+	// And once stopped it stays quiet, so a finished stream does not leave a timer running.
+	guard.stop()
+	fresh := newStallGuard(func() { t.Error("a stopped guard fired") }, time.Millisecond)
+	fresh.stop()
+	time.Sleep(20 * time.Millisecond)
+}
+
+// Every arriving line restarts the clock, or a slow but healthy stream would be killed part way
+// through a long answer.
+func TestActivityRestartsTheStallClock(t *testing.T) {
+	guard := newStallGuard(func() { t.Error("the watchdog fired on a stream that was producing") },
+		50*time.Millisecond)
+	defer guard.stop()
+
+	for i := 0; i < 10; i++ {
+		time.Sleep(10 * time.Millisecond)
+		guard.touch()
+	}
+	if guard.Fired() {
+		t.Error("a stream producing something every 10ms was treated as stalled")
 	}
 }

@@ -1093,6 +1093,16 @@ Four things this had to get right that the Anthropic client did not:
    family agrees on and several reject unknown fields outright, which would break exactly the
    providers this client exists to reach. Recorded here so the gap is a decision, not an oversight.
 
+**A stall watchdog, added after a live run.** A provider that accepts a request and then goes silent
+left the turn waiting on the HTTP client's own timeout, which is half an hour, and an agent hung for
+half an hour looks like an agent thinking. Two minutes of complete silence now ends it.
+
+The watchdog cancels a context derived from the caller's rather than setting a read deadline. A
+deadline can only be set on a connection and an `http.Response.Body` is not one: the type assertion
+that looks like it would work quietly does not, and the first version of this was a no-op that read
+like a fix. Deriving the context also keeps a stall distinguishable from somebody pressing escape,
+which matters because the two need entirely different words.
+
 Base URL is required rather than defaulted: this provider *is* its endpoint. Which provider gets
 spoken is decided by the credential, not by a flag, which is the point of naming keys. There is no
 default model for the same reason a base URL has none, so `-model` is required and says so.

@@ -241,3 +241,12 @@ and judging Canopy's speed on this endpoint would be judging NVIDIA's free tier.
 
 **Not decided:** whether these ever run anywhere other than by hand. They cost money and take ten
 minutes, so a per commit CI run is out. A nightly one against a cheap model is plausible.
+
+**Update, later the same night.** A final run had NIM returning 504s and, worse, accepting a request
+and then never sending anything. That second failure exposed a real gap rather than a flaky test:
+without a stall timeout the turn waited on the HTTP client's own limit, which is half an hour. There
+is now a two minute watchdog, and a stalled provider is reported as a provider that stopped answering
+rather than as a cancellation, because the two need entirely different words on screen. See the note
+in A2-06.
+
+So the flakiness was worth having. It is still worth deciding whether to keep paying for it.
