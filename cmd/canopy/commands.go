@@ -44,7 +44,12 @@ func runDashboard() error {
 		}
 	}()
 
-	return tui.Run(store)
+	keyStore, err := openKeyStore()
+	if err != nil {
+		return err
+	}
+
+	return tui.RunApp(store, keyStore)
 }
 
 func runSnapshot(out io.Writer) error {

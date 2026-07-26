@@ -62,10 +62,14 @@ func TestRendersTheFourWorkspaces(t *testing.T) {
 	}
 }
 
-// The other half of the acceptance criterion, and the real architectural constraint. The
-// dashboard talks to core and nothing else, which is what lets the fake be swapped for the real
-// engine without this package changing. A test is the only thing that keeps that true, because
-// the first accidental import will compile perfectly well.
+// The real architectural constraint: the interface depends on the contract and on other interface
+// packages, and on no engine package. That is what lets the fake be swapped for the real engine
+// without any of this changing, and a test is the only thing keeping it true, because the first
+// accidental import compiles perfectly well.
+//
+// Sibling UI packages are allowed. Screens have to be composed somewhere, and app.go importing
+// internal/tui/keys says nothing about where state comes from. Importing internal/keys,
+// internal/git or internal/provider would, which is what this actually forbids.
 func TestDashboardOnlyDependsOnCore(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -73,6 +77,7 @@ func TestDashboardOnlyDependsOnCore(t *testing.T) {
 	}
 
 	const own = "github.com/Walid-Idrissi-Labs/Canopy/"
+	const uiPrefix = own + "internal/tui/"
 	allowed := map[string]bool{own + "internal/core": true}
 
 	checked := 0
@@ -95,11 +100,12 @@ func TestDashboardOnlyDependsOnCore(t *testing.T) {
 			if !strings.HasPrefix(value, own) {
 				continue // stdlib and third party are fine
 			}
-			if !allowed[value] {
-				t.Errorf("%s imports %q. The dashboard may only depend on internal/core, "+
-					"otherwise it stops being swappable between the fake and the real engine.",
-					name, value)
+			if allowed[value] || strings.HasPrefix(value, uiPrefix) {
+				continue
 			}
+			t.Errorf("%s imports %q. The interface may depend on internal/core and on other "+
+				"internal/tui packages, and on nothing else, otherwise it stops being swappable "+
+				"between the fake and the real engine.", name, value)
 		}
 	}
 

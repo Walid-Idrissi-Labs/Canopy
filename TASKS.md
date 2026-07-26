@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A1-05, key management in the TUI | `feat/keys-tui` | none |
+| Claude | none, A1 complete and awaiting PG-A1 | `feat/keys-tui` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -754,7 +754,7 @@ A2-03 lands. That is intentional: it forces the limitation to be re-examined rat
 outliving the documentation that describes it.
 
 ### A1-05 Key management in the TUI
-`status: claimed | owner: Claude | branch: feat/keys-tui | depends: A1-03`
+`status: review | owner: Claude | branch: feat/keys-tui | depends: A1-03`
 `scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
 
 Deliverable: add, list, test and remove credentials without leaving the interface. Reachable from
@@ -765,10 +765,35 @@ present in any rendered frame. The provider is chosen from a list rather than ty
 requested only for providers that need one. Removal confirms first. On first run with no keys, the
 interface says so and offers to add one rather than presenting an empty dashboard.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: **added 2026-07-26 at Walid's request**, after A1 was otherwise finished. Recorded as a new
 task rather than folded into A1-03 so the change is visible.
+
+`internal/tui/keys` takes a narrow `Store` interface with no method that returns a secret value, so
+no mistake in that package can render one. The test types the canary a character at a time and
+checks every intermediate frame, because the leak that matters is the one visible mid keystroke,
+not the one at the end.
+
+The name field masks itself the moment its contents look like a credential, and is cleared on
+rejection, since the likeliest explanation for a key in the name field is a paste into the wrong
+place and it should not sit on screen while the user works that out.
+
+`K` opens the screen from the dashboard. Lowercase `k` only does so when the dashboard is empty,
+because it is otherwise move-up and hijacking it would throw a navigating user onto another screen.
+
+Three bugs found by the tests rather than by luck:
+
+1. **Value receiver aliasing.** The shared text field handler took `&m.draftName` from the caller
+   while returning its own copy, so every keystroke was silently discarded. Fixed by moving the
+   handlers to pointer receivers, which removes the class rather than the instance.
+2. **The dashboard was quitting on esc while typing.** Keys were forwarded to every screen, so
+   cancelling a field exited the program. Keystrokes now go only to the screen in front, while
+   engine events still reach both, so the dashboard is not stale when you return to it.
+3. **The architecture test was too strict.** It forbade the interface importing anything but
+   `core`, which caught `app.go` composing screens. The rule was wrong, not the code: the real
+   constraint is no *engine* packages. Sibling `internal/tui/*` imports say nothing about where
+   state comes from. Narrowed deliberately rather than deleted.
 
 The CLI stays. Piping from a password manager is a real workflow and a TUI cannot replace it.
 
