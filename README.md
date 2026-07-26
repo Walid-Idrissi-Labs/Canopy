@@ -1,12 +1,14 @@
 # Canopy
 
-A local terminal verification cockpit for parallel Git worktrees.
+A terminal coding agent that runs several agents at once, each on its own git worktree, and knows
+which of them actually produced working code.
 
-Canopy shows what revision was tested, whether required services are healthy, when each result was
-produced, and when a previously green result has gone stale.
+Canopy holds your provider API keys as named credentials, runs agents against them, and verifies
+each agent's work against the tests rather than against how confident it sounded.
 
-> Status: pre-alpha. Nothing here is usable yet. Development is tracked in [TASKS.md](TASKS.md),
-> and the decisions behind it are in [DECISIONS.md](DECISIONS.md).
+> Status: pre-alpha, and early. There is a working contract, state machine and dashboard, all
+> against scripted data. There is no provider connection yet. Development is tracked in
+> [TASKS.md](TASKS.md) and the decisions behind it in [DECISIONS.md](DECISIONS.md).
 
 ## The problem
 

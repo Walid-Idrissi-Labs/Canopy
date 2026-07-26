@@ -407,6 +407,50 @@ not discovered late:
 
 Full write up in FEATURES.md section 10.
 
+## D-22 Roadmap re-planned around the agent runtime. Decided 2026-07-26.
+
+D-21 settled what Canopy is. This settles the order it gets built in, and it reverses the
+observe-first sequencing that phases 2 to 6 were built around.
+
+**What changed.** Old phases 2 to 6 built a worktree verification cockpit and left the agent
+runtime as a conditional expansion after a pilot. They are replaced by A1 to A7, which build the
+agent runtime first and fold verification in at A6.
+
+**Why.** Walid observed, correctly, that the state of the app did not look like it was heading
+toward the product described in D-21, and said so three times. It was not. Everything shipped so
+far is Pillar 1. Recording a destination in a document does not make the code move toward it, and
+a plan whose next six weeks of work are invisible in the finished product is a plan that will get
+abandoned rather than followed.
+
+**What survives.** More than it might look like. The shared contract, the sequenced snapshot store
+with its coalescing rules, the TUI shell and its selection model, and the process group and
+bounded output designs all carry forward. Token streaming is the highest volume event source this
+project will have, which is exactly the case the store was designed for, so A3-01 is the first
+real test of whether P1-01 was right.
+
+**What is deferred rather than cancelled.** Service health, the whole of the old phase 3 section on
+probes, is off the path to the agent product and moves to after A7. Per project config returns
+when there is something worth configuring. The pilot still matters and follows A7.
+
+**Decisions this supersedes or changes:**
+
+- **D-02 is now false as written.** v0.1 is not a companion for existing worktrees. Canopy creates
+  and removes worktrees for its agents at A5-03, which the old plan forbade outright. The guards
+  survive as behaviour: never touch the primary checkout, never remove a dirty worktree silently.
+- **D-06 is deferred.** Observe-only service health is not on the path. When it returns, the
+  question of whether Canopy starts services reopens, because an agent runtime that owns a worktree
+  has a much better claim to owning its dev server than a passive monitor did.
+- **D-19 stays open** but is now answered in the A6 context rather than the v0.1 one.
+- **D-11 still holds.** No fixed ownership split, tasks claimed through TASKS.md.
+- **D-01, D-03, D-05, D-07 to D-10, D-12 to D-18, D-20 and D-21 are unaffected.**
+
+**The risk, recorded rather than argued away.** This is several times the scope of the plan the
+corrections document approved, against incumbents who do it full time. The competitive reasoning in
+that document has not become wrong, it has been overruled deliberately by the person whose project
+this is. A6-05, ranking agents by whether their code actually passes, is the bet that makes the
+larger scope worth attempting: Orca already fans out across agents, and nobody uses test truth to
+rank the results.
+
 ---
 
 ## Appendix: where the settled scope comes from

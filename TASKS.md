@@ -100,19 +100,19 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | none, P1-07 handed off for review | `feat/dashboard` | none |
+| Claude | A1-01, provider and key types | next feature branch | none |
 | Codex | none | none | none |
 
-PG-0 is signed by Walid and phase 1 is underway. P1-01 through P1-05 are done and in review on
-`feat/core-contract`, so the contract and the fake both exist and the four scripted worktrees
-behave. P0-01, P0-03, P0-04 and P0-07 are also in review. P0-02 needs the first pull request
-before its acceptance can be shown, and P0-05 follows from that. P0-06, the prior art pass, is
-unclaimed and open to either pair.
+**The roadmap was re-planned on 2026-07-26.** Canopy is an agent runtime, not a worktree monitor.
+Phases 0 and 1 are unchanged and still done. Old phases 2 to 6 are replaced by A1 to A7, and every
+task that survived carries its original ID in its notes so nothing already reasoned about was
+thrown away. See D-22 in DECISIONS.md and the internal replan note.
 
-Codex: `internal/core` and `internal/core/fake` are on `feat/core-contract` and ready to build
-against. **P1-07, the first dashboard, is the obvious thing to claim** and nothing blocks it, the
-fake gives you four workspaces and a `Touch` method that turns a passing row stale. Read the
-notes on P1-01, P1-03 and P1-04 first, each lists the judgement calls that are yours to overturn.
+Done and carrying forward: P0-01 to P0-07 and P1-01 to P1-07. The core contract, the state
+machine, the roll-up, the fake store, the headless harness and the dashboard.
+
+Codex: **A2 is the obvious thing to claim.** It is independent of A1, because a provider client can
+take a key as a parameter long before there is a registry to fetch one from. A3 depends on A2.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
@@ -123,13 +123,36 @@ push.
 
 Read this before claiming anything.
 
-v0.1 is an observe only verification cockpit. It discovers worktrees that already exist and proves
-whether their test and service evidence is current for the exact code in them.
+**Canopy is an agent runtime.** It holds provider API keys as named credentials, runs coding
+agents against them, and gives each agent its own git worktree. The differentiator is that it
+knows whether each agent's work actually passes, and can rank agents by that rather than by how
+confident they sounded.
 
-v0.1 does NOT: create or remove worktrees, delete branches, prune, spawn agents, attach PTYs,
-infer agent state, commit, push, open PRs, merge, discard, start services, run setup
-automatically, copy files automatically, restart processes automatically, persist across restart,
-parse framework specific test counts, or support Windows.
+Same category as OpenCode and Claude Code, plus multi agent orchestration on worktrees, plus a
+verification engine none of them have.
+
+Build order, and what each phase buys:
+
+| | | What it gets you |
+|---|---|---|
+| A1 | named keys, secure storage | credentials exist |
+| A2 | provider client, streaming | a real reply comes back |
+| A3 | chat interface | **it looks and feels like the product** |
+| A4 | tools and permissions | it can actually change code |
+| A5 | many agents, one worktree each | the differentiator |
+| A6 | verification per agent | the thing no incumbent does |
+| A7 | robustness, docs, packaging | someone else can install it |
+
+A3 is the milestone that makes the product recognisable. A5 is where the worktree work stops being
+a detour and becomes load bearing.
+
+### What is out of scope, and stays out
+
+- No cloud, no account, no hosted control plane. Local first, keys never leave the machine.
+- No Windows until process group and terminal semantics are designed for it, not approximated.
+- No headless unattended merging. A human stays in the loop on anything destructive.
+- **Canopy never claims to sandbox what it runs.** See A4-04. A worktree is file isolation, not a
+  security boundary, and saying otherwise would be the same class of error as a false green.
 
 If a task seems to need any of the above, it is mis-scoped. Stop and raise it.
 
@@ -582,713 +605,604 @@ notes: none
 
 ---
 
-# Phase 2: real worktrees and test evidence
+# Phase A1: named keys and secure storage
 
-Goal: four real worktrees observed, one passing, one failing, one stale, one unconfigured, with no
-ambiguous green state anywhere.
+Goal: Canopy can hold provider credentials by name, and can be trusted with them.
 
-### P2-01 Worktree discovery
-`status: todo | owner: none | branch: none | depends: PG-1`
-`scope: internal/git/`
+Nothing here talks to a provider yet. Keys come first because every later phase depends on them,
+and because credential handling is the one thing that is genuinely unpleasant to retrofit.
 
-Deliverable: discover the primary checkout and every existing worktree via
-`git worktree list --porcelain`. Assign stable workspace IDs. Assign ownership: primary for the
-original checkout, external-read-only for everything else.
-
-Acceptance: a temp repository with three added worktrees is discovered in full, the primary is
-correctly identified, and no worktree is modified in any way.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: the managed and adopted ownership states exist in the type but are unreachable in v0.1.
-
-### P2-02 Branch, HEAD, dirty state, last activity
-`status: todo | owner: none | branch: none | depends: P2-01`
-`scope: internal/git/`
-
-Deliverable: per worktree, the branch name (or detached HEAD), the HEAD SHA, dirty or clean, and a
-last activity timestamp.
-
-Acceptance: correct for a clean worktree, a dirty worktree, a worktree with only untracked files,
-and a detached HEAD.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P2-03 RevisionKey computation
-`status: todo | owner: none | branch: none | depends: P2-02`
-`scope: internal/git/`
-
-Deliverable: HeadSHA plus DirtyDigest per corrections section 3.1, digesting `git diff --binary
-HEAD`, the sorted output of `git ls-files --others --exclude-standard -z`, and a content hash per
-untracked file.
-
-Acceptance: the key changes when a tracked file is edited, when content is staged, and when a
-non-ignored untracked file is added. It does not change when a git-ignored file changes. Symlinks
-hash their target string and are not followed. Submodules contribute their HEAD SHA and are not
-recursed into. An untracked file above `untracked_file_hash_limit_mb` (default 25) forces the
-revision to unknown with a readable reason, never silently ignored and never green.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: staleness is deliberately coarse and whole worktree. See D-16 in DECISIONS.md. Whether that
-causes stale fatigue is flagged for Codex, and must not be "fixed" by adding an ignore list
-without an explicit joint decision.
-
-### P2-04 Revision poller
-`status: todo | owner: none | branch: none | depends: P2-03`
-`scope: internal/git/`
-
-Deliverable: poll each worktree's revision on `observation.revision_poll_interval` (default 2s)
-and emit a revision change event.
-
-Acceptance: editing a file produces a revision change event within one poll interval, and polling
-N worktrees does not saturate a CPU core.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P2-05 Test runner
-`status: todo | owner: none | branch: none | depends: P1-05`
-`scope: internal/exec/`
-
-Deliverable: execute a configured test command as an argv array in its own process group, inside
-the worktree, capturing exit code and duration and recording the RevisionKey at start.
-
-Acceptance: exit code 0 gives passing for the captured revision, non-zero gives failing, and a
-command that cannot start (missing binary) gives error, never failing and never passing.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: exit code is the only source of pass/fail truth in v0.1. No framework parsers.
-
-### P2-06 Bounded output capture
-`status: todo | owner: none | branch: none | depends: P2-05`
-`scope: internal/exec/`
-
-Deliverable: a bounded ring buffer per output source, default `logs.max_lines_per_source: 5000`,
-keeping head and tail and marking dropped lines explicitly.
-
-Acceptance: a command emitting a million lines neither exhausts memory nor blocks the producer,
-the buffer states how many lines were dropped, and the final state transition is never dropped.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P2-07 Cancellation
-`status: todo | owner: none | branch: none | depends: P2-05`
-`scope: internal/exec/`
-
-Deliverable: cancel a running test with a graceful signal, a grace period, then termination of the
-whole process group.
-
-Acceptance: a test that spawns child processes leaves nothing behind after cancellation, verified
-by process listing. A cancelled run is never green.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P2-08 Authoritative snapshot store
-`status: todo | owner: none | branch: none | depends: P1-04`
-`scope: internal/store/`
-
-Deliverable: one authoritative in-memory state store per corrections section 3.5, with immutable
-snapshots for UI reads, monotonically increasing event sequence numbers, coalescing of replaceable
-updates, separate bounded log buffers and explicit drop rules.
-
-Acceptance: a consumer can discard its state, call Snapshot(), resume from Events(afterSequence)
-and land in exactly the same state. No final state transition is ever coalesced away.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: the event channel notifies, it does not own truth. Reviewers should check this
-specifically.
-
-### P2-09 Dashboard on real data
-`status: todo | owner: none | branch: none | depends: P2-04, P2-08`
-`scope: internal/tui/`
-
-Deliverable: render real worktrees with branch, dirty state, test state, result age and freshness.
-
-Acceptance: four real worktrees render correctly and update live.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P2-10 Focused log view
-`status: todo | owner: none | branch: none | depends: P2-09, P2-06`
-`scope: internal/tui/`
-
-Deliverable: open the captured output for a selected workspace's test run, scrollable.
-
-Acceptance: the failure output for a failing run is readable in the UI, including the dropped line
-marker when it was truncated.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P2-11 Manual rerun
-`status: todo | owner: none | branch: none | depends: P2-09, P2-05`
-`scope: internal/tui/, internal/app/`
-
-Deliverable: a keybinding that reruns the selected workspace's tests.
-
-Acceptance: rerunning a stale workspace whose code has not changed returns it to passing, and
-rerunning after a breaking edit returns failing.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: manual triggering is the v0.1 default. Auto run on change is P4-13, not here.
-
-### P2-12 Missing and invalid configuration in the UI
-`status: todo | owner: none | branch: none | depends: P2-09`
-`scope: internal/tui/`
-
-Deliverable: clear states for "no configuration file", "configuration invalid" and "workspace has
-no configured evidence".
-
-Acceptance: none of the three ever renders as green or as failing, and each explains the next safe
-action.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: "no tests configured" being visibly distinct from "tests passed" is a core promise.
-
-### P2-13 Integration, real stale flip
-`status: todo | owner: none | branch: none | depends: P2-11`
-`scope: internal/app/`
-
-Deliverable: end to end freshness on real worktrees.
-
-Acceptance: this is the phase 2 integration checkpoint. Run tests to green, edit a file in that
-worktree, and the green result goes stale promptly without restarting Canopy.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P2-14 The four worktree demo
-`status: todo | owner: none | branch: none | depends: P2-13, P2-12`
-`scope: demonstration only`
-
-Deliverable: the target demo running on a real repository.
-
-Acceptance: this is the phase 2 definition of done. Four real worktrees visible, one passing for
-its current revision, one failing with useful output, one stale immediately after an edit, one
-with no configured evidence. No ambiguous green anywhere.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: this is the demo the whole project gets judged on. Record it.
-
-### PG-2 Phase 2 gate
-`status: todo | depends: P2-14`
-
-Both supervisors watch the four worktree demo live and confirm no state is ambiguous.
-
-`signed: walid [ ]   classmate [ ]`
-
-notes: none
-
----
-
-# Phase 3: configuration trust and service health
-
-Goal: no project command ever runs without explicit approval, and a live but broken service is
-visibly unhealthy.
-
-### P3-01 Configuration schema v1
-`status: todo | owner: none | branch: none | depends: PG-2`
-`scope: internal/config/`
-
-Deliverable: load and validate the schema from corrections section 9. schema_version required.
-Unknown executable fields are errors, not warnings. Durations and port ranges validated before
-anything runs. Template references resolve before execution. A relative cwd may not escape the
-worktree.
-
-Acceptance: each rule has a test with a fixture that fails validation for the right reason, and
-`cwd: "../.."` is rejected.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: tests is an array, with name, required, command, cwd, timeout and trigger, confirmed in
-round 2 section 4.2. The required flag feeds the roll-up from P1-04.
-
-### P3-02 Command representation and shell opt-in
-`status: todo | owner: none | branch: none | depends: P3-01`
-`scope: internal/config/`
-
-Deliverable: command.argv is the default form, command.shell requires `allow_shell: true`, and
-defining both forms is rejected.
-
-Acceptance: tests cover argv only (accepted), shell without the flag (rejected), shell with the
-flag (accepted, marked higher risk), and both forms present (rejected).
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P3-03 Secret handling
-`status: todo | owner: none | branch: none | depends: P3-01`
-`scope: internal/config/`
-
-Deliverable: environment variables markable as secret, never printed in the UI or in logs that
-Canopy formats.
-
-Acceptance: a secret value appears nowhere in the trust screen, the service detail view, or any
-captured log line Canopy renders.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: Canopy cannot redact secrets a child process prints itself. Say so honestly in the README
-rather than implying a guarantee.
-
-### P3-04 Trust store
-`status: todo | owner: none | branch: none | depends: P3-01`
-`scope: internal/trust/`
-
-Deliverable: trust decisions stored outside the repository, keyed by repository identity plus
-configuration hash.
-
-Acceptance: a freshly discovered repository executes nothing until approved, approval survives a
-restart, and the trust record is not written inside the observed repository.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: a worktree is file isolation, not a security sandbox. Canopy must never claim to sandbox
-anything.
-
-### P3-05 Trust invalidation
-`status: todo | owner: none | branch: none | depends: P3-04`
-`scope: internal/trust/`
-
-Deliverable: changing any executable configuration field invalidates the previous approval.
-
-Acceptance: editing a test command re-prompts, editing a non-executable field such as project.name
-does not.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: round 2 section 3.4 raised setup friction here, since repeatedly tweaking a test command
-re-prompts every time. No low friction mode is approved yet, see D-17. Do not invent one
-unilaterally.
-
-### P3-06 Health probes
-`status: todo | owner: none | branch: none | depends: PG-2`
-`scope: internal/health/`
-
-Deliverable: process alive, TCP connect and HTTP probes with expected_status, interval, timeout
-and failure_threshold. Each check records checked_at, latency, failure reason and consecutive
-failure count.
-
-Acceptance: a running process failing its HTTP probe is unhealthy, not healthy. A probe timeout
-records a useful reason. Process state and readiness state stay separately visible.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: Canopy observes services in v0.1, it does not start them. `managed: false` is the only
-supported value. See D-06.
-
-### P3-07 Service identity binding
-`status: todo | owner: none | branch: none | depends: P3-06`
-`scope: internal/health/`
-
-Deliverable: record workspace, service instance, PID and process group, port and start time, so a
-response cannot be attributed to the wrong process.
-
-Acceptance: a port occupied by an unrelated process is not accepted as proof that the configured
-service is healthy.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: this is one of the easiest ways to ship a false green. Reviewers should attack it directly.
-
-### P3-08 Named ports, declaration only
-`status: todo | owner: none | branch: none | depends: P3-01`
-`scope: internal/config/`
-
-Deliverable: named ports resolvable in templates, so `{{ ports.web }}` works in health URLs and
-env values.
-
-Acceptance: templates resolve before execution, and an unresolvable reference is a validation
-error.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: declaration only, there is no port allocator in v0.1. Canopy cannot allocate a port for a
-process it does not start. The allocator, leases and bind collision recovery described in
-corrections section 7 move to phase 6 alongside managed services. See D-06.
-
-### P3-09 Required versus optional roll-up
-`status: todo | owner: none | branch: none | depends: P3-06, P1-04`
+### A1-01 Provider and key domain types
+`status: todo | owner: none | branch: none | depends: none`
 `scope: internal/core/`
 
-Deliverable: wire real service health into the roll-up.
+Deliverable: `Provider`, `KeyRef`, `KeyMetadata` and `AgentProfile` in the shared contract. A
+`KeyRef` names a credential, it never carries the secret. A profile binds a name to a provider, a
+key, a model and a set of defaults.
 
-Acceptance: an unhealthy required service blocks green, an unhealthy optional service does not and
-is still visible.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P3-10 Trust review screen
-`status: todo | owner: none | branch: none | depends: P3-04`
-`scope: internal/tui/`
-
-Deliverable: show the fully resolved command, working directory and non-secret environment, and
-require an explicit approval action.
-
-Acceptance: nothing executes before approval, the screen shows the resolved command rather than
-the template, and secrets are absent.
+Acceptance: a `KeyRef` cannot hold a secret value, enforced by the type rather than by convention.
+Round tripping a profile through JSON never produces a secret.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: shared contract file, so changes need a joint discussion. The separation between a
+reference and a secret is the whole design: if the secret is never in the type that gets logged,
+serialised, snapshotted or put in an event, it cannot leak through any of them.
 
-### P3-11 Process versus readiness display
-`status: todo | owner: none | branch: none | depends: P3-06`
-`scope: internal/tui/`
+### A1-02 Key store on the OS keychain
+`status: todo | owner: none | branch: none | depends: A1-01`
+`scope: internal/keys/`
 
-Deliverable: show "process alive" and "ready" as separate signals.
+Deliverable: store and retrieve secrets through the macOS Keychain and the Linux secret service.
+A file backend exists only as an explicit, loudly warned fallback, and never as a silent default.
 
-Acceptance: a running but unhealthy service is unmistakably distinguishable from both a healthy
-one and a stopped one.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P3-12 Service detail and error screens
-`status: todo | owner: none | branch: none | depends: P3-11`
-`scope: internal/tui/`
-
-Deliverable: per service detail with last check time, latency, failure reason and consecutive
-failures.
-
-Acceptance: after a probe failure the reason is visible without leaving the TUI.
+Acceptance: a stored key survives a restart, is absent from the process's own config files, and
+the file fallback refuses to run without the user opting into it by name.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: writing plaintext credentials to disk because the keychain was awkward is exactly the kind
+of shortcut that is invisible until it is a headline. If the keychain is unavailable, say so and
+stop, do not quietly degrade.
 
-### PG-3 Phase 3 gate
-`status: todo | depends: P3-05, P3-07, P3-09, P3-10, P3-12`
+### A1-03 Key management commands
+`status: todo | owner: none | branch: none | depends: A1-02`
+`scope: cmd/canopy/`
 
-Both supervisors confirm that a changed executable configuration requires fresh approval, that a
-live but unhealthy service reads as unhealthy, and that no command runs before trust.
+Deliverable: `canopy keys add`, `list`, `remove` and `test`. Adding reads from a prompt or stdin,
+never from an argument.
+
+Acceptance: no command prints a secret. `keys list` shows name, provider, created date and a
+fingerprint. A key passed as a command line argument is rejected with an explanation.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: rejecting `--key sk-...` matters because arguments end up in shell history and in the
+process list, where any other user on the machine can read them.
+
+### A1-04 Redaction guarantees
+`status: todo | owner: none | branch: none | depends: A1-03`
+`scope: internal/keys/, internal/core/`
+
+Deliverable: a test suite asserting secrets cannot reach output Canopy controls.
+
+Acceptance: a known secret is planted, then every rendered surface is searched for it: snapshot
+JSON, event stream, log buffers, dashboard frames, error messages and panic output. None contain
+it. Errors from a provider carry the failure without echoing the credential back.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the honest boundary from D-20 still applies. Canopy cannot redact what a child process
+prints itself, and that limitation is documented rather than implied away.
+
+### PG-A1 Phase A1 gate
+`status: todo | depends: A1-01, A1-02, A1-03, A1-04`
+
+Both supervisors confirm a key can be added, survives a restart, and cannot be found anywhere in
+Canopy's own output.
 
 `signed: walid [ ]   classmate [ ]`
 
-notes: none
+---
+
+# Phase A2: provider client and streaming
+
+Goal: a real message goes to a real provider and a real reply streams back.
+
+### A2-01 Provider interface
+`status: todo | owner: none | branch: none | depends: A1-01`
+`scope: internal/core/`
+
+Deliverable: the interface an agent session talks to. Streaming, cancellable, provider agnostic,
+with tool use in the shape from the start even though tools arrive in A4.
+
+Acceptance: compiles, and a fake provider satisfies it and can script a scripted reply.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: designing the tool use shape now is deliberate, unlike the PTY interfaces we correctly
+refused to design early. The difference is that tools are a certainty three phases out, whereas
+those were speculative. Retrofitting tool calls into a streaming protocol is genuinely painful.
+
+### A2-02 Anthropic client
+`status: todo | owner: none | branch: none | depends: A2-01, A1-02`
+`scope: internal/provider/anthropic/`
+
+Deliverable: the Messages API with streaming, using a named key from the store.
+
+Acceptance: a real request returns a streamed reply. Cancellation stops the stream and releases
+the connection. Recorded fixtures let the tests run without network or credentials.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: pin the API version explicitly. Use the current model ids rather than whatever was current
+when this was written, and check them at implementation time rather than trusting memory.
+
+### A2-03 Error taxonomy
+`status: todo | owner: none | branch: none | depends: A2-02`
+`scope: internal/core/, internal/provider/`
+
+Deliverable: provider failures mapped to distinct states: authentication, rate limited, overloaded,
+context length exceeded, network, cancelled, unknown.
+
+Acceptance: each has a test, and each produces a message telling the user the next useful action.
+A rate limit is never reported the same way as a bad key.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: this is the same discipline as the test state vocabulary. "Something went wrong" is the
+agent equivalent of a status nobody can act on.
+
+### A2-04 One shot ask
+`status: todo | owner: none | branch: none | depends: A2-02`
+`scope: cmd/canopy/`
+
+Deliverable: `canopy ask "..."` streams a reply to stdout.
+
+Acceptance: works against a real key, streams rather than buffering, exits non zero on failure,
+and cancels cleanly on interrupt.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the smallest possible proof the whole pipe works. Worth having permanently as a debugging
+tool, the same way the headless harness is.
+
+### A2-05 Usage and cost accounting
+`status: todo | owner: none | branch: none | depends: A2-02`
+`scope: internal/core/, internal/provider/`
+
+Deliverable: tokens in, out and cached, plus cost, recorded per request and attributed to the key
+and the agent.
+
+Acceptance: usage from a real response matches what the provider reported. Cost is computed from
+a pricing table that is versioned and dated, not hardcoded inline.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: this is exact rather than inferred, because Canopy makes the request. That is what kills
+the metering proxy question in FEATURES.md sections 7.1 and 7.5. A stale pricing table is a way to
+put a wrong number on screen, so it carries the date it was written and says so when it is old.
+
+### PG-A2 Phase A2 gate
+`status: todo | depends: A2-03, A2-04, A2-05`
+
+Both supervisors watch `canopy ask` stream a real reply and see the token and cost figures for it.
+
+`signed: walid [ ]   classmate [ ]`
 
 ---
 
-# Phase 4: robustness and acceptance
+# Phase A3: the chat interface
 
-Goal: every acceptance test in corrections section 12 passes, on two real repositories.
+Goal: it looks and feels like the product. This is the phase that makes Canopy recognisable.
 
-### P4-01 Timeouts and process group termination
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/exec/`
+### A3-01 Session and conversation types
+`status: todo | owner: none | branch: none | depends: A2-01`
+`scope: internal/core/`
 
-Acceptance: a timeout terminates the correct process group and produces error or failing per the
-documented setting, never passing. No orphans remain.
+Deliverable: `Session`, `Message`, `Role` and `AgentState`, held in the existing snapshot store so
+sessions and workspaces share one authoritative view and one event stream.
+
+Acceptance: a session's history rebuilds exactly from a snapshot. Streaming updates coalesce, and
+a completed turn is a final event that can never be dropped.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: the timeout outcome setting has to be documented, not implicit. See D-18.
+notes: token streaming is the highest volume event source this project will ever have, which is
+precisely the case the coalescing rules in P1-01 were designed for. This is the first real test of
+whether that design was right.
 
-### P4-02 No dropped final transitions
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/store/`
+### A3-02 Chat view
+`status: todo | owner: none | branch: none | depends: A3-01`
+`scope: internal/tui/chat/`
 
-Acceptance: under a flood of rapid events, no final state transition is lost or coalesced away,
-verified by a stress test.
+Deliverable: message list, live streaming output, an input box, scrollback.
+
+Acceptance: a reply renders token by token without flicker, the view follows the tail unless the
+user has scrolled up, and resizing does not corrupt the frame.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: reuses the model, event loop and 80 column discipline from P1-07. Same rule as before, this
+package talks to core and nothing else.
+
+### A3-03 Markdown and code rendering
+`status: todo | owner: none | branch: none | depends: A3-02`
+`scope: internal/tui/chat/`
+
+Deliverable: readable code blocks with syntax highlighting, plus the usual inline markdown.
+
+Acceptance: a long code block wraps or scrolls without breaking the layout, and remains readable
+with colour disabled.
 
 `verify: claude [ ]   codex [ ]`
 
 notes: none
 
-### P4-03 Large output and backpressure
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/exec/, internal/store/`
+### A3-04 Cancel a turn in flight
+`status: todo | owner: none | branch: none | depends: A3-02`
+`scope: internal/tui/chat/, internal/core/`
 
-Acceptance: enormous test output cannot freeze the UI or corrupt the final state.
+Deliverable: interrupt a streaming reply and keep the partial output.
+
+Acceptance: the connection closes, no goroutine leaks, and the partial reply stays visible and
+clearly marked as interrupted rather than silently truncated.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: a partial answer presented as complete is the chat equivalent of a stale green.
+
+### PG-A3 Phase A3 gate
+`status: todo | depends: A3-03, A3-04`
+
+Both supervisors hold a real conversation in the terminal. **This is the milestone that settles
+whether the product feels like what we set out to build.**
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
+# Phase A4: tools and the permission model
+
+Goal: the agent can change code, and cannot do so without the user knowing what it did.
+
+**Read A4-04 before claiming anything else in this phase.** It is the dangerous part.
+
+### A4-01 Tool interface and registry
+`status: todo | owner: none | branch: none | depends: A2-01`
+`scope: internal/core/, internal/tools/`
+
+Deliverable: the tool contract, a registry, and JSON schema generation for the provider.
+
+Acceptance: a tool declares its schema once and it is used for both the provider call and local
+argument validation, so the two cannot drift apart.
 
 `verify: claude [ ]   codex [ ]`
 
 notes: none
 
-### P4-04 Paths and branch names with spaces
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/git/, internal/exec/`
+### A4-02 File tools
+`status: todo | owner: none | branch: none | depends: A4-01`
+`scope: internal/tools/`
 
-Acceptance: a repository at a path containing spaces, and a branch name containing spaces, both
-render and execute correctly.
+Deliverable: read, write, edit, glob and grep.
+
+Acceptance: every path is resolved and confined to the agent's worktree. Symlinks that escape are
+refused. Edits against a file that changed since it was read are rejected rather than applied
+blind.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: the development folder itself contains spaces, so this is not hypothetical.
+notes: the read-then-edit conflict check is the same freshness idea as the truth engine, applied
+to a file instead of a test run. Applying an edit computed against content that has since moved is
+how an agent silently destroys work.
 
-### P4-05 Externally removed worktrees
-`status: todo | owner: none | branch: none | depends: PG-3`
+### A4-03 Shell tool
+`status: todo | owner: none | branch: none | depends: A4-01`
+`scope: internal/exec/, internal/tools/`
+
+Deliverable: run a command in the agent's worktree, own process group, timeout, bounded output.
+
+Acceptance: reuses the bounded buffer and process group rules already specified in the old P2-05
+to P2-07. Cancellation leaves no orphans, verified by process listing.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: carries forward the old P2-05, P2-06 and P2-07 designs, which were already worked out in
+detail and are unchanged by the re-plan.
+
+### A4-04 Permission model
+`status: todo | owner: none | branch: none | depends: A4-02, A4-03`
+`scope: internal/permission/`
+
+Deliverable: per tool approval, path restrictions, an allow and deny model for shell commands,
+approval scopes (once, session, always), and an audit trail of every tool call with its arguments
+and result.
+
+Acceptance: no tool runs without an applicable approval. A denied call returns an error to the
+model rather than terminating the session. The audit trail is complete enough to answer "what did
+this agent actually do" after the fact. An approval for one path never covers another.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **the existing repository trust contract does not cover this and must not be reused as
+though it does.** That contract governs commands the user wrote in a config file. This governs
+commands a model generated, which is a different threat model. Canopy does not sandbox what it
+runs and must never imply otherwise. Recorded as consequence 1 in D-21.
+
+### A4-05 Tool use loop
+`status: todo | owner: none | branch: none | depends: A4-04`
+`scope: internal/agent/`
+
+Deliverable: the full turn: model requests a tool, permission is checked, the tool runs, the result
+goes back, repeat until the model stops.
+
+Acceptance: a multi step task completes end to end. Cancellation mid loop leaves no partial tool
+execution. A tool that fails is reported to the model rather than crashing the turn.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: needs a loop limit and a token budget, or a confused model can spend real money in a circle.
+
+### PG-A4 Phase A4 gate
+`status: todo | depends: A4-05`
+
+Both supervisors watch an agent make a real change to a real file, having approved it, and then
+read the audit trail of what it did.
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
+# Phase A5: many agents, one worktree each
+
+Goal: the differentiator. Several agents working in parallel, each isolated, all visible at once.
+
+This is where the worktree work becomes load bearing rather than speculative, which is why it was
+moved here.
+
+### A5-01 Worktree discovery
+`status: todo | owner: none | branch: none | depends: PG-A4`
 `scope: internal/git/`
 
-Acceptance: a worktree removed outside Canopy disappears from the dashboard safely, with no crash
-and no stale row.
+Deliverable: discover the primary checkout and existing worktrees via
+`git worktree list --porcelain`, with stable IDs and ownership states.
+
+Acceptance: a temp repository with three added worktrees is discovered in full, and the primary is
+correctly identified and protected.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: was P2-01, unchanged. The ownership states from P1-01 now all become reachable, since
+Canopy creates worktrees in A5-03.
 
-### P4-06 Interrupted and crashed commands
-`status: todo | owner: none | branch: none | depends: PG-3`
+### A5-02 Branch, HEAD, dirty state
+`status: todo | owner: none | branch: none | depends: A5-01`
+`scope: internal/git/`
+
+Deliverable: per worktree branch or detached HEAD, HEAD SHA, dirty counts, last activity.
+
+Acceptance: correct for clean, dirty, untracked only, and detached HEAD.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: was P2-02, unchanged.
+
+### A5-03 Create and remove a worktree
+`status: todo | owner: none | branch: none | depends: A5-02`
+`scope: internal/git/`
+
+Deliverable: create a worktree and branch for an agent, and remove it afterwards.
+
+Acceptance: removal refuses on a dirty worktree without explicit confirmation. The primary
+checkout can never be removed. A failed creation leaves nothing behind.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **new, and previously excluded.** The old plan forbade this entirely. Under the agent
+runtime it is required, since each agent needs its own tree. The guards from the old exclusion list
+survive as behaviour: never touch the primary, never remove a dirty tree silently.
+
+### A5-04 Agent registry
+`status: todo | owner: none | branch: none | depends: A5-03, A3-01`
+`scope: internal/agent/`
+
+Deliverable: named agents, each bound to a worktree, a key, a model and a session.
+
+Acceptance: several agents run concurrently without touching each other's worktrees or sessions.
+Usage and cost are attributed per agent.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: this is where the named key model from A1 pays off. Naming an agent `claude` runs it on the
+Anthropic key while another runs elsewhere.
+
+### A5-05 Per agent view and switching
+`status: todo | owner: none | branch: none | depends: A5-04, A3-02`
+`scope: internal/tui/`
+
+Deliverable: a list of agents, switch into any one's conversation, come back out.
+
+Acceptance: switching is instant and never shows one agent's output in another's view. An agent
+that needs input is visibly distinct from one that is working.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: selection stays keyed by ID rather than row index, for the same reason as P1-07.
+
+### A5-06 Steering and interrupting
+`status: todo | owner: none | branch: none | depends: A5-05`
+`scope: internal/tui/, internal/agent/`
+
+Deliverable: send a message to a running agent, interrupt one, redirect one.
+
+Acceptance: a steering message reaches the right agent and only that agent. Interrupting one does
+not disturb the others.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the feature Walid asked for by name. Being able to correct an agent mid task without
+killing it is most of the value of watching them at all.
+
+### PG-A5 Phase A5 gate
+`status: todo | depends: A5-06`
+
+Both supervisors run three agents at once on one repository, watch all three, and steer one
+without disturbing the others.
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
+# Phase A6: verification per agent
+
+Goal: the thing no incumbent does. Canopy knows whether each agent's work actually passes.
+
+Everything here already exists as a design and partly as code. P1-01 to P1-06 built the contract,
+the state machine, the roll-up and the fake.
+
+### A6-01 RevisionKey
+`status: todo | owner: none | branch: none | depends: A5-02`
+`scope: internal/git/`
+
+Deliverable: HeadSHA plus DirtyDigest, per the truth contract.
+
+Acceptance: the key changes on a tracked edit, on staged content and on a new untracked file, and
+does not change when a git ignored file changes. Symlinks hash their target, submodules contribute
+their HEAD SHA, and an untracked file above the size limit forces the revision to unknown with a
+readable reason.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: was P2-03, unchanged. D-09 and D-16 still apply.
+
+### A6-02 Revision poller
+`status: todo | owner: none | branch: none | depends: A6-01`
+`scope: internal/git/`
+
+Deliverable: poll each worktree and emit a revision change event.
+
+Acceptance: an edit produces the event within one poll interval, and polling many worktrees does
+not saturate a core.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: was P2-04, unchanged. D-07 still applies.
+
+### A6-03 Test runner
+`status: todo | owner: none | branch: none | depends: A6-01`
 `scope: internal/exec/`
 
-Acceptance: a killed or crashed command produces error, distinguishable from a real test failure.
+Deliverable: run a configured test command per agent worktree, capturing exit code, duration and
+the revision at start.
+
+Acceptance: exit zero is passing for the captured revision, non zero is failing, and a command
+that cannot start is error rather than either.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: was P2-05, unchanged. Shares the process group and bounded output machinery with A4-03,
+which is a simplification the re-plan buys us: the shell tool and the test runner are the same
+problem.
 
-### P4-07 Cleanup hardening
-`status: todo | owner: none | branch: none | depends: P4-01`
-`scope: internal/exec/, cmd/canopy/`
-
-Acceptance: quitting Canopy leaves no child processes behind, including during an in-flight test
-run.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P4-08 Terminal resize and narrow layouts
-`status: todo | owner: none | branch: none | depends: PG-3`
+### A6-04 Verification per agent in the UI
+`status: todo | owner: none | branch: none | depends: A6-03, A5-05`
 `scope: internal/tui/`
 
-Acceptance: four or more worktrees stay readable in an 80 column terminal, and resizing does not
-corrupt the frame.
+Deliverable: every agent row carries its verification state, using the existing roll-up.
+
+Acceptance: an agent that edits its worktree turns stale, and re-running clears it. The wording
+and glyphs are the ones fixed in D-10.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: this is the old P2-09 to P2-14 demo, now per agent instead of per worktree. The dashboard
+from P1-07 already renders it, against the fake.
 
-### P4-09 Distinguishable without color
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/tui/`
+### A6-05 Rank agents by outcome
+`status: todo | owner: none | branch: none | depends: A6-04`
+`scope: internal/agent/`
 
-Acceptance: passing, failing, stale, unknown and not-configured are distinguishable with color
-disabled (NO_COLOR=1), by glyph and word rather than hue.
+Deliverable: give several agents the same task, then rank the results by tests passing for the
+current revision, and by diff size as a tiebreak.
 
-`verify: claude [ ]   codex [ ]`
-
-notes: accessibility is part of the truth contract here. A status nobody can read is a status
-nobody can trust. Wording is fixed by D-10.
-
-### P4-10 Selection stability under rapid updates
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/tui/`
-
-Acceptance: rapid updates never leave the selected row pointing at a different workspace than the
-one the user selected.
+Acceptance: the ranking refuses to rank anything whose evidence is stale or unknown, rather than
+guessing.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: **the crown jewel from FEATURES.md pillar 2.** Orca fans out across agents. Nobody uses
+test truth to rank the results. This task is the entire strategic argument for the project, and it
+is only possible because A6 exists.
 
-### P4-11 Rebuild from a fresh snapshot
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/tui/, internal/store/`
+### PG-A6 Phase A6 gate
+`status: todo | depends: A6-05`
 
-Acceptance: the UI can discard all local state, request a snapshot and recover identically.
-Restarting the TUI cannot resurrect a stale green state from an old event.
+Both supervisors give three agents the same task and watch Canopy pick the winner on evidence.
 
-`verify: claude [ ]   codex [ ]`
+`signed: walid [ ]   classmate [ ]`
 
-notes: none
+---
 
-### P4-12 Help and recovery states
-`status: todo | owner: none | branch: none | depends: PG-3`
-`scope: internal/tui/`
+# Phase A7: robustness, docs, packaging
 
-Acceptance: every error message explains the next safe action, and a keybinding help overlay
-exists.
+Goal: someone who is not us can install it and get value without being told how.
 
-`verify: claude [ ]   codex [ ]`
+### A7-01 Robustness sweep
+`status: todo | owner: none | branch: none | depends: PG-A6`
 
-notes: none
-
-### P4-13 Debounced auto run on change, opt-in
-`status: todo | owner: none | branch: none | depends: P4-01, P4-02, P2-07`
-`scope: internal/app/, internal/config/`
-
-Deliverable: `trigger: on_change` as an opt-in per test setting, debounced, cancelling any
-in-flight run for that test.
-
-Acceptance: rapid successive edits produce exactly one run after the debounce window, and
-cancelling the superseded run leaves no orphan processes.
+Acceptance: the surviving criteria from the old P4 set. Timeouts terminate the right process
+group, no final state transition is ever dropped under load, huge output cannot freeze the UI,
+paths and branch names with spaces work, externally removed worktrees disappear safely, and
+quitting leaves no child processes behind.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: blocked on a product decision, see D-19. The corrections document defers on_change until
-debounce and cancellation are proven, while round 2 section 3.2 argues v0.1 may not clear the "why
-not just run the tests myself" bar without it. Do not build this until the supervisors and Codex
-settle whether it ships in v0.1 or after the pilot.
+notes: carries forward P4-01 to P4-07.
 
-### P4-14 Acceptance test suite
-`status: todo | owner: none | branch: none | depends: P4-01 through P4-12`
-`scope: internal/**, testdata/`
+### A7-02 Interface robustness
+`status: todo | owner: none | branch: none | depends: PG-A6`
 
-Deliverable: an executable test for every checkbox in corrections section 12, covering truth and
-freshness, tests, services, git and ownership, trust and configuration, and the TUI.
-
-Acceptance: all section 12 boxes pass in CI. Any box that cannot be automated is listed explicitly
-with a documented manual procedure.
+Acceptance: readable at 80 columns with several agents, resize does not corrupt the frame, every
+state is distinguishable with colour disabled, rapid updates never move the selection, the UI
+rebuilds from a fresh snapshot, and every error says what to do next.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: this task is the real definition of "v0.1 works". Do not shortcut it.
+notes: carries forward P4-08 to P4-12. P1-07 already met the 80 column and selection criteria.
 
-### P4-15 End to end on two real repositories
-`status: todo | owner: none | branch: none | depends: P4-14`
-`scope: validation only`
+### A7-03 Honest limitations document
+`status: todo | owner: none | branch: none | depends: A7-01, A7-02`
+`scope: LIMITATIONS.md`
 
-Acceptance: the full flow verified on one Go repository and one Node or Python repository. See
-D-04, the two repositories have to be chosen by the supervisors first.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P4-16 Honest limitations document
-`status: todo | owner: none | branch: none | depends: P4-15`
-`scope: LIMITATIONS.md, README.md`
-
-Deliverable: document what Canopy does not guarantee, including no sandboxing, no database or
-dependency isolation, coarse whole worktree staleness, no framework specific test counts, secrets
-printed by child processes not being redactable, and macOS and Linux only.
+Deliverable: what Canopy does not guarantee. No sandboxing. No database or dependency isolation
+between worktrees. Coarse whole worktree staleness. Secrets a child process prints are not
+redactable. macOS and Linux only. Cost figures depend on a pricing table with a date on it.
 
 Acceptance: a reader can tell within a minute whether Canopy will lie to them, and how.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: truthfulness is the product. Underclaiming in the docs is on brand, not a weakness.
+notes: carries forward P4-16. Underclaiming is on brand, not a weakness.
 
-### P4-17 Installable preview
-`status: todo | owner: none | branch: none | depends: P4-16`
-`scope: .github/workflows/, docs`
+### A7-04 Packaging and install
+`status: todo | owner: none | branch: none | depends: A7-03`
 
-Acceptance: a stranger can install a preview build and reach a useful dashboard on their own
-repository.
+Acceptance: a stranger can install a build, add a key, and run an agent without being talked
+through it.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: carries forward P4-17.
 
-### PG-4 Phase 4 gate
-`status: todo | depends: P4-14, P4-15, P4-16, P4-17`
+### PG-A7 Phase A7 gate
+`status: todo | depends: A7-04`
 
-Both supervisors confirm every acceptance criterion in corrections section 12 passes and that the
-limitations document is honest.
+Both supervisors watch someone outside the team install it and use it.
 
 `signed: walid [ ]   classmate [ ]`
 
-notes: none
-
 ---
 
-# Phase 5: pilot
+# Retired tasks
 
-Goal: find out whether developers actually care about the verification view.
+Replaced by the 2026-07-26 re-plan. Kept as a record so the reasoning is not lost.
 
-### P5-01 Developer interviews
-`status: todo | owner: none | branch: none | depends: none`
-
-Deliverable: 8 to 12 interviews using the evidence based questions in corrections section 13. Ask
-for demonstrations, not opinions.
-
-Acceptance: written notes for each interview.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: can start any time, it does not depend on the build. Starting early is better.
-
-### P5-02 Recruit pilot users
-`status: todo | owner: none | branch: none | depends: PG-4`
-
-Acceptance: at least five people outside the two person team install it, preferably people already
-keeping three or more worktrees active.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: aspirational rather than blocking, see D-01. The goal is portfolio and learning.
-
-### P5-03 Observed onboarding
-`status: todo | owner: none | branch: none | depends: P5-02`
-
-Acceptance: installation and configuration watched directly rather than instructed by message,
-with setup time recorded.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### P5-04 Pilot report
-`status: todo | owner: none | branch: none | depends: P5-03`
-
-Deliverable: setup time, false states observed, real failures caught, repeat usage, feature
-requests, and a continue, change or stop recommendation.
-
-Acceptance: the false green count is recorded explicitly and is zero. Stars and compliments do not
-count as usage.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: none
-
-### PG-5 Phase 5 gate
-`status: todo | depends: P5-04`
-
-Both supervisors decide together: continue, change direction, or stop.
-
-`signed: walid [ ]   classmate [ ]`
-
-notes: none
-
----
-
-# Phase 6: conditional expansion
-
-Locked until PG-5 is signed. After the pilot, pick exactly one repeatedly requested expansion. Do
-not start several at once.
-
-Candidates, deliberately left unelaborated so nobody starts building them early:
-
-- managed service start and stop, including everything in corrections section 7: the port
-  allocator, leases, bind collision recovery, startup timeouts, graceful shutdown, restart policy
-- setup hooks and the ignored file allow-list
-- automatic test on change, if D-19 has not already settled it
-- notifications
-- worktree lifecycle: create, remove, prune, adopt
-- agent PTY and session management
-- merge and pull request integration
-
-### P6-01 Choose the single expansion
-`status: blocked | owner: none | branch: none | depends: PG-5`
-
-Acceptance: the pilot report names one expansion and the reason, it is recorded in DECISIONS.md,
-and the remaining candidates stay unstarted.
-
-`verify: claude [ ]   codex [ ]`
-
-notes: blocked by design, not by an obstacle.
+| Old | Fate |
+|---|---|
+| P2-01, P2-02 | now A5-01, A5-02, unchanged |
+| P2-03, P2-04 | now A6-01, A6-02, unchanged |
+| P2-05, P2-06, P2-07 | now A6-03 and A4-03, which turn out to be the same machinery |
+| P2-08 | folded into A3-01, the store now carries sessions as well as workspaces |
+| P2-09 to P2-14 | now A6-04, per agent instead of per worktree |
+| P3-01 to P3-05 | config and repository trust. Deferred. A4-04 supersedes the trust model for agent execution, and per project config returns when there is something to configure |
+| P3-06 to P3-12 | service health. Deferred to after A7. It was Pillar 1 scope and is not on the path to the agent product |
+| P4-01 to P4-12 | now A7-01 and A7-02 |
+| P4-13 | auto run on change, D-19. Still open, now decided in the A6 context |
+| P4-14, P4-15 | acceptance suite, folded into each phase gate rather than saved for the end |
+| P4-16, P4-17 | now A7-03, A7-04 |
+| P5-01 to P5-04 | pilot. Still worth doing, after A7 |
+| P6-01 | the conditional expansion menu is gone. The expansions became the plan |
 
 ---
 
@@ -1300,3 +1214,4 @@ status or verification updates.
 | Date | Agent | Change |
 |---|---|---|
 | 2026-07-26 | Claude | Created ledger. Phases 0 to 6 derived from Canopy-Pre-Build-Corrections.md sections 11 and 12. |
+| 2026-07-26 | Claude | Re-planned. Canopy is an agent runtime, so phases 2 to 6 became A1 to A7. Phases 0 and 1 untouched. Surviving tasks keep their old IDs in their notes, and a retired tasks table records where each one went. |
