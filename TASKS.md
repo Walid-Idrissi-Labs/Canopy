@@ -100,16 +100,19 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | P1-01 to P1-05, the core contract | `feat/core-contract` | none |
+| Claude | P1-06, the headless harness | `feat/core-contract` | none |
 | Codex | none | none | none |
 
-PG-0 is signed by Walid and phase 1 is underway. P0-01, P0-03, P0-04 and P0-07 are in review and
-waiting on Codex. P0-02 needs the first pull request before its acceptance can be shown, and P0-05
-follows from that. P0-06, the prior art pass, is unclaimed and open to either pair.
+PG-0 is signed by Walid and phase 1 is underway. P1-01 through P1-05 are done and in review on
+`feat/core-contract`, so the contract and the fake both exist and the four scripted worktrees
+behave. P0-01, P0-03, P0-04 and P0-07 are also in review. P0-02 needs the first pull request
+before its acceptance can be shown, and P0-05 follows from that. P0-06, the prior art pass, is
+unclaimed and open to either pair.
 
-Codex: the core contract is being written on `feat/core-contract`. Everything from P1-06 onward is
-free to claim, and the fastest thing to pick up in parallel is P1-06, the headless harness, or
-P1-07, the first dashboard, both of which only need the interfaces from P1-02.
+Codex: `internal/core` and `internal/core/fake` are on `feat/core-contract` and ready to build
+against. **P1-07, the first dashboard, is the obvious thing to claim** and nothing blocks it, the
+fake gives you four workspaces and a `Touch` method that turns a passing row stale. Read the
+notes on P1-01, P1-03 and P1-04 first, each lists the judgement calls that are yours to overturn.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
@@ -427,7 +430,7 @@ The reason lists every blocker rather than the first one found, since someone fi
 wants the whole list.
 
 ### P1-05 Fake snapshot store
-`status: todo | owner: none | branch: none | depends: P1-02, P1-04`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-02, P1-04`
 `scope: internal/core/fake/`
 
 Deliverable: an in-memory implementation of all five interfaces, emitting four scripted worktrees
@@ -437,10 +440,26 @@ a revision change event.
 Acceptance: a test drives the fake through a revision change and observes the visible state flip
 from passing to stale.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: this doubles as the test double for the whole project. Both pairs depend on it, so treat
-breaking changes to it as contract changes.
+breaking changes to it as contract changes. Compile time assertions in fake.go prove all five
+interfaces are satisfied, which is the second half of P1-02's acceptance.
+
+Event delivery is implemented for real rather than stubbed, because the coalescing rules are part
+of the contract the UI gets written against. A fake that delivered everything in order through an
+unbounded buffer would let the dashboard be built on behaviour the real store cannot provide, and
+the gap would only surface under load. There is a test that fires a burst of 500 and asserts the
+consumer sees fewer, and another that fires 100 final transitions and asserts every one arrives.
+
+Driving API beyond the interfaces: `Touch` for an edit, `SetRevisionUnknown`, `SetServiceHealth`,
+`SetOutcome`, `SetTrust`, `RemoveWorkspace`, `BeginRun` and `CompleteRun` for observing a run in
+flight, and `SetClock`.
+
+**Known gap for whoever takes P2-08.** `Events(afterSequence)` accepts the argument and ignores
+it, because this store keeps no history to replay from. A consumer that falls behind has to
+recover by taking a fresh snapshot. The real store needs a bounded history to honour the signature
+properly, and until it does, the recovery property in P4-11 is only half proven.
 
 ### P1-06 Headless engine harness
 `status: todo | owner: none | branch: none | depends: P1-02`
