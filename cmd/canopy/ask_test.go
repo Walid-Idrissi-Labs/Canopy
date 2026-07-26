@@ -264,3 +264,24 @@ func TestCachingIsReported(t *testing.T) {
 		t.Errorf("a turn that touched no cache has nothing to report, got %q", note)
 	}
 }
+
+// A fallback that nobody is told about bills a different key, and possibly answers with a weaker
+// model, without saying so.
+func TestNoticesAreShown(t *testing.T) {
+	var out bytes.Buffer
+	stream := &scriptedStream{events: []core.StreamEvent{
+		{Kind: core.EventNotice, Text: "claude could not take this turn, so it went to kimi"},
+		{Kind: core.EventText, Text: "hello"},
+		{Kind: core.EventDone, StopReason: core.StopEndTurn},
+	}}
+
+	if err := drain(stream, &out, unpriced); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if !strings.Contains(out.String(), "went to kimi") {
+		t.Errorf("the fallback did not reach the screen:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "hello") {
+		t.Errorf("the reply is missing:\n%s", out.String())
+	}
+}

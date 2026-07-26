@@ -1111,8 +1111,8 @@ Worth noticing later: caching is the thing that degrades silently. If a breakpoi
 nothing breaks, the bill just goes up. That is why the saving is on screen rather than in a log.
 
 ### A2-08 Provider fallback chains
-`status: todo | owner: none | branch: none | depends: A2-03`
-`scope: internal/agent/, internal/core/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-03`
+`scope: internal/provider/chain.go, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: a profile may list ordered fallbacks. On overload or rate limit, try the next key or
 provider.
@@ -1121,12 +1121,37 @@ Acceptance: an overloaded primary falls through without losing the turn. Authent
 **not** fall through, because a wrong key should be fixed rather than routed around. Every fallback
 is visible in the transcript, never silent.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **added 2026-07-26.** Cheap once the error taxonomy exists, and it matters the moment eight
 agents run at once, which is exactly when providers start shedding load. Silent fallback would be
 dishonest: you would be billed on a different key, and possibly answered by a weaker model, without
 being told.
+
+`provider.Chain` is itself a `ProviderClient`, so nothing above has to know whether it is holding
+one provider or five. `AllowsFallback` from A2-01 already drew the line and this consumes it:
+overload and rate limits fall through, authentication and invalid requests and cancellation do not,
+and an unrecognised error defaults to not, since routing around something nobody has reasoned about
+spends money on a guess.
+
+Two things the obvious implementation gets wrong:
+
+1. **Watching only the call that opens the stream is not enough.** The Anthropic SDK hands back a
+   stream immediately and reports an overload on the first read, so a chain that checked only the
+   constructor's error would sit there having never fallen back, in exactly the case it exists for.
+   The chain watches the stream too, swallows the failed done event, and delivers the real one from
+   whichever link answers.
+2. **Falling back stops the moment any of the answer has been delivered.** A replacement stream
+   starts its answer from the beginning, so splicing it onto a half delivered one produces a reply
+   that reads as though the model contradicted itself mid sentence. Better to report the failure on
+   a partial answer than to hide it under a seam.
+
+Fallbacks are reported through a new `EventNotice`, kept separate from text because it comes from
+Canopy rather than from the model and merging it into the reply would read as the model saying it.
+The notice names both ends: what could not take the turn, why, and what did.
+
+Not yet wired to profiles. `AgentProfile` gains its fallback list in A3, where there is somewhere
+for a user to configure one; the mechanism exists and is tested ahead of it.
 
 ### PG-A2 Phase A2 gate
 `status: todo | depends: A2-03, A2-04, A2-05, A2-06`

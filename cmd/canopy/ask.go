@@ -171,6 +171,12 @@ func drain(stream core.Stream, out io.Writer, price func(core.Usage) (core.Usage
 		case core.EventToolCall:
 			w.printf("\n[tool call: %s]\n", event.ToolCall.Name)
 
+		case core.EventNotice:
+			// Printed as its own line rather than merged into the reply, because it comes from
+			// Canopy and not from the model, and it is usually the reason the reply looks
+			// different from what was expected.
+			w.printf("\n[%s]\n", event.Text)
+
 		case core.EventDone:
 			if wroteText {
 				w.printf("\n")

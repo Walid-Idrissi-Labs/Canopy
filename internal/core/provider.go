@@ -252,6 +252,12 @@ const (
 	EventThinking StreamEventKind = "thinking"
 	// EventToolCall is a completed tool invocation request.
 	EventToolCall StreamEventKind = "tool-call"
+	// EventNotice is something the reader needs to know about the turn itself rather than an answer
+	// to what they asked. A fallback to a different provider is the first of these.
+	//
+	// Separate from text on purpose. Merged into the reply it would read as the model saying it,
+	// and the whole reason for the event is that it comes from Canopy rather than from the model.
+	EventNotice StreamEventKind = "notice"
 	// EventDone is the final event. It carries the stop reason and usage, and always arrives, even
 	// on failure.
 	EventDone StreamEventKind = "done"
