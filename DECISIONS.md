@@ -429,8 +429,11 @@ project will have, which is exactly the case the store was designed for, so A3-0
 real test of whether P1-01 was right.
 
 **What is deferred rather than cancelled.** Service health, the whole of the old phase 3 section on
-probes, is off the path to the agent product and moves to after A7. Per project config returns
-when there is something worth configuring. The pilot still matters and follows A7.
+probes, is off the path to the agent product and moves to after A9. Per project config returns at
+A8-03, when there is something worth configuring. The pilot still matters and follows A9.
+
+**Expanded on the same day.** A full review of `SPEC.md` and `FEATURES.md` grew A1 to A7 into A1 to
+A9, adding persistence, compaction, git workflow and the extensibility layer. See D-23 to D-29.
 
 **Decisions this supersedes or changes:**
 
@@ -450,6 +453,126 @@ that document has not become wrong, it has been overruled deliberately by the pe
 this is. A6-05, ranking agents by whether their code actually passes, is the bet that makes the
 larger scope worth attempting: Orca already fans out across agents, and nobody uses test truth to
 rank the results.
+
+## D-23 Go, not Rust. Decided 2026-07-26.
+
+Considered and rejected a rewrite in Rust on performance grounds.
+
+The workload is I/O bound. Ten agents streaming is ten HTTP connections waiting on model latency
+measured in hundreds of milliseconds. Rust does not make a model answer faster. The only genuinely
+CPU bound work in the design is hashing and diffing worktrees, which is milliseconds.
+
+Where Rust would win: memory footprint at high agent counts, startup time, binary size. All real,
+all small at this scale. Where Go wins here: goroutines make N concurrent streaming sessions
+simpler than async Rust, Bubble Tea is more mature than ratatui for this shape of application, and
+two part time students ship several times faster. A rewrite would also discard 4,600 tested lines.
+
+**Revisit trigger, so this is a decision rather than an assumption:** measure at A5 with eight
+agents running. If memory or render latency is actually a problem, port the hot path rather than
+the product.
+
+## D-24 SQLite for session storage. Decided 2026-07-26.
+
+Sessions are persisted, resumable by id, and searchable across history.
+
+One storage decision buys four features, because sessions, the tool call audit trail, cost history
+and run reports are all queries over the same data. Embedded, no server, one file, and it is the
+obvious fit.
+
+Schema migrations from the first version. The schema will change, and a tool that loses your
+history on upgrade is not one anyone keeps.
+
+The alternative considered was a file per session, which is simpler and gives up search, and
+would have meant building the audit trail and cost history separately anyway.
+
+## D-25 Permissions are per agent trust levels. Decided 2026-07-26.
+
+Trust posture is a property of the profile, not a global setting. A scratch agent in a throwaway
+worktree runs loose. An agent working near `main` asks for everything.
+
+Rejected alternatives and why:
+
+- **Ask every time.** Unusable with several agents running. You answer prompts constantly, which
+  trains you to approve without reading, which is worse than asking less.
+- **One global allowlist.** Lowest friction, but a wrong allowlist is silent and you find out
+  afterwards.
+- **Ask once per tool per session.** Reasonable, and it was the recommendation, but it forces the
+  strictest agent's friction onto every agent, and people respond to that by loosening everything.
+
+Costs more to design and to explain. Worth it, because the whole product is about running agents
+with different levels of trust at the same time, and a single posture cannot express that.
+
+See A4-04, and note that the repository trust contract from the corrections document does **not**
+cover this. That governs commands the user wrote. This governs commands a model wrote.
+
+## D-26 MCP after A5. Decided 2026-07-26.
+
+An MCP client is in, at A8-06, not at A4.
+
+One protocol implementation gets an entire ecosystem of third party tools, which makes it the
+highest leverage single feature on the list. It is deliberately placed after the multi agent core,
+so that core is built on tools we control and can reason about completely.
+
+Non negotiable when it lands: third party tools pass through the same permission model as built in
+ones, with no exemption. A tool somebody else wrote is exactly the thing that most needs the same
+scrutiny as our own.
+
+## D-27 LSP integration is cut. Decided 2026-07-26.
+
+Real go to definition, find references and compiler diagnostics would measurably improve agent
+output on a large codebase, and few terminal agents offer it.
+
+Cut anyway. It is one client per language server, which is a subsystem sized commitment against a
+product that already has nine phases. Grep and structured file tools are adequate for most work.
+
+Recorded with the reasoning rather than deleted, so reversing it is cheap. Revisit only if agent
+quality on large repositories becomes the binding constraint, which is a measurable condition
+rather than a feeling.
+
+## D-28 Context compaction is always visible. Decided 2026-07-26.
+
+Automatic compaction near the context limit, plus a permanently visible context meter, plus manual
+compaction on demand.
+
+Compaction always announces itself in the transcript and says what was summarised. Silently
+dropping context so an agent quietly gets dumber is the same class of lie as a false green: the
+output still looks confident and there is no way for the user to know why it got worse.
+
+Compaction shortens what is sent to the model. It never destroys history, which stays complete in
+storage and stays searchable.
+
+## D-29 Features added during the 2026-07-26 review. Decided.
+
+Beyond what Walid specified, seven additions were proposed and accepted. Recorded here with their
+justification so they can be cut on purpose if the scope needs to shrink.
+
+1. **A5-04, worktree environment setup.** Not an addition, a hole. Canopy now creates worktrees,
+   and a fresh worktree has no `.env`, no dependencies and no build cache, so an agent spawns into
+   a tree where nothing runs and A6 reports failures that have nothing to do with its code. That
+   is a false red, and just as damaging as a false green. Restores the environment contract from
+   corrections section 6, which the first re-plan dropped at exactly the point it became more
+   necessary.
+2. **A2-08, provider fallback chains.** Cheap once the error taxonomy exists, and it matters as
+   soon as many agents run, which is when providers shed load. Authentication failures deliberately
+   do not fall through, because a wrong key should be fixed rather than routed around, and every
+   fallback is visible because being billed on a different key without being told would be
+   dishonest.
+3. **A3-07, session forking.** The companion to branch per agent, and it maps onto how people
+   already think in git. Today "go back three turns and try it the other way" means either a fresh
+   session with lost context or arguing with an agent already committed to an approach.
+4. **A4-09, plan first mode.** Approval at the task level rather than the keystroke level. Per tool
+   prompting on a fifty step task trains people to approve without reading, which is worse than not
+   asking at all. Reviewing one plan is something a person actually does properly.
+5. **A5-09, cost preview before dispatch.** Nearly free once usage history exists, and it is the
+   real answer to a misparsed 20 instead of 2. The estimate carries its basis and says plainly when
+   there is not enough history, because an estimate presented more confidently than the data
+   supports is its own small lie.
+6. **A6-06, ready to review queue.** Nearly free, since the truth engine already knows which agents
+   are green for their current code. With six agents running, "which should I look at next" is the
+   actual question and nothing else on the list answers it.
+7. **A8-02, agent handoff and model escalation.** A cost lever that exists only because keys have
+   names. Exploring a large codebase is mostly reading, which a cheap model does adequately, while
+   the fix wants the strongest model available.
 
 ---
 
