@@ -18,10 +18,15 @@ NVIDIA would be a guess wearing the clothes of a fact. See D-32.
 
 **Consequence:** every turn on the NIM key reports "cost unknown" with the endpoint named.
 
-**What would change it:** A2-09 lets a rate be attached to a stored credential, labelled as the
-user's figure rather than a checked one. Worth building; the question is whether "cost unknown" in
-the meantime is acceptable at the A2 gate, whose acceptance line says both supervisors see cost
-figures on two providers.
+**Now built.** `canopy keys rate nim -in 0.30 -out 1.20` makes turns on that key show a figure,
+labelled "priced at your own rate for this key". **Walid needs to set the real number**, because the
+one used to test it was invented and has been cleared again rather than left on the key.
+
+**Still open:** the NVIDIA free tier genuinely bills nothing at personal volumes, and a rate of zero
+is currently refused on the grounds that it would report every turn as free, which is a claim rather
+than an absence. That reasoning is right for a gateway with unknown pricing and possibly wrong for
+one that really is free. Options are a `-free` flag that means it deliberately, or leaving it
+unpriced. Needs a decision.
 
 ---
 

@@ -1010,8 +1010,8 @@ one, the standard rate is used: overstating cost is the safer error, because und
 spend that is really happening.
 
 ### A2-09 User supplied prices
-`status: todo | owner: none | branch: none | depends: A2-05`
-`scope: internal/keys/, internal/pricing/, cmd/canopy/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`scope: internal/keys/, internal/pricing/, internal/core/key.go, cmd/canopy/keys.go`
 
 Deliverable: a rate can be attached to a stored credential, so an endpoint Canopy has no table entry
 for still shows a real cost.
@@ -1019,7 +1019,7 @@ for still shows a real cost.
 Acceptance: setting a rate on a key produces a figure on screen. A key with no rate still reads as
 unpriced rather than free. The user's own figure is labelled as theirs, never as a checked one.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **added 2026-07-26.** Falls straight out of A2-05. Canopy will never hold rates for every
 gateway in the OpenAI compatible family and should not pretend to, but the person who signed up for
@@ -1027,6 +1027,33 @@ the gateway knows what they pay. This turns "we cannot price this" into "tell us
 their figure from a checked one in the interface: the point of the dated table is that Canopy is
 honest about where a number came from, and quietly absorbing a user's rate into it would throw that
 away.
+
+`pricing.Source` is the three states, all distinguishable on screen: a checked price, the user's
+price, and no price. A user rate wins over the table where both exist, because they are the one
+being billed and theirs answers the question actually being asked, which is "what will this cost
+me" rather than "what is the list price".
+
+Three decisions:
+
+- **`canopy keys rate` is its own command, not a flag on `add`.** Correcting a price must not
+  require re typing a secret, and a flow that asks for one is a flow where people paste keys into
+  shell history.
+- **Rotating a key keeps its rate.** The endpoint charges what it charges regardless of which
+  credential reaches it, and dropping the price would turn a working cost figure into "unknown" for
+  no reason the user could see.
+- **An unstated cache rate is assumed to be full price.** Most gateways in this family either do not
+  cache or do not say what they charge for it, so assuming a discount nobody promised would
+  understate the bill.
+
+A rate of zero is refused, because it is a claim rather than an absence: it would report every turn
+as free. Somebody who really pays nothing should leave it unset and let it read as unpriced, or use
+a local endpoint, which Canopy already knows is free. **This may be wrong for the NVIDIA free tier**,
+which genuinely bills nothing at personal volumes. See Q-01.
+
+Verified against a real endpoint: `canopy keys rate nim -in 0.30 -out 1.20` then `canopy ask` showed
+`$0.0005` with "priced at your own rate for this key". The rate was cleared afterwards rather than
+left on the key, since a figure Canopy invented on somebody's behalf is exactly what D-32 exists to
+prevent.
 
 ### A2-06 OpenAI compatible provider and local models
 `status: review | owner: Claude | branch: feat/providers | depends: A2-02`

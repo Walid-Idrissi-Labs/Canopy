@@ -43,7 +43,7 @@ func (r *KeyResolver) Resolve(
 		return nil, pricing.ModelID{}, err
 	}
 
-	id := pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, model)
+	id := pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, model).WithUserRate(meta.Rate)
 
 	switch meta.Ref.Provider {
 	case core.ProviderAnthropic:

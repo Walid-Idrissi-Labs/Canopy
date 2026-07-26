@@ -24,10 +24,17 @@ usage:
   canopy keys list           show stored credentials, never their values
   canopy keys remove <name>  delete a credential
   canopy keys test <name>    check that a credential can be read back
+  canopy keys rate <name>    record what this credential charges, so turns show a cost
 
 flags for add:
   -provider string   anthropic or openai-compatible (default "anthropic")
   -base-url string   endpoint, required for openai-compatible
+
+flags for rate:
+  -in float          dollars per million input tokens
+  -out float         dollars per million output tokens
+  -cached float      dollars per million cached input tokens (default: same as -in)
+  -clear             forget the rate, so turns read as unpriced again
 
 The value is never taken from a command line argument. Arguments end up in shell
 history and in the process list, where any other user on the machine can read them.
@@ -36,6 +43,12 @@ examples:
   canopy keys add claude
   canopy keys add kimi -provider openai-compatible -base-url https://api.moonshot.cn/v1
   pbpaste | canopy keys add claude
+  canopy keys rate kimi -in 0.6 -out 2.5
+
+Canopy holds published rates for Anthropic and knows that a local model is free. It
+does not hold rates for the OpenAI compatible gateways, because the gateway sets the
+price and there are many of them, so guessing from a model name would be a guess
+presented as a fact. Your own figure is labelled as yours wherever it appears.
 `
 
 // secretFlagNames are flags a user might reasonably reach for to pass a credential inline.
@@ -64,6 +77,8 @@ func runKeys(args []string, out io.Writer) error {
 		return runKeysRemove(rest, out)
 	case "test":
 		return runKeysTest(rest, out)
+	case "rate", "price":
+		return runKeysRate(rest, out)
 	default:
 		return fmt.Errorf("unknown keys command %q, try `canopy keys help`", command)
 	}
@@ -201,6 +216,103 @@ func readSecret(name string) (core.Secret, error) {
 	return core.NewSecret(strings.TrimSpace(line)), nil
 }
 
+// runKeysRate records what a credential charges.
+//
+// Its own command rather than a flag on add, because correcting a price must not require re typing
+// a secret. A flow that asks for one is a flow where people paste keys into shell history.
+func runKeysRate(args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("which key? For example `canopy keys rate kimi -in 0.6 -out 2.5`")
+	}
+
+	// The name comes off the front before parsing, because Go's flag package stops at the first
+	// positional argument and would silently ignore every flag after it.
+	name, rest := args[0], args[1:]
+
+	flags := flag.NewFlagSet("keys rate", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	in := flags.Float64("in", 0, "dollars per million input tokens")
+	outRate := flags.Float64("out", 0, "dollars per million output tokens")
+	cached := flags.Float64("cached", 0, "dollars per million cached input tokens")
+	clear := flags.Bool("clear", false, "forget the rate")
+	if err := flags.Parse(rest); err != nil {
+		return err
+	}
+
+	store, err := openStore(out)
+	if err != nil {
+		return err
+	}
+	meta, err := store.Metadata(core.KeyRef{Name: name})
+	if err != nil {
+		return err
+	}
+
+	if *clear {
+		if err := store.SetRate(meta.Ref, core.KeyRate{}); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(out,
+			"Forgot the rate for %q. Turns on it will read as unpriced rather than as free.\n", name)
+		return err
+	}
+
+	rate := core.KeyRate{InputPerMTok: *in, OutputPerMTok: *outRate, CacheReadPerMTok: *cached}
+	if rate.IsZero() {
+		return showRate(out, meta)
+	}
+	if err := rate.Validate(); err != nil {
+		return err
+	}
+	if err := store.SetRate(meta.Ref, rate); err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(out,
+		"Recorded $%g in and $%g out per million tokens for %q.\n"+
+			"Shown as your own figure, never as a checked one.\n",
+		rate.InputPerMTok, rate.OutputPerMTok, name)
+	return err
+}
+
+// showRate prints what is currently recorded, which is what `canopy keys rate <name>` with no flags
+// asks for. Reading before writing is the more common intent when somebody is unsure.
+func showRate(out io.Writer, meta core.KeyMetadata) error {
+	if meta.Rate.IsZero() {
+		_, err := fmt.Fprintf(out,
+			"No rate recorded for %q, so its turns read as unpriced.\n"+
+				"Set one with `canopy keys rate %s -in 0.6 -out 2.5`.\n",
+			meta.Ref.Name, meta.Ref.Name)
+		return err
+	}
+
+	cached := meta.Rate.CacheReadPerMTok
+	note := ""
+	if cached == 0 {
+		cached = meta.Rate.InputPerMTok
+		note = " (assumed, since none was given)"
+	}
+	_, err := fmt.Fprintf(out,
+		"%s: $%g in, $%g out, $%g cached%s, per million tokens.\nYour own figure.\n",
+		meta.Ref.Name, meta.Rate.InputPerMTok, meta.Rate.OutputPerMTok, cached, note)
+	return err
+}
+
+// formatRate is the rate column.
+//
+// Worth a column of its own because it answers the question somebody actually has when looking at
+// this list: which of these will show me what a session cost. "Published" and "not set" are as
+// useful as a figure, since both say where a number would come from.
+func formatRate(meta core.KeyMetadata) string {
+	if meta.Rate.IsZero() {
+		if meta.Ref.Provider == core.ProviderAnthropic {
+			return "published"
+		}
+		return "not set"
+	}
+	return fmt.Sprintf("$%g/$%g", meta.Rate.InputPerMTok, meta.Rate.OutputPerMTok)
+}
+
 func runKeysList(args []string, out io.Writer) error {
 	if len(args) > 0 {
 		return fmt.Errorf("`canopy keys list` takes no arguments")
@@ -222,12 +334,13 @@ func runKeysList(args []string, out io.Writer) error {
 
 	tab := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	w := &errWriter{w: tab}
-	w.printf("NAME\tPROVIDER\tFINGERPRINT\tADDED\tLAST USED\n")
+	w.printf("NAME\tPROVIDER\tFINGERPRINT\tRATE\tADDED\tLAST USED\n")
 	for _, meta := range all {
-		w.printf("%s\t%s\t%s\t%s\t%s\n",
+		w.printf("%s\t%s\t%s\t%s\t%s\t%s\n",
 			meta.Ref.Name,
 			meta.Ref.Provider,
 			meta.Fingerprint,
+			formatRate(meta),
 			meta.CreatedAt.Format("2006-01-02"),
 			formatLastUsed(meta.LastUsedAt))
 	}

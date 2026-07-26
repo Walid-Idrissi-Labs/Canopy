@@ -55,6 +55,22 @@ const (
 	anthropicCacheWriteMultiplier = 1.25
 )
 
+// Source says where a price came from.
+//
+// Three states, all distinguishable on screen, because Canopy is a tool for telling which of several
+// things is actually true and a cost figure it cannot stand behind is exactly the kind of confident
+// wrong answer the rest of the design avoids.
+type Source string
+
+const (
+	// SourceNone means no price is known.
+	SourceNone Source = ""
+	// SourceTable means the price came from the dated table in this package.
+	SourceTable Source = "table"
+	// SourceUser means the user told us what this credential charges.
+	SourceUser Source = "user"
+)
+
 // ModelID is everything needed to find a price.
 //
 // Host is part of the key because a model name alone does not determine a price for the
@@ -64,11 +80,24 @@ type ModelID struct {
 	Provider core.Provider
 	Host     string
 	Model    string
+
+	// UserRate is what the credential's owner said it charges, and it wins over the table.
+	//
+	// Wins rather than defers, because they are the one being billed. Where they have set a rate
+	// and Canopy also holds one, theirs is the answer to the question actually being asked, which
+	// is "what will this cost me" rather than "what is the list price".
+	UserRate core.KeyRate
 }
 
 // NewModelID builds an identifier from what a credential and a request already carry.
 func NewModelID(provider core.Provider, baseURL, model string) ModelID {
 	return ModelID{Provider: provider, Host: hostOf(baseURL), Model: model}
+}
+
+// WithUserRate attaches a rate the user supplied.
+func (id ModelID) WithUserRate(rate core.KeyRate) ModelID {
+	id.UserRate = rate
+	return id
 }
 
 func hostOf(baseURL string) string {
@@ -123,6 +152,34 @@ var dateSuffix = regexp.MustCompile(`-\d{8}$`)
 // reads the zero Rates as free would report every unknown model as costing nothing, which is the
 // exact failure this signature exists to prevent.
 func Lookup(id ModelID) (Rates, bool) {
+	rates, source := lookupWithSource(id)
+	return rates, source != SourceNone
+}
+
+// lookupWithSource is Lookup, plus where the answer came from.
+func lookupWithSource(id ModelID) (Rates, Source) {
+	if !id.UserRate.IsZero() {
+		cacheRead := id.UserRate.CacheReadPerMTok
+		if cacheRead == 0 {
+			// Same as input, which is the honest default. Most gateways in this family either do
+			// not cache or do not say what they charge for it, and assuming a discount nobody
+			// promised would understate the bill.
+			cacheRead = id.UserRate.InputPerMTok
+		}
+		return Rates{
+			Input:      id.UserRate.InputPerMTok,
+			Output:     id.UserRate.OutputPerMTok,
+			CacheRead:  cacheRead,
+			CacheWrite: id.UserRate.InputPerMTok,
+		}, SourceUser
+	}
+	if rates, ok := lookupTable(id); ok {
+		return rates, SourceTable
+	}
+	return Rates{}, SourceNone
+}
+
+func lookupTable(id ModelID) (Rates, bool) {
 	switch id.Provider {
 	case core.ProviderAnthropic:
 		return lookupAnthropic(id.Model)
@@ -198,16 +255,22 @@ func Saving(id ModelID, usage core.Usage) (float64, bool) {
 
 // Apply fills in the cost fields on a usage record.
 //
-// The second return is why the cost is unknown, empty when it is known. Saying "cost unknown" with
-// no reason invites the reading that Canopy is broken, when usually the answer is that nobody has
-// told it what this endpoint charges.
+// The second return is the note to show beside the figure: why there is none, or whose figure it is.
+// Saying "cost unknown" with no reason invites the reading that Canopy is broken, when usually the
+// answer is that nobody has told it what this endpoint charges. And a price the user supplied has
+// to be labelled as theirs, or the dated table's whole purpose is lost.
 func Apply(id ModelID, usage core.Usage) (core.Usage, string) {
-	rates, ok := Lookup(id)
-	if !ok {
+	rates, source := lookupWithSource(id)
+	if source == SourceNone {
 		return usage, unpricedReason(id)
 	}
+
 	usage.CostUSD = rates.Cost(usage)
 	usage.CostKnown = true
+
+	if source == SourceUser {
+		return usage, "priced at your own rate for this key"
+	}
 	return usage, ""
 }
 
@@ -220,7 +283,7 @@ func unpricedReason(id ModelID) string {
 		}
 		return fmt.Sprintf(
 			"no rate recorded for %s. The same model costs different amounts through different "+
-				"gateways, so Canopy does not guess", where)
+				"gateways, so Canopy does not guess. Set yours with `canopy keys rate <name>`", where)
 	case core.ProviderAnthropic:
 		return fmt.Sprintf("no rate recorded for model %q", id.Model)
 	default:

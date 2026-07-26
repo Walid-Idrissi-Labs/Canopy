@@ -225,3 +225,72 @@ func TestSavingIsSilentWhenItCannotBeKnown(t *testing.T) {
 		t.Error("a saving on something that was already free is not worth printing")
 	}
 }
+
+// Canopy will never hold rates for every gateway in this family and should not pretend to. The
+// person who signed up for one knows what they pay, so this turns "we cannot price this" into
+// "tell us once".
+func TestAUserRateProducesAFigureAndIsLabelledAsTheirs(t *testing.T) {
+	id := NewModelID(core.ProviderOpenAICompatible,
+		"https://integrate.api.nvidia.com/v1", "minimaxai/minimax-m2.7").
+		WithUserRate(core.KeyRate{InputPerMTok: 0.3, OutputPerMTok: 1.2})
+
+	usage, note := Apply(id, core.Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000})
+	if !usage.CostKnown {
+		t.Fatal("a rate the user supplied should produce a figure")
+	}
+	if !closeTo(usage.CostUSD, 1.5) {
+		t.Errorf("cost = %v, want 1.5", usage.CostUSD)
+	}
+	// The point of the dated table is that Canopy is honest about where a number came from, and
+	// quietly absorbing somebody's own figure into it would throw that away.
+	if !strings.Contains(note, "your own") {
+		t.Errorf("note = %q, want the figure attributed to the user", note)
+	}
+}
+
+// They are the one being billed, so theirs is the answer to the question actually being asked,
+// which is "what will this cost me" rather than "what is the list price".
+func TestAUserRateWinsOverTheTable(t *testing.T) {
+	id := ModelID{Provider: core.ProviderAnthropic, Model: "claude-opus-5"}
+
+	published, _ := Apply(id, core.Usage{InputTokens: 1_000_000})
+	theirs, note := Apply(id.WithUserRate(core.KeyRate{InputPerMTok: 1, OutputPerMTok: 2}),
+		core.Usage{InputTokens: 1_000_000})
+
+	if !closeTo(theirs.CostUSD, 1) {
+		t.Errorf("cost = %v, want the user's own rate of 1", theirs.CostUSD)
+	}
+	if closeTo(theirs.CostUSD, published.CostUSD) {
+		t.Error("the table won over the user's own rate")
+	}
+	if !strings.Contains(note, "your own") {
+		t.Errorf("note = %q, want the figure attributed to the user", note)
+	}
+}
+
+// Most gateways in this family either do not cache or do not say what they charge for it, so
+// assuming a discount nobody promised would understate the bill.
+func TestAnUnstatedCacheRateIsAssumedToBeFullPrice(t *testing.T) {
+	rates, ok := Lookup(ModelID{Provider: core.ProviderOpenAICompatible, Host: "example.com"}.
+		WithUserRate(core.KeyRate{InputPerMTok: 2, OutputPerMTok: 8}))
+	if !ok {
+		t.Fatal("expected a rate")
+	}
+	if rates.CacheRead != rates.Input {
+		t.Errorf("cached tokens priced at %v against %v input, which claims a discount nobody gave",
+			rates.CacheRead, rates.Input)
+	}
+}
+
+// A rate of zero is a claim, not an absence, and the two need different words on screen.
+func TestAZeroRateIsRefused(t *testing.T) {
+	if err := (core.KeyRate{}).Validate(); err == nil {
+		t.Error("a rate of zero would report every turn as free")
+	}
+	if err := (core.KeyRate{InputPerMTok: -1, OutputPerMTok: 2}).Validate(); err == nil {
+		t.Error("a negative rate should be refused")
+	}
+	if err := (core.KeyRate{InputPerMTok: 0, OutputPerMTok: 2}).Validate(); err != nil {
+		t.Errorf("an output only rate is legitimate, some gateways bill that way: %v", err)
+	}
+}

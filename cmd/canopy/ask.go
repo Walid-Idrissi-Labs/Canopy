@@ -111,7 +111,8 @@ func runAsk(args []string, out io.Writer) error {
 
 	// Priced here rather than in the provider clients: what a turn costs depends on which endpoint
 	// answered, and only the credential knows that.
-	priced := pricer(pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, *model))
+	priced := pricer(pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, *model).
+		WithUserRate(meta.Rate))
 
 	return drain(stream, out, priced)
 }
