@@ -28,7 +28,7 @@ usage:
 flags:
   -source string       where state comes from (default "fake")
 
-Only the fake source exists so far. Real worktree discovery is P2-01.
+Only the fake source exists so far. Real worktree discovery is A5-01.
 `
 
 func main() {
@@ -73,7 +73,7 @@ func run(args []string) error {
 	}
 
 	if *source != "fake" {
-		return fmt.Errorf("unknown source %q, only \"fake\" exists so far (real discovery is P2-01)", *source)
+		return fmt.Errorf("unknown source %q, only \"fake\" exists so far (real discovery is A5-01)", *source)
 	}
 
 	switch command {

@@ -108,8 +108,8 @@ type TestRun struct {
 	StartedAt  time.Time
 	FinishedAt *time.Time
 
-	// ExitCode is nil until the process finishes. In v0.1 it is the only source of pass and fail
-	// truth.
+	// ExitCode is nil until the process finishes. It is the only source of pass and fail truth,
+	// since no framework parsers ship.
 	ExitCode *int
 
 	// State is the recorded outcome of the run itself. It is not necessarily what the user sees:
@@ -117,15 +117,15 @@ type TestRun struct {
 	// VisibleTestState to get the displayed value.
 	State TestState
 
-	// PassedCount and FailedCount are optional metadata and stay nil in v0.1, which ships no
-	// framework parsers. They exist so adding parsers later is not a contract change.
+	// PassedCount and FailedCount are optional metadata and stay nil, since no framework parsers
+	// ship. They exist so adding parsers later is not a contract change.
 	PassedCount *int
 	FailedCount *int
 
 	// OutputBufferID points at the bounded log buffer holding this run's output.
 	OutputBufferID string
 
-	// Parser names the parser that produced the counts, and is empty in v0.1.
+	// Parser names the parser that produced the counts, and is currently always empty.
 	Parser string
 
 	// ErrorMessage explains a TestError, for example that the binary was not found or that the

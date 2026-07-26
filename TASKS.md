@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A1-01, provider key and profile types | next feature branch | none |
+| Claude | A1-02, keychain storage | `feat/keys-and-profiles` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -613,7 +613,7 @@ Nothing talks to a provider yet. Keys come first because everything depends on t
 credential handling is genuinely unpleasant to retrofit.
 
 ### A1-01 Provider, key and profile types
-`status: todo | owner: none | branch: none | depends: none`
+`status: review | owner: Claude | branch: feat/keys-and-profiles | depends: none`
 `scope: internal/core/`
 
 Deliverable: `Provider`, `KeyRef`, `KeyMetadata`, `TrustLevel` and `AgentProfile`. A profile binds
@@ -623,11 +623,36 @@ resolves to everything needed to start an agent.
 Acceptance: `KeyRef` is structurally incapable of holding a secret, enforced by the type rather
 than by convention. Round tripping a profile through JSON never produces one.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: shared contract, so changes need a joint discussion. The reference/secret split is the whole
 design. If the secret is never in the type that gets logged, serialised, snapshotted or put in an
 event, it cannot leak through any of them.
+
+`core.Secret` closes every route Go offers for turning a value into text: `String` for `%s` and
+`%v`, `Format` for the verbs that bypass Stringer such as `%q` and `%x`, `GoString` for `%#v`, and
+`MarshalJSON` for anything encoded. `Reveal()` is the only way out and is deliberately conspicuous
+so a reviewer can grep for it. `UnmarshalJSON` refuses, which removes the supported path for
+putting a credential into a config file somebody then commits.
+
+Two tests are the real deliverable. One plants a credential and asserts it appears in none of
+sixteen renderings and five JSON encodings. The other walks the field graph of every published
+type, `KeyRef`, `KeyMetadata`, `AgentProfile`, `WorkspaceSnapshot`, `ProjectSnapshot`, `TestRun`,
+`ServiceHealth` and `Event`, and fails if any of them can reach a `Secret`.
+
+Three calls for Codex:
+
+1. **Key names are constrained to `^[a-z0-9][a-z0-9_-]{0,30}$`.** This is a safety feature rather
+   than tidiness. A name is displayed, logged, put into events and written into transcripts, so a
+   key named after its own value would travel everywhere the name does. Real credentials fail the
+   pattern, so a paste becomes an error rather than a permanent leak, and the rejection message
+   truncates what it rejected because errors get logged.
+2. **Four trust levels**, read-only, confined, standard and broad, with standard as the default.
+   Unknown values resolve to read-only rather than the default, so a typo in a config file reduces
+   what an agent can do instead of quietly granting the usual amount.
+3. **No trust level permits touching another agent's worktree or the primary checkout.** Those are
+   refused rather than gated. Some actions should not have an approval path at all, and putting
+   that in the type rather than in the permission layer means A4-04 cannot accidentally grant it.
 
 ### A1-02 Key store on the OS keychain
 `status: todo | owner: none | branch: none | depends: A1-01`
