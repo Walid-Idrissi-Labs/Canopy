@@ -192,6 +192,14 @@ type Turn struct {
 	// Error explains a failed turn in words a user can act on.
 	Error string
 
+	// Checkpoint is the worktree state captured before this turn ran, empty when nothing was
+	// captured. Undoing a turn restores it.
+	//
+	// Per turn rather than per session, because the question people actually ask is "undo what it
+	// just did", and a session level checkpoint would throw away the four turns they were happy
+	// with along with the one they were not.
+	Checkpoint string
+
 	StartedAt time.Time
 	// EndedAt is zero until the turn is terminal.
 	EndedAt time.Time

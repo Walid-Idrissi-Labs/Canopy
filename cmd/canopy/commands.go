@@ -16,6 +16,8 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
+	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -130,7 +132,21 @@ func attachTools(engine *session.Engine, dir string) error {
 	// The engine asks the person watching. It implements the approver itself, which is what lets a
 	// blocking question from a background goroutine reach an event loop that must never block.
 	engine.WithTools(registry, core.TrustStandard, engine)
+
+	// Checkpoints only work in a git repository, and a conversation in a directory that is not one
+	// is a legitimate thing that should not be refused for want of somewhere to store a snapshot.
+	if isGitRepository(dir) {
+		engine.WithCheckpoints(gitpkg.NewTaker(dir))
+	}
 	return nil
+}
+
+// isGitRepository reports whether a directory is inside a git working tree.
+func isGitRepository(dir string) bool {
+	result, err := execpkg.Run(context.Background(), "git",
+		[]string{"rev-parse", "--is-inside-work-tree"},
+		execpkg.Options{Dir: dir, Timeout: 10 * time.Second})
+	return err == nil && result.Succeeded()
 }
 
 // attachHistory gives the engine somewhere to persist to.

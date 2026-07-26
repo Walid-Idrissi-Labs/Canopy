@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -140,6 +140,10 @@ var migrations = []string{
 		PRIMARY KEY (session_id, fork_id)
 	);
 	`,
+
+	// Added when checkpoints landed. Without persisting this, undo would work until you quit and
+	// then silently stop, which is worse than not offering it.
+	`ALTER TABLE turns ADD COLUMN checkpoint TEXT NOT NULL DEFAULT '';`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -369,8 +373,8 @@ func (s *Storage) SaveTurn(sessionID string, ordinal int, turn core.Turn) error 
 			session_id, turn_id, ordinal, state, request, request_text, reply, thinking,
 			tool_calls, tool_results,
 			input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_known,
-			provider, model, error, started_at, ended_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider, model, error, started_at, ended_at, checkpoint
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id, turn_id) DO UPDATE SET
 			state = excluded.state,
 			reply = excluded.reply,
@@ -386,13 +390,15 @@ func (s *Storage) SaveTurn(sessionID string, ordinal int, turn core.Turn) error 
 			provider = excluded.provider,
 			model = excluded.model,
 			error = excluded.error,
-			ended_at = excluded.ended_at`,
+			ended_at = excluded.ended_at,
+			checkpoint = excluded.checkpoint`,
 		sessionID, turn.ID, ordinal, string(turn.State), string(request), turn.Request.Text,
 		turn.Text, turn.Thinking, string(calls), string(results),
 		turn.Usage.InputTokens, turn.Usage.OutputTokens,
 		turn.Usage.CacheReadTokens, turn.Usage.CacheWriteTokens,
 		turn.Usage.CostUSD, boolToInt(turn.Usage.CostKnown),
-		turn.Provider, turn.Model, turn.Error, unix(turn.StartedAt), unix(turn.EndedAt))
+		turn.Provider, turn.Model, turn.Error, unix(turn.StartedAt), unix(turn.EndedAt),
+		turn.Checkpoint)
 	if err != nil {
 		return fmt.Errorf("saving turn %s: %w", turn.ID, err)
 	}
@@ -448,7 +454,7 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 	rows, err := s.db.Query(`
 		SELECT turn_id, state, request, reply, thinking, tool_calls, tool_results,
 		       input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_known,
-		       provider, model, error, started_at, ended_at
+		       provider, model, error, started_at, ended_at, checkpoint
 		FROM turns WHERE session_id = ? ORDER BY ordinal`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("loading the turns of session %s: %w", sessionID, err)
@@ -466,7 +472,7 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 			&t.Usage.InputTokens, &t.Usage.OutputTokens,
 			&t.Usage.CacheReadTokens, &t.Usage.CacheWriteTokens,
 			&t.Usage.CostUSD, &costKnown,
-			&t.Provider, &t.Model, &t.Error, &started, &ended); err != nil {
+			&t.Provider, &t.Model, &t.Error, &started, &ended, &t.Checkpoint); err != nil {
 			return nil, err
 		}
 

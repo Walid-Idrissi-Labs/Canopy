@@ -568,3 +568,29 @@ func TestClosingTheEngineFinishesRunningTurns(t *testing.T) {
 		t.Errorf("text = %q, want the partial kept", turn.Text)
 	}
 }
+
+// Somebody who thinks they can undo and cannot is worse off than somebody who knows they cannot.
+func TestUndoWithoutACheckpointSaysSoRatherThanFailingQuietly(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+
+	s := e.Create("claude", "m")
+	turnID, err := e.Send(s.ID, "change something")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForTurn(t, e, s.ID, turnID)
+
+	err = e.Undo(context.Background(), s.ID, turnID)
+	if err == nil {
+		t.Fatal("undoing with no checkpoint should be refused rather than silently doing nothing")
+	}
+	if !strings.Contains(err.Error(), "git repository") {
+		t.Errorf("the reason should be actionable, got %q", err)
+	}
+
+	if err := e.Undo(context.Background(), "nope", turnID); err == nil {
+		t.Error("undoing a session that does not exist should be an error")
+	}
+}

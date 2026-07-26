@@ -458,3 +458,41 @@ func TestAnEngineResumesWhatItSaved(t *testing.T) {
 		t.Errorf("a new session took the existing ID %q, so it would append to it", fresh.ID)
 	}
 }
+
+// Undo working until you quit and then silently stopping is worse than not offering it.
+func TestACheckpointSurvivesARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+	if err := storage.SaveSession(core.Session{
+		ID: "session-1", CreatedAt: storedAt, UpdatedAt: storedAt,
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	turn := storedTurn("t1", "change it", "changed", core.TurnComplete)
+	turn.Checkpoint = "abc123def456"
+	if err := storage.SaveTurn("session-1", 0, turn); err != nil {
+		t.Fatalf("SaveTurn: %v", err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	reopened, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+
+	loaded, err := reopened.Load("session-1")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.Turns[0].Checkpoint != "abc123def456" {
+		t.Errorf("the checkpoint was lost on restart: %q", loaded.Turns[0].Checkpoint)
+	}
+}

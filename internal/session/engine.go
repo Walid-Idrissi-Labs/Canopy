@@ -21,6 +21,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/store"
@@ -86,6 +87,9 @@ type Engine struct {
 
 	// pending is the question each session is waiting on, at most one at a time.
 	pending map[string]*Prompt
+
+	// checkpoints captures the worktree before each turn, when there is a worktree to capture.
+	checkpoints *git.Taker
 
 	nextID int
 }
@@ -167,6 +171,76 @@ func (e *Engine) WithTools(
 	if e.trail == nil {
 		e.trail = permission.NewTrail()
 	}
+}
+
+// WithCheckpoints captures the worktree before every turn, so any turn can be undone.
+//
+// Optional, because a conversation in a directory that is not a git repository is a legitimate thing
+// and should not be refused for want of somewhere to store a snapshot.
+func (e *Engine) WithCheckpoints(taker *git.Taker) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.checkpoints = taker
+}
+
+// checkpointBefore captures the worktree, returning an empty string when there is nowhere to.
+//
+// A failure to checkpoint does not stop the turn. Refusing to answer because a snapshot could not be
+// taken would be a tool that stops working in a directory it cannot fully manage, and the turn is
+// still what the user asked for. It is reported instead, since somebody who thinks they can undo and
+// cannot is worse off than somebody who knows they cannot.
+func (e *Engine) checkpointBefore(ctx context.Context, sessionID, turnID string) string {
+	e.mu.Lock()
+	taker, report := e.checkpoints, e.onStorageError
+	e.mu.Unlock()
+
+	if taker == nil {
+		return ""
+	}
+	checkpoint, err := taker.Take(ctx, turnID, "before "+sessionID)
+	if err != nil {
+		if report != nil {
+			report(fmt.Errorf("could not checkpoint before this turn, so it cannot be undone: %w", err))
+		}
+		return ""
+	}
+	return checkpoint.Commit
+}
+
+// Undo restores the worktree to how it was before a turn ran.
+//
+// The conversation is left alone. Reverting the files and deleting the messages would destroy the
+// record of what was tried, which is the thing somebody undoing wants to look at afterwards to work
+// out what to ask for instead.
+func (e *Engine) Undo(ctx context.Context, sessionID, turnID string) error {
+	e.mu.Lock()
+	taker := e.checkpoints
+	session, ok := e.sessions[sessionID]
+	var commit string
+	if ok {
+		for _, turn := range session.Turns {
+			if turn.ID == turnID {
+				commit = turn.Checkpoint
+				break
+			}
+		}
+	}
+	e.mu.Unlock()
+
+	switch {
+	case !ok:
+		return fmt.Errorf("no session %q", sessionID)
+	case taker == nil:
+		return errors.New("this directory is not a git repository, so nothing was checkpointed")
+	case commit == "":
+		return fmt.Errorf("turn %s has no checkpoint, so there is nothing to restore", turnID)
+	}
+
+	if err := taker.Restore(ctx, git.Checkpoint{Commit: commit}); err != nil {
+		return err
+	}
+	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: sessionID})
+	return nil
 }
 
 // Trail is the audit record of every tool call these agents have made.
@@ -368,6 +442,14 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 	saved := copySession(*s)
 	e.mu.Unlock()
 
+	// Taken before the turn runs and before it is persisted, so the snapshot describes the worktree
+	// as it was when the question was asked rather than part way through the answer.
+	if commit := e.checkpointBefore(context.Background(), sessionID, turnID); commit != "" {
+		e.update(sessionID, turnID, func(t *core.Turn) { t.Checkpoint = commit })
+		started.Checkpoint = commit
+		saved = e.snapshot(sessionID)
+	}
+
 	e.persistSession(saved)
 	e.persistTurn(sessionID, ordinal, started)
 	e.publishTurn(sessionID, turnID, false)
@@ -453,6 +535,16 @@ func (e *Engine) run(
 	}
 
 	e.finish(sessionID, turnID, state, reason, usage, client.Name())
+}
+
+// snapshot returns a copy of a session, or the zero value if it has gone.
+func (e *Engine) snapshot(sessionID string) core.Session {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if s, ok := e.sessions[sessionID]; ok {
+		return copySession(*s)
+	}
+	return core.Session{}
 }
 
 // grantsFor returns the approvals in force for a session, creating them on first use.

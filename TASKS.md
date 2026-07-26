@@ -1957,8 +1957,8 @@ Other decisions:
   automated traffic is a correct outcome rather than a problem to route around.
 
 ### A4-08 Checkpoint and undo
-`status: todo | owner: none | branch: none | depends: A4-06`
-`scope: internal/git/, internal/agent/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-06`
+`scope: internal/git/, internal/session/`
 
 Deliverable: snapshot an agent's worktree before it acts, and revert everything it did with one
 key.
@@ -1966,11 +1966,49 @@ key.
 Acceptance: undo restores tracked and untracked files exactly, including deletions. Checkpoints are
 cheap enough to take every turn. Reverting one agent never touches another's worktree.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: with several agents editing in parallel this is the difference between experimenting freely
 and being afraid to let them run. Probably implemented as a stash or a hidden ref rather than a
 file copy.
+
+**A hidden commit under `refs/canopy/checkpoints/`, not a stash and not a copy.** A stash is a stack,
+and a stack is shared mutable state: two agents stashing in the same repository interleave, and
+`stash pop` gives one of them the other's work. A copy is expensive on a large repository and gets
+the ignored files wrong in one direction or the other. A commit object is content addressed, so two
+agents cannot collide; cheap, because git already holds most of those blobs; and it captures exactly
+what git captures, which is the definition the rest of the tool already uses.
+
+Under `refs/canopy/` rather than `refs/heads/`, so checkpoints never appear in `git branch`, never
+get pushed by a plain `git push`, and never turn up in tab completion.
+
+Three things this needed that are not obvious:
+
+1. **A temporary index.** Staging into the real one would silently stage every untracked file in the
+   user's working tree, and their next commit would include things they never chose. There is a test
+   that takes a checkpoint and asserts `git status --porcelain` is byte for byte unchanged.
+2. **`read-tree -u --reset` followed by `clean -fd`.** Restoring the tree alone brings file contents
+   back and leaves files the agent created still sitting there, because nothing removes what is not
+   in the tree. An undo that left the new files behind is not an undo.
+3. **A minimal environment.** A user's `GIT_DIR`, `GIT_INDEX_FILE` or `GIT_WORK_TREE` would redirect
+   Canopy's own bookkeeping somewhere unexpected, and the failure would be a checkpoint silently
+   taken of the wrong repository.
+
+Per turn rather than per session, because the question people ask is "undo what it just did", and a
+session level checkpoint throws away the four turns they were happy with along with the one they
+were not.
+
+**Undo restores the files and leaves the conversation alone.** Reverting both would destroy the
+record of what was tried, which is exactly what somebody undoing wants to look at afterwards to work
+out what to ask for instead.
+
+A failure to checkpoint does not stop the turn, it is reported. Refusing to answer because a snapshot
+could not be taken would be a tool that stops working in a directory it cannot fully manage.
+Somebody who thinks they can undo and cannot is worse off than somebody who knows they cannot, so
+the report matters more than the failure.
+
+No interface yet: `Engine.Undo` exists and is tested, and the key to reach it belongs with the turn
+list, which is A5 work.
 
 ### A4-09 Plan first mode
 `status: todo | owner: none | branch: none | depends: A4-05`
