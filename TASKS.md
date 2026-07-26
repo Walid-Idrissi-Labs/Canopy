@@ -1862,8 +1862,8 @@ trust level says no and carry on, and create a file with specific content. All t
 `minimaxai/minimax-m2.7` on NVIDIA NIM.
 
 ### A4-06 Git tools
-`status: todo | owner: none | branch: none | depends: A4-04`
-`scope: internal/tools/git/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
+`scope: internal/tools/git.go`
 
 Deliverable: status, diff, log, add, commit, branch, checkout and stash as structured tools scoped
 to the agent's worktree.
@@ -1873,12 +1873,42 @@ meaning checkout over uncommitted work, reset, branch deletion and force anythin
 separately from ordinary shell approval. An agent cannot operate on another agent's worktree or on
 the primary checkout.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **not a convenience wrapper over `bash`.** A shell tool hands the permission model an opaque
 string, which cannot be told apart from `git push --force`. Structured output is also far more
 reliable for a model to act on than parsed porcelain, and confinement is enforceable per argument
 where in a shell string it is not enforceable at all.
+
+Six tools: status, diff, log, add, commit and branch. Classified for the permission model as read,
+read, read, write, write and git respectively, which is what makes the destructive half separable.
+
+Three deliberate omissions, all reachable through the shell tool where they are visible and approved
+as what they are:
+
+- **`commit` takes no `--amend` and no `-a`.** Amending rewrites a commit that may already have been
+  pushed, and `-a` stages files the model never looked at.
+- **`branch` can only create**, via `checkout -b`. Switching to an existing branch can discard
+  uncommitted work, which belongs behind the destructive gate rather than inside a tool called
+  "branch".
+- No `reset`, `clean`, `stash`, `push` or `rebase` at all yet.
+
+Every path argument goes after a `--` separator and is refused if it starts with a dash, because git
+reads a leading dash as an option wherever it appears and a path called `-f` becomes a flag. Branch
+names are validated here rather than left to git: git's own error for a bad ref name is written for
+somebody who has read the ref format documentation, and a model reading it tries something adjacent
+rather than something correct.
+
+A successful git command that printed nothing says so explicitly. Git is famously silent on success
+and a model handed an empty string cannot tell that apart from a failure it did not notice, which it
+answers by running the command again.
+
+**Registered before the shell tool**, since models weight earlier tool definitions more heavily and
+the tools that can be governed per argument should be reached for before the one that cannot.
+
+Worktree confinement is not enforced here yet: the tools run git in the agent's workspace, which is
+the right directory, but nothing stops a `git_add` path from naming something git tracks elsewhere
+via a submodule. Recorded rather than claimed. A5-03 is where worktrees become real.
 
 ### A4-07 Web search and fetch
 `status: todo | owner: none | branch: none | depends: A4-01`
