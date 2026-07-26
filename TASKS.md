@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A1-02, keychain storage | `feat/keys-and-profiles` | none |
+| Claude | none, A1 complete and awaiting PG-A1 | `feat/keys-and-profiles` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -655,7 +655,7 @@ Three calls for Codex:
    that in the type rather than in the permission layer means A4-04 cannot accidentally grant it.
 
 ### A1-02 Key store on the OS keychain
-`status: todo | owner: none | branch: none | depends: A1-01`
+`status: review | owner: Claude | branch: feat/keys-and-profiles | depends: A1-01`
 `scope: internal/keys/`
 
 Deliverable: macOS Keychain and Linux secret service. A file backend exists only as an explicit,
@@ -664,14 +664,30 @@ loudly warned opt-in.
 Acceptance: a key survives a restart, is absent from any config file, and the file backend refuses
 to run unless named explicitly.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: writing plaintext credentials to disk because the keychain was awkward is the kind of
-shortcut that stays invisible until it is a headline. If the keychain is unavailable, say so and
-stop, never degrade quietly.
+notes: verified against the real macOS Keychain, not only the fake. A key was added, read back from
+a fresh process, and then removed, and the keychain was checked afterwards to confirm nothing was
+left behind.
+
+Secrets and metadata are stored separately, which is deliberate. The OS credential store protects
+a value and cannot hold structure; a JSON file is the opposite. The cost is that they can disagree,
+so that case is handled explicitly: a key whose metadata exists but whose secret has vanished
+reports exactly that and names the fix, rather than reporting a plain absence and sending the user
+looking for something they can still see in `keys list`.
+
+Writes go secret first, then metadata. If the second step fails there is an orphaned secret nobody
+can reach, which is harmless. The other order would leave metadata claiming a credential exists
+when it does not, which is a lie the rest of the system would act on. Both files are written
+atomically and are mode 0600.
+
+Checked rather than assumed: on macOS the underlying library pipes its command through the
+`security` binary's **stdin** rather than passing the credential as an argument, so the value never
+appears in the process list.
 
 ### A1-03 Key and profile commands
-`status: todo | owner: none | branch: none | depends: A1-02`
+`status: review | owner: Claude | branch: feat/keys-and-profiles | depends: A1-02`
+
 `scope: cmd/canopy/`
 
 Deliverable: `canopy keys add|list|remove|test` and `canopy profiles list|show`. Adding reads from
@@ -680,14 +696,33 @@ a prompt or stdin.
 Acceptance: no command prints a secret. `keys list` shows name, provider, created date and a
 fingerprint. A key passed as a command line argument is refused with an explanation.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: refusing `--key sk-...` matters because arguments land in shell history and the process
 list, where any other user on the machine can read them.
 
+Flags such as `-key`, `-secret`, `-token` and `-password` are **defined only so they can be
+refused with an explanation**. Left undefined they would produce "flag provided but not defined",
+which tells someone they made a typo rather than that they were about to write a credential into
+their shell history.
+
+Three refusal paths, all with tests: a value as a second positional argument, a value in one of
+those flags, and a value used as the name. The last one says "that looks like a credential" rather
+than "too long", and every rejection truncates what it rejected, because errors get logged too.
+
+One real bug found while testing: Go's `flag` stops parsing at the first positional, so
+`keys add kimi -provider openai-compatible`, which is both the natural form and the one in the
+help text, was failing. The name is now taken off the front before flags are parsed, and both
+orders work.
+
+`keys test` recomputes the fingerprint from what came back rather than trusting the record, so a
+credential changed outside Canopy is caught instead of used. It says plainly that it checks storage
+only, since no provider client exists until A2.
+
 ### A1-04 Redaction guarantees
-`status: todo | owner: none | branch: none | depends: A1-03`
-`scope: internal/keys/, internal/core/`
+`status: review | owner: Claude | branch: feat/keys-and-profiles | depends: A1-03`
+
+`scope: cmd/canopy/, internal/keys/, internal/core/`
 
 Deliverable: a test suite proving secrets cannot reach output Canopy controls.
 
@@ -695,13 +730,31 @@ Acceptance: a planted secret is absent from snapshot JSON, the event stream, log
 frames, error messages and panic output. Provider errors report the failure without echoing the
 credential.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: the D-20 boundary still holds. Canopy cannot redact what a child process prints itself, and
-that is documented rather than implied away.
+notes: a canary is planted once and every surface Canopy controls is searched for it: command
+output, error text including wrapped and `%q` formatted errors, snapshot JSON including a
+deliberately smuggled secret, and rendered dashboard frames with the colour stripped.
+
+The point of doing it here rather than only per package is that each package's own redaction test
+already passed. What this catches is a credential reaching a surface because two individually
+correct components were joined, which is how it actually happens.
+
+**It found something.** Free text fields, a revision error or a probe failure reason, render
+verbatim. The realistic version is a provider replying "invalid x-api-key: sk-ant-..." and Canopy
+putting it on screen and into any screenshot of it.
+
+Fixed at the provider boundary rather than in the renderer, and added as an acceptance criterion
+on **A2-03**. Scrubbing at render time would mean loading every stored credential so the rendering
+path could search for it, which is secrets travelling further in order to be protected. At the
+provider boundary the credential is already in scope, so the scrub is local and complete.
+
+`TestFreeTextFieldsAreNotScrubbed` asserts the current boundary deliberately, and will fail when
+A2-03 lands. That is intentional: it forces the limitation to be re-examined rather than quietly
+outliving the documentation that describes it.
 
 ### PG-A1 Phase A1 gate
-`status: todo | depends: A1-01, A1-02, A1-03, A1-04`
+`status: review | depends: A1-01, A1-02, A1-03, A1-04`
 
 Both supervisors add a key, restart, confirm it survived, and fail to find it anywhere in Canopy's
 own output.
@@ -754,10 +807,23 @@ context length exceeded, network, cancelled, unknown.
 Acceptance: each has a test and a message naming the next useful action. A rate limit is never
 reported like a bad key.
 
+**Provider error text is scrubbed of the credential before it leaves this package.** A planted key
+does not appear in any error surfaced from a provider failure, and there is a test for it.
+
 `verify: claude [ ]   codex [ ]`
 
 notes: same discipline as the test state vocabulary. "Something went wrong" is the agent equivalent
 of a status nobody can act on.
+
+The scrubbing requirement came out of A1-04, which found that free text fields render verbatim.
+The realistic leak is a provider replying "invalid x-api-key: sk-ant-..." and Canopy putting it on
+screen and into any screenshot of it.
+
+It belongs here rather than in the renderer. Scrubbing at render time would mean loading every
+stored credential so the rendering path could search for it, which is secrets travelling further
+in order to be protected. At this boundary the credential is already in scope, so the scrub is
+local and complete. `TestFreeTextFieldsAreNotScrubbed` in `cmd/canopy` will fail when this lands,
+and should then be narrowed to the fields this package does not own.
 
 ### A2-04 One shot ask
 `status: todo | owner: none | branch: none | depends: A2-02`

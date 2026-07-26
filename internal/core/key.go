@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -48,8 +49,36 @@ func (p Provider) String() string { return string(p) }
 // so a pasted key fails to validate rather than becoming a permanent leak.
 var keyNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,30}$`)
 
+// credentialPrefixes are how the common providers' keys start.
+//
+// Used only to give a better error, never to decide whether something is secret. A value that
+// looks like a credential is rejected as a name either way, by length or by character set. This
+// just replaces "too long" with an explanation of what the user probably did.
+var credentialPrefixes = []string{"sk-", "sk_", "ghp_", "gho_", "github_pat_", "gsk_", "xai-", "AIza", "hf_", "r8_"}
+
+// LooksLikeCredential reports whether a string resembles an API key.
+//
+// Deliberately a hint rather than a security control. Treating it as a control would mean a
+// credential that does not match becomes acceptable input somewhere, which is the wrong shape of
+// defence. The real protection is that names are constrained and secrets are never arguments.
+func LooksLikeCredential(s string) bool {
+	for _, prefix := range credentialPrefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return len(s) >= 40
+}
+
 // ValidateKeyName reports whether a string is acceptable as a credential name.
 func ValidateKeyName(name string) error {
+	if LooksLikeCredential(name) {
+		return fmt.Errorf(
+			"%q looks like a credential rather than a name. The value is not passed on the command "+
+				"line, since arguments reach shell history and the process list. Give the key a short "+
+				"name such as \"claude\", and paste the value when prompted",
+			truncateForError(name))
+	}
 	switch {
 	case name == "":
 		return fmt.Errorf("a key name is required")
