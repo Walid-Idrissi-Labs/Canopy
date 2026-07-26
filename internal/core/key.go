@@ -139,6 +139,44 @@ func (k KeyRef) String() string {
 	return fmt.Sprintf("%s (%s)", k.Name, k.Provider)
 }
 
+// KeyRate is what the user says this credential charges, per million tokens.
+//
+// Exists because Canopy will never hold rates for every gateway in the OpenAI compatible family and
+// should not pretend to: the gateway sets the price and there are many gateways. The person who
+// signed up for one knows what they pay, so this turns "we cannot price this" into "tell us once".
+//
+// Kept separate from the built in table rather than merged into it, and labelled as the user's
+// figure wherever it is shown. The point of the dated table is that Canopy is honest about where a
+// number came from, and quietly absorbing somebody's guess into it would throw that away.
+type KeyRate struct {
+	// InputPerMTok and OutputPerMTok are dollars per million tokens.
+	InputPerMTok  float64
+	OutputPerMTok float64
+
+	// CacheReadPerMTok is the rate for tokens served from a cache. Zero means "same as input",
+	// which is the honest default: most gateways in this family either do not cache or do not say
+	// what they charge for it, and assuming a discount nobody promised would understate the bill.
+	CacheReadPerMTok float64
+}
+
+// IsZero reports whether no rate has been set.
+func (r KeyRate) IsZero() bool { return r == KeyRate{} }
+
+// Validate checks that a rate is usable.
+func (r KeyRate) Validate() error {
+	switch {
+	case r.InputPerMTok < 0 || r.OutputPerMTok < 0 || r.CacheReadPerMTok < 0:
+		return fmt.Errorf("a rate cannot be negative")
+	case r.InputPerMTok == 0 && r.OutputPerMTok == 0:
+		// A rate of zero on both would report every turn as free, which is a claim, not an absence.
+		// Somebody who genuinely runs something free should leave the rate unset and let it read as
+		// unpriced, or use a local endpoint, which Canopy already knows is free.
+		return fmt.Errorf("a rate of zero would report every turn as free. Leave it unset instead, " +
+			"which reads as unpriced rather than as costing nothing")
+	}
+	return nil
+}
+
 // KeyMetadata is everything about a stored credential that is safe to display.
 //
 // Note what is absent. There is no field for the value, and adding one would be a contract change
@@ -148,6 +186,10 @@ type KeyMetadata struct {
 
 	// BaseURL is the endpoint, for providers that need one.
 	BaseURL string
+
+	// Rate is what the user told us this credential charges. Zero means they have not said, which
+	// is different from free.
+	Rate KeyRate
 
 	// Fingerprint is a short non reversible identifier, so two credentials can be told apart in a
 	// list without either being shown.

@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | none, A3-00 done, A2 next | `feat/tui-shell` | none |
+| Claude | A3, chat and persistence | `feat/providers` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -111,8 +111,9 @@ D-23 and the retired tasks table at the bottom.
 Done and carrying forward: P0-01 to P0-07 and P1-01 to P1-07. The core contract, the state machine,
 the roll-up, the fake store, the headless harness and the dashboard.
 
-Codex: **A2 is the obvious thing to claim.** It is independent of A1, because a provider client can
-take a key as a parameter long before there is a registry to fetch one from. A3 depends on A2.
+Codex: A2 is largely written, so **A2-05 usage and cost accounting is the obvious thing to claim**,
+and A2-07 and A2-08 after it. A2-05 is independent of everything in flight: it needs a dated price
+table and the token counts the two clients already report. A3 depends on A2.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
@@ -124,8 +125,9 @@ push.
 Read this before claiming anything.
 
 **Canopy is a terminal coding agent built for running several agents at once.** Provider keys go in
-by name, agents are dispatched from the conversation, each gets its own worktree and branch, you
-watch and steer several at a time, and Canopy knows which of them actually produced working code.
+by name, agents are dispatched from the conversation, you watch and steer several at a time, and
+Canopy knows which of them actually produced working code. Isolating an agent on its own worktree
+and branch is an option you reach for when you want it, not the standard way agents run.
 
 Same category as OpenCode and Claude Code, plus agentic parallelism and git as first class
 concerns rather than afterthoughts.
@@ -818,7 +820,7 @@ Goal: a real message reaches a real provider and a real reply streams back, on m
 vendor.
 
 ### A2-01 Provider interface
-`status: todo | owner: none | branch: none | depends: A1-01`
+`status: review | owner: Claude | branch: feat/providers | depends: A1-01`
 `scope: internal/core/`
 
 Deliverable: the interface an agent session talks to. Streaming, cancellable, provider agnostic,
@@ -826,14 +828,38 @@ with tool use in the shape from the start.
 
 Acceptance: compiles, and a fake provider satisfies it and can script a reply.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: designing the tool use shape before tools exist is deliberate, unlike the PTY interfaces we
 correctly refused to design early. Those were speculative. Tools are a certainty two phases out,
 and retrofitting tool calls into a streaming protocol is genuinely painful.
 
+Checked against the current API reference rather than written from memory, which changed two
+decisions. Both are recorded as D-30 and D-31.
+
+**The interface is called `ProviderClient`, not `Provider`.** `Provider` is already the vendor enum
+on `KeyRef` from A1-01, and two things called Provider in one package would be a coin flip at every
+call site.
+
+Four contract rules that are not obvious and produce a 400 or a crash rather than a worse answer:
+
+1. **`refusal` is a stop reason, not an error.** A declined request returns success with possibly
+   empty content, so `StopReason` has to be checked before reading content. There is a test
+   asserting it never appears in the error vocabulary too, or callers would handle it twice.
+2. **Sampling parameters are rejected by current models.** `AgentProfile.Temperature` exists from
+   A1-01, and the provider layer is where it gets dropped rather than sent.
+3. **Thinking depth is effort, not a token budget.** A budget is rejected, and thinking is on by
+   default, so `MaxTokens` sized for the answer alone truncates.
+4. **`AllowsFallback` is deliberately narrower than `Retryable`.** A wrong key must never route to
+   another credential: the user would be billed elsewhere, possibly answered by a weaker model, and
+   never told the key was wrong. A network blip is retryable but says nothing about the credential.
+
+`Usage.CostKnown` distinguishes "free" from "we could not price this", and an unknown cost poisons
+any total it is summed into. A partial sum shown as a figure is a wrong number on screen, which is
+worse than an absent one.
+
 ### A2-02 Anthropic client
-`status: todo | owner: none | branch: none | depends: A2-01, A1-02`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-01, A1-02`
 `scope: internal/provider/anthropic/`
 
 Deliverable: the Messages API with streaming, using a named key.
@@ -841,13 +867,41 @@ Deliverable: the Messages API with streaming, using a named key.
 Acceptance: a real request returns a streamed reply. Cancellation stops the stream and releases the
 connection. Recorded fixtures let tests run without network or credentials.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: pin the API version. Check current model ids at implementation time rather than trusting
-what was current when this was written.
+notes: model ids and parameter names were checked against the SDK source and the current API
+reference at implementation time, not recalled. `claude-opus-5` is the default. The effort constants
+were read out of the SDK rather than guessed.
+
+Built on the official SDK per D-30. The credential is revealed once, in `New`, and handed straight
+to the SDK, which is the entire window in which it exists as an ordinary string here.
+
+**The A1-04 finding is fixed here.** Provider error text is scrubbed of the credential before it
+leaves the package, so a reply of "invalid x-api-key: sk-ant-..." cannot reach the screen. This is
+the right layer: the credential is already in scope, so the scrub is local and complete, whereas
+doing it at render time would mean loading every stored key so the renderer could search for it.
+Tested with a planted canary.
+
+Four things worth Codex's attention:
+
+1. **Sampling parameters are dropped here, not trusted to callers.** `AgentProfile.Temperature`
+   exists from A1-01 and current models reject it with a 400. The test asserts on the marshalled
+   request body rather than the struct, because the body is what actually goes over the wire.
+2. **Thinking is only mentioned when disabled.** It is on by default on current models, so a
+   request that says nothing gets thinking. `DefaultMaxTokens` is 32000 because the cap covers
+   thinking and answer together, and a value sized for the answer alone truncates mid sentence.
+3. **Tool calls are emitted only once complete**, at the end of the stream, while text streams
+   live. A partially received tool input is not something a caller can act on.
+4. **The done event always fires**, on every path including failure and cancellation. Without it a
+   failed stream is indistinguishable from one still running, and usage already billed goes
+   unaccounted for.
+
+One real bug found while testing: the SDK's `Error` method dereferences the HTTP response it was
+built from, so an error constructed without one panics. That would turn a provider failure into a
+lost session and everything in it. `safeMessage` guards it and falls back to naming the status.
 
 ### A2-03 Error taxonomy
-`status: todo | owner: none | branch: none | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
 `scope: internal/core/, internal/provider/`
 
 Deliverable: provider failures mapped to distinct states: authentication, rate limited, overloaded,
@@ -859,10 +913,16 @@ reported like a bad key.
 **Provider error text is scrubbed of the credential before it leaves this package.** A planted key
 does not appear in any error surfaced from a provider failure, and there is a test for it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: same discipline as the test state vocabulary. "Something went wrong" is the agent equivalent
-of a status nobody can act on.
+of a status nobody can act on. The vocabulary lives in `core` from A2-01 and the mapping in the
+Anthropic client from A2-02, so this task was satisfied by those two rather than adding a third
+layer.
+
+Each class carries a message naming the next action, tested. A rate limit and a rejected key read
+completely differently, because sending someone hunting for a bad key when they were merely rate
+limited wastes real time.
 
 The scrubbing requirement came out of A1-04, which found that free text fields render verbatim.
 The realistic leak is a provider replying "invalid x-api-key: sk-ant-..." and Canopy putting it on
@@ -875,7 +935,7 @@ local and complete. `TestFreeTextFieldsAreNotScrubbed` in `cmd/canopy` will fail
 and should then be narrowed to the fields this package does not own.
 
 ### A2-04 One shot ask
-`status: todo | owner: none | branch: none | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
 `scope: cmd/canopy/`
 
 Deliverable: `canopy ask "..."` streams a reply to stdout.
@@ -885,32 +945,126 @@ cancels cleanly on interrupt.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: the smallest proof the whole pipe works, and worth keeping permanently as a debugging tool.
+notes: **deliberately unticked.** Everything except "works against a real key" is built and tested
+against a scripted stream. The real network call needs a credential, which is the supervisors' to
+make at PG-A2. That is the honest state, not a formality.
+
+The command is the smallest proof the whole pipe works, and worth keeping permanently as a way to
+check a key or a model without opening the interface.
+
+Four decisions in the output handling:
+
+1. **The stop reason is checked before anything is presented as an answer.** A refusal arrives as
+   a successful response with possibly empty content, so printing the text and exiting zero would
+   present a declined request as an answered one.
+2. **A truncated reply exits non zero.** It looks complete on screen, which is the whole problem,
+   so the exit status is the only thing distinguishing it. The partial is still shown, since it
+   was paid for.
+3. **A stream that ends with no done event is an error**, not a success. That is a bug in a
+   provider adapter, and exiting zero on an answer nobody received would hide it.
+4. **Cost prints only when known.** A zero rendered as a dollar figure reads as "this was free",
+   which is a different claim from "we could not price it". Pricing lands in A2-05.
+
+With several usable credentials it refuses and lists them rather than picking one. Silently
+choosing which key gets billed is not a decision to make on someone's behalf.
 
 ### A2-05 Usage and cost accounting
-`status: todo | owner: none | branch: none | depends: A2-02`
-`scope: internal/core/, internal/provider/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`scope: internal/pricing/, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: tokens in, out and cached, plus cost, per request, attributed to key and agent.
 
 Acceptance: usage matches what the provider reported. Cost comes from a versioned, dated pricing
 table, and the interface says so when the table is old.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: exact rather than inferred, because Canopy makes the request. A stale pricing table is a way
 to put a wrong number on screen, which is why it carries its date.
 
+`internal/pricing` holds the table, dated by `AsOf` and announced as approximate once past `MaxAge`.
+Old numbers keep being used, since an old figure beats no figure; they just stop being presented as
+current.
+
+Three things worth knowing about the shape it took:
+
+1. **Rates are only recorded where the endpoint determines the price.** Anthropic first party, and
+   local runtimes which are genuinely free. Nothing else in the OpenAI compatible family is priced
+   by model name, because the gateway sets the price and there are many gateways: pricing
+   `anthropic/claude-opus-5` at Anthropic's rate when it was reached through OpenRouter would be a
+   guess presented as a fact. Unpriced turns say which endpoint has no rate, so "cost unknown" reads
+   as a gap in the table rather than as a broken tool. **This means the NVIDIA key shows no cost
+   figure at PG-A2.** A2-09 is the fix; see the note there.
+2. **Free and unpriced are different claims and Canopy makes both.** A local model bills nothing,
+   which is a known cost of zero. That is the whole reason `CostKnown` exists next to `CostUSD`.
+3. **`Usage.Add` has no identity element, and `core.Sum` exists because of it.** `Usage{}` cannot
+   serve as one: an empty running total and a turn nobody could price are the same value, so
+   folding a list from zero would mark every total unpriced, and a session of perfectly priced
+   turns would report its cost as unknown. Found while wiring this up, and it would have been
+   invisible until a per session total appeared on screen reading "cost unknown" for no reason.
+
+Cache reads and writes are derived from the input rate by multiplier rather than typed out per
+model, since they are properties of the API rather than of any one model, and a hand copied cache
+column is somewhere for a typo to hide. Where a published introductory rate undercuts the standard
+one, the standard rate is used: overstating cost is the safer error, because understating hides
+spend that is really happening.
+
+### A2-09 User supplied prices
+`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`scope: internal/keys/, internal/pricing/, internal/core/key.go, cmd/canopy/keys.go`
+
+Deliverable: a rate can be attached to a stored credential, so an endpoint Canopy has no table entry
+for still shows a real cost.
+
+Acceptance: setting a rate on a key produces a figure on screen. A key with no rate still reads as
+unpriced rather than free. The user's own figure is labelled as theirs, never as a checked one.
+
+`verify: claude [x]   codex [ ]`
+
+notes: **added 2026-07-26.** Falls straight out of A2-05. Canopy will never hold rates for every
+gateway in the OpenAI compatible family and should not pretend to, but the person who signed up for
+the gateway knows what they pay. This turns "we cannot price this" into "tell us once". Distinguish
+their figure from a checked one in the interface: the point of the dated table is that Canopy is
+honest about where a number came from, and quietly absorbing a user's rate into it would throw that
+away.
+
+`pricing.Source` is the three states, all distinguishable on screen: a checked price, the user's
+price, and no price. A user rate wins over the table where both exist, because they are the one
+being billed and theirs answers the question actually being asked, which is "what will this cost
+me" rather than "what is the list price".
+
+Three decisions:
+
+- **`canopy keys rate` is its own command, not a flag on `add`.** Correcting a price must not
+  require re typing a secret, and a flow that asks for one is a flow where people paste keys into
+  shell history.
+- **Rotating a key keeps its rate.** The endpoint charges what it charges regardless of which
+  credential reaches it, and dropping the price would turn a working cost figure into "unknown" for
+  no reason the user could see.
+- **An unstated cache rate is assumed to be full price.** Most gateways in this family either do not
+  cache or do not say what they charge for it, so assuming a discount nobody promised would
+  understate the bill.
+
+A rate of zero is refused, because it is a claim rather than an absence: it would report every turn
+as free. Somebody who really pays nothing should leave it unset and let it read as unpriced, or use
+a local endpoint, which Canopy already knows is free. **This may be wrong for the NVIDIA free tier**,
+which genuinely bills nothing at personal volumes. See Q-01.
+
+Verified against a real endpoint: `canopy keys rate nim -in 0.30 -out 1.20` then `canopy ask` showed
+`$0.0005` with "priced at your own rate for this key". The rate was cleared afterwards rather than
+left on the key, since a figure Canopy invented on somebody's behalf is exactly what D-32 exists to
+prevent.
+
 ### A2-06 OpenAI compatible provider and local models
-`status: todo | owner: none | branch: none | depends: A2-02`
-`scope: internal/provider/openai/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`scope: internal/provider/openai/, cmd/canopy/ask.go`
 
 Deliverable: the chat completions API with tool calls and streaming, and a configurable base URL.
 
 Acceptance: the same agent code runs unchanged on both providers. A base URL override reaches a non
 OpenAI endpoint. Ollama and one hosted third party both work.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: one task covers most of the field. Kimi, MiniMax, DeepSeek, Groq, OpenRouter and most local
 runtimes speak this API. Building it second, rather than after five Anthropic only phases, is what
@@ -918,23 +1072,74 @@ stops provider assumptions baking into the agent loop. Tool calling differs in s
 two APIs but not in meaning, and that difference belongs behind the interface, never in
 `internal/agent`.
 
+Hand rolled, unlike A2-02, per D-30. The surface needed is small, and pointing an SDK written for
+one vendor at arbitrary base URLs is the case those SDKs handle worst.
+
+Four things this had to get right that the Anthropic client did not:
+
+1. **Tool calls arrive as fragments.** An index, sometimes an id, sometimes a name, and the
+   arguments a few characters at a time across many chunks. They are accumulated and emitted whole,
+   because half a JSON argument string is not something a caller can act on. Emitted in index
+   order, because map iteration is random and a caller executing them should see them in the order
+   the model asked for.
+2. **`content_filter` is this family's refusal**, and like Anthropic's it arrives on a successful
+   response. Mapped to `StopRefusal`, so a declined request is never presented as an answered one.
+3. **Usage has to be asked for.** Without `stream_options.include_usage` most implementations
+   report nothing at all on a streamed request, and a turn with no usage cannot be costed.
+4. **Effort and sampling parameters are deliberately not sent.** There is no effort field this
+   family agrees on and several reject unknown fields outright, which would break exactly the
+   providers this client exists to reach. Recorded here so the gap is a decision, not an oversight.
+
+Base URL is required rather than defaulted: this provider *is* its endpoint. Which provider gets
+spoken is decided by the credential, not by a flag, which is the point of naming keys. There is no
+default model for the same reason a base URL has none, so `-model` is required and says so.
+
+The acceptance line's "Ollama and one hosted third party both work" needs a person at a terminal,
+so it belongs to PG-A2 alongside A2-04's live check, not to this box.
+
 ### A2-07 Prompt caching
-`status: todo | owner: none | branch: none | depends: A2-05`
-`scope: internal/provider/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`scope: internal/provider/anthropic/, internal/pricing/, cmd/canopy/ask.go`
 
 Deliverable: cache long stable prefixes such as system prompts and file context where the provider
 supports it.
 
 Acceptance: cached tokens are reported separately in usage, and the saving is visible.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: large cost saving for small effort, and it compounds with several agents sharing a project
 system prompt.
 
+A prompt is sent in a fixed order, tools then system then messages, and a breakpoint caches
+everything before it. So the useful places are the boundaries between what stays the same and what
+changes, which for a coding agent is nearly everything. Three of the four available breakpoints are
+used: the last tool definition, the system prompt, and the end of the previous exchange.
+
+Two placements were deliberately avoided:
+
+- **Nothing on the newest message.** It would write an entry that the next turn invalidates by
+  appending to it, paying the write premium for a read that never happens.
+- **Nothing on a conversation shorter than three messages.** There is no prefix worth caching yet
+  and the breakpoint would only cost a write. A test asserts both, since either would be invisible
+  in normal use and would show up only as a bill.
+
+The saving is reported net and can be negative. A cache write costs more than plain input, so the
+turn that fills a cache genuinely pays a premium and the interface says "caching cost $x extra on
+this turn, which later turns read back". Reporting only the reads would be the flattering version
+and would make the numbers impossible to calibrate against. A single read more than repays the
+premium on the same tokens, so a session pays for its cache on the second turn.
+
+The OpenAI compatible client sends nothing for this: caching is automatic on the endpoints in that
+family that do it at all, and we hold no rates for them, so there is no counterfactual to report a
+saving against. `pricing.Saving` stays silent rather than printing a zero.
+
+Worth noticing later: caching is the thing that degrades silently. If a breakpoint stops matching,
+nothing breaks, the bill just goes up. That is why the saving is on screen rather than in a log.
+
 ### A2-08 Provider fallback chains
-`status: todo | owner: none | branch: none | depends: A2-03`
-`scope: internal/agent/, internal/core/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-03`
+`scope: internal/provider/chain.go, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: a profile may list ordered fallbacks. On overload or rate limit, try the next key or
 provider.
@@ -943,12 +1148,37 @@ Acceptance: an overloaded primary falls through without losing the turn. Authent
 **not** fall through, because a wrong key should be fixed rather than routed around. Every fallback
 is visible in the transcript, never silent.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **added 2026-07-26.** Cheap once the error taxonomy exists, and it matters the moment eight
 agents run at once, which is exactly when providers start shedding load. Silent fallback would be
 dishonest: you would be billed on a different key, and possibly answered by a weaker model, without
 being told.
+
+`provider.Chain` is itself a `ProviderClient`, so nothing above has to know whether it is holding
+one provider or five. `AllowsFallback` from A2-01 already drew the line and this consumes it:
+overload and rate limits fall through, authentication and invalid requests and cancellation do not,
+and an unrecognised error defaults to not, since routing around something nobody has reasoned about
+spends money on a guess.
+
+Two things the obvious implementation gets wrong:
+
+1. **Watching only the call that opens the stream is not enough.** The Anthropic SDK hands back a
+   stream immediately and reports an overload on the first read, so a chain that checked only the
+   constructor's error would sit there having never fallen back, in exactly the case it exists for.
+   The chain watches the stream too, swallows the failed done event, and delivers the real one from
+   whichever link answers.
+2. **Falling back stops the moment any of the answer has been delivered.** A replacement stream
+   starts its answer from the beginning, so splicing it onto a half delivered one produces a reply
+   that reads as though the model contradicted itself mid sentence. Better to report the failure on
+   a partial answer than to hide it under a seam.
+
+Fallbacks are reported through a new `EventNotice`, kept separate from text because it comes from
+Canopy rather than from the model and merging it into the reply would read as the model saying it.
+The notice names both ends: what could not take the turn, why, and what did.
+
+Not yet wired to profiles. `AgentProfile` gains its fallback list in A3, where there is somewhere
+for a user to configure one; the mechanism exists and is tested ahead of it.
 
 ### PG-A2 Phase A2 gate
 `status: todo | depends: A2-03, A2-04, A2-05, A2-06`
@@ -957,6 +1187,21 @@ Both supervisors watch `canopy ask` stream a real reply on two different provide
 token and cost figures for each.
 
 `signed: walid [ ]   classmate [ ]`
+
+**Half of this is already proved.** `canopy ask -key nim -model minimaxai/minimax-m2.7` streams a
+real reply from NVIDIA NIM with token counts. The cost figure reads "cost unknown" and names the
+endpoint, for the reason in D-32 and Q-01. The Anthropic side still needs a real key, which neither
+agent has.
+
+`internal/session/live_test.go` runs the same path under test, gated behind `CANOPY_LIVE_KEY` so it
+skips unless asked for:
+
+```
+CANOPY_LIVE_KEY=<name> CANOPY_LIVE_MODEL=<model> go test ./internal/session/ -run Live -v
+```
+
+Worth knowing before the gate: **that file found two real bugs on its first run**, both about
+cancellation, and neither was findable by a scripted test. Recorded in A3-08's notes.
 
 ---
 
@@ -1017,9 +1262,15 @@ a data change later, and costs nothing now.
 Placed at the head of A3 because the chat interface is what will live inside it, and building the
 frame after the contents is the more expensive order.
 
+**The entry point is provisional.** It currently opens on the dashboard, or on credentials when
+there are none. Once A3-03 lands, **chat becomes the home screen** and the dashboard becomes a view
+reached from it. Recorded 2026-07-26 after Walid pointed out that opening on a monitor puts the
+least common activity first and makes Canopy look like something you watch rather than something
+you talk to.
+
 ### A3-01 Session and conversation types
-`status: todo | owner: none | branch: none | depends: A2-01`
-`scope: internal/core/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-01`
+`scope: internal/core/session.go, internal/core/event.go, internal/core/project.go`
 
 Deliverable: `Session`, `Message`, `Role`, `Turn` and `AgentState`, held in the existing snapshot
 store so sessions and workspaces share one authoritative view and one event stream.
@@ -1027,11 +1278,41 @@ store so sessions and workspaces share one authoritative view and one event stre
 Acceptance: a session rebuilds exactly from a snapshot. Streaming updates coalesce, and a completed
 turn is a final event that can never be dropped.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: token streaming is the highest volume event source this project will ever have, which is
 precisely the case the coalescing rules in P1-01 were designed for. This is the first real test of
 whether that design was right.
+
+**The design held, and the reason it held is worth writing down.** Events carry no payload, so a
+reader who sees one notification where three were sent takes a snapshot and finds every token that
+arrived, because the turn's text grows in the snapshot rather than travelling in the event. Had
+events carried their own copy of the text, coalescing would drop characters. Keyed per turn rather
+than per session, so two agents streaming at once never swallow each other.
+
+`Message` and `Role` already existed on the provider contract, and `Turn` reuses them rather than
+defining a parallel pair. `Session.History()` is then a copy rather than a translation, and a
+translation between two shapes that mean the same thing is exactly where a tool result loses its
+error flag.
+
+`TurnState` is deliberately wider than it first looks. Complete, interrupted and failed are the
+obvious three; **refused and truncated are the ones that matter**. Both arrive as successful
+responses carrying text a reader would take for a finished answer, so both are their own state and
+`Whole()` returns true for exactly one of the eight. That is the chat form of the stale green
+problem the whole project is built around: plausible, and wrong in the direction that costs you.
+
+Three invariants that Validate enforces, each because the failure is invisible until it is not:
+
+- **A terminal turn must record when it ended**, or its duration grows forever and a finished turn
+  counts up on screen as though it were still running.
+- **A failed turn must say why.** "Something went wrong" is not something a user can act on.
+- **Only the last turn may be in flight.** An earlier one still streaming was abandoned without
+  being closed out, and it would show as running for the life of the session.
+
+Sessions live in `ProjectSnapshot` beside the workspaces rather than in a store of their own, so
+"this agent is working in that worktree, whose tests are failing" is one read of one consistent
+view. Two stores would mean two reads, and two reads mean a moment where the answer is half from
+before and half from after.
 
 ### A3-02 Session storage
 `status: todo | owner: none | branch: none | depends: A3-01`
@@ -1050,18 +1331,54 @@ one storage decision buys four features. Schema migrations from day one, since t
 change and a tool that loses your history on upgrade is not one anyone keeps.
 
 ### A3-03 Chat view
-`status: todo | owner: none | branch: none | depends: A3-01`
-`scope: internal/tui/chat/`
+`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`scope: internal/tui/chat/, internal/tui/app.go, cmd/canopy/`
 
-Deliverable: message list, live streaming, input box, scrollback.
+Deliverable: message list, live streaming, input box, scrollback. **This becomes the home screen**:
+running `canopy` in a directory opens a chat there, and every other screen is somewhere you go from
+it.
 
 Acceptance: a reply renders token by token without flicker, follows the tail unless the user has
-scrolled up, and survives a resize.
+scrolled up, and survives a resize. `canopy` with no arguments lands here, not on the dashboard.
+Someone who has never used it can install it, run it and start working without reading anything.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: reuses the model, event loop and 80 column discipline from P1-07. This package still talks
 to core and nothing else.
+
+The screen holds no conversation state. It reads the session from the engine on every refresh, and
+there is no local copy being appended to as events arrive, which is exactly why a coalesced or
+dropped notification cannot lose a token: the next refresh reads whatever is there now. The spinner
+tick doubles as that refresh beat, so the screen catches up even during a stretch where coalescing
+delivered nothing.
+
+Four decisions worth keeping:
+
+1. **Navigation out of chat is on control keys only.** Every printable key belongs to the message
+   box, so a plain letter opening another screen would mean that letter could never be typed in a
+   message. `ctrl+d` for agents, `ctrl+k` for credentials.
+2. **`esc` stops the turn rather than leaving the screen**, and `ctrl+c` stops before it quits.
+   Somebody hitting either during a long reply means stop, and navigating away or exiting would
+   abandon a running turn out of sight or throw the conversation away.
+3. **A failed send keeps the message in the box.** Clearing it would mean retyping what was just
+   written because a provider was busy.
+4. **Escape from the credential screen returns where you came from**, tracked rather than assumed,
+   because that screen is reachable from both chat and the dashboard.
+
+The transcript asks the turn state what a reply is rather than deciding for itself. `Whole()` is
+true for exactly one state, and every other one gets a label: stopped, declined, cut off, or the
+failure reason. A completed answer carries no label at all, because a line under every reply saying
+"complete" trains people to stop reading the ones that matter.
+
+The message box is hand written rather than pulled from a widget library, because the cursor has to
+sit inside wrapped text. A single line field that scrolls sideways is the wrong shape for what
+people type here, which is several sentences and sometimes a pasted stack trace.
+
+One bug worth recording because it was invisible in every test that did not measure: the box and
+the text inside it computed their widths from two different constants, so at 80 columns the box came
+out 81 wide and wrapped the entire frame. Both now come from `boxChrome`. The layout test that
+measures every line at three terminal sizes is what caught it.
 
 ### A3-04 Markdown and code rendering
 `status: todo | owner: none | branch: none | depends: A3-03`
@@ -1122,6 +1439,44 @@ notes: **added 2026-07-26.** The natural companion to branch per agent, and it m
 already think in git. "Go back three turns and try it the other way" is currently either a fresh
 session with lost context, or an argument with an agent that has already committed to an approach.
 At A5 a fork becomes a second agent on a second branch, which is where it earns its place.
+
+### A3-08 Session engine
+`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`scope: internal/session/, internal/store/`
+
+Deliverable: the thing the interface talks to. Owns every session, runs a turn in the background,
+folds the provider stream into the authoritative view as it arrives, and publishes one notification
+per update.
+
+Acceptance: a turn streams into the snapshot and is readable while still arriving. Cancelling keeps
+the partial and marks it. One turn per session at a time. Every terminal state publishes a final
+event.
+
+`verify: claude [x]   codex [ ]`
+
+notes: **added 2026-07-26.** Not in the original plan because A3-01 said sessions live in "the
+existing snapshot store", and the only store that existed was the fake from P1. A3-03 needs
+something real to talk to and A3-02 is persistence rather than runtime, so this is the piece
+between them.
+
+`Send` returns as soon as the turn is registered rather than when the answer arrives, because a
+terminal that blocked until the reply landed could not draw the reply landing. Everything after
+that point reaches the interface through the snapshot and the event stream, which is what lets the
+interface hold no conversation state of its own.
+
+Every exit path from a turn goes through one `finish`, which is the only place a turn becomes
+terminal. One exit means one place that sets the end time, marks the event final and releases the
+cancel, rather than three paths somebody remembered and a fourth they did not.
+
+`ErrBusy` is its own error rather than a generic failure, because the caller's response differs: a
+second message while the first is still streaming is a person typing ahead, and the interface
+should queue rather than show something that reads as broken.
+
+The event broker moved to `internal/store` as part of this. It was inside the P1 fake, and there
+are now two stores that need it with persistence to follow. Coalescing is subtle enough that two
+copies would drift, and the way they would drift is a dropped final transition under load, which is
+the one failure the design exists to prevent. The fake's own event tests still pass unchanged,
+which is what makes the extraction safe to believe.
 
 ### PG-A3 Phase A3 gate
 `status: todo | depends: A3-00, A3-04, A3-05, A3-06`
@@ -1490,20 +1845,29 @@ to a misparsed 20 instead of 2. Enforcement before the request rather than after
 between a guardrail and a receipt. An estimate presented more confidently than the data supports
 would be its own small lie, so the range carries its basis.
 
-### A5-10 Split screen agent views
+### A5-10 Agents view
 `status: todo | owner: none | branch: none | depends: A5-06`
-`scope: internal/tui/`
+`scope: internal/tui/agents/`
 
-Deliverable: several agents at once in split panes, two up and four up, focus by keyboard and by
-mouse.
+Deliverable: one screen showing every running agent, in **three modes the user switches between**:
 
-Acceptance: four agents stream simultaneously without tearing. Focus follows a click. Layout
-degrades sensibly on a narrow terminal. Keyboard remains sufficient for everything.
+- **tabbed**, one agent at a time, tab and shift-tab to move
+- **split**, several at once in panes, two up and four up
+- **list**, a compact row per agent showing what each is currently doing
+
+Acceptance: four agents stream simultaneously in split mode without tearing. Switching modes keeps
+the same agent focused. Focus follows a click. Layout degrades sensibly on a narrow terminal, and
+split falls back to tabbed when there is not room. Keyboard remains sufficient for everything.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: this is what makes running many agents feel like supervising rather than tab switching. Four
-live streams into one terminal is also where the coalescing rules from P1-01 stop being
+notes: three modes rather than one because they answer different questions. Tabbed is for working
+with one agent while others run. Split is for watching two compete. List is for "what is everything
+doing right now" at a glance, which is the question you have most often with six agents going.
+
+Reached from the chat, which is the home screen. This is where the P1-07 dashboard ends up living.
+
+Four live streams into one terminal is also where the coalescing rules from P1-01 stop being
 theoretical. Mouse support is additive only, since the tool has to stay usable over ssh where mouse
 reporting may not survive.
 

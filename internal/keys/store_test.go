@@ -401,3 +401,76 @@ func TestAtomicWriteLeavesNoDebris(t *testing.T) {
 		}
 	}
 }
+
+// Correcting a price must not require re typing a secret. A flow that asks for one is a flow where
+// people paste keys into shell history.
+func TestSettingARateDoesNotNeedTheSecret(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	ref := core.KeyRef{Name: "kimi", Provider: core.ProviderOpenAICompatible}
+	if _, err := store.Put(
+		core.KeyMetadata{Ref: ref, BaseURL: "https://api.moonshot.cn/v1"},
+		core.NewSecret("sk-secret-value"),
+	); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	rate := core.KeyRate{InputPerMTok: 0.6, OutputPerMTok: 2.5}
+	if err := store.SetRate(ref, rate); err != nil {
+		t.Fatalf("SetRate: %v", err)
+	}
+
+	meta, err := store.Metadata(ref)
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if meta.Rate != rate {
+		t.Errorf("rate = %+v, want %+v", meta.Rate, rate)
+	}
+
+	// And the secret is untouched, which is the whole point of it being a separate call.
+	secret, err := store.Get(ref)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if secret.Reveal() != "sk-secret-value" {
+		t.Error("setting a rate disturbed the stored secret")
+	}
+}
+
+// Rotating a key does not change what the endpoint charges, so dropping the price would turn a
+// working cost figure into "unknown" for no reason the user could see.
+func TestRotatingAKeyKeepsItsRate(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	ref := core.KeyRef{Name: "kimi", Provider: core.ProviderOpenAICompatible}
+	meta := core.KeyMetadata{Ref: ref, BaseURL: "https://api.moonshot.cn/v1"}
+	if _, err := store.Put(meta, core.NewSecret("sk-first-value")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	rate := core.KeyRate{InputPerMTok: 0.6, OutputPerMTok: 2.5}
+	if err := store.SetRate(ref, rate); err != nil {
+		t.Fatalf("SetRate: %v", err)
+	}
+
+	if _, err := store.Put(meta, core.NewSecret("sk-rotated-value")); err != nil {
+		t.Fatalf("Put after rotation: %v", err)
+	}
+
+	after, err := store.Metadata(ref)
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if after.Rate != rate {
+		t.Errorf("rate after rotation = %+v, want it kept at %+v", after.Rate, rate)
+	}
+}
+
+func TestSettingARateOnAMissingKeyIsAnError(t *testing.T) {
+	store, _ := newTestStore(t)
+	err := store.SetRate(core.KeyRef{Name: "nope"}, core.KeyRate{InputPerMTok: 1, OutputPerMTok: 2})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want not found", err)
+	}
+}

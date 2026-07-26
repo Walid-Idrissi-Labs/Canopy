@@ -106,6 +106,39 @@ type ProjectSnapshot struct {
 	TrustState TrustState
 
 	Workspaces []WorkspaceSnapshot
+
+	// Sessions are the conversations, newest activity first.
+	//
+	// They live in the same snapshot as the workspaces rather than in a store of their own, so that
+	// "this agent is working in that worktree, whose tests are currently failing" is one read of one
+	// consistent view. Two stores would mean two reads, and two reads mean a moment where the
+	// answer is half from before and half from after.
+	Sessions []Session
+}
+
+// Session returns the session with an ID.
+func (p ProjectSnapshot) Session(id string) (Session, bool) {
+	for _, s := range p.Sessions {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return Session{}, false
+}
+
+// AgentsNeedingAttention counts the sessions that have stopped and cannot start again without a
+// person.
+//
+// One number, because it is the one the header shows and the one that decides whether a user who
+// has walked away needs to come back.
+func (p ProjectSnapshot) AgentsNeedingAttention() int {
+	var n int
+	for _, s := range p.Sessions {
+		if s.AgentState().NeedsAttention() {
+			n++
+		}
+	}
+	return n
 }
 
 // Workspace returns the snapshot for a workspace ID.

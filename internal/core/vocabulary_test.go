@@ -133,6 +133,16 @@ func TestEveryDeclaredStateIsValid(t *testing.T) {
 			t.Errorf("trust state %q is in the vocabulary but Valid() says otherwise", s)
 		}
 	}
+	for _, s := range AllTurnStates() {
+		if !s.Valid() {
+			t.Errorf("turn state %q is in the vocabulary but Valid() says otherwise", s)
+		}
+	}
+	for _, s := range AllAgentStates() {
+		if !s.Valid() {
+			t.Errorf("agent state %q is in the vocabulary but Valid() says otherwise", s)
+		}
+	}
 }
 
 func TestUnknownStringsAreNotValid(t *testing.T) {
@@ -240,6 +250,51 @@ func TestOnlyGrantedTrustAllowsExecution(t *testing.T) {
 		want := s == TrustGranted
 		if got := s.AllowsExecution(); got != want {
 			t.Errorf("%q AllowsExecution() = %v, want %v", s, got, want)
+		}
+	}
+}
+
+func TestAllTurnStatesMatchesTheContract(t *testing.T) {
+	want := []TurnState{
+		"pending",
+		"streaming",
+		"awaiting-tools",
+		"complete",
+		"interrupted",
+		"refused",
+		"truncated",
+		"failed",
+	}
+
+	got := AllTurnStates()
+	if len(got) != len(want) {
+		t.Fatalf("turn state vocabulary changed size: got %d states %v, want %d %v",
+			len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("turn state %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestAllAgentStatesMatchesTheContract(t *testing.T) {
+	want := []AgentState{
+		"idle",
+		"working",
+		"awaiting-permission",
+		"failed",
+		"stopped",
+	}
+
+	got := AllAgentStates()
+	if len(got) != len(want) {
+		t.Fatalf("agent state vocabulary changed size: got %d states %v, want %d %v",
+			len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("agent state %d: got %q, want %q", i, got[i], want[i])
 		}
 	}
 }

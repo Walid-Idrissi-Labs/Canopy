@@ -19,8 +19,9 @@ var version = "dev"
 const usage = `canopy - a local verification cockpit for parallel git worktrees
 
 usage:
-  canopy               open the dashboard
+  canopy               open a chat in this directory
   canopy keys          manage provider credentials
+  canopy ask           send one message to a provider and stream the reply
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
   canopy demo          drive the stale flip and show it happening
@@ -50,7 +51,7 @@ func run(args []string) error {
 			printUsage(os.Stdout)
 			return nil
 		}
-		return runDashboard()
+		return runChat()
 	}
 
 	command := args[0]
@@ -59,6 +60,10 @@ func run(args []string) error {
 	// gets a chance to reject them.
 	if command == "keys" {
 		return runKeys(args[1:], os.Stdout)
+	}
+	// ask owns its own flags too, so it is dispatched before the shared flag set sees them.
+	if command == "ask" {
+		return runAsk(args[1:], os.Stdout)
 	}
 
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
@@ -85,8 +90,8 @@ func run(args []string) error {
 	}
 
 	switch command {
-	case "dashboard", "ui":
-		return runDashboard()
+	case "dashboard", "ui", "chat":
+		return runChat()
 	case "snapshot":
 		return runSnapshot(os.Stdout)
 	case "watch":

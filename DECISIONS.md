@@ -574,6 +574,67 @@ justification so they can be cut on purpose if the scope needs to shrink.
    names. Exploring a large codebase is mostly reading, which a cheap model does adequately, while
    the fix wants the strongest model available.
 
+## D-30 Official Anthropic SDK, hand-rolled elsewhere. Decided 2026-07-26.
+
+The Anthropic client uses `github.com/anthropics/anthropic-sdk-go`. Other providers are hand
+rolled.
+
+**This reverses an earlier call in SPEC.md**, which said hand-roll both on the grounds that a
+vendor SDK would fight the streaming and cancellation shape we need. Checking the SDK rather than
+assuming: it supports streaming through `Messages.NewStreaming`, takes a context for cancellation,
+and ships typed errors and model constants. The objection was to a problem that does not exist,
+and hand rolling would mean tracking API changes ourselves for nothing in return.
+
+The asymmetry is deliberate rather than untidy. The OpenAI compatible surface we need is small,
+and pointing a vendor SDK at arbitrary base URLs is exactly the case those SDKs handle worst. Each
+provider package hides its own approach behind the `core` interface, so nothing above the provider
+layer can tell which one is which.
+
+## D-31 Provider contract rules from the current API. Decided 2026-07-26.
+
+Checked against the current API reference rather than written from memory, because several of
+these changed recently and a plausible-looking wrong value is worse than an obvious one.
+
+- **Default model is `claude-opus-5`.** Model IDs are exact and carry no date suffix.
+- **`refusal` is a stop reason, not an error.** A declined request returns HTTP 200 with
+  `stop_reason: "refusal"` and possibly empty content. Code that reads the first content block
+  without checking the stop reason breaks on it, so the contract requires checking first.
+- **Sampling parameters are rejected.** `temperature`, `top_p` and `top_k` return 400 on the
+  current models. `AgentProfile.Temperature` exists in the contract from A1-01 and must not be
+  sent to those models. The provider layer enforces this rather than trusting callers.
+- **Thinking depth is controlled by effort, not a token budget.** `budget_tokens` returns 400.
+  Thinking is on by default on the current Opus, so an omitted setting means it thinks.
+- **Streaming above roughly 16k output tokens**, because non-streaming requests hit HTTP timeouts
+  there. We stream everything anyway.
+
+Recorded here rather than only in code comments so the next person to touch the provider layer
+does not have to rediscover them, and so a wrong value can be traced to a decision rather than to
+a guess.
+
+---
+
+## D-32 Prices are recorded, never inferred. Decided 2026-07-26.
+
+The pricing table in `internal/pricing` only holds rates for endpoints where the endpoint
+determines the price: Anthropic first party, and local runtimes where nothing is billed at all.
+
+The temptation was to price the OpenAI compatible family by model name, since a model called
+`anthropic/claude-opus-5` obviously costs what Anthropic charges. It does not. The gateway sets the
+price, there are many gateways, and their margins differ. A number derived that way would be a guess
+wearing the clothes of a fact, and the person reading it would have no way to tell.
+
+So an endpoint with no recorded rate reports as unpriced and names itself, and A2-09 will let the
+user supply their own rate, labelled as theirs. Three states, all distinguishable on screen: a
+checked price, the user's price, and no price. Canopy is a tool for telling which of several things
+is actually true, and a cost figure it cannot stand behind is exactly the kind of confident wrong
+answer the rest of the design is built to avoid.
+
+Two consequences worth naming. **Free and unpriced are separate claims** and both get made:
+`CostKnown` exists next to `CostUSD` precisely so a local model can say zero and mean it. And
+**`Usage.Add` has no identity element**, which is why `core.Sum` exists: `Usage{}` is
+indistinguishable from a turn nobody could price, so folding a list from the zero value would mark
+every total unknown.
+
 ---
 
 ## Appendix: where the settled scope comes from

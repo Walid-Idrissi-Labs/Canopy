@@ -40,6 +40,13 @@ type record struct {
 	Fingerprint string     `json:"fingerprint"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
+
+	// Rate is the user's own price for this credential, per million tokens. Absent until they set
+	// one, which is why every field is omitempty: a rate of zero written to disk and a rate never
+	// set would otherwise be the same document.
+	InputPerMTok     float64 `json:"inputPerMTok,omitempty"`
+	OutputPerMTok    float64 `json:"outputPerMTok,omitempty"`
+	CacheReadPerMTok float64 `json:"cacheReadPerMTok,omitempty"`
 }
 
 // Open returns the key store, choosing a backend from the environment.
@@ -134,6 +141,11 @@ func (r record) toMetadata() core.KeyMetadata {
 		Fingerprint: r.Fingerprint,
 		CreatedAt:   r.CreatedAt,
 		LastUsedAt:  r.LastUsedAt,
+		Rate: core.KeyRate{
+			InputPerMTok:     r.InputPerMTok,
+			OutputPerMTok:    r.OutputPerMTok,
+			CacheReadPerMTok: r.CacheReadPerMTok,
+		},
 	}
 }
 
@@ -168,11 +180,14 @@ func (s *Store) Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata
 	}
 
 	stored := record{
-		Name:        meta.Ref.Name,
-		Provider:    string(meta.Ref.Provider),
-		BaseURL:     meta.BaseURL,
-		Fingerprint: secret.Fingerprint(),
-		CreatedAt:   s.clock(),
+		Name:             meta.Ref.Name,
+		Provider:         string(meta.Ref.Provider),
+		BaseURL:          meta.BaseURL,
+		Fingerprint:      secret.Fingerprint(),
+		CreatedAt:        s.clock(),
+		InputPerMTok:     meta.Rate.InputPerMTok,
+		OutputPerMTok:    meta.Rate.OutputPerMTok,
+		CacheReadPerMTok: meta.Rate.CacheReadPerMTok,
 	}
 
 	replaced := false
@@ -181,6 +196,16 @@ func (s *Store) Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata
 			// Keep the original creation time. Rotating a credential is not creating a new one,
 			// and losing the date would hide how long a key has been in use.
 			stored.CreatedAt = existing.CreatedAt
+			stored.LastUsedAt = existing.LastUsedAt
+
+			// And keep the rate, unless the caller supplied one. Rotating a key does not change
+			// what the endpoint charges, so silently dropping the price would turn a working cost
+			// figure into "unknown" for no reason the user could see.
+			if meta.Rate.IsZero() {
+				stored.InputPerMTok = existing.InputPerMTok
+				stored.OutputPerMTok = existing.OutputPerMTok
+				stored.CacheReadPerMTok = existing.CacheReadPerMTok
+			}
 			records[i] = stored
 			replaced = true
 			break
@@ -284,6 +309,38 @@ func (s *Store) Remove(ref core.KeyRef) error {
 		}
 	}
 	return s.save(remaining)
+}
+
+// SetRate records what the user says this credential charges.
+//
+// A separate call rather than a field on Put, because setting a price must not require re typing a
+// secret. Somebody correcting a rate they got wrong should not have to go and find their API key
+// again, and a flow that asks for one is a flow where people paste keys into shell history.
+func (s *Store) SetRate(ref core.KeyRef, rate core.KeyRate) error {
+	if !rate.IsZero() {
+		if err := rate.Validate(); err != nil {
+			return err
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records, err := s.load()
+	if err != nil {
+		return err
+	}
+
+	for i, r := range records {
+		if r.Name != ref.Name {
+			continue
+		}
+		records[i].InputPerMTok = rate.InputPerMTok
+		records[i].OutputPerMTok = rate.OutputPerMTok
+		records[i].CacheReadPerMTok = rate.CacheReadPerMTok
+		return s.save(records)
+	}
+	return fmt.Errorf("no key named %q: %w", ref.Name, ErrNotFound)
 }
 
 // MarkUsed records that a credential was used just now.

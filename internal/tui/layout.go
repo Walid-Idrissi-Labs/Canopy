@@ -76,7 +76,7 @@ func Frame(d Dimensions, title, context, body, footer string) string {
 		b.WriteString(t.Muted.Render("  " + context))
 	}
 	b.WriteString("\n")
-	b.WriteString(t.Border.Render(strings.Repeat("-", maxInt(1, minInt(d.Width, 200)))))
+	b.WriteString(t.Border.Render(strings.Repeat("─", maxInt(1, minInt(d.Width, 200)))))
 	b.WriteString("\n\n")
 
 	bodyLines := strings.Split(strings.TrimRight(body, "\n"), "\n")
