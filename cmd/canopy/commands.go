@@ -99,6 +99,25 @@ func eventView(ev core.Event) eventLine {
 	}
 }
 
+// errWriter defers error handling across a run of writes.
+//
+// Printing a table means a dozen calls in a row, and checking each one inline would bury the
+// logic in error handling that says the same thing every time. This remembers the first failure,
+// skips the rest, and hands it back once at the end. Ignoring write errors outright would be the
+// easier option and the wrong one: out is caller supplied, so a closed pipe or a full disk is a
+// real failure that should be reported rather than swallowed.
+type errWriter struct {
+	w   io.Writer
+	err error
+}
+
+func (e *errWriter) printf(format string, args ...any) {
+	if e.err != nil {
+		return
+	}
+	_, e.err = fmt.Fprintf(e.w, format, args...)
+}
+
 // runDemo shows the thing the whole project is built around: a green result becoming stale the
 // moment the code underneath it changes, with nothing re-run and nothing restarted.
 func runDemo(out io.Writer) error {
@@ -110,8 +129,10 @@ func runDemo(out io.Writer) error {
 	snap := store.Snapshot()
 	events := store.Events(snap.Sequence)
 
-	fmt.Fprintln(out, "before the edit")
-	printTable(out, store.Snapshot())
+	w := &errWriter{w: out}
+
+	w.printf("before the edit\n")
+	printTable(w, store.Snapshot())
 
 	if err := store.Touch(target); err != nil {
 		return fmt.Errorf("editing %s: %w", target, err)
@@ -127,7 +148,7 @@ func runDemo(out io.Writer) error {
 				return fmt.Errorf("the event stream closed before the change arrived")
 			}
 			if ev.Kind == core.EventRevisionChanged && ev.WorkspaceID == target {
-				fmt.Fprintf(out, "\nedited %s, event #%d %s\n\n", target, ev.Sequence, ev.Kind)
+				w.printf("\nedited %s, event #%d %s\n\n", target, ev.Sequence, ev.Kind)
 				waiting = false
 			}
 		case <-deadline:
@@ -135,25 +156,28 @@ func runDemo(out io.Writer) error {
 		}
 	}
 
-	fmt.Fprintln(out, "after the edit")
-	printTable(out, store.Snapshot())
+	w.printf("after the edit\n")
+	printTable(w, store.Snapshot())
 
-	w, ok := store.Snapshot().Workspace(target)
+	workspace, ok := store.Snapshot().Workspace(target)
 	if !ok {
 		return fmt.Errorf("workspace %s disappeared", target)
 	}
-	rollup := core.RollUp(w)
+	rollup := core.RollUp(workspace)
 	if rollup.Tests != core.TestStale {
 		return fmt.Errorf("expected %s to be stale, got %s", target, rollup.Tests)
 	}
-	fmt.Fprintf(out, "\n%s went from passing to stale without anything being re-run.\nreason: %s\n",
+	w.printf("\n%s went from passing to stale without anything being re-run.\nreason: %s\n",
 		target, rollup.Reason)
-	return nil
+
+	return w.err
 }
 
-func printTable(out io.Writer, snap core.ProjectSnapshot) {
-	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "  WORKSPACE\tBRANCH\tREVISION\tTESTS\tSERVICES\tVERIFIED")
+func printTable(out *errWriter, snap core.ProjectSnapshot) {
+	tab := tabwriter.NewWriter(out.w, 0, 0, 2, ' ', 0)
+	table := &errWriter{w: tab}
+
+	table.printf("  WORKSPACE\tBRANCH\tREVISION\tTESTS\tSERVICES\tVERIFIED\n")
 
 	for _, workspace := range snap.Workspaces {
 		rollup := core.RollUp(workspace)
@@ -172,8 +196,14 @@ func printTable(out io.Writer, snap core.ProjectSnapshot) {
 			tests = fmt.Sprintf("%s %d/%d", rollup.Tests, rollup.TestsPassing, rollup.TestsTotal)
 		}
 
-		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%s\n",
+		table.printf("  %s\t%s\t%s\t%s\t%s\t%s\n",
 			workspace.Name, workspace.Branch, workspace.Revision.Short(), tests, services, verified)
 	}
-	_ = w.Flush()
+
+	if err := tab.Flush(); err != nil && table.err == nil {
+		table.err = err
+	}
+	if out.err == nil {
+		out.err = table.err
+	}
 }

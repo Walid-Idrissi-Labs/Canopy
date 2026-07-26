@@ -53,6 +53,10 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      - uses: golangci/golangci-lint-action@v6
+      # Both the action major and the tool version are pinned. The previous attempt used action
+      # v6 with "latest", which resolved to golangci-lint v2 and failed in seven seconds without
+      # linting anything, because v6 only knows how to drive v1. An unpinned version means CI can
+      # start failing on a day nobody touched the code.
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2

@@ -9,6 +9,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -38,7 +39,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		fmt.Fprint(os.Stdout, usage)
+		printUsage(os.Stdout)
 		return nil
 	}
 
@@ -53,10 +54,12 @@ func run(args []string) error {
 
 	switch command {
 	case "version":
-		fmt.Fprintf(os.Stdout, "canopy %s\n", version)
-		return nil
+		// Returned rather than dropped: this line is the command's entire output, so failing to
+		// write it means the command did not do its job.
+		_, err := fmt.Fprintf(os.Stdout, "canopy %s\n", version)
+		return err
 	case "help", "-h", "--help":
-		fmt.Fprint(os.Stdout, usage)
+		printUsage(os.Stdout)
 		return nil
 	}
 
@@ -72,7 +75,14 @@ func run(args []string) error {
 	case "demo":
 		return runDemo(os.Stdout)
 	default:
-		fmt.Fprint(os.Stderr, usage)
+		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+// printUsage writes the usage text. A failure to print usage is not worth failing the process
+// over, and there is nowhere useful left to report it to, so it is dropped explicitly rather than
+// left as an unchecked call that only looks deliberate.
+func printUsage(w io.Writer) {
+	_, _ = fmt.Fprint(w, usage)
 }

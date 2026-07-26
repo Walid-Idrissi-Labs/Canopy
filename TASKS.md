@@ -169,9 +169,24 @@ the pipeline fail.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: the workflow is committed but acceptance is not demonstrated yet, since it needs a real
-pull request to run. Deliberately left unticked. No .golangci.yml, so golangci-lint runs on its
-defaults. Add a config later only if the defaults prove too loose.
+notes: first attempt failed on PR #1. The workflow pinned `golangci-lint-action@v6` with
+`version: latest`, and latest now resolves to golangci-lint v2.12.2, which v6 cannot drive. It
+died in seven seconds without linting anything. Fixed by moving to action v9 and pinning the tool
+to v2.12.2. Both the action major and the tool version are pinned now, since an unpinned version
+means CI can start failing on a day nobody touched the code.
+
+That also uncovered eight real findings the failing job had been hiding, all unchecked write
+errors in `cmd/canopy`. Fixed properly rather than excluded: an `errWriter` defers error handling
+across a run of writes and reports the first failure once, and the two places where a write
+genuinely cannot be acted on drop it explicitly at the call site.
+
+`.golangci.yml` uses the v2 schema with the standard linter set. Deliberately **no exclusion for
+unchecked write errors**, which is the usual thing to exclude. This project reports on other
+people's processes and exists to not quietly lose information, so silently dropped writes are the
+wrong default here.
+
+Still unticked until CI is observed green on a pull request. Verified locally against the same
+tool version: `golangci-lint run ./...` reports 0 issues.
 
 ### P0-03 DECISIONS.md
 `status: review | owner: Claude | branch: main | depends: none`
