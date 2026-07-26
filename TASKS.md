@@ -2011,8 +2011,8 @@ No interface yet: `Engine.Undo` exists and is tested, and the key to reach it be
 list, which is A5 work.
 
 ### A4-09 Plan first mode
-`status: todo | owner: none | branch: none | depends: A4-05`
-`scope: internal/agent/, internal/tui/`
+`status: partial | owner: Claude | branch: feat/agent-runtime | depends: A4-05`
+`scope: internal/agent/plan.go`
 
 Deliverable: a profile setting where the agent produces a plan, waits for approval, then executes
 without asking per tool.
@@ -2025,6 +2025,34 @@ described. An agent that departs from the plan stops and asks again.
 notes: **added 2026-07-26.** Approval at the task level rather than the keystroke level, and better
 than either extreme. Per tool prompting on a fifty step task trains you to approve without reading,
 which is worse than not asking. Reviewing one plan is something a person actually does properly.
+
+**The mechanism is done. The profile setting and the interface are not**, because there are no
+profiles until A5 and the screen for reviewing a plan belongs with them. `Loop.Plan` and
+`Loop.Execute` exist and are tested; nothing calls them yet. The verify box stays unticked.
+
+**Planning is enforced, not requested.** The planning phase runs with a read-only trust level, an
+approver that refuses everything, and a fresh grant set, so a model that ignores the instruction and
+calls a tool anyway is stopped by the permission layer rather than by its own good behaviour. The
+fresh grant set matters on its own: reusing the session's would mean an earlier "always allow edits"
+quietly turning plan mode into ordinary mode. Both are tested with an agent at **broad** trust,
+because relying on the agent's own level being low is exactly the mistake.
+
+The tools are still described to the planning model. A plan written by something that does not know
+what it can do is a plan that proposes the impossible.
+
+The plan is asked for in prose rather than a structured format, because the reader is a person
+deciding whether to allow this and a person reads prose. Nothing parses it back out: what a plan
+authorises is a phase, not a checklist to verify against.
+
+On execution the plan goes back into the conversation **as the agent's own words** and the approval
+as the user's reply. A model that reads its own plan as something it said follows it; one handed the
+same text as an instruction from somebody else argues with it.
+
+"An agent that departs from the plan stops and asks again" is currently done by telling it to, in the
+approval message, rather than by detecting the departure. That is honest about what it is: cheaper
+than any mechanism that tries to catch a departure afterwards, and weaker. Worth discussing whether
+the stronger version is worth building, since detecting it properly means comparing intent against
+action, which is the hard problem in the middle of this whole product.
 
 ### A4-10 Todo and plan tracking
 `status: todo | owner: none | branch: none | depends: A4-05`
