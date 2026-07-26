@@ -20,6 +20,11 @@ What now exists that did not last night:
 - **Nothing is silently lost.** Compaction announces itself and keeps the history. Every turn is
   checkpointed so it can be undone. A cancelled turn keeps its partial and says it is partial.
 - **Markdown and syntax highlighting** in replies, written by a Sonnet agent working in parallel.
+- **Several agents at once.** Named, each with its own conversation, credential and model. Three
+  layouts over them: a list ordered by what needs you, a two way split, and one full width. `ctrl+d`
+  from chat, `enter` to open one, `n` to start another.
+- **Worktrees.** Discovered, created and removed, with the primary checkout and anything Canopy did
+  not make protected at every level of confirmation.
 
 Four things worth a second pair of eyes, in order:
 
@@ -28,10 +33,23 @@ Four things worth a second pair of eyes, in order:
 3. **Q-06**, the 148 MB SQLite dependency, given Walid is storage aware.
 4. **Q-01**, whether a rate of zero should be allowed for a genuinely free endpoint.
 
-**Six real bugs were found by tests rather than by review**, and each is recorded where it happened.
-The two most instructive: a cancelled turn reported itself as failed on both providers, which only a
-live test could catch; and the tool loop hung for ten minutes because it read past the done event,
-which only showed up because a scripted stream blocked where a real one returns false.
+**Ten real bugs were found by tests rather than by review**, and each is recorded where it happened.
+The four most instructive:
+
+- A cancelled turn reported itself as **failed** on both providers. Only a live test could catch it,
+  because the ordering only goes wrong when a read is genuinely blocked when the cancel arrives.
+- The tool loop **hung for ten minutes** because it read past the done event, which only showed up
+  because a scripted stream blocks where a real one returns false.
+- A compaction could report having made the conversation **larger**, because the before and after
+  figures were measured two different ways.
+- The marker file that says "Canopy made this worktree" could not be written at all, because in a
+  linked worktree `.git` is a file rather than a directory.
+
+And one found by rendering a screen and looking at it: the cost figure in the chat header vanished
+every time somebody sent a message, because an unpriced in flight turn poisoned the total.
+
+**The last live run of the night** had NVIDIA accept a request and then send nothing. That was worth
+having: it exposed a real gap, and there is now a stall watchdog. The live suite passes.
 
 ---
 
