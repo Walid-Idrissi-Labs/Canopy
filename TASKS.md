@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | none, P1-01 to P1-06 handed off for review | `feat/core-contract` | none |
+| Claude | P1-07, the first dashboard | `feat/dashboard` | none |
 | Codex | none | none | none |
 
 PG-0 is signed by Walid and phase 1 is underway. P1-01 through P1-05 are done and in review on
@@ -517,7 +517,7 @@ revision it actually covered. Every service reports liveness and readiness separ
 once real discovery lands in P2-01.
 
 ### P1-07 First dashboard against the fake
-`status: todo | owner: none | branch: none | depends: P1-05`
+`status: claimed | owner: Claude | branch: feat/dashboard | depends: P1-05`
 `scope: internal/tui/`
 
 Deliverable: a Bubble Tea dashboard listing the fake's workspaces with test state and freshness,
