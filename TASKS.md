@@ -899,7 +899,7 @@ built from, so an error constructed without one panics. That would turn a provid
 lost session and everything in it. `safeMessage` guards it and falls back to naming the status.
 
 ### A2-03 Error taxonomy
-`status: todo | owner: none | branch: none | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
 `scope: internal/core/, internal/provider/`
 
 Deliverable: provider failures mapped to distinct states: authentication, rate limited, overloaded,
@@ -911,10 +911,16 @@ reported like a bad key.
 **Provider error text is scrubbed of the credential before it leaves this package.** A planted key
 does not appear in any error surfaced from a provider failure, and there is a test for it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: same discipline as the test state vocabulary. "Something went wrong" is the agent equivalent
-of a status nobody can act on.
+of a status nobody can act on. The vocabulary lives in `core` from A2-01 and the mapping in the
+Anthropic client from A2-02, so this task was satisfied by those two rather than adding a third
+layer.
+
+Each class carries a message naming the next action, tested. A rate limit and a rejected key read
+completely differently, because sending someone hunting for a bad key when they were merely rate
+limited wastes real time.
 
 The scrubbing requirement came out of A1-04, which found that free text fields render verbatim.
 The realistic leak is a provider replying "invalid x-api-key: sk-ant-..." and Canopy putting it on
@@ -927,7 +933,7 @@ local and complete. `TestFreeTextFieldsAreNotScrubbed` in `cmd/canopy` will fail
 and should then be narrowed to the fields this package does not own.
 
 ### A2-04 One shot ask
-`status: todo | owner: none | branch: none | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
 `scope: cmd/canopy/`
 
 Deliverable: `canopy ask "..."` streams a reply to stdout.
@@ -937,7 +943,28 @@ cancels cleanly on interrupt.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: the smallest proof the whole pipe works, and worth keeping permanently as a debugging tool.
+notes: **deliberately unticked.** Everything except "works against a real key" is built and tested
+against a scripted stream. The real network call needs a credential, which is the supervisors' to
+make at PG-A2. That is the honest state, not a formality.
+
+The command is the smallest proof the whole pipe works, and worth keeping permanently as a way to
+check a key or a model without opening the interface.
+
+Four decisions in the output handling:
+
+1. **The stop reason is checked before anything is presented as an answer.** A refusal arrives as
+   a successful response with possibly empty content, so printing the text and exiting zero would
+   present a declined request as an answered one.
+2. **A truncated reply exits non zero.** It looks complete on screen, which is the whole problem,
+   so the exit status is the only thing distinguishing it. The partial is still shown, since it
+   was paid for.
+3. **A stream that ends with no done event is an error**, not a success. That is a bug in a
+   provider adapter, and exiting zero on an answer nobody received would hide it.
+4. **Cost prints only when known.** A zero rendered as a dollar figure reads as "this was free",
+   which is a different claim from "we could not price it". Pricing lands in A2-05.
+
+With several usable credentials it refuses and lists them rather than picking one. Silently
+choosing which key gets billed is not a decision to make on someone's behalf.
 
 ### A2-05 Usage and cost accounting
 `status: todo | owner: none | branch: none | depends: A2-02`
