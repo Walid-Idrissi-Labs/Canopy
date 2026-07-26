@@ -1666,18 +1666,53 @@ the same reason a malformed pattern says so rather than matching nothing: a mode
 for a typo stops looking, which is far more expensive than a syntax error.
 
 ### A4-03 Shell tool
-`status: todo | owner: none | branch: none | depends: A4-01`
-`scope: internal/exec/, internal/tools/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
+`scope: internal/exec/, internal/tools/shell.go`
 
 Deliverable: run a command in the agent's worktree, own process group, timeout, bounded output.
 
 Acceptance: cancellation leaves no orphans, verified by process listing. Output above the limit
 keeps head and tail and says how much was dropped.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: carries forward the old P2-05 to P2-07 designs unchanged. Shares machinery with the test
 runner at A6-03, which the old plan had as two separate efforts.
+
+**Every command gets its own process group and the whole group is killed together.** A test runner
+spawns workers, a dev server spawns a bundler. Killing only the process we started leaves those
+holding ports and file handles, and the next run fails with "address already in use" for reasons
+nobody can see. Tested by starting a background child that keeps touching a file, cancelling, and
+checking the file stops changing.
+
+SIGTERM first, SIGKILL shortly after. A process asked to stop politely cleans up its temporary
+directories; one killed outright leaves them. A process that ignores SIGTERM is exactly what the
+second signal is for.
+
+Windows has no process group in this sense and the equivalent is a job object, which is more work
+than this needs today. `process_windows.go` says so out loud rather than being an empty file that
+reads as though the problem were handled. **On Windows a cancelled command may leave children
+running.** Recorded as a gap, not a decision.
+
+Output keeps the **head and the tail**, not just the tail. The two ends carry different information
+and both are usually wanted: the first compiler error is at the top and how many there were is at
+the bottom. The gap is marked in the output itself, because a model that cannot see the gap answers
+as though the two halves were adjacent.
+
+There is no "no timeout" option. A hung command is a session that looks like it is thinking, and the
+failure mode of forgetting to set one should be a command that stops rather than one that never
+does. A timeout and a cancellation are separate fields, because "it took too long" and "you pressed
+escape" lead somewhere different.
+
+The command goes to `/bin/sh -c` rather than being split into arguments here. It will contain pipes,
+redirections and globs, and splitting it ourselves would run something subtly different from what
+was asked for and approved.
+
+**The shell tool is the one that is not confined by construction.** Every other tool here is limited
+by what `Workspace.Resolve` will resolve; a shell command is an opaque string that can do anything
+the user can, and inspecting it does not change that. Its confinement is the permission model, which
+is A4-04, and its kind is `execute` precisely so that model can treat it differently. Canopy does
+not sandbox and must never imply that it does.
 
 ### A4-04 Per agent trust levels and permissions
 `status: todo | owner: none | branch: none | depends: A4-02, A4-03`

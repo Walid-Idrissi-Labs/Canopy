@@ -392,3 +392,75 @@ func TestEveryFileToolDeclaresAUsableSchema(t *testing.T) {
 		}
 	}
 }
+
+// The shell tool is the broadest thing an agent has. Everything else here is confined by
+// construction; this one is confined by the permission model and by its working directory.
+func TestTheShellToolRunsInTheWorkspace(t *testing.T) {
+	w := testWorkspace(t)
+	tool := ShellTool(w)
+
+	result := call(t, tool, map[string]any{"command": "ls"})
+	if result.IsError {
+		t.Fatalf("run failed: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "main.go") {
+		t.Errorf("the command ran somewhere other than the workspace: %q", result.Content)
+	}
+	if tool.Kind() != core.ToolExecute {
+		t.Errorf("kind = %q, and the permission model treats execute differently from every other",
+			tool.Kind())
+	}
+}
+
+// A model reading "exit status 1" next to a wall of test output has to work out which is the
+// answer, and models get that wrong in the expensive direction.
+func TestAFailingCommandIsMarkedAsAFailure(t *testing.T) {
+	w := testWorkspace(t)
+	tool := ShellTool(w)
+
+	result := call(t, tool, map[string]any{"command": "echo broken >&2; exit 1"})
+	if !result.IsError {
+		t.Error("a command that exited non zero was reported as a success")
+	}
+	if !strings.Contains(result.Content, "broken") {
+		t.Errorf("stderr is missing: %q", result.Content)
+	}
+	if !strings.Contains(result.Content, "failed") {
+		t.Errorf("the failure should be stated in words, not only as a number: %q", result.Content)
+	}
+}
+
+func TestAShellCommandKeepsItsShellSyntax(t *testing.T) {
+	w := testWorkspace(t)
+	tool := ShellTool(w)
+
+	// Pipes, redirections and globs are why the command goes to a shell rather than being split
+	// here. Splitting it would run something subtly different from what was approved.
+	result := call(t, tool, map[string]any{"command": "echo one two three | wc -w"})
+	if result.IsError {
+		t.Fatalf("run failed: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "3") {
+		t.Errorf("the pipe was not honoured: %q", result.Content)
+	}
+}
+
+// A model that has decided a command needs an hour has misunderstood something, and letting it wait
+// turns that into an hour of somebody's time.
+func TestAnExcessiveTimeoutIsCapped(t *testing.T) {
+	w := testWorkspace(t)
+	tool := ShellTool(w)
+
+	result := call(t, tool, map[string]any{"command": "echo quick", "timeout_seconds": 99999})
+	if result.IsError {
+		t.Errorf("a capped timeout should still run the command: %s", result.Content)
+	}
+}
+
+func TestAnEmptyCommandIsRefused(t *testing.T) {
+	w := testWorkspace(t)
+	result := call(t, ShellTool(w), map[string]any{"command": "   "})
+	if !result.IsError {
+		t.Error("an empty command should be refused rather than running a shell that does nothing")
+	}
+}
