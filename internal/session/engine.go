@@ -91,6 +91,10 @@ type Engine struct {
 	// checkpoints captures the worktree before each turn, when there is a worktree to capture.
 	checkpoints *git.Taker
 
+	// agents are the named workers, and agentOrder is the order they were created in.
+	agents     map[string]*Agent
+	agentOrder []string
+
 	nextID int
 }
 

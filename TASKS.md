@@ -2209,8 +2209,8 @@ isolate a database, Redis, a queue or an OAuth callback, and Canopy supplies tem
 without promising isolation it cannot deliver.
 
 ### A5-05 Agent registry
-`status: todo | owner: none | branch: none | depends: A3-01`
-`scope: internal/agent/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-01`
+`scope: internal/session/agents.go`
 
 Deliverable: named agents, each bound to a profile, a key, a session and a working directory. The
 working directory defaults to the repository, and is a worktree only for agents put into isolated
@@ -2220,9 +2220,30 @@ Acceptance: several agents run concurrently in the same repository without their
 interfering. Usage and cost are attributed per agent. An agent can be created without any worktree
 existing for it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: where the named key model from A1 pays off.
+notes: where the named key model from A1 pays off. Each agent carries its own credential and model,
+so one agent on Claude and one on a local model is a configuration rather than a fork.
+
+**Agents are listed with whatever needs a person first**, not alphabetically and not by creation
+order. With eight running, the useful question is not "where is the one called docs" but "which of
+these has stopped and cannot start again without me". The name is how you find a specific agent;
+the ordering is how you find the one that matters. Each waiting agent also says what it is waiting
+for, or the list sends you somewhere without saying why.
+
+Names are chosen rather than generated, because a list of eight agents called agent-1 through
+agent-8 is a list nobody can navigate. A duplicate name is refused rather than replacing, since two
+agents with one name makes every later reference ambiguous, including the ones in the audit trail,
+where ambiguity costs most.
+
+**Removing an agent keeps its conversation.** An agent is a worker and its transcript is a record of
+what was done; dismissing the worker is not a reason to burn the record, and it would leave the
+audit trail pointing at a session nobody can open.
+
+`Agents()` returns them in creation order, which is the order somebody built them in and therefore
+the order they already have in their head. `AgentStatuses()` is the one that sorts by need. Two
+methods rather than one with a flag, because they answer different questions and a caller that had
+to remember which order it was getting would eventually get it wrong.
 
 **Deliberately does not depend on the isolation tasks.** Coupling the registry to worktree creation
 would make "run an agent" mean "make a branch", which is not how anyone works most of the time and
