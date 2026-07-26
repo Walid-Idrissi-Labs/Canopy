@@ -1578,20 +1578,44 @@ Goal: the agent can change code, and cannot do so without you knowing what it di
 **Read A4-04 before claiming anything else here.** It is the dangerous part.
 
 ### A4-01 Tool interface and registry
-`status: todo | owner: none | branch: none | depends: A2-01`
-`scope: internal/core/, internal/tools/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A2-01`
+`scope: internal/core/tool.go`
 
 Deliverable: the tool contract, a registry, and schema generation for both provider APIs.
 
 Acceptance: a tool declares its schema once, used for the provider call and for local argument
 validation, so the two cannot drift.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: none
+notes: one schema, from one declaration, for both the provider request and the local check. Two
+declarations drift the first time somebody adds a field to one, and the failure is a model
+confidently passing an argument that is silently ignored.
+
+`ToolKind` is coarse on purpose: read, write, execute, network, git. The permission model asks "may
+this agent write files" rather than "may this agent call `edit`", because a per tool allow list has
+to be updated every time a tool is added, and the update that gets forgotten is the one that grants
+more than intended. Git is separate from write because a bad edit is recoverable from git and a bad
+`git checkout` is what you would have recovered from. Network is separate from read because the risk
+runs both ways: what comes back is untrusted, and what goes out has left.
+
+**`Run` returns a result, not an error, for anything the model could act on.** A tool that failed
+because the file was not there has told the model something useful, and turning that into a Go error
+would end the turn instead of letting it try a different path. The error return is only for failures
+the model cannot do anything about.
+
+Validation is deliberately shallow and is not a JSON Schema implementation. It catches the mistakes
+models actually make, a missing required field and a value of entirely the wrong type, and says
+which one: a model told "path is required" fixes it next turn, one told "invalid input" guesses. A
+number is accepted where an integer is declared, since JSON has one number type and refusing that
+would reject well formed calls for a reason nobody could fix.
+
+Tools come back in registration order rather than sorted, because models weight earlier definitions
+more heavily and that order is a choice. A duplicate name is refused rather than replacing, since
+otherwise whichever registration ran last wins and that is decided by import order.
 
 ### A4-02 File tools
-`status: todo | owner: none | branch: none | depends: A4-01`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
 `scope: internal/tools/`
 
 Deliverable: read, write, edit, glob, grep.
@@ -1599,11 +1623,47 @@ Deliverable: read, write, edit, glob, grep.
 Acceptance: every path resolves inside the agent's worktree. Symlinks that escape are refused. An
 edit against a file that changed since it was read is rejected rather than applied blind.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: the read-then-edit check is the freshness idea from the truth engine applied to a file
 instead of a test run. Applying an edit computed against content that has moved is how an agent
 silently destroys work, including another agent's.
+
+**Confinement is in exactly one function.** `Workspace.Resolve` is the only place in the package
+that turns a model's string into a path on disk. One place to get right, one to test, one to read
+when somebody asks how confinement works. A tool that resolved its own paths would be one tool away
+from a bug that lets an agent write outside its worktree, and that bug is not recoverable: by the
+time anyone notices, the file is gone.
+
+The check is on the **resolved** path. `../../etc/passwd` is the obvious attack and the easy one;
+a symlink inside the workspace pointing outside it looks entirely innocent until it is followed.
+Paths that do not exist yet are confined through their nearest existing ancestor, which is every
+file an agent creates. And `/work/project-secrets` is not inside `/work/project`, despite the string
+prefix.
+
+Two things found while writing it:
+
+- **The workspace root has to be symlink resolved too.** On macOS the temporary directory is itself
+  a symlink, so a workspace opened there has a root that matches no path resolved through it, and
+  every single call is refused.
+- **A refusal must not disclose where the path resolved to.** That is a description of the
+  filesystem outside the workspace, which is the thing the caller was not allowed to learn. It still
+  names what was asked for, or the model has nothing to correct.
+
+The read ledger is per workspace, not global, because two agents editing the same file in different
+worktrees have genuinely independent views of it and a shared ledger would let one agent's read
+satisfy the other's edit. An edit updates the ledger rather than clearing it, so several edits to
+one file do not each need a re read, which would triple the cost of a multi line change.
+
+An edit matching more than once is refused rather than guessed at: replacing the first is a guess
+about which was meant, and replacing all is a different edit from the one asked for. Overwriting an
+existing file gets the same freshness rule as an edit, since that is the destructive case.
+
+`glob` implements `**` itself, because `filepath.Match` has none and its `*` does not cross
+separators, so `**/*.go`, the pattern every model reaches for first, matches nothing. A tool whose
+most obvious input silently returns nothing is one a model concludes the codebase is empty from. For
+the same reason a malformed pattern says so rather than matching nothing: a model told "no matches"
+for a typo stops looking, which is far more expensive than a syntax error.
 
 ### A4-03 Shell tool
 `status: todo | owner: none | branch: none | depends: A4-01`
