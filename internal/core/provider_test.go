@@ -184,3 +184,36 @@ func (*stubProvider) Name() string { return "stub" }
 func (*stubProvider) Stream(context.Context, Request) (Stream, error) {
 	return nil, errors.New("not implemented")
 }
+
+// Add has no identity element, so folding a list from Usage{} would carry an unknown cost into
+// every total. This is the correct way to add turns up, and the reason it exists.
+func TestSumDoesNotStartFromAnUnpricedZero(t *testing.T) {
+	turns := []Usage{
+		{InputTokens: 100, OutputTokens: 10, CostUSD: 0.01, CostKnown: true},
+		{InputTokens: 200, OutputTokens: 20, CostUSD: 0.02, CostKnown: true},
+	}
+
+	total := Sum(turns...)
+	if !total.CostKnown {
+		t.Error("every turn was priced, so the total is priced")
+	}
+	if total.InputTokens != 300 || total.OutputTokens != 30 {
+		t.Errorf("token totals wrong: %+v", total)
+	}
+	if total.CostUSD != 0.03 {
+		t.Errorf("cost = %v, want 0.03", total.CostUSD)
+	}
+
+	// One unpriced turn still poisons the total, which is the property from TestUnknownCostPoisons.
+	withUnknown := Sum(turns[0], Usage{InputTokens: 5, CostKnown: false})
+	if withUnknown.CostKnown {
+		t.Error("a total containing an unpriced turn is not a known total")
+	}
+
+	if Sum().CostKnown {
+		t.Error("nothing to add is not a priced zero")
+	}
+	if Sum(turns[0]) != turns[0] {
+		t.Error("one turn sums to itself")
+	}
+}

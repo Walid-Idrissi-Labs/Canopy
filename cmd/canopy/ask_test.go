@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 )
 
 // scriptedStream replays a fixed set of events, which is how the drain logic gets tested without a
@@ -41,13 +42,17 @@ func done(reason core.StopReason) core.StreamEvent {
 	}
 }
 
+// unpriced stands in for the pricing table in tests about how a turn is reported, since what a
+// turn cost is a separate question from how it ended.
+func unpriced(usage core.Usage) (core.Usage, string) { return usage, "" }
+
 func TestDrainWritesTheReply(t *testing.T) {
 	var out bytes.Buffer
 	stream := &scriptedStream{events: []core.StreamEvent{
 		text("Hello"), text(", "), text("world"), done(core.StopEndTurn),
 	}}
 
-	if err := drain(stream, &out); err != nil {
+	if err := drain(stream, &out, unpriced); err != nil {
 		t.Fatalf("drain: %v", err)
 	}
 	if got := strings.TrimSpace(out.String()); got != "Hello, world" {
@@ -61,7 +66,7 @@ func TestRefusalIsReportedAsAFailure(t *testing.T) {
 	var out bytes.Buffer
 	stream := &scriptedStream{events: []core.StreamEvent{done(core.StopRefusal)}}
 
-	err := drain(stream, &out)
+	err := drain(stream, &out, unpriced)
 	if err == nil {
 		t.Fatal("a refused request must not exit successfully")
 	}
@@ -78,7 +83,7 @@ func TestTruncatedReplyIsReportedAsIncomplete(t *testing.T) {
 		text("this answer stops mid"), done(core.StopMaxTokens),
 	}}
 
-	err := drain(stream, &out)
+	err := drain(stream, &out, unpriced)
 	if err == nil {
 		t.Fatal("a truncated reply is not a complete answer")
 	}
@@ -96,7 +101,7 @@ func TestInterruptedReplyIsMarked(t *testing.T) {
 		text("partial"), done(core.StopCancelled),
 	}}
 
-	if err := drain(stream, &out); err == nil {
+	if err := drain(stream, &out, unpriced); err == nil {
 		t.Fatal("a cancelled turn should not exit successfully")
 	}
 	if !strings.Contains(out.String(), "interrupted") {
@@ -110,7 +115,7 @@ func TestMissingDoneEventIsAnError(t *testing.T) {
 	var out bytes.Buffer
 	stream := &scriptedStream{events: []core.StreamEvent{text("hello")}}
 
-	err := drain(stream, &out)
+	err := drain(stream, &out, unpriced)
 	if err == nil {
 		t.Fatal("a stream with no done event did not complete")
 	}
@@ -124,7 +129,7 @@ func TestStreamErrorIsSurfaced(t *testing.T) {
 	boom := errors.New("connection reset")
 	stream := &scriptedStream{events: []core.StreamEvent{text("part")}, err: boom}
 
-	if err := drain(stream, &out); !errors.Is(err, boom) {
+	if err := drain(stream, &out, unpriced); !errors.Is(err, boom) {
 		t.Errorf("the underlying failure should reach the caller, got %v", err)
 	}
 }
@@ -210,5 +215,31 @@ func TestUnknownProviderIsRefused(t *testing.T) {
 	meta := core.KeyMetadata{Ref: core.KeyRef{Name: "k", Provider: core.Provider("mystery")}}
 	if _, err := newClient(meta, core.NewSecret("x"), "m"); err == nil {
 		t.Fatal("an unknown provider should be refused rather than defaulted to one of them")
+	}
+}
+
+// The credential decides the price as well as the API, because what a turn costs depends on which
+// endpoint answered it.
+func TestUsageIsPricedFromTheCredential(t *testing.T) {
+	anthropicPrice := pricer(pricing.NewModelID(core.ProviderAnthropic, "", "claude-opus-5"))
+	usage, note := anthropicPrice(core.Usage{InputTokens: 1_000_000, OutputTokens: 100_000})
+	if !usage.CostKnown {
+		t.Fatal("a known model on a known provider should be priced")
+	}
+	if usage.CostUSD <= 0 {
+		t.Errorf("cost = %v, want a real figure", usage.CostUSD)
+	}
+	_ = note
+
+	// A hosted gateway sets its own prices, so this one reports why it has no figure rather than
+	// showing $0.0000, which would read as free.
+	hosted := pricer(pricing.NewModelID(
+		core.ProviderOpenAICompatible, "https://integrate.api.nvidia.com/v1", "some/model"))
+	usage, note = hosted(core.Usage{InputTokens: 1000, OutputTokens: 100})
+	if usage.CostKnown {
+		t.Error("an endpoint with no recorded rate must not report a cost")
+	}
+	if note == "" {
+		t.Error("an unpriced turn should say why, otherwise it reads as a broken tool")
 	}
 }

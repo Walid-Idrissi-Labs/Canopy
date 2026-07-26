@@ -10,9 +10,11 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
@@ -107,7 +109,22 @@ func runAsk(args []string, out io.Writer) error {
 		fmt.Fprintf(os.Stderr, "warning: could not record key usage: %v\n", err)
 	}
 
-	return drain(stream, out)
+	// Priced here rather than in the provider clients: what a turn costs depends on which endpoint
+	// answered, and only the credential knows that.
+	priced := pricer(pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, *model))
+
+	return drain(stream, out, priced)
+}
+
+// pricer turns a model identity into the function that costs a turn.
+func pricer(id pricing.ModelID) func(core.Usage) (core.Usage, string) {
+	return func(usage core.Usage) (core.Usage, string) {
+		usage, reason := pricing.Apply(id, usage)
+		if reason == "" {
+			reason = pricing.StalenessNote(time.Now())
+		}
+		return usage, reason
+	}
 }
 
 // drain writes the reply as it arrives and reports how the turn ended.
@@ -115,7 +132,7 @@ func runAsk(args []string, out io.Writer) error {
 // The stop reason is checked before anything is presented as an answer. A refusal arrives as a
 // successful response with possibly empty content, so a caller that just printed the text would
 // show nothing and exit zero, as though the request had been answered.
-func drain(stream core.Stream, out io.Writer) error {
+func drain(stream core.Stream, out io.Writer, price func(core.Usage) (core.Usage, string)) error {
 	w := &errWriter{w: out}
 	var wroteText bool
 
@@ -133,7 +150,7 @@ func drain(stream core.Stream, out io.Writer) error {
 			if wroteText {
 				w.printf("\n")
 			}
-			return report(event, w)
+			return report(event, w, price)
 		}
 	}
 
@@ -145,24 +162,26 @@ func drain(stream core.Stream, out io.Writer) error {
 	return errors.New("the stream ended without reporting how it finished")
 }
 
-func report(event core.StreamEvent, w *errWriter) error {
+func report(event core.StreamEvent, w *errWriter, price func(core.Usage) (core.Usage, string)) error {
+	usage, note := price(event.Usage)
+
 	switch event.StopReason {
 	case core.StopEndTurn, core.StopToolUse:
-		printUsageLine(event.Usage, w)
+		printUsageLine(usage, note, w)
 		return w.err
 
 	case core.StopRefusal:
-		printUsageLine(event.Usage, w)
+		printUsageLine(usage, note, w)
 		return errors.New("the provider declined this request")
 
 	case core.StopMaxTokens:
-		printUsageLine(event.Usage, w)
+		printUsageLine(usage, note, w)
 		return errors.New("the reply was cut off at the output limit, so it is incomplete. " +
 			"Raise the limit or shorten the request")
 
 	case core.StopCancelled:
 		w.printf("\n[interrupted, the reply above is partial]\n")
-		printUsageLine(event.Usage, w)
+		printUsageLine(usage, note, w)
 		return errors.New("cancelled")
 
 	default:
@@ -173,7 +192,7 @@ func report(event core.StreamEvent, w *errWriter) error {
 	}
 }
 
-func printUsageLine(usage core.Usage, w *errWriter) {
+func printUsageLine(usage core.Usage, note string, w *errWriter) {
 	parts := []string{
 		fmt.Sprintf("%d in", usage.InputTokens),
 		fmt.Sprintf("%d out", usage.OutputTokens),
@@ -189,7 +208,14 @@ func printUsageLine(usage core.Usage, w *errWriter) {
 		cost = fmt.Sprintf("$%.4f", usage.CostUSD)
 	}
 
-	_, _ = fmt.Fprintf(os.Stderr, "\n[%s tokens, %s]\n", strings.Join(parts, ", "), cost)
+	line := fmt.Sprintf("[%s tokens, %s]", strings.Join(parts, ", "), cost)
+	// The note says either why there is no figure or how old the figure is. Both are the difference
+	// between a number somebody can act on and one they should not.
+	if note != "" {
+		line += "\n" + note
+	}
+
+	_, _ = fmt.Fprintf(os.Stderr, "\n%s\n", line)
 }
 
 // readPrompt takes the prompt from the arguments or from stdin.

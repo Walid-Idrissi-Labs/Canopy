@@ -199,7 +199,14 @@ type Usage struct {
 	CostKnown bool
 }
 
+// IsZero reports whether a turn consumed nothing, which is what an unfilled Usage looks like.
+func (u Usage) IsZero() bool { return u == Usage{} }
+
 // Add accumulates usage across the turns of a multi step task.
+//
+// Deliberately has no identity element. `Usage{}` cannot serve as one, because an empty running
+// total and a turn nobody could price look identical, and treating the first as the second would
+// silently mark every accumulation unpriced. Sum is the way to fold a list.
 func (u Usage) Add(other Usage) Usage {
 	return Usage{
 		InputTokens:      u.InputTokens + other.InputTokens,
@@ -211,6 +218,23 @@ func (u Usage) Add(other Usage) Usage {
 		// wrong number on screen, which is worse than an absent one.
 		CostKnown: u.CostKnown && other.CostKnown,
 	}
+}
+
+// Sum totals the usage of several turns.
+//
+// This exists rather than a fold from `Usage{}` because Add has no identity element. Starting a
+// running total at the zero value would carry CostKnown false into every sum, so a session of
+// perfectly priced turns would report its cost as unknown. Nothing to add is unknown; one thing to
+// add is that thing.
+func Sum(turns ...Usage) Usage {
+	if len(turns) == 0 {
+		return Usage{}
+	}
+	total := turns[0]
+	for _, turn := range turns[1:] {
+		total = total.Add(turn)
+	}
+	return total
 }
 
 // TotalTokens is every token the turn touched.

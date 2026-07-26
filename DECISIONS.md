@@ -613,6 +613,30 @@ a guess.
 
 ---
 
+## D-32 Prices are recorded, never inferred. Decided 2026-07-26.
+
+The pricing table in `internal/pricing` only holds rates for endpoints where the endpoint
+determines the price: Anthropic first party, and local runtimes where nothing is billed at all.
+
+The temptation was to price the OpenAI compatible family by model name, since a model called
+`anthropic/claude-opus-5` obviously costs what Anthropic charges. It does not. The gateway sets the
+price, there are many gateways, and their margins differ. A number derived that way would be a guess
+wearing the clothes of a fact, and the person reading it would have no way to tell.
+
+So an endpoint with no recorded rate reports as unpriced and names itself, and A2-09 will let the
+user supply their own rate, labelled as theirs. Three states, all distinguishable on screen: a
+checked price, the user's price, and no price. Canopy is a tool for telling which of several things
+is actually true, and a cost figure it cannot stand behind is exactly the kind of confident wrong
+answer the rest of the design is built to avoid.
+
+Two consequences worth naming. **Free and unpriced are separate claims** and both get made:
+`CostKnown` exists next to `CostUSD` precisely so a local model can say zero and mean it. And
+**`Usage.Add` has no identity element**, which is why `core.Sum` exists: `Usage{}` is
+indistinguishable from a turn nobody could price, so folding a list from the zero value would mark
+every total unknown.
+
+---
+
 ## Appendix: where the settled scope comes from
 
 Three documents govern this project and they do not carry equal weight.

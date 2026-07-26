@@ -969,18 +969,64 @@ With several usable credentials it refuses and lists them rather than picking on
 choosing which key gets billed is not a decision to make on someone's behalf.
 
 ### A2-05 Usage and cost accounting
-`status: todo | owner: none | branch: none | depends: A2-02`
-`scope: internal/core/, internal/provider/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`scope: internal/pricing/, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: tokens in, out and cached, plus cost, per request, attributed to key and agent.
 
 Acceptance: usage matches what the provider reported. Cost comes from a versioned, dated pricing
 table, and the interface says so when the table is old.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: exact rather than inferred, because Canopy makes the request. A stale pricing table is a way
 to put a wrong number on screen, which is why it carries its date.
+
+`internal/pricing` holds the table, dated by `AsOf` and announced as approximate once past `MaxAge`.
+Old numbers keep being used, since an old figure beats no figure; they just stop being presented as
+current.
+
+Three things worth knowing about the shape it took:
+
+1. **Rates are only recorded where the endpoint determines the price.** Anthropic first party, and
+   local runtimes which are genuinely free. Nothing else in the OpenAI compatible family is priced
+   by model name, because the gateway sets the price and there are many gateways: pricing
+   `anthropic/claude-opus-5` at Anthropic's rate when it was reached through OpenRouter would be a
+   guess presented as a fact. Unpriced turns say which endpoint has no rate, so "cost unknown" reads
+   as a gap in the table rather than as a broken tool. **This means the NVIDIA key shows no cost
+   figure at PG-A2.** A2-09 is the fix; see the note there.
+2. **Free and unpriced are different claims and Canopy makes both.** A local model bills nothing,
+   which is a known cost of zero. That is the whole reason `CostKnown` exists next to `CostUSD`.
+3. **`Usage.Add` has no identity element, and `core.Sum` exists because of it.** `Usage{}` cannot
+   serve as one: an empty running total and a turn nobody could price are the same value, so
+   folding a list from zero would mark every total unpriced, and a session of perfectly priced
+   turns would report its cost as unknown. Found while wiring this up, and it would have been
+   invisible until a per session total appeared on screen reading "cost unknown" for no reason.
+
+Cache reads and writes are derived from the input rate by multiplier rather than typed out per
+model, since they are properties of the API rather than of any one model, and a hand copied cache
+column is somewhere for a typo to hide. Where a published introductory rate undercuts the standard
+one, the standard rate is used: overstating cost is the safer error, because understating hides
+spend that is really happening.
+
+### A2-09 User supplied prices
+`status: todo | owner: none | branch: none | depends: A2-05`
+`scope: internal/keys/, internal/pricing/, cmd/canopy/`
+
+Deliverable: a rate can be attached to a stored credential, so an endpoint Canopy has no table entry
+for still shows a real cost.
+
+Acceptance: setting a rate on a key produces a figure on screen. A key with no rate still reads as
+unpriced rather than free. The user's own figure is labelled as theirs, never as a checked one.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **added 2026-07-26.** Falls straight out of A2-05. Canopy will never hold rates for every
+gateway in the OpenAI compatible family and should not pretend to, but the person who signed up for
+the gateway knows what they pay. This turns "we cannot price this" into "tell us once". Distinguish
+their figure from a checked one in the interface: the point of the dated table is that Canopy is
+honest about where a number came from, and quietly absorbing a user's rate into it would throw that
+away.
 
 ### A2-06 OpenAI compatible provider and local models
 `status: review | owner: Claude | branch: feat/providers | depends: A2-02`
