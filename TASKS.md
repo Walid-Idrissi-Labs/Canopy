@@ -618,7 +618,8 @@ and because credential handling is the one thing that is genuinely unpleasant to
 
 Deliverable: `Provider`, `KeyRef`, `KeyMetadata` and `AgentProfile` in the shared contract. A
 `KeyRef` names a credential, it never carries the secret. A profile binds a name to a provider, a
-key, a model and a set of defaults.
+key, a model, a system prompt and a set of defaults, so "claude" or "kimi" resolves to everything
+needed to start an agent.
 
 Acceptance: a `KeyRef` cannot hold a secret value, enforced by the type rather than by convention.
 Round tripping a profile through JSON never produces a secret.
@@ -762,6 +763,26 @@ a pricing table that is versioned and dated, not hardcoded inline.
 notes: this is exact rather than inferred, because Canopy makes the request. That is what kills
 the metering proxy question in FEATURES.md sections 7.1 and 7.5. A stale pricing table is a way to
 put a wrong number on screen, so it carries the date it was written and says so when it is old.
+
+### A2-06 OpenAI compatible provider
+`status: todo | owner: none | branch: none | depends: A2-02`
+`scope: internal/provider/openai/`
+
+Deliverable: a second provider speaking the OpenAI chat completions API, including tool calls and
+streaming, with a configurable base URL.
+
+Acceptance: the same agent code runs unchanged against both providers. A base URL override reaches
+a non OpenAI endpoint successfully.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: this one task covers most of the field. Kimi, MiniMax, DeepSeek, Groq, OpenRouter and most
+local runtimes all speak this API, so a configurable base URL turns one client into support for
+nearly everything that is not Anthropic. Building it second, rather than after five more Anthropic
+only phases, is also what stops provider assumptions quietly baking into the agent loop.
+
+Tool calling differs between the two APIs in shape but not in meaning. That difference belongs
+here, behind the interface, never in `internal/agent`.
 
 ### PG-A2 Phase A2 gate
 `status: todo | depends: A2-03, A2-04, A2-05`
@@ -924,6 +945,30 @@ execution. A tool that fails is reported to the model rather than crashing the t
 
 notes: needs a loop limit and a token budget, or a confused model can spend real money in a circle.
 
+### A4-06 Git tools
+`status: todo | owner: none | branch: none | depends: A4-04`
+`scope: internal/tools/git/`
+
+Deliverable: git as first class tools the agent calls directly. Status, diff, log, add, commit,
+branch, checkout and stash, scoped to the agent's own worktree.
+
+Acceptance: an agent can inspect its changes and commit them without shelling out. Every
+destructive operation, meaning checkout over uncommitted work, reset, branch deletion and force
+anything, requires approval separately from ordinary shell approval. An agent cannot operate on
+another agent's worktree or on the primary checkout.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **not a convenience wrapper over `bash`.** Three reasons it has to be its own tool. Git
+through a shell tool means the permission model sees an opaque string and cannot tell `git status`
+from `git push --force`. Structured output is far more reliable for a model to act on than parsed
+porcelain. And the worktree confinement in A4-02 is enforceable per argument here, where in a shell
+string it is not enforceable at all.
+
+This is what Walid meant by controlling branches and telling agents what to do with git. It is
+also, per the corrections document's original safety rules, the place where "never stage all,
+never force push, never delete a branch without a reviewed flow" has to actually live.
+
 ### PG-A4 Phase A4 gate
 `status: todo | depends: A4-05`
 
@@ -1010,25 +1055,82 @@ that needs input is visibly distinct from one that is working.
 
 notes: selection stays keyed by ID rather than row index, for the same reason as P1-07.
 
-### A5-06 Steering and interrupting
+### A5-06 Steering without interrupting
 `status: todo | owner: none | branch: none | depends: A5-05`
 `scope: internal/tui/, internal/agent/`
 
-Deliverable: send a message to a running agent, interrupt one, redirect one.
+Deliverable: two separate mechanisms, deliberately not one.
 
-Acceptance: a steering message reaches the right agent and only that agent. Interrupting one does
-not disturb the others.
+**Steer.** Queue guidance for a working agent. It is delivered at the next turn boundary and the
+current turn finishes normally. The agent never loses its place.
+
+**Interrupt.** Stop the current turn now, keep the partial output, mark it interrupted.
+
+Acceptance: steering a working agent does not cancel its in flight request, and the guidance is
+visibly part of the next turn's context. Interrupting stops the stream within a second and leaves
+no orphan processes. Both reach the right agent and only that agent. The interface never offers
+one where the user meant the other.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: the feature Walid asked for by name. Being able to correct an agent mid task without
-killing it is most of the value of watching them at all.
+notes: Walid asked for steering **without interrupting**, and the distinction is the whole feature
+rather than a detail. Cancelling a turn to inject a correction throws away the work in progress and
+usually the reasoning with it. Queueing to the turn boundary keeps both. Building only interrupt
+and calling it steering would produce something that looks right in a demo and is useless in
+practice.
+
+### A5-07 Natural language agent dispatch
+`status: todo | owner: none | branch: none | depends: A5-04`
+`scope: internal/agent/, internal/tools/`
+
+Deliverable: dispatch agents from the chat. "use 2 claude sonnet 5 agents for this" creates two
+agents on the named profile, each with its own worktree and branch, and hands them the task.
+
+Acceptance: the count, the profile and the task are all extracted correctly, and each is confirmed
+to the user before anything spawns. An ambiguous request asks rather than guesses. A request naming
+a profile that does not exist says which profiles do exist. Spawning respects the concurrency and
+budget limits from A4-05.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **probably the most differentiating single feature in this plan**, and it is the reason the
+named key model from A1 is load bearing rather than cosmetic. Saying "two sonnet agents and a kimi
+agent" only means anything if names resolve to credentials and profiles.
+
+Implemented as tools the orchestrating agent calls, `spawn_agents` and `list_profiles`, not as
+regex over the user's message. Pattern matching on phrasing would break the first time somebody
+wrote it differently, and the model is already good at exactly this.
+
+Confirmation before spawning is not optional. Spawning agents costs real money against real keys,
+and a misparsed "20" instead of "2" should be a question, not an invoice.
+
+### A5-08 Split screen agent views
+`status: todo | owner: none | branch: none | depends: A5-05`
+`scope: internal/tui/`
+
+Deliverable: watch several agents at once in split panes, two up and four up, with focus moving by
+keyboard and by mouse.
+
+Acceptance: four agents stream simultaneously without tearing or flicker. Focus follows a click.
+Layout degrades sensibly on a narrow terminal rather than becoming unreadable. Keyboard remains
+sufficient for everything, so nothing requires a mouse.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: this is what makes running many agents feel like supervising rather than tab switching.
+
+Rendering several live streams at once is the point where the coalescing rules from P1-01 stop
+being theoretical: four agents streaming tokens into one terminal is precisely the load that model
+was designed for.
+
+Mouse support is additive only. Keyboard first is not negotiable, since the tool has to stay usable
+over ssh in a session where mouse reporting may not survive.
 
 ### PG-A5 Phase A5 gate
-`status: todo | depends: A5-06`
+`status: todo | depends: A5-06, A5-07, A5-08`
 
-Both supervisors run three agents at once on one repository, watch all three, and steer one
-without disturbing the others.
+Both supervisors type "use 3 agents for this" into the chat, watch three agents spawn onto their
+own branches, see all three at once in split panes, and steer one of them without interrupting it.
 
 `signed: walid [ ]   classmate [ ]`
 

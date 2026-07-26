@@ -1,99 +1,98 @@
 # Canopy
 
-A terminal coding agent that runs several agents at once, each on its own git worktree, and knows
-which of them actually produced working code.
+A terminal coding agent built for running several agents at once, each on its own git branch, and
+knowing which of them actually produced working code.
 
-Canopy holds your provider API keys as named credentials, runs agents against them, and verifies
-each agent's work against the tests rather than against how confident it sounded.
+> **Status: pre-alpha, and early.** The shared contract, the verification state machine, the fake
+> store and the dashboard exist and are tested. There is no provider connection yet. Development
+> is tracked in [TASKS.md](TASKS.md), and the decisions behind it in [DECISIONS.md](DECISIONS.md).
 
-> Status: pre-alpha, and early. There is a working contract, state machine and dashboard, all
-> against scripted data. There is no provider connection yet. Development is tracked in
-> [TASKS.md](TASKS.md) and the decisions behind it in [DECISIONS.md](DECISIONS.md).
+## What it is
 
-## The problem
+Canopy does what a terminal coding agent does. You plug in provider API keys, talk to it, and it
+reads and writes code with tools. If that were all, there would be no reason to use it over the
+tools that already do it well.
 
-If you keep several Git worktrees active, one per branch or per task or per coding agent, you end
-up asking the same question about each one over and over: is this branch actually green right now?
+The reason to use it is what happens when one agent is not enough.
 
-Answering it means changing directory into a worktree, remembering whether the tests you ran an
-hour ago were before or after that last edit, checking whether the dev server is still up, then
-doing it again for the next worktree.
+## Named keys, so agents have names
 
-The expensive failure is not a red test. It is a green result you trust that is no longer true.
-The suite passed, then you changed three files, and the memory of "that one passed" quietly
-survived the edit.
+Credentials are stored by name, not as an ambient environment variable.
 
-## What Canopy does
+```sh
+canopy keys add claude   --provider anthropic
+canopy keys add kimi     --provider openai-compatible --base-url ...
+canopy keys add minimax  --provider openai-compatible --base-url ...
+```
 
-Canopy watches worktrees that already exist and reports evidence about them, with every piece of
-evidence bound to the exact code it came from.
+Once a key has a name, so does an agent, and you can talk about agents the way you already think
+about them.
 
-**Revision aware.** Every result is tied to the precise worktree state it tested, meaning the
-commit plus staged, unstaged and untracked content.
+## Dispatch agents from the conversation
 
-**Freshness aware.** Any later change invalidates the previous result. A green result goes stale
-within about two seconds of an edit, without restarting anything.
+```
+> use 2 claude sonnet agents for the auth refactor, and a kimi agent to write the tests
+```
 
-**Structured.** Tests, service readiness, failure output and timestamps each have explicit states.
-An error is not a failure. Stale is not a failure. "No tests configured" is never "tests passed".
+Canopy resolves the names, creates a worktree and a branch for each agent, and hands them the
+task. It confirms the plan before spawning anything, because spawning agents spends real money
+against real keys, and a misread number should be a question rather than an invoice.
 
-**Worktree manager independent.** Canopy monitors worktrees made by git, a script, an editor, or
-any agent tool, and in v0.1 it never modifies them.
+## Watch them, and steer without stopping them
 
-**Terminal first and local.** No account, no hosted control plane, no desktop app. Works over SSH.
+Split panes show several agents working at once. Move between them by keyboard or by clicking.
 
-**Truthful by default.** Missing, stale, unparseable or contradictory evidence is never shown as
-green.
+Steering and interrupting are deliberately two different things:
 
-That last point is the whole design constraint. A verification tool that is occasionally wrong is
-worse than no verification tool at all, because you stop checking manually.
+- **Steer** queues guidance that arrives at the next turn boundary. The current turn finishes and
+  the agent never loses its place.
+- **Interrupt** stops the turn now and keeps the partial output, clearly marked as interrupted.
 
-## What Canopy does not do
+Cancelling a turn to inject a correction throws away the work in progress, and usually the
+reasoning with it. Steering is the one you want almost every time, and it is the one most tools do
+not have.
 
-Canopy is a companion to your existing setup, not a replacement for it. In v0.1 it deliberately
-does not:
+## Git as a real tool, not a shell string
 
-- create, remove, prune or adopt worktrees, or delete branches
-- spawn coding agents, attach to their terminals, or infer what they are doing
-- commit, push, merge, open pull requests, stage files, or discard changes
-- start your services, since it observes services you started (see below)
-- run setup commands automatically, copy files between worktrees, or restart crashed processes
-- persist state across restarts
+Agents get status, diff, log, branch, commit and stash as structured tools scoped to their own
+worktree. Not `bash("git ...")`.
 
-There is a deliberate asymmetry worth stating plainly. Canopy executes your test commands itself,
-but only observes services you started. Starting and supervising services is a later feature, and
-until it exists Canopy will not pretend otherwise.
+That matters for a reason that is easy to miss. A shell tool hands the permission model an opaque
+string, and an opaque string cannot tell `git status` from `git push --force`. With git as its own
+tool, destructive operations are approved separately from ordinary ones, and an agent cannot touch
+another agent's worktree or your primary checkout.
 
-## Honest positioning
+## Know which agent was actually right
 
-Several tools already run tests and dev servers per worktree. What Canopy is trying to add is
-narrower, and as far as we can tell unclaimed: modelling freshness rigorously, so a result is
-never presented as current when the code has moved underneath it.
+Every agent's branch carries a verification state bound to the exact code in it. Not "the tests
+passed at some point", but "the tests pass for this revision, right now".
 
-We have not found a tool that models this rigorously. That is a statement about our search rather
-than a claim that none exists. This space moves quickly, and we would rather understate the
-position than claim to be the only anything.
+- A result is tied to the precise worktree state it tested: commit plus staged, unstaged and
+  untracked content.
+- Any later change invalidates it. Green becomes `STALE` within about two seconds of an edit.
+- `error` is not `failing`. `stale` is not `failing`. "No tests configured" is never "tests
+  passed".
+- Missing, stale or contradictory evidence is never shown as green.
 
-## Safety model
+Give the same task to three agents and Canopy can rank the results by whose code actually passes,
+rather than by which one sounded most confident. Fanning out across agents is not new. Using test
+evidence to decide who won appears to be.
 
-A configuration file that lives in a repository can run commands as you. A worktree is file
-isolation, not a security sandbox, and Canopy never claims to sandbox anything it runs.
+## What it will not do
 
-- No command from a newly discovered repository runs until you have seen it and approved it.
-- Approvals are stored outside the repository, keyed by repository identity and configuration
-  hash. Changing an executable field invalidates the approval.
-- Commands are argument arrays by default. Shell strings need an explicit `allow_shell: true` and
-  are marked as higher risk.
-- Environment values marked secret are never printed in output Canopy formats. Output your own
-  processes print is captured verbatim, and Canopy cannot redact that.
-- Logs stay on your machine, bounded, and are never uploaded.
+- No cloud, no account, no hosted control plane. Keys never leave your machine.
+- No unattended merging. A human stays in the loop on anything destructive.
+- **No sandboxing claims.** Canopy runs agent-generated commands under your account. A worktree is
+  file isolation, not a security boundary, and pretending otherwise would be the same class of
+  error as a false green. There is a permission model. It is not a sandbox.
+- Windows is deferred until process group and terminal semantics are designed for it rather than
+  approximated.
 
 ## Requirements
 
 - Go 1.26 or newer
 - git
-- macOS or Linux. Windows is deferred until its process and terminal semantics are properly
-  designed for rather than approximated.
+- macOS or Linux
 
 ## Development
 
@@ -102,6 +101,7 @@ go build ./...
 go test ./...
 go vet ./...
 gofmt -l .
+golangci-lint run ./...
 ```
 
 Work is claimed and verified through [TASKS.md](TASKS.md). Read its first section before starting
