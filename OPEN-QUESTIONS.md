@@ -152,3 +152,37 @@ only defensible default when the user has not chosen.
 
 **What would change it:** A5 brings profiles. Until then, somebody who wants a read-only agent
 cannot have one, which is a real limitation for the "point it at a repository you do not own" case.
+
+---
+
+## Q-11 Web search needs a provider and an account
+
+`fetch_url` is built. Search is not, because every usable search API wants a key and an account:
+Brave Search, Tavily, Exa, Serper. Which one, and whose account pays for it, is not something to
+decide unilaterally.
+
+**Decided in the meantime:** not built. Scraping a search engine's HTML was considered and rejected:
+it breaks constantly, and it is rude in a way that reflects on whoever ships an open source tool
+that does it.
+
+**What is needed:** a choice of provider, and a decision about whether search is a Canopy account
+thing or a bring your own key thing. The second is more in keeping with how keys already work here.
+
+A model can still find current documentation by fetching a URL it already knows, which covers the
+common case of checking a library version. It cannot discover a page it has never heard of.
+
+---
+
+## Q-12 Nothing enforces worktree confinement on the git tools
+
+The git tools run git with the workspace as the working directory, which is the right directory.
+Nothing stops a path argument from naming something git tracks elsewhere through a submodule, and
+nothing stops an agent operating on the primary checkout if that is where it was started.
+
+**Decided in the meantime:** left as is and recorded rather than claimed, because A5-03 is where
+worktrees become real and the confinement has something to be confined to. Claiming it now would be
+worse than the gap.
+
+**What it means today:** an agent started in the primary checkout can commit to the primary
+checkout. That is what somebody running `canopy` in their own repository is asking for, so it is not
+wrong yet, but it stops being right the moment several agents exist.

@@ -1911,8 +1911,8 @@ the right directory, but nothing stops a `git_add` path from naming something gi
 via a submodule. Recorded rather than claimed. A5-03 is where worktrees become real.
 
 ### A4-07 Web search and fetch
-`status: todo | owner: none | branch: none | depends: A4-01`
-`scope: internal/tools/web/`
+`status: partial | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
+`scope: internal/tools/web.go`
 
 Deliverable: search the web and fetch a URL as text.
 
@@ -1922,6 +1922,39 @@ model rather than crashing the turn. Requests are visible in the audit trail.
 `verify: claude [ ]   codex [ ]`
 
 notes: a model working from training data alone gets library versions wrong, confidently.
+
+**Fetch is done. Search is not, and needs a decision rather than an implementation.** Every usable
+search API wants a key and an account: Brave, Tavily, Exa, Serper. Which one, and whose account, is
+a question for the four of us rather than something to pick unilaterally at three in the morning.
+Scraping a search engine's HTML was considered and rejected: it breaks constantly, and it is rude in
+a way that reflects on whoever ships it. See Q-11. The verify box stays unticked until search lands
+or is cut.
+
+`fetch_url` is `ToolNetwork`, which the permission model asks about at **every** trust level
+including broad. What comes back is text somebody else wrote, it lands in the model's context, and
+the model has no reliable way to tell it apart from the user's instructions.
+
+Nothing here can make fetched text safe. What it does instead is make the boundary visible: the
+result names its source, wraps the page in explicit begin and end markers, and says in words that
+the text was written by somebody else and is not an instruction. That is the only thing standing
+between "this page says" and "this page told me to", and a test uses a page containing "ignore your
+previous instructions" to check the markers survive.
+
+Other decisions:
+
+- **Only http and https.** `file://` would read the filesystem through a tool whose permission kind
+  says network, which is exactly the confusion a permission model cannot survive.
+- **Redirects are followed but each hop is rechecked**, because a redirect is a URL the user never
+  approved, and without the check approving `example.com` approves wherever it decides to send you.
+- **A small HTML stripper rather than a parser.** The failure mode of doing this badly is some stray
+  angle brackets costing a few tokens; the failure mode of pulling in a full parser is a dependency
+  the size of the rest of the program. Script, style and svg content is dropped whole, which is most
+  of a modern page by weight.
+- **A page with nothing readable says why.** A model handed an empty result concludes the page is
+  empty rather than that it is built by JavaScript and cannot be read this way.
+- The user agent identifies Canopy honestly. A tool that pretends to be a browser is one whose
+  traffic nobody can attribute when it goes wrong, and being blocked by a site that does not want
+  automated traffic is a correct outcome rather than a problem to route around.
 
 ### A4-08 Checkpoint and undo
 `status: todo | owner: none | branch: none | depends: A4-06`

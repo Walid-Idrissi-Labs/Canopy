@@ -116,6 +116,11 @@ func attachTools(engine *session.Engine, dir string) error {
 			return err
 		}
 	}
+	for _, tool := range tools.WebTools() {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
 	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
 	// the ones that can be governed per argument should be reached for before the one that cannot.
 	if err := registry.Register(tools.ShellTool(workspace)); err != nil {
