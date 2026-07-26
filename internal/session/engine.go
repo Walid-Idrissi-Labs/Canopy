@@ -84,6 +84,9 @@ type Engine struct {
 	// grants are the approvals in force per session.
 	grants map[string]*permission.Grants
 
+	// pending is the question each session is waiting on, at most one at a time.
+	pending map[string]*Prompt
+
 	nextID int
 }
 

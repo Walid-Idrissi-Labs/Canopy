@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 )
@@ -25,6 +26,8 @@ type fakeEngine struct {
 	compacted  int
 	compactErr error
 	applied    []session.CompactionResult
+	prompt     *session.Prompt
+	answers    [][2]bool
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -54,6 +57,19 @@ func (e *fakeEngine) Compact(context.Context, string) (session.CompactionResult,
 func (e *fakeEngine) Apply(_ string, result session.CompactionResult) error {
 	e.applied = append(e.applied, result)
 	return nil
+}
+
+func (e *fakeEngine) Pending(string) (session.Prompt, bool) {
+	if e.prompt == nil {
+		return session.Prompt{}, false
+	}
+	return *e.prompt, true
+}
+
+func (e *fakeEngine) Answer(_ string, approved, remember bool) bool {
+	e.answers = append(e.answers, [2]bool{approved, remember})
+	e.prompt = nil
+	return true
 }
 
 func model(engine chat.Engine) chat.Model {
@@ -582,5 +598,115 @@ func TestALongCodeLineInAReplyStaysInsideTheFrame(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func pendingPrompt(command string) *session.Prompt {
+	req := permission.Request{
+		AgentID: "s1", SessionID: "s1",
+		Tool: "run_command", Kind: core.ToolExecute, Command: command,
+	}
+	return &session.Prompt{
+		SessionID: "s1",
+		Request:   req,
+		Decision:  permission.Decide(req, core.TrustStandard, permission.NewGrants()),
+	}
+}
+
+// A command summarised or truncated is a command somebody approved without having seen it.
+func TestThePromptShowsTheCommandInFull(t *testing.T) {
+	command := "rm -rf ./build && make clean && ./scripts/deploy.sh --production"
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Turns: []core.Turn{
+			turn("t1", "clean up", "Let me clear the build.", core.TurnAwaitingTools),
+		}},
+		prompt: pendingPrompt(command),
+	}
+
+	m := model(engine)
+	m.SetSize(100, 40)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	view := plain(m.Body())
+	if !strings.Contains(view, command) {
+		t.Errorf("the command being approved is not shown in full:\n%s", view)
+	}
+	// In words rather than tool names. "run a command" is something somebody can decide about at
+	// two in the morning; "run_command" is a symbol from a codebase they have never read.
+	if !strings.Contains(view, "run a command") {
+		t.Errorf("the prompt should say what is being asked in words:\n%s", view)
+	}
+	if !m.Awaiting() {
+		t.Error("the model should report that a question is up")
+	}
+}
+
+// The reflex key on a prompt somebody has not read is enter, and enter meaning no is the difference
+// between a misread prompt costing a retry and costing a repository.
+func TestAnythingOtherThanYesRefuses(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyEnter},
+		{Type: tea.KeyEsc},
+		{Type: tea.KeyRunes, Runes: []rune{'n'}},
+		{Type: tea.KeyRunes, Runes: []rune{'q'}},
+		{Type: tea.KeySpace},
+	} {
+		engine := &fakeEngine{
+			session: core.Session{ID: "s1", Turns: []core.Turn{
+				turn("t1", "go", "", core.TurnAwaitingTools),
+			}},
+			prompt: pendingPrompt("rm -rf /"),
+		}
+		m := model(engine)
+		m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+		m.Update(key)
+
+		if len(engine.answers) != 1 {
+			t.Errorf("%v: %d answers, want 1", key, len(engine.answers))
+			continue
+		}
+		if engine.answers[0][0] {
+			t.Errorf("%v approved a command", key)
+		}
+	}
+}
+
+func TestYesApprovesOnceAndAlwaysApprovesWidely(t *testing.T) {
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Turns: []core.Turn{turn("t1", "go", "", core.TurnAwaitingTools)}},
+		prompt:  pendingPrompt("make test"),
+	}
+	m := model(engine)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+
+	if len(engine.answers) != 1 || !engine.answers[0][0] || engine.answers[0][1] {
+		t.Errorf("y gave %v, want approved once and not remembered", engine.answers)
+	}
+
+	engine.prompt = pendingPrompt("make test")
+	engine.answers = nil
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+
+	if len(engine.answers) != 1 || !engine.answers[0][0] || !engine.answers[0][1] {
+		t.Errorf("a gave %v, want approved and remembered", engine.answers)
+	}
+}
+
+// Typing an answer to a yes or no question into a text field and wondering why nothing happens is a
+// bad minute to give somebody.
+func TestAQuestionTakesTheKeyboard(t *testing.T) {
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Turns: []core.Turn{turn("t1", "go", "", core.TurnAwaitingTools)}},
+		prompt:  pendingPrompt("make test"),
+	}
+	m := model(engine)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if m.InputValue() != "" {
+		t.Errorf("a keystroke while a question was up went into the message box as %q",
+			m.InputValue())
 	}
 }

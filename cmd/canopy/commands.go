@@ -14,7 +14,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
@@ -116,10 +115,9 @@ func attachTools(engine *session.Engine, dir string) error {
 		return err
 	}
 
-	// DenyAll until the approval prompt exists. Approving by default because there is no interface
-	// to ask through would be an agent with broad trust wearing a standard label, which is worse
-	// than an agent that cannot yet run commands. See Q-09.
-	engine.WithTools(registry, core.TrustStandard, agent.DenyAll)
+	// The engine asks the person watching. It implements the approver itself, which is what lets a
+	// blocking question from a background goroutine reach an event loop that must never block.
+	engine.WithTools(registry, core.TrustStandard, engine)
 	return nil
 }
 

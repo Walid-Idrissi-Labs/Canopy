@@ -127,15 +127,28 @@ be rebased before merge, since nothing has been built on it outside this branch.
 
 ---
 
-## Q-09 Permission decisions have no interface yet
+## ~~Q-09 Permission decisions have no interface yet~~ resolved 2026-07-27
 
-`internal/permission` decides, remembers approvals and records an audit trail. Nothing in the TUI
-asks the user anything yet, so an `Ask` outcome currently has nobody to ask.
+**Built.** The prompt appears at the bottom of the transcript, under the reasoning that led to the
+call, rather than in a dialogue over it: a modal that covers the conversation asks somebody to decide
+with the context hidden. `y` allows once, `a` allows everything of that shape for the rest of the
+session, and **anything else refuses, including enter and escape**. That last part is deliberate.
+The reflex key on a prompt somebody has not read is enter, and enter meaning no is the difference
+between a misread prompt costing a retry and costing a repository.
 
-**Decided in the meantime:** the model is built and tested first, because the prompt is the easy
-part and getting the decisions wrong is the expensive part. The tool use loop at A4-05 is what will
-surface it.
+Worth a look in review: whether `a` is too easy to reach. It is one keystroke away from the safe
+answer, and it is the one that stops the asking.
 
-**What matters when it does get built:** the prompt has to show the scope being approved in the
-words the user will recognise, and the narrowest scope has to be the default. Offering "allow all"
-as the obvious button is how "yes" comes to mean "yes to everything" without anybody deciding that.
+---
+
+## Q-10 The trust level is hardcoded to standard
+
+`attachTools` in `cmd/canopy/commands.go` gives every agent `TrustStandard`. There is no way to
+choose, because per profile levels are configured at A5 and there are no profiles yet.
+
+**Decided in the meantime:** standard, which reads and writes inside the workspace without asking
+and shows every shell command before running it. The level that asks about the dangerous half is the
+only defensible default when the user has not chosen.
+
+**What would change it:** A5 brings profiles. Until then, somebody who wants a read-only agent
+cannot have one, which is a real limitation for the "point it at a repository you do not own" case.

@@ -68,6 +68,10 @@ func (e *stubEngine) Compact(context.Context, string) (session.CompactionResult,
 
 func (e *stubEngine) Apply(string, session.CompactionResult) error { return nil }
 
+func (e *stubEngine) Pending(string) (session.Prompt, bool) { return session.Prompt{}, false }
+
+func (e *stubEngine) Answer(string, bool, bool) bool { return false }
+
 // launch builds the application past the splash and at a known size, which is the state every
 // test below actually cares about. Tests should not wait on a timer.
 func launch(store core.SnapshotStore, keyStore keysui.Store) tea.Model {

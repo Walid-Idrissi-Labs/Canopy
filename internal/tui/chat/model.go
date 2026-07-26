@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -37,6 +38,12 @@ type Engine interface {
 	// different decisions and a single call would quietly change what the agent knows.
 	Compact(ctx context.Context, sessionID string) (session.CompactionResult, error)
 	Apply(sessionID string, result session.CompactionResult) error
+
+	// Pending is the tool call waiting on a person, and Answer replies to it. The interface never
+	// blocks: it notices the question through the ordinary event stream and the answer travels back
+	// through the engine.
+	Pending(sessionID string) (session.Prompt, bool)
+	Answer(sessionID string, approved, remember bool) bool
 }
 
 // EventMsg carries an engine notification into the update loop.
@@ -95,6 +102,10 @@ type Model struct {
 	// compacting is true while a summary is being produced, which is a model call and takes as long
 	// as any other. Without it the interface looks frozen and people press the key again.
 	compacting bool
+
+	// prompt is the tool call waiting on an answer, when there is one.
+	prompt   session.Prompt
+	awaiting bool
 }
 
 // New builds a chat model over an engine and a session.
@@ -191,6 +202,75 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// answerPrompt handles the keys that reply to a permission question.
+//
+// Deliberately few, and deliberately not a single key for the widest option. Approving once is `y`,
+// approving everything like this for the rest of the session is `a`, and refusing is anything else
+// including escape and enter. That last part matters: the reflex key on a prompt somebody has not
+// read is enter, and enter meaning no is the difference between a misread prompt costing a retry
+// and costing a repository.
+func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		m.engine.Answer(m.sessionID, true, false)
+	case "a":
+		m.engine.Answer(m.sessionID, true, true)
+	default:
+		m.engine.Answer(m.sessionID, false, false)
+	}
+	m.refresh()
+	return m, nil
+}
+
+// promptLines renders the question.
+func (m Model) promptLines() []string {
+	t := theme.Current()
+	req := m.prompt.Request
+
+	var lines []string
+	lines = append(lines, t.Warning.Render("This agent wants to "+describeRequest(req)))
+	lines = append(lines, "")
+
+	// The thing being approved, shown verbatim and in full. A command summarised or truncated is a
+	// command somebody approved without having seen it.
+	if req.Command != "" {
+		for _, line := range wrap(req.Command, m.width-4) {
+			lines = append(lines, "  "+t.Body.Render(line))
+		}
+	}
+	for _, path := range req.Paths {
+		lines = append(lines, "  "+t.Body.Render(path))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, t.Muted.Render("  "+m.prompt.Decision.Reason))
+	lines = append(lines, "")
+	lines = append(lines,
+		"  "+t.Key.Render("y")+t.Muted.Render(" once   ")+
+			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
+			t.Key.Render("any other key")+t.Muted.Render(" no"))
+	return lines
+}
+
+// describeRequest says what is being asked for in words rather than in tool names.
+//
+// "run a command" is something somebody can decide about at two in the morning. "run_command" is a
+// symbol from a codebase they have never read.
+func describeRequest(req permission.Request) string {
+	switch req.Kind {
+	case core.ToolExecute:
+		return "run a command"
+	case core.ToolWrite:
+		return "change a file"
+	case core.ToolNetwork:
+		return "fetch something from the internet"
+	case core.ToolGit:
+		return "run a git operation that can destroy work"
+	default:
+		return "use " + req.Tool
+	}
+}
+
 // compact asks for a summary of the older half of the conversation.
 //
 // Manual, on a key, rather than only automatic at the limit. Somebody who knows they are about to
@@ -211,6 +291,13 @@ func (m Model) compact() (Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
+	// into the message box, and typing an answer to a yes or no question into a text field and
+	// wondering why nothing happens is a bad minute to give somebody.
+	if m.awaiting {
+		return m.answerPrompt(msg)
+	}
+
 	switch msg.String() {
 	case "enter":
 		return m.send()
@@ -282,13 +369,14 @@ func (m Model) send() (Model, tea.Cmd) {
 // appended to as events arrive, which is exactly why a coalesced or dropped notification cannot
 // lose a token: the next refresh reads whatever is there now.
 func (m *Model) refresh() {
-	session, ok := m.engine.Session(m.sessionID)
+	current, ok := m.engine.Session(m.sessionID)
 	if !ok {
 		return
 	}
-	m.session = session
+	m.session = current
 	m.loaded = true
-	_, m.working = session.Active()
+	_, m.working = current.Active()
+	m.prompt, m.awaiting = m.engine.Pending(m.sessionID)
 }
 
 // Session exposes the current session. For tests and for the screen around this one.
@@ -296,6 +384,10 @@ func (m Model) Session() core.Session { return m.session }
 
 // Working reports whether a turn is in flight.
 func (m Model) Working() bool { return m.working }
+
+// Awaiting reports whether a question is on screen. The frame uses it to change the footer, since
+// the keys mean something different while one is up.
+func (m Model) Awaiting() bool { return m.awaiting }
 
 // Input exposes the message box. For tests.
 func (m Model) InputValue() string { return m.input.Value() }
@@ -306,7 +398,16 @@ func (m Model) transcript() []string {
 	if !m.loaded || len(m.session.Turns) == 0 {
 		return Welcome(m.width, m.dir, m.keyName)
 	}
-	return Transcript(m.session, m.width, m.spinnerFrame())
+
+	lines := Transcript(m.session, m.width, m.spinnerFrame())
+	if m.awaiting {
+		// At the bottom of the transcript rather than in a dialogue over it, so the command being
+		// approved sits directly under the reasoning that led to it. A modal that covers the
+		// conversation asks somebody to decide with the context hidden.
+		lines = append(lines, "")
+		lines = append(lines, m.promptLines()...)
+	}
+	return lines
 }
 
 // transcriptHeight is how many lines are left for the conversation once the input box has taken
@@ -367,6 +468,9 @@ func (m Model) statusRow(below int) string {
 		// Said explicitly, because a view that has silently stopped following the tail looks
 		// identical to one where nothing is happening.
 		return t.Warning.Render(fmt.Sprintf("  %d more lines below, ctrl+end to follow", below))
+	}
+	if m.awaiting {
+		return t.Warning.Render("  waiting for you")
 	}
 	if m.compacting {
 		return t.Muted.Render("  " + m.spinnerFrame() + " summarising the conversation so far")

@@ -174,6 +174,11 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case screenChat:
 		switch msg.String() {
 		case "ctrl+c":
+			// While a question is open, every key belongs to the question, including this one.
+			// Answering it is refusing, which is the safe reading.
+			if a.chat.Awaiting() {
+				return false, a, nil
+			}
 			// Quits only when nothing is running. With a turn in flight the first press stops the
 			// turn, because that is what somebody hitting it during a long reply almost always
 			// means, and quitting instead would throw the conversation away.
@@ -182,12 +187,18 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 				return true, a, nil
 			}
 			return true, a, tea.Quit
-		case "ctrl+k":
-			a.cameFrom = screenChat
-			a.screen = screenKeys
-			return true, a, nil
-		case "ctrl+d":
-			a.screen = screenDashboard
+		case "ctrl+k", "ctrl+d":
+			// Navigation is disabled while a question is open, for the same reason: leaving the
+			// screen with a tool call waiting would hide the thing that is blocking.
+			if a.chat.Awaiting() {
+				return false, a, nil
+			}
+			if msg.String() == "ctrl+k" {
+				a.cameFrom = screenChat
+				a.screen = screenKeys
+			} else {
+				a.screen = screenDashboard
+			}
 			return true, a, nil
 		}
 
@@ -237,9 +248,14 @@ func (a App) View() string {
 
 	switch a.screen {
 	case screenChat:
-		return Frame(a.dim, "canopy", a.chat.Context(), a.chat.Body(),
-			Keys(a.dim.Width, "enter", "send", "esc", "stop", "ctrl+d", "agents",
-				"ctrl+k", "keys", "ctrl+r", "compact", "ctrl+c", "quit"))
+		// The keys mean something different while a question is up, so the footer says so rather
+		// than listing commands that are not currently in effect.
+		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "ctrl+d", "agents",
+			"ctrl+k", "keys", "ctrl+r", "compact", "ctrl+c", "quit")
+		if a.chat.Awaiting() {
+			footer = Keys(a.dim.Width, "y", "allow once", "a", "always", "any other key", "refuse")
+		}
+		return Frame(a.dim, "canopy", a.chat.Context(), a.chat.Body(), footer)
 	case screenKeys:
 		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
 	default:

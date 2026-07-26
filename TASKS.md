@@ -1796,9 +1796,26 @@ The audit trail records refusals as well as successes, because an agent that tri
 its workspace nine times and was stopped nine times is a very different thing from one that never
 tried, and only the trail can tell them apart.
 
-**No interface yet, and the default until there is one is to refuse.** `agent.DenyAll` is what a
-turn gets when nobody is there to ask. Approving by default because there is no prompt would be an
-agent with broad trust wearing a standard label. See Q-09.
+**The prompt lives at the bottom of the transcript**, under the reasoning that led to the call,
+rather than in a dialogue over it. A modal that covers the conversation asks somebody to decide with
+the context hidden.
+
+`y` allows once, `a` allows everything of that shape for the session, and **anything else refuses,
+including enter and escape**. The reflex key on a prompt somebody has not read is enter, and enter
+meaning no is the difference between a misread prompt costing a retry and costing a repository. A
+question takes the keyboard entirely while it is up, because typing an answer into a text field and
+wondering why nothing happens is a bad minute to give somebody.
+
+The engine is its own approver, which is what lets a blocking question from a background goroutine
+reach an event loop that must never block: the loop parks the question in the snapshot and waits on
+a channel, the interface notices it the same way it notices everything else, and the answer travels
+back through the channel. Having the loop call into the interface instead would run the interface's
+update loop inside a provider goroutine, which is the shape of every deadlock a TUI ever has.
+
+A second question while one is open is refused rather than replacing it, because silently dropping
+somebody's question to ask a different one is worse than declining the second. Cancelling a turn
+while a question is open refuses it: they never answered, and a cancelled turn should not leave a
+command running behind it.
 
 ### A4-05 Tool use loop
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
