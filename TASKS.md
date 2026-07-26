@@ -1161,6 +1161,21 @@ token and cost figures for each.
 
 `signed: walid [ ]   classmate [ ]`
 
+**Half of this is already proved.** `canopy ask -key nim -model minimaxai/minimax-m2.7` streams a
+real reply from NVIDIA NIM with token counts. The cost figure reads "cost unknown" and names the
+endpoint, for the reason in D-32 and Q-01. The Anthropic side still needs a real key, which neither
+agent has.
+
+`internal/session/live_test.go` runs the same path under test, gated behind `CANOPY_LIVE_KEY` so it
+skips unless asked for:
+
+```
+CANOPY_LIVE_KEY=<name> CANOPY_LIVE_MODEL=<model> go test ./internal/session/ -run Live -v
+```
+
+Worth knowing before the gate: **that file found two real bugs on its first run**, both about
+cancellation, and neither was findable by a scripted test. Recorded in A3-08's notes.
+
 ---
 
 # Phase A3: chat and persistence

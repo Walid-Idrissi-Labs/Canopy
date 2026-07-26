@@ -90,13 +90,19 @@ func (s *stream) queueDeltas(event sdk.MessageStreamEventUnion) {
 
 // finish handles the end of the underlying stream, whether it ended cleanly or failed.
 func (s *stream) finish() {
+	// Cancellation is checked before the stream's error, not after.
+	//
+	// Cancelling an in flight request unblocks the read with a transport error, so checking the
+	// error first would classify every turn the user stopped as a turn that broke. A stopped turn
+	// and a failed one need different words on screen and lead the reader somewhere different, and
+	// this ordering is the whole difference between them.
+	if err := s.ctx.Err(); err != nil {
+		s.finishWith(core.StopCancelled, nil)
+		return
+	}
 	if err := s.inner.Err(); err != nil {
 		s.err = s.client.classify(err)
 		s.finishWith(core.StopError, s.err)
-		return
-	}
-	if err := s.ctx.Err(); err != nil {
-		s.finishWith(core.StopCancelled, nil)
 		return
 	}
 

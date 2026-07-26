@@ -386,3 +386,53 @@ func TestName(t *testing.T) {
 		t.Errorf("named client = %q, want the name so usage attributes to it", got)
 	}
 }
+
+// Cancelling unblocks the read with a transport error rather than at a context check, so a stream
+// that inspected the error first would mark every turn the user stopped as a turn that broke.
+//
+// This was a real bug, found by a live test against a provider and not by any scripted one, because
+// a script cannot reproduce the ordering: the read has to be genuinely blocked when the cancel
+// arrives.
+func TestCancellingMidStreamIsNotAFailure(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		// Held open with nothing more to say, which is the state a long reply is in when somebody
+		// presses escape.
+		<-release
+	}))
+	defer func() { close(release); srv.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	client := New(srv.URL, core.NewSecret(canary))
+	stream, err := client.Stream(ctx, request())
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	// Read the first chunk so the next read is genuinely blocked on the server.
+	if !stream.Next() {
+		t.Fatal("expected the first chunk")
+	}
+	cancel()
+
+	var final core.StreamEvent
+	for stream.Next() {
+		if e := stream.Event(); e.Kind == core.EventDone {
+			final = e
+		}
+	}
+
+	if final.StopReason != core.StopCancelled {
+		t.Errorf("stop reason = %q, want cancelled. A stopped turn and a failed one need different "+
+			"words on screen and lead the reader somewhere different", final.StopReason)
+	}
+	if final.StopReason.Complete() {
+		t.Error("a cancelled turn is not complete")
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -434,5 +435,47 @@ func TestEmptyMessagesAreRefused(t *testing.T) {
 	}
 	if _, err := e.Send("nope", "hello"); err == nil {
 		t.Error("sending to a session that does not exist should be an error")
+	}
+}
+
+// A provider can take several seconds to send its first byte. Somebody who presses escape in that
+// window has stopped the turn, not hit a fault, and reporting a failure would put an error on
+// screen for something they did on purpose.
+//
+// Found by a live test against a real provider: the cancel landed while the request was still
+// waiting for a response, so it never reached the stream at all.
+func TestCancellingBeforeTheFirstByteIsStillAnInterruption(t *testing.T) {
+	client := &blockingClient{opened: make(chan struct{})}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+
+	session := e.Create("claude", "m")
+	turnID, err := e.Send(session.ID, "hi")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	<-client.opened
+	e.Cancel(session.ID)
+
+	turn := waitForTurn(t, e, session.ID, turnID)
+	if turn.State != core.TurnInterrupted {
+		t.Errorf("state = %s, want interrupted", turn.State)
+	}
+}
+
+// blockingClient never answers, so a cancel always lands before the stream exists.
+type blockingClient struct {
+	opened chan struct{}
+	once   sync.Once
+}
+
+func (c *blockingClient) Name() string { return "blocking" }
+
+func (c *blockingClient) Stream(ctx context.Context, _ core.Request) (core.Stream, error) {
+	c.once.Do(func() { close(c.opened) })
+	<-ctx.Done()
+	return nil, &core.ProviderError{
+		Kind: core.ErrNetwork, Provider: "blocking", Message: "context canceled", Err: ctx.Err(),
 	}
 }

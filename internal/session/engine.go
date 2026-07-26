@@ -224,7 +224,7 @@ func (e *Engine) run(
 
 	client, id, err := e.resolver.Resolve(keyName, model)
 	if err != nil {
-		e.finish(sessionID, turnID, core.TurnFailed, err, core.Usage{}, "")
+		e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, "")
 		return
 	}
 
@@ -233,7 +233,11 @@ func (e *Engine) run(
 		Messages: history,
 	})
 	if err != nil {
-		e.finish(sessionID, turnID, core.TurnFailed, err, core.Usage{}, client.Name())
+		// failureState rather than a flat TurnFailed: a provider can take several seconds to send
+		// its first byte, and somebody who presses escape in that window has stopped the turn
+		// rather than hit a fault. Reporting it as failed would put an error on screen for
+		// something the user did on purpose.
+		e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, client.Name())
 		return
 	}
 	defer func() { _ = stream.Close() }()
@@ -280,7 +284,20 @@ func (e *Engine) run(
 	if err == nil {
 		err = errors.New("the provider stopped without saying how the turn ended")
 	}
-	e.finish(sessionID, turnID, core.TurnFailed, err, core.Usage{}, client.Name())
+	e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, client.Name())
+}
+
+// failureState decides whether something that went wrong was a fault or a person pressing escape.
+//
+// The context is the authority, not the error. Cancelling an in flight request surfaces as a
+// transport failure at whatever layer happened to be waiting, and every one of those layers would
+// otherwise have to recognise its own vendor's phrasing of "cancelled". Asking the context instead
+// gives one answer that cannot drift.
+func failureState(ctx context.Context) core.TurnState {
+	if ctx.Err() != nil {
+		return core.TurnInterrupted
+	}
+	return core.TurnFailed
 }
 
 // update applies a change to a turn and publishes a coalescable notification.

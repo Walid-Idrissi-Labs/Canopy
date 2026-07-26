@@ -73,6 +73,16 @@ func (s *stream) Next() bool {
 		}
 
 		if !s.scanner.Scan() {
+			// The context is checked again here, after the read rather than only before it.
+			//
+			// Scan blocks, so cancelling while it is waiting unblocks it with a transport error
+			// rather than at the check above. Reporting that as a failure would mark every turn the
+			// user stopped as a turn that broke, and a stopped turn and a failed one need different
+			// words on screen and lead somewhere different.
+			if err := s.ctx.Err(); err != nil {
+				s.finishWith(core.StopCancelled, nil)
+				continue
+			}
 			if err := s.scanner.Err(); err != nil {
 				s.err = s.client.classifyTransport(err)
 				s.finishWith(core.StopError, s.err)
