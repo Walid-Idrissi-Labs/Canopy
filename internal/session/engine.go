@@ -19,7 +19,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/store"
 )
@@ -44,6 +46,14 @@ type Engine struct {
 
 	resolver Resolver
 	events   *store.Broker
+
+	// tools is what agents in this engine may do, and trust is how much of it they may do without
+	// asking. Both nil or zero means a conversation with no tools, which is what a chat with no
+	// workspace is and is a legitimate thing to want.
+	tools    *core.ToolRegistry
+	trust    core.TrustLevel
+	approver agent.Approver
+	trail    *permission.Trail
 
 	// storage is optional. An engine without one still works completely and forgets everything on
 	// exit, which is what the tests want and what a first run before the config directory exists
@@ -70,6 +80,9 @@ type Engine struct {
 	// the interface from reading. Anything that watches for a turn to finish and then shuts down
 	// would otherwise close the database out from under that write.
 	writes sync.WaitGroup
+
+	// grants are the approvals in force per session.
+	grants map[string]*permission.Grants
 
 	nextID int
 }
@@ -134,6 +147,34 @@ func idNumber(id string) int {
 
 // SetClock replaces the clock. Only useful in tests.
 func (e *Engine) SetClock(now func() time.Time) { e.events.SetClock(now) }
+
+// WithTools gives agents in this engine something to do besides talk.
+//
+// The approver is separate from the tools because who answers a permission prompt is a property of
+// how Canopy is being run, not of what the agent can do. A terminal asks; a scheduled run has a
+// policy; neither should be assumed by the thing holding the tool list.
+func (e *Engine) WithTools(
+	tools *core.ToolRegistry, trust core.TrustLevel, approver agent.Approver,
+) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.tools = tools
+	e.trust = trust
+	e.approver = approver
+	if e.trail == nil {
+		e.trail = permission.NewTrail()
+	}
+}
+
+// Trail is the audit record of every tool call these agents have made.
+func (e *Engine) Trail() *permission.Trail {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.trail == nil {
+		e.trail = permission.NewTrail()
+	}
+	return e.trail
+}
 
 // Events returns a channel of notifications. See core.SnapshotStore for the contract.
 func (e *Engine) Events(afterSequence uint64) <-chan core.Event {
@@ -366,10 +407,28 @@ func (e *Engine) run(
 		return
 	}
 
-	stream, err := client.Stream(ctx, core.Request{
-		Model:    model,
-		Messages: history,
+	e.update(sessionID, turnID, func(t *core.Turn) {
+		t.State = core.TurnStreaming
+		t.Provider = client.Name()
 	})
+
+	e.mu.Lock()
+	tools, trust, approver, trail := e.tools, e.trust, e.approver, e.trail
+	e.mu.Unlock()
+
+	loop := &agent.Loop{
+		Client:    client,
+		Tools:     tools,
+		Trust:     trust,
+		Grants:    e.grantsFor(sessionID),
+		Trail:     trail,
+		Approver:  approver,
+		AgentID:   sessionID,
+		SessionID: sessionID,
+	}
+
+	outcome, err := loop.Run(ctx, core.Request{Model: model, Messages: history},
+		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
 	if err != nil {
 		// failureState rather than a flat TurnFailed: a provider can take several seconds to send
 		// its first byte, and somebody who presses escape in that window has stopped the turn
@@ -378,51 +437,80 @@ func (e *Engine) run(
 		e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, client.Name())
 		return
 	}
-	defer func() { _ = stream.Close() }()
 
-	e.update(sessionID, turnID, func(t *core.Turn) {
-		t.State = core.TurnStreaming
-		t.Provider = client.Name()
+	usage, _ := pricing.Apply(id, outcome.Usage)
+	state := core.TurnStateFromStopReason(outcome.Stop)
+
+	// A turn stopped by a step or token bound is a failure with a specific explanation, not a
+	// generic one. "It went in circles" is something a user can act on; "the turn failed" is not.
+	var reason error
+	if outcome.LimitHit != "" {
+		state = core.TurnFailed
+		reason = errors.New(outcome.LimitHit)
+	}
+
+	e.finish(sessionID, turnID, state, reason, usage, client.Name())
+}
+
+// grantsFor returns the approvals in force for a session, creating them on first use.
+//
+// Per session and never persisted, because an approval that outlives the conversation it was given
+// in is one nobody remembers granting.
+func (e *Engine) grantsFor(sessionID string) *permission.Grants {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.grants == nil {
+		e.grants = map[string]*permission.Grants{}
+	}
+	if existing, ok := e.grants[sessionID]; ok {
+		return existing
+	}
+	fresh := permission.NewGrants()
+	e.grants[sessionID] = fresh
+	return fresh
+}
+
+// turnObserver folds the loop's running commentary into the session snapshot.
+//
+// This is the only thing that connects a turn in progress to what is on screen, and every method
+// has to be cheap: they run on the loop's goroutine, between tokens.
+type turnObserver struct {
+	engine    *Engine
+	sessionID string
+	turnID    string
+}
+
+func (o *turnObserver) Text(chunk string) {
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Text += chunk })
+}
+
+func (o *turnObserver) Thinking(chunk string) {
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Thinking += chunk })
+}
+
+func (o *turnObserver) ToolRequested(call core.ToolCall) {
+	// Shown before permission is decided, because the gap between a tool being asked for and being
+	// approved is exactly when somebody wants to see what is being proposed.
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		t.ToolCalls = append(t.ToolCalls, call)
+		t.State = core.TurnAwaitingTools
 	})
+}
 
-	for stream.Next() {
-		event := stream.Event()
+func (o *turnObserver) ToolFinished(_ core.ToolCall, result core.ToolResult) {
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		t.ToolResults = append(t.ToolResults, result)
+		t.State = core.TurnStreaming
+	})
+}
 
-		switch event.Kind {
-		case core.EventText:
-			e.update(sessionID, turnID, func(t *core.Turn) { t.Text += event.Text })
-
-		case core.EventThinking:
-			e.update(sessionID, turnID, func(t *core.Turn) { t.Thinking += event.Text })
-
-		case core.EventNotice:
-			// A fallback to another provider. Recorded on the turn rather than merged into the
-			// reply, because it came from Canopy and reads as the model speaking otherwise.
-			e.update(sessionID, turnID, func(t *core.Turn) {
-				t.Text += fmt.Sprintf("\n[%s]\n", event.Text)
-			})
-
-		case core.EventToolCall:
-			e.update(sessionID, turnID, func(t *core.Turn) {
-				t.ToolCalls = append(t.ToolCalls, *event.ToolCall)
-			})
-
-		case core.EventDone:
-			usage, _ := pricing.Apply(id, event.Usage)
-			e.finish(sessionID, turnID,
-				core.TurnStateFromStopReason(event.StopReason), event.Err, usage, client.Name())
-			return
-		}
-	}
-
-	// A stream that ended without a done event is a bug in a provider adapter, not a completed
-	// turn. Left as failed rather than complete, because the alternative is presenting an answer
-	// nobody can vouch for as finished.
-	err = stream.Err()
-	if err == nil {
-		err = errors.New("the provider stopped without saying how the turn ended")
-	}
-	e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, client.Name())
+func (o *turnObserver) StepFinished(usage core.Usage) {
+	// A running total, so a turn that takes twenty steps shows what it has spent before it ends
+	// rather than only afterwards.
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		t.Usage = t.Usage.Add(usage)
+	})
 }
 
 // failureState decides whether something that went wrong was a fault or a person pressing escape.

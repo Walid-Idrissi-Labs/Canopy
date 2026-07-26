@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A3 onward, working overnight | `feat/agent-runtime` | none |
+| Claude | A4 tools and permissions, working overnight | `feat/agent-runtime` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -1745,7 +1745,7 @@ is A4-04, and its kind is `execute` precisely so that model can treat it differe
 not sandbox and must never imply that it does.
 
 ### A4-04 Per agent trust levels and permissions
-`status: todo | owner: none | branch: none | depends: A4-02, A4-03`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-02, A4-03`
 `scope: internal/permission/`
 
 Deliverable: trust level as a property of the profile. Each level defines which tools run without
@@ -1757,7 +1757,7 @@ model rather than killing the session. An approval for one path never covers ano
 profile and a profile working near `main` behave differently on the same request. The audit trail
 answers "what did this agent actually do" after the fact.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **the existing repository trust contract does not cover this and must not be reused as
 though it does.** That governs commands the user wrote in a config file. This governs commands a
@@ -1767,9 +1767,42 @@ Canopy does not sandbox and must never imply that it does. Per agent levels were
 global posture because the alternative forces the strictest agent's friction onto every agent, and
 people respond to that by loosening everything.
 
+**Deny is a separate outcome from Ask**, and that separation is the load bearing part. A denial is
+structural: this level does not include this, and clicking yes is not on offer. Dressing it up as a
+question that can only be answered no is how people learn to click through prompts, which is the
+failure this whole design exists to avoid. An approval cannot override a denial either, because the
+denial is what the user chose when they picked the level, and a prompt that could override it would
+make the level advisory.
+
+An unknown trust level denies everything. "I do not know how much this agent is trusted" reads as
+"not at all", and a configuration somebody got wrong should fail closed.
+
+**Approvals default to the narrowest scope that covers the call**, and a wider one is something a
+user chooses explicitly. Offering the broad one as the default is how "yes" comes to mean "yes to
+everything" without anybody deciding that. They are per session and never persisted: an approval
+that outlives the conversation it was given in is one nobody remembers granting.
+
+A directory approval covers a call only when **every** path it touches is inside. Approving a
+directory and then letting a multi file call through on the strength of the paths that did match is
+the obvious hole and it is not obvious from the outside.
+
+**Command case is preserved when judging git.** `git branch -d` deletes a merged branch and
+`git branch -D` deletes any branch, and lowercasing to simplify matching conflates them and quietly
+allows the destructive one at a level that should ask. A test caught this. An unfamiliar git command
+carrying `--force` or a bare `-f` is treated as destructive anyway, because a list of subcommands
+will always be behind the tool.
+
+The audit trail records refusals as well as successes, because an agent that tried to write outside
+its workspace nine times and was stopped nine times is a very different thing from one that never
+tried, and only the trail can tell them apart.
+
+**No interface yet, and the default until there is one is to refuse.** `agent.DenyAll` is what a
+turn gets when nobody is there to ask. Approving by default because there is no prompt would be an
+agent with broad trust wearing a standard label. See Q-09.
+
 ### A4-05 Tool use loop
-`status: todo | owner: none | branch: none | depends: A4-04`
-`scope: internal/agent/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
+`scope: internal/agent/, internal/session/engine.go, cmd/canopy/`
 
 Deliverable: the full turn. Model requests a tool, permission is checked, the tool runs, the result
 returns, repeat until the model stops.
@@ -1778,9 +1811,38 @@ Acceptance: a multi step task completes end to end. Cancellation mid loop leaves
 execution. A failing tool is reported to the model rather than crashing the turn. Loop count and
 token budget are both bounded.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: without a loop limit and a budget, a confused model spends real money in a circle.
+notes: without a loop limit and a budget, a confused model spends real money in a circle. Both
+bounds are enforced and both say which one stopped the turn, because "the model finished" and "we
+stopped it because it was going in circles" are different things to tell a user.
+
+**Every path through a tool call produces exactly one audit entry and exactly one result.** A call
+with no entry is one nobody can find afterwards; a call with no result leaves the model waiting for
+an answer that is never coming, which it responds to by asking again, which is how a loop that
+should have taken three steps takes fifty.
+
+A denied call, a failed tool, an unknown tool name and invalid arguments all come back to the model
+as results rather than ending the turn. A refusal is information: the model can try something within
+its remit, which is usually what it should do, and ending the turn would throw away everything it
+had worked out. The unknown tool case names the tool, because "unknown tool" alone leaves the model
+guessing which of the three it just asked for was wrong.
+
+Cancellation is checked between tool calls, not only around the model call. A turn that was stopped
+should not run the remaining three tools it had queued up.
+
+One bug worth recording, because it cost ten minutes of test time to find: **the loop must return at
+the done event rather than reading past it.** The done event is by contract the last thing a stream
+has to say, so continuing to read means depending on the stream also reporting that it is finished,
+promptly. A stream that simply stops producing events hangs the turn instead of ending it, which is
+far worse than leaving an event unread. There is now a test with a stream that does exactly that.
+
+**Proved live against a real provider**, which is the only thing that can check the part scripted
+tests cannot: whether a real model, given these tool descriptions and these schemas, reaches for the
+right tool and fills it in correctly. That is a property of the descriptions as much as of the code.
+`internal/agent/live_test.go` has an agent read a file and answer from it, get refused when its
+trust level says no and carry on, and create a file with specific content. All three pass against
+`minimaxai/minimax-m2.7` on NVIDIA NIM.
 
 ### A4-06 Git tools
 `status: todo | owner: none | branch: none | depends: A4-04`

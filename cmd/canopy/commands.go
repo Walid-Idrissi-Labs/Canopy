@@ -14,11 +14,13 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 )
 
@@ -70,18 +72,55 @@ func runChat() error {
 		fmt.Fprintf(os.Stderr, "warning: history is not being saved: %v\n", err)
 	}
 
+	dir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("finding the working directory: %w", err)
+	}
+
+	// Tools are scoped to the directory Canopy was started in, which is what "run canopy in a
+	// project" means. A workspace that could not be opened is a directory the agent cannot work in,
+	// and a conversation with no tools is still a useful thing, so it is a warning rather than a
+	// failure.
+	if err := attachTools(engine, dir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
+	}
+
 	// One session to start in. Several sessions and the agents view arrive at A5; the engine
 	// already holds a list rather than a single conversation, so that is a screen rather than a
 	// rewrite.
 	keyName := resolver.DefaultKeyName()
 	engine.Create(keyName, defaultModelFor(keyStore, keyName))
 
-	dir, err := os.Getwd()
+	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
+}
+
+// attachTools gives the agent something to do besides talk.
+//
+// The trust level is standard for now, which reads and writes inside the workspace without asking
+// and shows every shell command before running it. Per profile levels are configured at A5, and
+// until there is a way to choose one, the level that asks about the dangerous half is the only
+// defensible default.
+func attachTools(engine *session.Engine, dir string) error {
+	workspace, err := tools.OpenWorkspace(dir)
 	if err != nil {
-		dir = ""
+		return err
 	}
 
-	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
+	registry := core.NewToolRegistry()
+	for _, tool := range tools.FileTools(workspace) {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	if err := registry.Register(tools.ShellTool(workspace)); err != nil {
+		return err
+	}
+
+	// DenyAll until the approval prompt exists. Approving by default because there is no interface
+	// to ask through would be an agent with broad trust wearing a standard label, which is worse
+	// than an agent that cannot yet run commands. See Q-09.
+	engine.WithTools(registry, core.TrustStandard, agent.DenyAll)
+	return nil
 }
 
 // attachHistory gives the engine somewhere to persist to.
