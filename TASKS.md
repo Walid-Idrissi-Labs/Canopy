@@ -857,7 +857,7 @@ any total it is summed into. A partial sum shown as a figure is a wrong number o
 worse than an absent one.
 
 ### A2-02 Anthropic client
-`status: todo | owner: none | branch: none | depends: A2-01, A1-02`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-01, A1-02`
 `scope: internal/provider/anthropic/`
 
 Deliverable: the Messages API with streaming, using a named key.
@@ -865,10 +865,38 @@ Deliverable: the Messages API with streaming, using a named key.
 Acceptance: a real request returns a streamed reply. Cancellation stops the stream and releases the
 connection. Recorded fixtures let tests run without network or credentials.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: pin the API version. Check current model ids at implementation time rather than trusting
-what was current when this was written.
+notes: model ids and parameter names were checked against the SDK source and the current API
+reference at implementation time, not recalled. `claude-opus-5` is the default. The effort constants
+were read out of the SDK rather than guessed.
+
+Built on the official SDK per D-30. The credential is revealed once, in `New`, and handed straight
+to the SDK, which is the entire window in which it exists as an ordinary string here.
+
+**The A1-04 finding is fixed here.** Provider error text is scrubbed of the credential before it
+leaves the package, so a reply of "invalid x-api-key: sk-ant-..." cannot reach the screen. This is
+the right layer: the credential is already in scope, so the scrub is local and complete, whereas
+doing it at render time would mean loading every stored key so the renderer could search for it.
+Tested with a planted canary.
+
+Four things worth Codex's attention:
+
+1. **Sampling parameters are dropped here, not trusted to callers.** `AgentProfile.Temperature`
+   exists from A1-01 and current models reject it with a 400. The test asserts on the marshalled
+   request body rather than the struct, because the body is what actually goes over the wire.
+2. **Thinking is only mentioned when disabled.** It is on by default on current models, so a
+   request that says nothing gets thinking. `DefaultMaxTokens` is 32000 because the cap covers
+   thinking and answer together, and a value sized for the answer alone truncates mid sentence.
+3. **Tool calls are emitted only once complete**, at the end of the stream, while text streams
+   live. A partially received tool input is not something a caller can act on.
+4. **The done event always fires**, on every path including failure and cancellation. Without it a
+   failed stream is indistinguishable from one still running, and usage already billed goes
+   unaccounted for.
+
+One real bug found while testing: the SDK's `Error` method dereferences the HTTP response it was
+built from, so an error constructed without one panics. That would turn a provider failure into a
+lost session and everything in it. `safeMessage` guards it and falls back to naming the status.
 
 ### A2-03 Error taxonomy
 `status: todo | owner: none | branch: none | depends: A2-02`
