@@ -33,6 +33,19 @@ const (
 	EventConfigChanged EventKind = "config-changed"
 	// EventTrustChanged means the trust decision for this project changed.
 	EventTrustChanged EventKind = "trust-changed"
+	// EventSessionsChanged means a session was created or removed.
+	EventSessionsChanged EventKind = "sessions-changed"
+	// EventSessionUpdated means something about a session other than its in flight turn changed,
+	// such as its title or which credential it uses.
+	EventSessionUpdated EventKind = "session-updated"
+	// EventTurnUpdated means a turn started, streamed, or finished.
+	//
+	// This is the highest volume event in the system by a wide margin: one per token, times
+	// however many agents are running. It is also the case the coalescing rules were designed for,
+	// and the reason they hold is that events carry no payload. A reader who sees one notification
+	// where three were sent takes a snapshot and finds every token that arrived, because the turn's
+	// text grows in the snapshot rather than travelling in the event.
+	EventTurnUpdated EventKind = "turn-updated"
 )
 
 // AllEventKinds returns every valid event kind.
@@ -46,6 +59,9 @@ func AllEventKinds() []EventKind {
 		EventLogAppended,
 		EventConfigChanged,
 		EventTrustChanged,
+		EventSessionsChanged,
+		EventSessionUpdated,
+		EventTurnUpdated,
 	}
 }
 
@@ -78,6 +94,8 @@ type Event struct {
 	ServiceName string
 	RunID       string
 	BufferID    string
+	SessionID   string
+	TurnID      string
 
 	// Final marks a transition that will not be followed by another for this subject, such as a
 	// test run reaching passing, failing, cancelled or error.
@@ -120,6 +138,15 @@ func (e Event) CoalesceKey() string {
 		return "config"
 	case EventTrustChanged:
 		return "trust"
+	case EventSessionsChanged:
+		return "sessions"
+	case EventSessionUpdated:
+		return fmt.Sprintf("session|%s", e.SessionID)
+	case EventTurnUpdated:
+		// Keyed by turn rather than by session, so two agents streaming at once never collapse into
+		// each other. Coalescing a burst of tokens from one turn loses nothing; coalescing across
+		// turns would lose the fact that a different turn moved at all.
+		return fmt.Sprintf("turn|%s|%s", e.SessionID, e.TurnID)
 	default:
 		// An unrecognised kind is never coalesced. Being conservative here means an unknown
 		// event is delivered redundantly rather than silently discarded.

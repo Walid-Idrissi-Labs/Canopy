@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A2, the provider layer | `feat/providers` | none |
+| Claude | A3, chat and persistence | `feat/providers` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -1227,8 +1227,8 @@ least common activity first and makes Canopy look like something you watch rathe
 you talk to.
 
 ### A3-01 Session and conversation types
-`status: todo | owner: none | branch: none | depends: A2-01`
-`scope: internal/core/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-01`
+`scope: internal/core/session.go, internal/core/event.go, internal/core/project.go`
 
 Deliverable: `Session`, `Message`, `Role`, `Turn` and `AgentState`, held in the existing snapshot
 store so sessions and workspaces share one authoritative view and one event stream.
@@ -1236,11 +1236,41 @@ store so sessions and workspaces share one authoritative view and one event stre
 Acceptance: a session rebuilds exactly from a snapshot. Streaming updates coalesce, and a completed
 turn is a final event that can never be dropped.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: token streaming is the highest volume event source this project will ever have, which is
 precisely the case the coalescing rules in P1-01 were designed for. This is the first real test of
 whether that design was right.
+
+**The design held, and the reason it held is worth writing down.** Events carry no payload, so a
+reader who sees one notification where three were sent takes a snapshot and finds every token that
+arrived, because the turn's text grows in the snapshot rather than travelling in the event. Had
+events carried their own copy of the text, coalescing would drop characters. Keyed per turn rather
+than per session, so two agents streaming at once never swallow each other.
+
+`Message` and `Role` already existed on the provider contract, and `Turn` reuses them rather than
+defining a parallel pair. `Session.History()` is then a copy rather than a translation, and a
+translation between two shapes that mean the same thing is exactly where a tool result loses its
+error flag.
+
+`TurnState` is deliberately wider than it first looks. Complete, interrupted and failed are the
+obvious three; **refused and truncated are the ones that matter**. Both arrive as successful
+responses carrying text a reader would take for a finished answer, so both are their own state and
+`Whole()` returns true for exactly one of the eight. That is the chat form of the stale green
+problem the whole project is built around: plausible, and wrong in the direction that costs you.
+
+Three invariants that Validate enforces, each because the failure is invisible until it is not:
+
+- **A terminal turn must record when it ended**, or its duration grows forever and a finished turn
+  counts up on screen as though it were still running.
+- **A failed turn must say why.** "Something went wrong" is not something a user can act on.
+- **Only the last turn may be in flight.** An earlier one still streaming was abandoned without
+  being closed out, and it would show as running for the life of the session.
+
+Sessions live in `ProjectSnapshot` beside the workspaces rather than in a store of their own, so
+"this agent is working in that worktree, whose tests are failing" is one read of one consistent
+view. Two stores would mean two reads, and two reads mean a moment where the answer is half from
+before and half from after.
 
 ### A3-02 Session storage
 `status: todo | owner: none | branch: none | depends: A3-01`
