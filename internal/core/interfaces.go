@@ -2,25 +2,19 @@ package core
 
 import "context"
 
-// The five interfaces below are the seam between the engine and the interface, and they are the
-// complete set for v0.1. They are written exactly as the corrections document specifies.
+// The interfaces below are the seam between the verification engine and everything that consumes
+// it. They came from the original truth contract and survive the move to an agent runtime intact,
+// because whether a result still describes the code in front of you is the same question whoever
+// produced the code.
 //
-// Nothing here describes spawning an agent, attaching a PTY, creating or removing a worktree,
-// committing, merging or opening a pull request. That is not an oversight. Designing those
-// interfaces now would shape the code around features that were deliberately cut, and the usual
-// result is that the cut stops holding, because the shape is already there and filling it in
-// looks like a small step.
-//
-// One interface is knowingly missing: reading a log buffer, which the focused log view in P2-10
-// needs. The buffer design lands in P2-06, and adding the interface before knowing that shape
-// would be guessing. It is a contract change when it comes, so it goes through a joint discussion
-// like any other.
+// The agent side of the contract, meaning providers, sessions, tools and permissions, is added in
+// A1 through A4 alongside the packages that implement it. Interfaces are written when the thing
+// they describe is about to exist, not before.
 
 // WorkspaceSource discovers the worktrees Canopy should watch.
 //
-// Discovery is strictly read only in v0.1. An implementation must never create, remove, prune,
-// reset or clean a worktree, and must only ever report ownership values for which
-// ReachableInV01 is true.
+// Discovery only reads. Creating and removing worktrees is a separate concern (A5-03) so that the
+// code path which finds worktrees can never be the one that destroys them.
 type WorkspaceSource interface {
 	// Discover returns every worktree currently known, including the primary checkout.
 	//
@@ -78,8 +72,8 @@ type TestRunner interface {
 
 // HealthChecker probes a service the user started.
 //
-// Canopy does not start services in v0.1, so an implementation observes and never launches,
-// restarts or stops anything.
+// Canopy observes services rather than starting them. Managed services are deferred past A9,
+// see D-06.
 type HealthChecker interface {
 	// Check performs one probe and returns what it observed.
 	//

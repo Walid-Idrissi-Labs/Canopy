@@ -11,7 +11,7 @@ import (
 // through an unbounded buffer would let the UI be developed against behaviour the real store
 // cannot provide, and the gap would only show up under load, which is the worst time to find it.
 //
-// The guarantees, which P2-08 has to match:
+// The guarantees, which the real store has to match:
 //
 //   - sequence numbers are monotonic and never reused
 //   - a subscriber may miss intermediate updates, never a final transition
@@ -65,9 +65,9 @@ func (s *Store) Events(afterSequence uint64) <-chan core.Event {
 	go sub.pump()
 
 	// A caller resuming from an older sequence has no history to replay from here, because this
-	// store keeps none. Saying so in a comment rather than silently doing nothing: the real store
-	// in P2-08 needs a bounded history to honour this properly, and until it does, a consumer
-	// that falls far behind must recover by taking a fresh snapshot rather than by replaying.
+	// store keeps none. Said out loud rather than silently ignored: the real store needs a bounded
+	// history to honour this properly, and until it does, a consumer that falls far behind
+	// recovers by taking a fresh snapshot rather than by replaying.
 	_ = afterSequence
 
 	return sub.out

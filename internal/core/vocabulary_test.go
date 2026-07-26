@@ -203,29 +203,35 @@ func TestTerminalTestStates(t *testing.T) {
 	}
 }
 
-func TestOwnershipReachableInV01(t *testing.T) {
-	// v0.1 discovers worktrees and never creates or adopts one, so only two of the four
-	// ownership values can ever appear. Managed and adopted exist so the lifecycle feature is not
-	// a contract change later.
-	reachable := map[WorkspaceOwnership]bool{
+func TestDiscoveredOwnership(t *testing.T) {
+	// Discovery finds the primary checkout and worktrees other tools made. It never produces
+	// managed or adopted, because those mean Canopy created the worktree or was handed it.
+	discovered := map[WorkspaceOwnership]bool{
 		OwnershipPrimary:          true,
 		OwnershipExternalReadOnly: true,
 	}
 	for _, o := range AllWorkspaceOwnerships() {
-		if got, want := o.ReachableInV01(), reachable[o]; got != want {
-			t.Errorf("%q ReachableInV01() = %v, want %v", o, got, want)
+		if got, want := o.DiscoveredNotCreated(), discovered[o]; got != want {
+			t.Errorf("%q DiscoveredNotCreated() = %v, want %v", o, got, want)
 		}
 	}
 }
 
-func TestNothingReachableInV01AllowsLifecycleOperations(t *testing.T) {
-	// The safety property behind the whole observe-only scope: every workspace v0.1 can produce
-	// must refuse removal, pruning and resetting.
+// The safety property that survives every scope change: Canopy may create and remove worktrees for
+// its own agents, and may never remove one it merely found. The primary checkout is never
+// removable under any feature.
+func TestCanopyNeverRemovesWhatItDidNotCreate(t *testing.T) {
 	for _, o := range AllWorkspaceOwnerships() {
-		if o.ReachableInV01() && o.AllowsLifecycleOperations() {
-			t.Errorf("%q is reachable in v0.1 and allows lifecycle operations, "+
-				"which would let Canopy modify a worktree it did not create", o)
+		if o.DiscoveredNotCreated() && o.AllowsLifecycleOperations() {
+			t.Errorf("%q was discovered rather than created, but allows lifecycle operations, "+
+				"which would let Canopy destroy a worktree somebody else made", o)
 		}
+	}
+	if OwnershipPrimary.AllowsLifecycleOperations() {
+		t.Error("the primary checkout must never be removable")
+	}
+	if !OwnershipManaged.AllowsLifecycleOperations() {
+		t.Error("Canopy creates managed worktrees for agents, so it has to be able to remove them")
 	}
 }
 

@@ -20,6 +20,7 @@ const usage = `canopy - a local verification cockpit for parallel git worktrees
 
 usage:
   canopy               open the dashboard
+  canopy keys          manage provider credentials
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
   canopy demo          drive the stale flip and show it happening
@@ -28,7 +29,7 @@ usage:
 flags:
   -source string       where state comes from (default "fake")
 
-Only the fake source exists so far. Real worktree discovery is P2-01.
+Only the fake source exists so far. Real worktree discovery is A5-01.
 `
 
 func main() {
@@ -53,6 +54,13 @@ func run(args []string) error {
 	}
 
 	command := args[0]
+
+	// keys owns its own subcommands and flags, so it is dispatched before the shared flag set
+	// gets a chance to reject them.
+	if command == "keys" {
+		return runKeys(args[1:], os.Stdout)
+	}
+
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	source := flags.String("source", "fake", `where state comes from, only "fake" for now`)
@@ -73,7 +81,7 @@ func run(args []string) error {
 	}
 
 	if *source != "fake" {
-		return fmt.Errorf("unknown source %q, only \"fake\" exists so far (real discovery is P2-01)", *source)
+		return fmt.Errorf("unknown source %q, only \"fake\" exists so far (real discovery is A5-01)", *source)
 	}
 
 	switch command {

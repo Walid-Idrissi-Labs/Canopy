@@ -12,14 +12,12 @@ const (
 	// OwnershipPrimary is the user's original checkout. Canopy never removes it, under any
 	// future feature.
 	OwnershipPrimary WorkspaceOwnership = "primary"
-	// OwnershipManaged is a worktree Canopy created itself. Unreachable in v0.1, which creates
-	// nothing.
+	// OwnershipManaged is a worktree Canopy created for an agent, and may remove again.
 	OwnershipManaged WorkspaceOwnership = "managed"
 	// OwnershipAdopted is a worktree that started external and was explicitly handed to Canopy.
-	// Unreachable in v0.1.
 	OwnershipAdopted WorkspaceOwnership = "adopted"
 	// OwnershipExternalReadOnly is a worktree Canopy discovered and watches, but never modifies.
-	// Along with primary, this is the only ownership v0.1 can produce.
+	// Somebody else made it, so Canopy does not get to remove it.
 	OwnershipExternalReadOnly WorkspaceOwnership = "external-read-only"
 )
 
@@ -43,20 +41,23 @@ func (o WorkspaceOwnership) Valid() bool {
 	return false
 }
 
-// ReachableInV01 reports whether v0.1 can ever produce this ownership.
+// DiscoveredNotCreated reports whether this worktree came from outside Canopy.
 //
-// Managed and adopted exist in the vocabulary so the lifecycle feature is not a contract change
-// later, but nothing in v0.1 may assign them. A test asserts that discovery only produces the
-// two reachable values.
-func (o WorkspaceOwnership) ReachableInV01() bool {
+// Discovery may only ever produce these two. A worktree Canopy did not make is one it does not
+// get to unmake, and keeping that as a property of the ownership value rather than a rule someone
+// remembers is what makes it checkable.
+func (o WorkspaceOwnership) DiscoveredNotCreated() bool {
 	return o == OwnershipPrimary || o == OwnershipExternalReadOnly
 }
 
-// AllowsLifecycleOperations reports whether Canopy may ever remove, prune or reset this worktree.
+// AllowsLifecycleOperations reports whether Canopy may remove, prune or reset this worktree.
 //
-// It is false for primary and for external-read-only, which is every workspace v0.1 can see. The
-// method exists so that a future lifecycle feature has one obvious place to ask permission, and
-// so that a reviewer can grep for the question.
+// True only for worktrees Canopy created for an agent, or ones explicitly handed to it. The
+// primary checkout is never removable under any feature, and neither is a worktree somebody else
+// created and Canopy merely watches.
+//
+// Every destructive git path asks this question through this method, so a reviewer has one place
+// to check rather than several to find.
 func (o WorkspaceOwnership) AllowsLifecycleOperations() bool {
 	return o == OwnershipManaged || o == OwnershipAdopted
 }
@@ -103,7 +104,7 @@ type ServiceSnapshot struct {
 	// Required decides whether this service can block a green roll-up.
 	Required bool
 
-	// Managed is always false in v0.1. Canopy observes services, it does not start them.
+	// Managed is always false. Canopy observes services rather than starting them, see D-06.
 	Managed bool
 
 	// Instance is the running service this snapshot describes, or nil if none was found.
