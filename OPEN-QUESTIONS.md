@@ -186,3 +186,23 @@ worse than the gap.
 **What it means today:** an agent started in the primary checkout can commit to the primary
 checkout. That is what somebody running `canopy` in their own repository is asking for, so it is not
 wrong yet, but it stops being right the moment several agents exist.
+
+---
+
+## Q-13 The live tests are slow and occasionally flaky against NVIDIA NIM
+
+The three live agent tests take between one and four minutes each against
+`minimaxai/minimax-m2.7`, and one of them timed out at four minutes on a run where the other two
+passed comfortably. Raising the budget to ten minutes fixed it.
+
+**Decided in the meantime:** a generous budget, because tightening it makes the suite fail for
+reasons that have nothing to do with this code, which is the fastest way to teach people to ignore a
+red test.
+
+**Worth knowing:** the slowdown got noticeably worse after the tool set grew from five tools to
+eleven, which is a larger prompt on every step. That is expected and is the cost of giving an agent
+more to choose from. It also means a faster provider will make the whole thing feel very different,
+and judging Canopy's speed on this endpoint would be judging NVIDIA's free tier.
+
+**Not decided:** whether these ever run anywhere other than by hand. They cost money and take ten
+minutes, so a per commit CI run is out. A nightly one against a cheap model is plausible.

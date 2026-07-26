@@ -25,6 +25,15 @@ import (
 // is only observable against something that has not been told the answer.
 //
 //	CANOPY_LIVE_KEY=nim CANOPY_LIVE_MODEL=minimaxai/minimax-m2.7 go test ./internal/agent/ -run Live -v
+//
+// liveBudget is how long a live turn may take before the test gives up.
+//
+// Generous, and it has been raised once already. NVIDIA NIM is a free tier and is genuinely slow
+// under load: the same request that answers in seventy seconds one minute takes four the next.
+// Tightening this would make the suite fail for reasons that have nothing to do with this code,
+// which is the fastest way to teach people to ignore a red test.
+const liveBudget = 10 * time.Minute
+
 func liveLoop(t *testing.T, dir string, trust core.TrustLevel) (*agent.Loop, string) {
 	t.Helper()
 
@@ -47,8 +56,17 @@ func liveLoop(t *testing.T, dir string, trust core.TrustLevel) (*agent.Loop, str
 	if err != nil {
 		t.Fatalf("OpenWorkspace: %v", err)
 	}
+	// The full set the running application gets, deliberately. A model choosing correctly from five
+	// tools tells us much less than one choosing correctly from eleven, and the whole point of a
+	// live test here is whether the descriptions are good enough to disambiguate.
 	registry := core.NewToolRegistry()
 	for _, tool := range tools.FileTools(workspace) {
+		registry.MustRegister(tool)
+	}
+	for _, tool := range tools.GitTools(workspace) {
+		registry.MustRegister(tool)
+	}
+	for _, tool := range tools.WebTools() {
 		registry.MustRegister(tool)
 	}
 	registry.MustRegister(tools.ShellTool(workspace))
@@ -75,7 +93,7 @@ func TestLiveAgentReadsAFileAndAnswersFromIt(t *testing.T) {
 
 	loop, model := liveLoop(t, dir, core.TrustReadOnly)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), liveBudget)
 	defer cancel()
 
 	outcome, err := loop.Run(ctx, core.Request{
@@ -121,7 +139,7 @@ func TestLiveReadOnlyAgentIsRefusedAndCarriesOn(t *testing.T) {
 
 	loop, model := liveLoop(t, dir, core.TrustReadOnly)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), liveBudget)
 	defer cancel()
 
 	if _, err := loop.Run(ctx, core.Request{
@@ -146,7 +164,7 @@ func TestLiveAgentWritesAFile(t *testing.T) {
 	dir := t.TempDir()
 	loop, model := liveLoop(t, dir, core.TrustConfined)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), liveBudget)
 	defer cancel()
 
 	if _, err := loop.Run(ctx, core.Request{
