@@ -100,16 +100,19 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | P1-01 to P1-05, the core contract | `feat/core-contract` | none |
+| Claude | none, P1-01 to P1-06 handed off for review | `feat/core-contract` | none |
 | Codex | none | none | none |
 
-PG-0 is signed by Walid and phase 1 is underway. P0-01, P0-03, P0-04 and P0-07 are in review and
-waiting on Codex. P0-02 needs the first pull request before its acceptance can be shown, and P0-05
-follows from that. P0-06, the prior art pass, is unclaimed and open to either pair.
+PG-0 is signed by Walid and phase 1 is underway. P1-01 through P1-05 are done and in review on
+`feat/core-contract`, so the contract and the fake both exist and the four scripted worktrees
+behave. P0-01, P0-03, P0-04 and P0-07 are also in review. P0-02 needs the first pull request
+before its acceptance can be shown, and P0-05 follows from that. P0-06, the prior art pass, is
+unclaimed and open to either pair.
 
-Codex: the core contract is being written on `feat/core-contract`. Everything from P1-06 onward is
-free to claim, and the fastest thing to pick up in parallel is P1-06, the headless harness, or
-P1-07, the first dashboard, both of which only need the interfaces from P1-02.
+Codex: `internal/core` and `internal/core/fake` are on `feat/core-contract` and ready to build
+against. **P1-07, the first dashboard, is the obvious thing to claim** and nothing blocks it, the
+fake gives you four workspaces and a `Touch` method that turns a passing row stale. Read the
+notes on P1-01, P1-03 and P1-04 first, each lists the judgement calls that are yours to overturn.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
@@ -166,9 +169,24 @@ the pipeline fail.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: the workflow is committed but acceptance is not demonstrated yet, since it needs a real
-pull request to run. Deliberately left unticked. No .golangci.yml, so golangci-lint runs on its
-defaults. Add a config later only if the defaults prove too loose.
+notes: first attempt failed on PR #1. The workflow pinned `golangci-lint-action@v6` with
+`version: latest`, and latest now resolves to golangci-lint v2.12.2, which v6 cannot drive. It
+died in seven seconds without linting anything. Fixed by moving to action v9 and pinning the tool
+to v2.12.2. Both the action major and the tool version are pinned now, since an unpinned version
+means CI can start failing on a day nobody touched the code.
+
+That also uncovered eight real findings the failing job had been hiding, all unchecked write
+errors in `cmd/canopy`. Fixed properly rather than excluded: an `errWriter` defers error handling
+across a run of writes and reports the first failure once, and the two places where a write
+genuinely cannot be acted on drop it explicitly at the call site.
+
+`.golangci.yml` uses the v2 schema with the standard linter set. Deliberately **no exclusion for
+unchecked write errors**, which is the usual thing to exclude. This project reports on other
+people's processes and exists to not quietly lose information, so silently dropped writes are the
+wrong default here.
+
+Still unticked until CI is observed green on a pull request. Verified locally against the same
+tool version: `golangci-lint run ./...` reports 0 issues.
 
 ### P0-03 DECISIONS.md
 `status: review | owner: Claude | branch: main | depends: none`
@@ -278,7 +296,7 @@ Goal: the shared types exist, the state machine is proven by tests, and the dash
 flips a row to stale, all before any real git or process code is written.
 
 ### P1-01 Core domain types
-`status: todo | owner: none | branch: none | depends: PG-0`
+`status: review | owner: Claude | branch: feat/core-contract | depends: PG-0`
 `scope: internal/core/*.go`
 
 Deliverable: RevisionKey, WorkspaceSnapshot, WorkspaceOwnership, TestRun, TestState,
@@ -288,28 +306,62 @@ in the corrections document sections 3.2 and 3.3, no extras and no omissions.
 Acceptance: every state string in 3.2 and 3.3 has a constant, and a test asserts the full set so
 it fails if one is added or removed without updating it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: shared contract file. Per the collaboration rules, changing it later needs a short joint
 design discussion, not a unilateral commit.
 
+Four decisions in here are worth Codex arguing with, because they are judgement calls rather than
+transcriptions of the corrections document:
+
+1. `RevisionKey.Equal` returns false when either side is unknown, including unknown against
+   unknown. If two unknowns compared equal, a result captured while the revision was uncomputable
+   would keep matching forever and sit there green. Prefer a spurious stale over a spurious pass.
+2. `Observation` is a three valued type instead of a bool, used for process liveness and
+   readiness. A bool zero value is false, and false reads as "no", so an unfilled field would
+   assert something we never observed.
+3. Events carry no state payload, only a subject and a sequence. If an event carried its own copy
+   of the state it could disagree with the snapshot, and then two things would each claim to be
+   authoritative with no way to tell which was lying.
+4. `Event.CoalesceKey` returns empty for final transitions, so they can never be dropped under
+   load. Intermediate updates are safe to drop because the snapshot is authoritative.
+
+Extra types beyond the corrections list: `Observation`, `DirtyState`, `TestSnapshot`,
+`ServiceSnapshot`, `ProbeKind`, `ConfigState`, `TrustState`. The last two are v0.1 scope per
+corrections section 8 items 12 and 13, and are here now so phase 3 is not a contract change.
+
 ### P1-02 Core interfaces
-`status: todo | owner: none | branch: none | depends: P1-01`
-`scope: internal/core/*.go`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-01`
+`scope: internal/core/interfaces.go`
 
 Deliverable: WorkspaceSource, RevisionTracker, TestRunner, HealthChecker and SnapshotStore,
 exactly as specified in the corrections document section 10.
 
 Acceptance: compiles, and the fake from P1-05 satisfies all five.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: do not design PTY, merge, PR or worktree removal interfaces. Explicitly forbidden at this
-stage.
+notes: signatures are verbatim from section 10, nothing added. Do not design PTY, merge, PR or
+worktree removal interfaces, explicitly forbidden at this stage. Second half of acceptance is
+demonstrated by P1-05.
+
+Error semantics are documented on each method rather than left to implementers, since they are
+where a false green would sneak in. Three rules:
+
+- `RevisionTracker.Current` returns the zero key plus an error on failure, never a partly filled
+  key that would report itself as known.
+- `TestRunner.Start` errors only when the run could not begin. A command that starts and fails is
+  a successful Start followed by a run reaching failing. A missing binary is error, not failing.
+- `HealthChecker.Check` returns a health with state unknown and a filled failure reason alongside
+  its error, never a zero value, so a caller that ignores the error still holds something honest.
+
+One interface is knowingly absent: reading a log buffer, which P2-10 needs. The buffer design
+lands in P2-06 and guessing its shape now would be worse than adding it later. Treat it as a
+contract change when it comes.
 
 ### P1-03 Test state transition rules
-`status: todo | owner: none | branch: none | depends: P1-01`
-`scope: internal/core/transitions*.go`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-01`
+`scope: internal/core/transitions.go`
 
 Deliverable: pure functions deciding the visible test state from a TestRun plus the current
 RevisionKey.
@@ -319,13 +371,44 @@ not-configured, asserting that a run whose revision differs from current renders
 failed parser never turns exit code 0 into a failure, that a timeout is never passing, that a
 cancelled run is never green, and that "no tests configured" never reads as "passed".
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: recorded run state and displayed state are kept apart. A run that exited zero stays
+recorded as passing forever, because that is what happened. What the user sees depends on whether
+that evidence still describes the current code. `ExplainTestState` returns a reason alongside
+every verdict, including the unreachable paths, so the dashboard can always account for what it
+shows.
+
+There is an exhaustive test that walks every run state against every revision relationship and
+fails if anything except a matching pass comes out green. That is the guard on the one claim this
+product makes.
+
+Four judgement calls for Codex to accept or overturn. None of them are transcriptions, and the
+first is a possible hole in the contract itself:
+
+1. **A configured test that has never run maps to `unknown`.** The section 3.2 vocabulary has no
+   "not yet run" state. `not-configured` would be a lie, since it is configured, and `queued`
+   would be a lie, since nothing was requested. `unknown` is the only honest fit and is correctly
+   non-green, but it reads as "evidence cannot be trusted" when the truth is "there is no evidence
+   yet". Those deserve different words in the UI. **This may mean the vocabulary is missing a
+   state.** Flagging rather than adding one unilaterally, since it is a contract change.
+2. **`failing` goes stale too, not just `passing`.** Section 3.2 says "the visible result becomes
+   stale" without limiting it to passing, and a failure is equally a claim about specific code. If
+   you edit to fix a failure, continuing to show FAIL asserts something we did not test. Section
+   12 only requires passing to go stale, so this is a deliberate widening.
+3. **`cancelled` and `error` do not go stale.** Neither produced a result, so there is nothing for
+   a later edit to invalidate, and calling them stale would imply a result exists. Both stay
+   non-green either way, so section 12 holds. This is the opposite direction to point 2 and the
+   two should be judged together.
+4. **A service reporting healthy without a successful readiness probe resolves to `unknown`.**
+   Liveness proves a program exists, not that it works. This deliberately overrides what the
+   probe layer claims rather than trusting it, on the grounds that health reported on liveness
+   alone is one of the two easiest false greens here. The other is accepting a probe from an
+   unrelated process on the same port, which is handled by the instance identity check.
 
 ### P1-04 Roll-up rules
-`status: todo | owner: none | branch: none | depends: P1-03`
-`scope: internal/core/rollup*.go`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-03`
+`scope: internal/core/rollup.go`
 
 Deliverable: the workspace level green indicator, implementing corrections section 3.4.
 
@@ -334,12 +417,35 @@ matching the current RevisionKey, every required service healthy, and no require
 unknown, stale or missing. Optional evidence (`required: false`) never blocks green. Tests and
 services stay separately addressable.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: `Green` is computed from required evidence only, while the two aggregate columns report the
+worst state across everything configured. They are separate fields because section 3.4 says a
+single green icon must not hide which evidence is absent.
+
+Three additions and calls for Codex:
+
+1. **`Rollup.Caveat` is an addition beyond section 3.4.** It names non-blocking problems that
+   exist even when green, such as a failing optional test. Without it there is a real hole: a user
+   who marked a test optional months ago sees a green row forever and never learns it has been
+   broken the whole time. That is exactly the failure section 3.4 warns about, arriving through
+   the optional flag instead of through the icon.
+2. **A workspace where nothing is marked required is not green.** Corrections says optional
+   evidence does not block green, which read literally would make an all-optional workspace green
+   with nothing verified at all. That is the product's central lie, an unconfigured worktree
+   looking like a tested one, so it returns not green with the reason "nothing is marked
+   required". Worth confirming this is the intended reading.
+3. **Severity ordering is a product decision, not a transcription.** Tests rank failing, error,
+   unknown, stale, running, queued, passing, not-configured. Services rank crashed, unhealthy,
+   unknown, stopped, stopping, starting, healthy, not-configured. An unrecognised state outranks
+   everything, on the grounds that a state we have never heard of should read as a problem rather
+   than as fine. Argue the ordering if you disagree, particularly stale above running.
+
+The reason lists every blocker rather than the first one found, since someone fixing a workspace
+wants the whole list.
 
 ### P1-05 Fake snapshot store
-`status: todo | owner: none | branch: none | depends: P1-02, P1-04`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-02, P1-04`
 `scope: internal/core/fake/`
 
 Deliverable: an in-memory implementation of all five interfaces, emitting four scripted worktrees
@@ -349,14 +455,30 @@ a revision change event.
 Acceptance: a test drives the fake through a revision change and observes the visible state flip
 from passing to stale.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: this doubles as the test double for the whole project. Both pairs depend on it, so treat
-breaking changes to it as contract changes.
+breaking changes to it as contract changes. Compile time assertions in fake.go prove all five
+interfaces are satisfied, which is the second half of P1-02's acceptance.
+
+Event delivery is implemented for real rather than stubbed, because the coalescing rules are part
+of the contract the UI gets written against. A fake that delivered everything in order through an
+unbounded buffer would let the dashboard be built on behaviour the real store cannot provide, and
+the gap would only surface under load. There is a test that fires a burst of 500 and asserts the
+consumer sees fewer, and another that fires 100 final transitions and asserts every one arrives.
+
+Driving API beyond the interfaces: `Touch` for an edit, `SetRevisionUnknown`, `SetServiceHealth`,
+`SetOutcome`, `SetTrust`, `RemoveWorkspace`, `BeginRun` and `CompleteRun` for observing a run in
+flight, and `SetClock`.
+
+**Known gap for whoever takes P2-08.** `Events(afterSequence)` accepts the argument and ignores
+it, because this store keeps no history to replay from. A consumer that falls behind has to
+recover by taking a fresh snapshot. The real store needs a bounded history to honour the signature
+properly, and until it does, the recovery property in P4-11 is only half proven.
 
 ### P1-06 Headless engine harness
-`status: todo | owner: none | branch: none | depends: P1-02`
-`scope: cmd/canopy/, debug subcommand`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-02`
+`scope: cmd/canopy/`
 
 Deliverable: a CLI that prints the current ProjectSnapshot as JSON and streams events, so the
 engine is testable without the TUI.
@@ -364,9 +486,35 @@ engine is testable without the TUI.
 Acceptance: running it against the fake prints four workspaces and streams a revision change
 event.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: required by collaboration rule 9, the engine has to be exercisable independently of the UI.
+
+Three commands. `canopy snapshot` prints the project as JSON, `canopy watch` streams events as
+JSON lines, `canopy demo` drives the stale flip and prints a before and after table.
+
+`canopy demo` is worth running before touching anything else. It is the entire product argument in
+one screen, and it currently works:
+
+```
+before the edit
+  WORKSPACE     BRANCH        REVISION      TESTS           SERVICES        VERIFIED
+  feat-login    feat/login    a1b2c3d       passing 1/1     healthy 1/1     yes
+  fix-cache     fix/cache     b2c3d4e       failing 0/1     healthy 1/1     no
+  refactor-api  refactor/api  c3d4e5f       passing 1/1     not-configured  yes
+  spike-search  spike/search  d4e5f6a       not-configured  not-configured  no
+
+after the edit
+  refactor-api  refactor/api  c3d4e5f+edit  stale 0/1       not-configured  no
+```
+
+The JSON reports **derived** state, not stored state. Printing what is on the record would show a
+run marked passing and leave the reader to work out that it no longer applies, which is the
+confusion this product exists to remove. Every test carries its state, its reason, and the
+revision it actually covered. Every service reports liveness and readiness separately.
+
+`-source` exists and rejects anything except `fake`, so nothing silently falls back to fake data
+once real discovery lands in P2-01.
 
 ### P1-07 First dashboard against the fake
 `status: todo | owner: none | branch: none | depends: P1-05`

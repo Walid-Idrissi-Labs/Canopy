@@ -1,0 +1,22 @@
+# golangci-lint v2 configuration.
+#
+# The version key is required by v2 and is what tells the tool which schema this file is written
+# against. Without it, v2 refuses the file rather than guessing.
+version: "2"
+
+linters:
+  # The standard set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+
+  # No exclusions for unchecked write errors. It is the usual thing to exclude, on the grounds
+  # that a failed Fprintln to stdout does not matter, but this project reports on other people's
+  # processes and the whole point is not to quietly lose information. Where a write really cannot
+  # be acted on, it is dropped explicitly at the call site so the intent is visible.
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+
+formatters:
+  enable:
+    - gofmt
