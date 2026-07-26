@@ -1,7 +1,7 @@
 # Canopy
 
-A terminal coding agent built for running several agents at once, each on its own git branch, and
-knowing which of them actually produced working code.
+A terminal coding agent built for running several agents at once, isolating them on their own git
+branches when they need it, and knowing which of them actually produced working code.
 
 > **Status: pre-alpha, and early.** The shared contract, the verification state machine, the fake
 > store and the dashboard exist and are tested. There is no provider connection yet. Development
@@ -34,9 +34,12 @@ about them.
 > use 2 claude sonnet agents for the auth refactor, and a kimi agent to write the tests
 ```
 
-Canopy resolves the names, creates a worktree and a branch for each agent, and hands them the
-task. It confirms the plan before spawning anything, because spawning agents spends real money
-against real keys, and a misread number should be a question rather than an invoice.
+Canopy resolves the names and hands each agent the task. Agents work in your repository by
+default. When they would collide, or when you want to compare their results, they are isolated
+into their own worktree and branch.
+
+It confirms the plan before spawning anything, because spawning agents spends real money against
+real keys, and a misread number should be a question rather than an invoice.
 
 ## Watch them, and steer without stopping them
 
@@ -64,8 +67,8 @@ another agent's worktree or your primary checkout.
 
 ## Know which agent was actually right
 
-Every agent's branch carries a verification state bound to the exact code in it. Not "the tests
-passed at some point", but "the tests pass for this revision, right now".
+Every agent carries a verification state bound to the exact code it produced. Not "the tests passed
+at some point", but "the tests pass for this revision, right now".
 
 - A result is tied to the precise worktree state it tested: commit plus staged, unstaged and
   untracked content.
