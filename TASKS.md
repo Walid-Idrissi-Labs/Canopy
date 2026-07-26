@@ -818,7 +818,7 @@ Goal: a real message reaches a real provider and a real reply streams back, on m
 vendor.
 
 ### A2-01 Provider interface
-`status: todo | owner: none | branch: none | depends: A1-01`
+`status: review | owner: Claude | branch: feat/providers | depends: A1-01`
 `scope: internal/core/`
 
 Deliverable: the interface an agent session talks to. Streaming, cancellable, provider agnostic,
@@ -826,11 +826,35 @@ with tool use in the shape from the start.
 
 Acceptance: compiles, and a fake provider satisfies it and can script a reply.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: designing the tool use shape before tools exist is deliberate, unlike the PTY interfaces we
 correctly refused to design early. Those were speculative. Tools are a certainty two phases out,
 and retrofitting tool calls into a streaming protocol is genuinely painful.
+
+Checked against the current API reference rather than written from memory, which changed two
+decisions. Both are recorded as D-30 and D-31.
+
+**The interface is called `ProviderClient`, not `Provider`.** `Provider` is already the vendor enum
+on `KeyRef` from A1-01, and two things called Provider in one package would be a coin flip at every
+call site.
+
+Four contract rules that are not obvious and produce a 400 or a crash rather than a worse answer:
+
+1. **`refusal` is a stop reason, not an error.** A declined request returns success with possibly
+   empty content, so `StopReason` has to be checked before reading content. There is a test
+   asserting it never appears in the error vocabulary too, or callers would handle it twice.
+2. **Sampling parameters are rejected by current models.** `AgentProfile.Temperature` exists from
+   A1-01, and the provider layer is where it gets dropped rather than sent.
+3. **Thinking depth is effort, not a token budget.** A budget is rejected, and thinking is on by
+   default, so `MaxTokens` sized for the answer alone truncates.
+4. **`AllowsFallback` is deliberately narrower than `Retryable`.** A wrong key must never route to
+   another credential: the user would be billed elsewhere, possibly answered by a weaker model, and
+   never told the key was wrong. A network blip is retryable but says nothing about the credential.
+
+`Usage.CostKnown` distinguishes "free" from "we could not price this", and an unknown cost poisons
+any total it is summed into. A partial sum shown as a figure is a wrong number on screen, which is
+worse than an absent one.
 
 ### A2-02 Anthropic client
 `status: todo | owner: none | branch: none | depends: A2-01, A1-02`
