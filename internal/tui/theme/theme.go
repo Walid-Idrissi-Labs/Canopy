@@ -30,6 +30,14 @@ type Palette struct {
 
 	Border    lipgloss.TerminalColor
 	Highlight lipgloss.TerminalColor
+
+	// The four categories a hand written lexer can tell apart without a full parser. Named for what
+	// a reader is looking at, not for the hue, so a colour blind palette or a light theme can pick
+	// values that suit it without any call site changing.
+	CodeKeyword lipgloss.TerminalColor
+	CodeString  lipgloss.TerminalColor
+	CodeComment lipgloss.TerminalColor
+	CodeNumber  lipgloss.TerminalColor
 }
 
 // Theme is a palette plus the styles derived from it.
@@ -60,6 +68,16 @@ type Theme struct {
 	// editors fall back to, and it survives a theme change because it takes its colours from
 	// whatever is already there.
 	Cursor lipgloss.Style
+
+	// InlineCode marks a span of text as code without needing a colour of its own: it reuses
+	// Highlight as a background rather than adding one, since "a chip of a different shade" is the
+	// same meaning Highlight already carries.
+	InlineCode lipgloss.Style
+
+	CodeKeyword lipgloss.Style
+	CodeString  lipgloss.Style
+	CodeComment lipgloss.Style
+	CodeNumber  lipgloss.Style
 }
 
 // Default is the built-in palette, adapting to a light or dark terminal.
@@ -74,6 +92,11 @@ var Default = Palette{
 	Info:      lipgloss.AdaptiveColor{Light: "#0969da", Dark: "#58a6ff"},
 	Border:    lipgloss.AdaptiveColor{Light: "#d1d9e0", Dark: "#30363d"},
 	Highlight: lipgloss.AdaptiveColor{Light: "#f6f8fa", Dark: "#161b22"},
+
+	CodeKeyword: lipgloss.AdaptiveColor{Light: "#8250df", Dark: "#d2a8ff"},
+	CodeString:  lipgloss.AdaptiveColor{Light: "#0a7d33", Dark: "#7ee787"},
+	CodeComment: lipgloss.AdaptiveColor{Light: "#6e7781", Dark: "#8b949e"},
+	CodeNumber:  lipgloss.AdaptiveColor{Light: "#0550ae", Dark: "#79c0ff"},
 }
 
 // New builds the styles for a palette.
@@ -94,6 +117,13 @@ func New(p Palette) Theme {
 		Footer:   lipgloss.NewStyle().Foreground(p.Muted),
 		Key:      lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
 		Cursor:   lipgloss.NewStyle().Reverse(true),
+
+		InlineCode: lipgloss.NewStyle().Foreground(p.Text).Background(p.Highlight),
+
+		CodeKeyword: lipgloss.NewStyle().Foreground(p.CodeKeyword),
+		CodeString:  lipgloss.NewStyle().Foreground(p.CodeString),
+		CodeComment: lipgloss.NewStyle().Foreground(p.CodeComment),
+		CodeNumber:  lipgloss.NewStyle().Foreground(p.CodeNumber),
 	}
 }
 

@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
@@ -59,6 +61,12 @@ func (e *stubEngine) Send(_, prompt string) (string, error) {
 func (e *stubEngine) Cancel(string) {}
 
 func (e *stubEngine) Events(uint64) <-chan core.Event { return make(chan core.Event) }
+
+func (e *stubEngine) Compact(context.Context, string) (session.CompactionResult, error) {
+	return session.CompactionResult{}, nil
+}
+
+func (e *stubEngine) Apply(string, session.CompactionResult) error { return nil }
 
 // launch builds the application past the splash and at a known size, which is the state every
 // test below actually cares about. Tests should not wait on a timer.

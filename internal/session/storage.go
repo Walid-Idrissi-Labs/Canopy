@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -105,6 +105,22 @@ var migrations = []string{
 		INSERT INTO turns_fts(rowid, request_text, reply)
 		VALUES (new.rowid, new.request_text, new.reply);
 	END;
+	`,
+
+	// Added when compaction landed. A second migration rather than an edit to the first, because
+	// somebody already has a file at version one and editing a migration that has run changes
+	// nothing for them while making the two disagree.
+	`
+	CREATE TABLE compactions (
+		session_id    TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+		ordinal       INTEGER NOT NULL,
+		summary       TEXT NOT NULL,
+		through       INTEGER NOT NULL,
+		at            INTEGER NOT NULL,
+		tokens_before INTEGER NOT NULL DEFAULT 0,
+		tokens_after  INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (session_id, ordinal)
+	);
 	`,
 }
 
@@ -216,7 +232,61 @@ func (s *Storage) SaveSession(session core.Session) error {
 	if err != nil {
 		return fmt.Errorf("saving session %s: %w", session.ID, err)
 	}
-	return nil
+	return s.saveCompactions(session)
+}
+
+// saveCompactions writes the summarisation history.
+//
+// Written whole each time rather than appended, because the list only ever grows and rewriting a
+// handful of rows is simpler than tracking which of them are already there. Simpler in a way that
+// matters: the failure mode of the clever version is a duplicated summary in somebody's context.
+func (s *Storage) saveCompactions(session core.Session) error {
+	if len(session.Compactions) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM compactions WHERE session_id = ?`, session.ID); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for i, compaction := range session.Compactions {
+		if _, err := tx.Exec(`
+			INSERT INTO compactions
+				(session_id, ordinal, summary, through, at, tokens_before, tokens_after)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			session.ID, i, compaction.Summary, compaction.Through, unix(compaction.At),
+			compaction.TokensBefore, compaction.TokensAfter); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("saving compaction %d of session %s: %w", i, session.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Storage) loadCompactions(sessionID string) ([]core.Compaction, error) {
+	rows, err := s.db.Query(`
+		SELECT summary, through, at, tokens_before, tokens_after
+		FROM compactions WHERE session_id = ? ORDER BY ordinal`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("loading the compactions of session %s: %w", sessionID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []core.Compaction
+	for rows.Next() {
+		var c core.Compaction
+		var at int64
+		if err := rows.Scan(&c.Summary, &c.Through, &at, &c.TokensBefore, &c.TokensAfter); err != nil {
+			return nil, err
+		}
+		c.At = fromUnix(at)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // SaveTurn writes one turn, replacing any earlier version of it.
@@ -300,6 +370,12 @@ func (s *Storage) Load(id string) (core.Session, error) {
 		return core.Session{}, err
 	}
 	session.Turns = turns
+
+	compactions, err := s.loadCompactions(id)
+	if err != nil {
+		return core.Session{}, err
+	}
+	session.Compactions = compactions
 	return session, nil
 }
 

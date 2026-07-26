@@ -1,6 +1,7 @@
 package chat_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 )
 
@@ -16,10 +18,13 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
-	session   core.Session
-	sent      []string
-	cancelled int
-	sendErr   error
+	session    core.Session
+	sent       []string
+	cancelled  int
+	sendErr    error
+	compacted  int
+	compactErr error
+	applied    []session.CompactionResult
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -35,6 +40,21 @@ func (e *fakeEngine) Send(_, prompt string) (string, error) {
 func (e *fakeEngine) Cancel(string) { e.cancelled++ }
 
 func (e *fakeEngine) Events(uint64) <-chan core.Event { return make(chan core.Event) }
+
+func (e *fakeEngine) Compact(context.Context, string) (session.CompactionResult, error) {
+	e.compacted++
+	if e.compactErr != nil {
+		return session.CompactionResult{}, e.compactErr
+	}
+	return session.CompactionResult{
+		Summary: "we agreed on bcrypt", Through: 4, TokensBefore: 8000, TokensAfter: 900,
+	}, nil
+}
+
+func (e *fakeEngine) Apply(_ string, result session.CompactionResult) error {
+	e.applied = append(e.applied, result)
+	return nil
+}
 
 func model(engine chat.Engine) chat.Model {
 	m := chat.New(engine, "s1", "myproject", "claude")
@@ -383,3 +403,138 @@ func TestUnpricedSpendSaysUnknown(t *testing.T) {
 		t.Errorf("context = %q, want an explicit unknown rather than a zero", plain(m.Context()))
 	}
 }
+
+// A meter that appears at eighty percent is one nobody has learned to read by the time it matters,
+// and its appearance is itself alarming.
+func TestTheContextMeterIsAlwaysVisible(t *testing.T) {
+	nearlyEmpty := turn("t1", "hi", "hello", core.TurnComplete)
+	nearlyEmpty.Usage = core.Usage{InputTokens: 100, OutputTokens: 10}
+	engine := &fakeEngine{session: core.Session{
+		ID: "s1", Model: "claude-opus-5", Turns: []core.Turn{nearlyEmpty},
+	}}
+
+	m := model(engine)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	if !strings.Contains(plain(m.Context()), "context") {
+		t.Errorf("the meter is missing from a near empty conversation: %q", plain(m.Context()))
+	}
+}
+
+// The point of the meter is that somebody sees it coming, so the state where it matters has to say
+// what to do about it.
+func TestAFullContextSaysHowToFixIt(t *testing.T) {
+	full := turn("t1", "hi", "hello", core.TurnComplete)
+	full.Usage = core.Usage{InputTokens: 950_000, OutputTokens: 1000}
+	engine := &fakeEngine{session: core.Session{
+		ID: "s1", Model: "claude-opus-5", Turns: []core.Turn{full},
+	}}
+
+	m := model(engine)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	context := plain(m.Context())
+	if !strings.Contains(context, "compact") {
+		t.Errorf("a nearly full context should say what to do: %q", context)
+	}
+}
+
+// An agent that quietly forgets half of what it was told and carries on answering is undetectable
+// from outside. This marker is what makes it detectable.
+func TestACompactionIsVisibleInTheTranscript(t *testing.T) {
+	turns := make([]core.Turn, 8)
+	for i := range turns {
+		turns[i] = turn("t", "question", "answer", core.TurnComplete)
+	}
+	engine := &fakeEngine{session: core.Session{
+		ID: "s1", Model: "claude-opus-5", Turns: turns,
+		Compactions: []core.Compaction{{
+			Summary: "we agreed on bcrypt", Through: 4, At: at,
+			TokensBefore: 8000, TokensAfter: 900,
+		}},
+	}}
+
+	m := model(engine)
+	m.SetSize(80, 60)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	view := plain(m.Body())
+	if !strings.Contains(view, "summarised") {
+		t.Errorf("nothing on screen says the agent no longer has the earlier turns:\n%s", view)
+	}
+	if !strings.Contains(view, "bcrypt") {
+		t.Error("the summary itself should be readable, not just the fact that there was one")
+	}
+	// The obvious fear on reading that line is that the conversation has been thrown away.
+	if !strings.Contains(view, "still here") {
+		t.Errorf("the marker should say the turns are kept:\n%s", view)
+	}
+	// And what it bought, since "compacted" on its own tells nobody whether it was worth the call.
+	if !strings.Contains(view, "8k") || !strings.Contains(view, "900") {
+		t.Errorf("the marker should say what it saved:\n%s", view)
+	}
+}
+
+// Somebody who knows they are about to paste a large file has a reason to compact before it, rather
+// than waiting for the threshold and the failure that precedes it.
+func TestCompactionCanBeAskedForByHand(t *testing.T) {
+	turns := make([]core.Turn, 8)
+	for i := range turns {
+		turns[i] = turn("t", "question", "answer", core.TurnComplete)
+	}
+	engine := &fakeEngine{session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: turns}}
+
+	m := model(engine)
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	if cmd == nil {
+		t.Fatal("ctrl+r should start a compaction")
+	}
+	if !strings.Contains(plain(m.Body()), "summarising") {
+		t.Errorf("a compaction in progress should say so, since it is a model call and takes as "+
+			"long as one:\n%s", plain(m.Body()))
+	}
+
+	m, _ = m.Update(cmd())
+	if engine.compacted != 1 {
+		t.Errorf("the engine was asked to compact %d times, want 1", engine.compacted)
+	}
+	if len(engine.applied) != 1 {
+		t.Fatalf("the result was applied %d times, want 1", len(engine.applied))
+	}
+	if engine.applied[0].Summary != "we agreed on bcrypt" {
+		t.Errorf("applied = %+v", engine.applied[0])
+	}
+	// And the interface stops saying it is working, or the user is left watching a spinner that
+	// will never resolve.
+	if strings.Contains(plain(m.Body()), "summarising") {
+		t.Error("the compacting indicator is still up after the compaction finished")
+	}
+}
+
+// A failed compaction must not leave the interface looking like it is still working, and must say
+// why rather than silently doing nothing.
+func TestAFailedCompactionIsReported(t *testing.T) {
+	engine := &fakeEngine{
+		session:    core.Session{ID: "s1", Model: "claude-opus-5"},
+		compactErr: errNotEnough{},
+	}
+
+	m := model(engine)
+	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = m.Update(cmd())
+
+	if len(engine.applied) != 0 {
+		t.Error("a failed compaction was applied anyway")
+	}
+	view := plain(m.Body())
+	if !strings.Contains(view, "not enough history") {
+		t.Errorf("the reason should be on screen:\n%s", view)
+	}
+	if strings.Contains(view, "summarising") {
+		t.Error("the interface still looks like it is compacting after the compaction failed")
+	}
+}
+
+type errNotEnough struct{}
+
+func (errNotEnough) Error() string { return "there is not enough history to compact yet" }

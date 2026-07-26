@@ -224,6 +224,29 @@ func (t Turn) Validate() error {
 	return nil
 }
 
+// Compaction records that part of a conversation has been replaced by a summary in what gets sent.
+//
+// It is a record, not a deletion. The turns it covers are still in Session.Turns, still on screen
+// and still searchable; this only changes what History builds for the next request. That split is
+// what makes the promise keepable: nothing is destroyed, only left out of the prompt.
+type Compaction struct {
+	// Summary stands in for the turns before Through.
+	Summary string
+	// Through is how many turns from the start of the conversation it replaces.
+	Through int
+	At      time.Time
+
+	// TokensBefore and TokensAfter are estimates of the conversation either side of the compaction,
+	// so the transcript can say what compacting actually bought rather than only that it happened.
+	//
+	// Both estimated, and measured the same way. Using the provider's reported count for one of them
+	// would be comparing the size of a whole request, system prompt and tool schemas included,
+	// against the size of a list of messages, which made a compaction look like it had made things
+	// larger.
+	TokensBefore int
+	TokensAfter  int
+}
+
 // Session is one conversation.
 type Session struct {
 	ID string
@@ -241,8 +264,24 @@ type Session struct {
 
 	Turns []Turn
 
+	// Compactions are every summarisation this session has been through, oldest first.
+	//
+	// A list rather than one value, because a long session compacts more than once and each one is
+	// a thing that happened to the conversation. Keeping only the latest would hide that an agent
+	// had been through three rounds of forgetting, which is exactly what somebody debugging a
+	// confused agent needs to see.
+	Compactions []Compaction
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// Compacted returns the compaction currently in effect, if any.
+func (s Session) Compacted() (Compaction, bool) {
+	if len(s.Compactions) == 0 {
+		return Compaction{}, false
+	}
+	return s.Compactions[len(s.Compactions)-1], true
 }
 
 // Usage totals everything the session has consumed.
@@ -295,8 +334,21 @@ func (s Session) AgentState() AgentState {
 // This is why Turn holds a `Message` rather than a bare string. Reconstructing the conversation is
 // a copy, and a copy cannot lose a tool result's error flag on the way.
 func (s Session) History() []Message {
-	messages := make([]Message, 0, len(s.Turns)*2)
-	for _, turn := range s.Turns {
+	turns := s.Turns
+	messages := make([]Message, 0, len(turns)*2)
+
+	// A compaction replaces the turns it covers with its summary. Sent as a user message rather
+	// than an assistant one, because it is Canopy speaking about the conversation and not the model
+	// recalling it, and a model that reads its own summary as something it said will defend it.
+	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(turns) {
+		messages = append(messages, Message{
+			Role: RoleUser,
+			Text: "Summary of the earlier part of this conversation:\n\n" + compaction.Summary,
+		})
+		turns = turns[compaction.Through:]
+	}
+
+	for _, turn := range turns {
 		messages = append(messages, turn.Request)
 
 		// A turn that produced nothing is left out entirely. An empty assistant message is rejected

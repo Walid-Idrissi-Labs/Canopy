@@ -55,6 +55,14 @@ type Engine struct {
 	// worth saying and is not worth ending a turn over: the answer on screen is still the answer.
 	onStorageError func(error)
 
+	// turns counts the turns in flight, so shutdown can wait for them to close out.
+	//
+	// Cancelling a turn is not the same as it being finished: the context comes down, the stream
+	// unwinds, and only then does the turn record that it was interrupted and keep whatever text
+	// had arrived. Quitting without waiting for that loses the partial that cancelling went to the
+	// trouble of keeping, which is the whole point of cancelling rather than killing.
+	turns sync.WaitGroup
+
 	// writes counts the saves in flight, so shutdown can wait for them.
 	//
 	// Needed because a turn becomes visibly terminal a moment before it is on disk: the state is set
@@ -152,9 +160,8 @@ func (e *Engine) Close() {
 		cancel()
 	}
 
-	// Every cancelled turn still writes its interrupted state, so this waits for those too. Without
-	// it, quitting during a reply would lose the partial that cancelling went to the trouble of
-	// keeping.
+	// In this order: the turns settle first, then the writes those turns produce.
+	e.turns.Wait()
 	e.writes.Wait()
 
 	if storage != nil {
@@ -197,6 +204,7 @@ func (e *Engine) Session(id string) (core.Session, bool) {
 
 func copySession(s core.Session) core.Session {
 	s.Turns = append([]core.Turn(nil), s.Turns...)
+	s.Compactions = append([]core.Compaction(nil), s.Compactions...)
 	return s
 }
 
@@ -319,6 +327,7 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 	e.persistTurn(sessionID, ordinal, started)
 	e.publishTurn(sessionID, turnID, false)
 
+	e.turns.Add(1)
 	go e.run(ctx, sessionID, turnID, keyName, model, history)
 	return turnID, nil
 }
@@ -347,6 +356,7 @@ func (e *Engine) run(
 		e.mu.Lock()
 		delete(e.cancels, sessionID)
 		e.mu.Unlock()
+		e.turns.Done()
 	}()
 
 	client, id, err := e.resolver.Resolve(keyName, model)

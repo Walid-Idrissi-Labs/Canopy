@@ -1434,17 +1434,39 @@ colour disabled.
 notes: none
 
 ### A3-05 Cancel a turn in flight
-`status: todo | owner: none | branch: none | depends: A3-03`
-`scope: internal/tui/chat/, internal/core/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-03`
+`scope: internal/session/, internal/provider/, internal/tui/chat/`
 
 Deliverable: interrupt a streaming reply and keep the partial output.
 
 Acceptance: the connection closes, nothing leaks, and the partial reply is visibly marked as
 interrupted rather than silently truncated.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: a partial answer presented as complete is the chat equivalent of a stale green.
+
+Escape stops the turn, and in chat it means stop rather than "leave this screen", because a screen
+that navigated away instead would abandon a running turn out of sight. `ctrl+c` stops before it
+quits, since somebody hitting it during a long reply almost always means stop and quitting would
+throw the conversation away.
+
+Three things this needed that were not obvious:
+
+1. **The context has to be checked after the blocking read, not only before it.** Cancelling
+   unblocks a waiting read with a transport error, so both clients were classifying every stopped
+   turn as a turn that broke. Found by the live tests, not by any scripted one.
+2. **A cancel can land before the first byte.** A provider can take seconds to respond, and a cancel
+   in that window never reaches the stream. The engine asks the context rather than the error, so
+   there is one answer instead of one per vendor's phrasing of "cancelled".
+3. **`Close` has to wait for turns to close out.** Cancelling is not the same as finished: the
+   context comes down, the stream unwinds, and only then does the turn record that it was
+   interrupted and keep what had arrived. Quitting without waiting lost the partial that cancelling
+   went to the trouble of keeping. A test caught it.
+
+"Nothing leaks" has its own test, because it is the half that is invisible when broken: a goroutine
+still reading an abandoned response body holds a connection open, and eight agents doing that is a
+program that slowly stops working for reasons nobody can see.
 
 ### A3-06 Context meter and compaction
 `status: todo | owner: none | branch: none | depends: A3-02`

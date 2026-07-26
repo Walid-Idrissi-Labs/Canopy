@@ -8,6 +8,7 @@
 package chat
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -29,6 +31,12 @@ type Engine interface {
 	Send(sessionID, prompt string) (turnID string, err error)
 	Cancel(sessionID string)
 	Events(afterSequence uint64) <-chan core.Event
+
+	// Compact summarises the older part of a conversation, and Apply is what puts that summary to
+	// use. Two calls rather than one, because producing a summary and deciding to rely on it are
+	// different decisions and a single call would quietly change what the agent knows.
+	Compact(ctx context.Context, sessionID string) (session.CompactionResult, error)
+	Apply(sessionID string, result session.CompactionResult) error
 }
 
 // EventMsg carries an engine notification into the update loop.
@@ -36,6 +44,12 @@ type EventMsg struct{ Event core.Event }
 
 // tickMsg advances the spinner.
 type tickMsg struct{}
+
+// compactedMsg carries the outcome of a compaction back into the update loop.
+type compactedMsg struct {
+	result session.CompactionResult
+	err    error
+}
 
 // spinnerInterval is how often the working indicator advances.
 //
@@ -77,6 +91,10 @@ type Model struct {
 
 	spinner int
 	working bool
+
+	// compacting is true while a summary is being produced, which is a model call and takes as long
+	// as any other. Without it the interface looks frozen and people press the key again.
+	compacting bool
 }
 
 // New builds a chat model over an engine and a session.
@@ -154,10 +172,42 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.refresh()
 		return m, tick()
 
+	case compactedMsg:
+		m.compacting = false
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		if err := m.engine.Apply(m.sessionID, msg.result); err != nil {
+			m.err = err.Error()
+			return m, nil
+		}
+		m.refresh()
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// compact asks for a summary of the older half of the conversation.
+//
+// Manual, on a key, rather than only automatic at the limit. Somebody who knows they are about to
+// paste a large file has a reason to compact before it, and a tool that only acts at the threshold
+// makes them wait for the failure first.
+func (m Model) compact() (Model, tea.Cmd) {
+	if m.compacting || m.working {
+		return m, nil
+	}
+	m.compacting = true
+	m.err = ""
+
+	engine, sessionID := m.engine, m.sessionID
+	return m, func() tea.Msg {
+		result, err := engine.Compact(context.Background(), sessionID)
+		return compactedMsg{result: result, err: err}
+	}
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
@@ -173,6 +223,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, nil
+
+	case "ctrl+r":
+		return m.compact()
 
 	case "pgup":
 		m.scroll += m.transcriptHeight() / 2
@@ -315,6 +368,9 @@ func (m Model) statusRow(below int) string {
 		// identical to one where nothing is happening.
 		return t.Warning.Render(fmt.Sprintf("  %d more lines below, ctrl+end to follow", below))
 	}
+	if m.compacting {
+		return t.Muted.Render("  " + m.spinnerFrame() + " summarising the conversation so far")
+	}
 	if m.working {
 		return t.Muted.Render("  " + m.spinnerFrame() + " working, esc to stop")
 	}
@@ -384,5 +440,30 @@ func (m Model) Context() string {
 		}
 		parts = append(parts, fmt.Sprintf("%d tokens, %s", usage.TotalTokens(), spent))
 	}
+
+	// The context meter is always here, not only when it is nearly full.
+	//
+	// A meter that appears at eighty percent is one nobody has learned to read by the time it
+	// matters, and its appearance is itself alarming. Always on, and it changes colour rather than
+	// materialising.
+	if len(m.session.Turns) > 0 {
+		parts = append(parts, m.contextMeter())
+	}
 	return strings.Join(parts, "  ")
+}
+
+// contextMeter is the "how full is this conversation" figure in the header.
+func (m Model) contextMeter() string {
+	t := theme.Current()
+	use := m.session.ContextUse()
+
+	text := "context " + use.String()
+	switch {
+	case use.NeedsCompaction():
+		return t.Warning.Render(text + ", ctrl+r to compact")
+	case use.Fraction() > 0.5:
+		return t.Info.Render(text)
+	default:
+		return t.Muted.Render(text)
+	}
 }

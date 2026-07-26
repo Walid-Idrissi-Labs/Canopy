@@ -110,14 +110,33 @@ func TooSmall(d Dimensions) string {
 }
 
 // Keys formats a footer hint list, so every screen's footer looks the same.
-func Keys(pairs ...string) string {
+//
+// Hints are dropped from the right when they do not fit, rather than wrapping. A footer that wraps
+// pushes the whole frame a line taller than the terminal and everything above it scrolls away,
+// which looks like the program breaking rather than like a narrow window. Callers put the hints in
+// order of importance and the least important ones are what go.
+func Keys(width int, pairs ...string) string {
 	t := theme.Current()
 
+	const gap = "   "
+	// The indent Frame adds, plus a column of slack so a full width footer does not sit flush
+	// against the edge.
+	available := width - 3
+
 	var parts []string
+	var used int
 	for i := 0; i+1 < len(pairs); i += 2 {
+		cost := len(pairs[i]) + 1 + len(pairs[i+1])
+		if len(parts) > 0 {
+			cost += len(gap)
+		}
+		if used+cost > available {
+			break
+		}
 		parts = append(parts, t.Key.Render(pairs[i])+" "+t.Footer.Render(pairs[i+1]))
+		used += cost
 	}
-	return strings.Join(parts, t.Footer.Render("   "))
+	return strings.Join(parts, t.Footer.Render(gap))
 }
 
 func maxInt(a, b int) int {

@@ -238,13 +238,13 @@ func (a App) View() string {
 	switch a.screen {
 	case screenChat:
 		return Frame(a.dim, "canopy", a.chat.Context(), a.chat.Body(),
-			Keys("enter", "send", "esc", "stop", "ctrl+d", "agents", "ctrl+k", "keys",
-				"ctrl+c", "quit"))
+			Keys(a.dim.Width, "enter", "send", "esc", "stop", "ctrl+d", "agents",
+				"ctrl+k", "keys", "ctrl+r", "compact", "ctrl+c", "quit"))
 	case screenKeys:
 		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
 	default:
 		return Frame(a.dim, "canopy", a.dashboard.Context(), a.dashboard.Body(),
-			Keys("j/k", "move", "K", "credentials", "r", "refresh", "esc", "back to chat"))
+			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc", "back"))
 	}
 }
 
