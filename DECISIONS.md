@@ -41,15 +41,18 @@ Windows is deferred until process group and terminal semantics are designed and 
 Shipping a half working Windows build would break the same "do not claim what you cannot prove"
 principle the product is built on.
 
-## D-04 Which two repositories for dogfooding? OPEN.
+## D-04 Which two repositories for dogfooding? Decided.
 
-Owner: both supervisors. Needed before P4-15.
+Canopy itself as the Go repository, once phase 2 lands. A Node repository with a real test suite
+as the second. Not Python, by preference.
 
-The constraint is fixed: one Go repository and one Node or Python repository, both real, both with
-a test suite slow enough to be worth watching. Canopy itself can serve as the Go repository once
-phase 2 lands.
+The second repository deliberately is not Go. Dogfooding on two Go projects would prove nothing,
+because the entire point is to catch the places where we accidentally baked in Go assumptions:
+process behaviour, exit codes, output volume, how long a suite takes, what a test runner does to
+its children on cancellation. A Node suite exercises all of that differently.
 
-Record the two choices here once made.
+The specific Node repository is still to be picked, but any real one with a test suite slow enough
+to be worth watching will do.
 
 ## D-05 Which test command format is supported first? Decided.
 
@@ -208,15 +211,25 @@ file boundary used to do. Two rules matter most:
 internal/core stays a shared contract regardless. Changing it needs a short joint design
 discussion, never a unilateral commit.
 
-## D-12 Integration checkpoint cadence. OPEN.
+## D-12 Integration checkpoint cadence. Decided.
 
-Owner: both supervisors.
+No fixed calendar. Both pairs work whenever they want, including at the same time, on short lived
+branches, and integrate when a branch is ready rather than on a schedule.
 
-The rule is settled: integrate at least twice per week, and never let two branches diverge for
-weeks. The specific days are not settled, and a vague cadence is how this rule quietly dies.
+This departs from the corrections document, which asked for at least two integrations per week on
+named days. The reasoning for departing: this is a part time project for two students, a calendar
+nobody agreed to is a calendar nobody keeps, and the actual failure mode it was guarding against
+is branches diverging for weeks rather than an absence of ceremony.
 
-Pick two fixed days and record them here. Also record the standing ten minute sync at the start of
-each work session.
+So the guard moves from the calendar to the branch. Three rules replace it:
+
+1. Branches stay short lived, ideally under two days. If a branch has been open longer than that,
+   it is too big and should be split.
+2. Merge or rebase main into your branch before you push, every time.
+3. Claim tasks in TASKS.md before starting, per section 1.3. That file is what stops us colliding
+   now that there is no fixed ownership split and no sync meeting.
+
+If branches start living for a week, this decision was wrong and the calendar comes back.
 
 ## D-13 What evidence would make us stop or pivot? Decided.
 
@@ -237,18 +250,24 @@ Recorded in advance, because deciding this after seeing the results is not decid
 MIT. Permissive, familiar to the Go and terminal tooling audience, and consistent with the
 comparable tools in this space.
 
-## D-15 Is "Canopy" available and worth keeping? OPEN.
+## D-15 Is "Canopy" available and worth keeping? Decided, keep it.
 
-Owner: both supervisors. Tracked as P0-07. Do this early, renaming gets more expensive every
-phase.
+Checked: the Homebrew formula name is free. GitHub has many projects called Canopy, none of them
+doing this.
 
-Check GitHub organisation and repository names, the Homebrew formula namespace, the Go module
-path, npm, and an ordinary trademark search. "Canopy" is a common English word already used by
-several software products, so a clash is likely.
+Keeping it. Homebrew is the distribution channel that actually matters for a Go CLI, and it is
+clear. The GitHub collisions cost nothing, because the module is namespaced under the
+organisation, so `go install github.com/Walid-Idrissi-Labs/Canopy/cmd/canopy@latest` is unambiguous
+no matter how many other Canopys exist. The only real cost is search noise, which a good README
+and a clear one liner fix.
 
-Alternatives already floated: Grove, Orchard, Muster, Warren, Hangar.
+The module path github.com/Walid-Idrissi-Labs/Canopy is now settled rather than provisional.
 
-Until this is resolved, "Canopy" is a working title and the Go module path is provisional.
+If a rename ever becomes worth it, the cheapest moment is before the first tagged release: one
+line in go.mod plus an import rewrite. After a release it means broken install paths, so decide
+before tagging v0.1.
+
+Alternatives that were floated and set aside: Grove, Orchard, Muster, Warren, Hangar.
 
 ---
 
@@ -315,8 +334,19 @@ have a good answer, and the value may not survive.
 Current plan: ship manual triggering as the default. on_change exists as P4-13, is gated on
 cancellation and debounce being proven, and is not to be built until this is settled.
 
-The question to answer is not really technical. It is: what single sentence would make a user keep
-this installed? If that sentence needs auto run to be true, on_change belongs in v0.1.
+The argument for manual being enough, which is the current recommendation: the freshness signal is
+live regardless of the trigger. Canopy polls the revision every two seconds, so a green result
+goes stale by itself whether or not it reruns anything. Auto run only removes the keystroke that
+re-verifies. That means the sentence that keeps a user installed, "at a glance I can see which of
+my branches is green for the code actually in them right now", is already true with manual
+triggering. What auto run buys is convenience, not the core claim.
+
+The counter-argument, which is why this stays open: convenience may be exactly what determines
+whether anyone bothers, and a dashboard full of stale rows that only clears when you press a key
+is a dashboard you stop looking at.
+
+Still open pending Codex and both supervisors. Recommendation is manual for v0.1, opt-in on_change
+in phase 4.
 
 ## D-20 Secret redaction boundary. Decided.
 

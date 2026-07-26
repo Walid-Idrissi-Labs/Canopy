@@ -63,6 +63,10 @@ watched them pass. That is a self check, not a rubber stamp.
 The other agent ticks their box only after independently reviewing the change and confirming the
 acceptance criteria, by reading the diff and re-running the check, not by trusting the first box.
 
+Both sides test their own work before handing it over. Verification is not a substitute for that,
+it is a second pair of eyes on work that already passed once. An implementer who ticks their box
+without running anything has broken the protocol, not saved time.
+
 Both boxes ticked means status done. One box ticked means status review.
 
 If the second agent disagrees, do not untick the first box. Set status to blocked, write the
@@ -96,13 +100,19 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | P0-02 | main (bootstrap) | acceptance needs the first pull request to run CI |
+| Claude | P1-01 to P1-05, the core contract | `feat/core-contract` | none |
 | Codex | none | none | none |
 
-P0-01, P0-03 and P0-04 are in review and waiting on Codex to verify. Phase 1 is blocked on PG-0,
-which needs P0-05, P0-06 and P0-07 done first, and all three of those need a human.
+PG-0 is signed by Walid and phase 1 is underway. P0-01, P0-03, P0-04 and P0-07 are in review and
+waiting on Codex. P0-02 needs the first pull request before its acceptance can be shown, and P0-05
+follows from that. P0-06, the prior art pass, is unclaimed and open to either pair.
 
-Next integration checkpoint: not yet scheduled, see D-12 in DECISIONS.md
+Codex: the core contract is being written on `feat/core-contract`. Everything from P1-06 onward is
+free to claim, and the fastest thing to pick up in parallel is P1-06, the headless harness, or
+P1-07, the first dashboard, both of which only need the interfaces from P1-02.
+
+Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
+push.
 
 ---
 
@@ -225,7 +235,7 @@ tools.
 notes: kept out of the repository on purpose, competitive analysis stays internal.
 
 ### P0-07 Name availability check
-`status: todo | owner: none | branch: none | depends: none`
+`status: review | owner: Walid | branch: main | depends: none`
 `scope: DECISIONS.md, D-15`
 
 Deliverable: check "Canopy" against GitHub org and repo names, Homebrew formula names, the Go
@@ -235,21 +245,30 @@ Acceptance: D-15 in DECISIONS.md says confirmed, or names the replacement.
 
 Needs a human.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: currently a working title. Renaming gets more expensive every phase, so do this early.
+notes: Walid checked. Homebrew formula name is free, many unrelated Canopys on GitHub. Keeping the
+name, see D-15. The module path github.com/Walid-Idrissi-Labs/Canopy is now settled rather than
+provisional. Last cheap moment to rename is before the first tagged release.
 
 ### PG-0 Phase 0 gate
-`status: todo | depends: P0-01, P0-02, P0-03, P0-04, P0-05, P0-06, P0-07`
+`status: review | depends: P0-01, P0-02, P0-03, P0-04, P0-05, P0-06, P0-07`
 
 Both supervisors confirm together that they have read the corrections document and agree to the
 corrected one liner, the v0.1 included and excluded lists, the truth and freshness state machine,
 the repository trust behaviour, the worktree ownership states, the license, and the first
 integration demo being "passing becomes stale after an edit".
 
-`signed: walid [ ]   classmate [ ]`
+`signed: walid [x] 2026-07-26   classmate [ ]`
 
-notes: none
+notes: Walid gave the go ahead for phase 1 on 2026-07-26 and reports that the classmate and Codex
+agree with the scope so far. The classmate's box is deliberately left for him to tick himself
+rather than being ticked on his behalf.
+
+Two dependencies are knowingly still open and phase 1 proceeds anyway, by supervisor decision.
+P0-05, branch protection, cannot be configured until CI has run once on a pull request, since
+GitHub only offers status checks it has already seen. P0-06, the prior art pass, is outstanding
+and does not block writing the contract.
 
 ---
 
