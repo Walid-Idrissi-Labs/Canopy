@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/store"
 )
 
 // Store is an in-memory implementation of every core interface, backed by four scripted
@@ -23,10 +24,12 @@ import (
 // cannot provide, and the difference would only surface under load.
 type Store struct {
 	mu      sync.Mutex
-	seq     uint64
 	project core.ProjectSnapshot
-	subs    map[*subscriber]struct{}
-	closed  bool
+
+	// events is the shared broker from internal/store, so this fake and the real stores deliver
+	// events by exactly the same rules. A second implementation would drift, and the way it would
+	// drift is a dropped final transition under load.
+	events *store.Broker
 
 	// runs holds every run ever started, keyed by run ID.
 	runs    map[string]*core.TestRun
@@ -55,7 +58,7 @@ var (
 func New() *Store {
 	start := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	s := &Store{
-		subs:     map[*subscriber]struct{}{},
+		events:   store.NewBroker(),
 		runs:     map[string]*core.TestRun{},
 		outcomes: map[string]core.TestState{},
 		touches:  map[string]int{},
@@ -187,6 +190,7 @@ func (s *Store) SetClock(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.now = now
+	s.events.SetClock(now)
 }
 
 // Snapshot implements core.SnapshotStore.
@@ -204,7 +208,7 @@ func (s *Store) Snapshot() core.ProjectSnapshot {
 // TestRun or ServiceHealth in place, it replaces them.
 func (s *Store) snapshotLocked() core.ProjectSnapshot {
 	out := s.project
-	out.Sequence = s.seq
+	out.Sequence = s.events.Sequence()
 	out.TakenAt = s.now()
 	out.Workspaces = make([]core.WorkspaceSnapshot, len(s.project.Workspaces))
 	for i, w := range s.project.Workspaces {

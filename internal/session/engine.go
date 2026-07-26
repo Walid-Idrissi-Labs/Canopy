@@ -1,0 +1,376 @@
+// Package session owns conversations and runs turns against providers.
+//
+// This is the thing the interface talks to. It holds the authoritative view of every session, runs
+// a turn in the background, folds the stream into that view as it arrives, and publishes a
+// notification per update. The interface never touches a provider and never holds conversation
+// state of its own: it renders a snapshot, and re-renders when told something moved.
+//
+// That split is what makes streaming survivable. Tokens arrive faster than a terminal can usefully
+// redraw, so notifications coalesce; they can coalesce safely only because they carry nothing, and
+// the growing reply lives in the snapshot instead.
+package session
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/store"
+)
+
+// Resolver produces the client and pricing identity for a named credential.
+//
+// An interface rather than a concrete key store, so the engine can be driven in tests without a
+// keychain, and so the engine never learns what a credential looks like. It asks for a name and
+// gets something that can answer.
+type Resolver interface {
+	// Resolve returns the client for a credential name. An empty name means "the obvious one",
+	// which is only obvious when exactly one credential is stored.
+	Resolve(name, model string) (client core.ProviderClient, id pricing.ModelID, err error)
+}
+
+// Engine holds every session and runs their turns.
+type Engine struct {
+	mu       sync.Mutex
+	sessions map[string]*core.Session
+	order    []string
+	cancels  map[string]context.CancelFunc
+
+	resolver Resolver
+	events   *store.Broker
+
+	nextID int
+}
+
+// New builds an engine.
+func New(resolver Resolver) *Engine {
+	return &Engine{
+		sessions: map[string]*core.Session{},
+		cancels:  map[string]context.CancelFunc{},
+		resolver: resolver,
+		events:   store.NewBroker(),
+	}
+}
+
+// SetClock replaces the clock. Only useful in tests.
+func (e *Engine) SetClock(now func() time.Time) { e.events.SetClock(now) }
+
+// Events returns a channel of notifications. See core.SnapshotStore for the contract.
+func (e *Engine) Events(afterSequence uint64) <-chan core.Event {
+	return e.events.Subscribe(afterSequence)
+}
+
+// Close stops every running turn and shuts the event stream down.
+func (e *Engine) Close() {
+	e.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(e.cancels))
+	for _, cancel := range e.cancels {
+		cancels = append(cancels, cancel)
+	}
+	e.cancels = map[string]context.CancelFunc{}
+	e.mu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	e.events.Close()
+}
+
+// Sessions returns every session, oldest first.
+//
+// A copy, deeply enough that a caller holding the result cannot be affected by a turn that arrives
+// afterwards. A shared backing array is the classic way an immutable snapshot quietly stops being
+// one, and here it would mean the interface rendering half of one update and half of the next.
+func (e *Engine) Sessions() []core.Session {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.sessionsLocked()
+}
+
+func (e *Engine) sessionsLocked() []core.Session {
+	out := make([]core.Session, 0, len(e.order))
+	for _, id := range e.order {
+		out = append(out, copySession(*e.sessions[id]))
+	}
+	return out
+}
+
+// Session returns one session by ID.
+func (e *Engine) Session(id string) (core.Session, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	s, ok := e.sessions[id]
+	if !ok {
+		return core.Session{}, false
+	}
+	return copySession(*s), true
+}
+
+func copySession(s core.Session) core.Session {
+	s.Turns = append([]core.Turn(nil), s.Turns...)
+	return s
+}
+
+// Create starts a new session.
+func (e *Engine) Create(keyName, model string) core.Session {
+	e.mu.Lock()
+	e.nextID++
+	now := e.events.Now()
+	s := &core.Session{
+		ID:        fmt.Sprintf("session-%d", e.nextID),
+		KeyName:   keyName,
+		Model:     model,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	e.sessions[s.ID] = s
+	e.order = append(e.order, s.ID)
+	out := copySession(*s)
+	e.mu.Unlock()
+
+	e.events.Publish(core.Event{Kind: core.EventSessionsChanged, SessionID: s.ID})
+	return out
+}
+
+// ErrBusy is returned when a session already has a turn in flight.
+//
+// Its own error because the caller's response is different: a second message while the first is
+// still streaming is a person typing ahead, not a failure, and the interface queues or refuses
+// rather than showing them something that reads as broken.
+var ErrBusy = errors.New("this session is already working on a turn")
+
+// Send asks a question and runs the turn in the background.
+//
+// Returns as soon as the turn is registered, because a terminal that blocked until the answer
+// arrived could not draw the answer arriving. Everything after this point reaches the caller
+// through the snapshot and the event stream.
+func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return "", errors.New("an empty message has nothing to answer")
+	}
+
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok {
+		e.mu.Unlock()
+		return "", fmt.Errorf("no session %q", sessionID)
+	}
+	if _, running := s.Active(); running {
+		e.mu.Unlock()
+		return "", ErrBusy
+	}
+
+	now := e.events.Now()
+	turnID = fmt.Sprintf("%s-turn-%d", sessionID, len(s.Turns)+1)
+	s.Turns = append(s.Turns, core.Turn{
+		ID:        turnID,
+		State:     core.TurnPending,
+		Request:   core.Message{Role: core.RoleUser, Text: prompt},
+		Model:     s.Model,
+		StartedAt: now,
+	})
+	s.UpdatedAt = now
+
+	// The title is the first thing said, which is what a person recognises a session by in a list.
+	// Set once and never rewritten, so a session does not rename itself out from under someone.
+	if s.Title == "" {
+		s.Title = summarise(prompt)
+	}
+
+	history := s.History()
+	keyName, model := s.KeyName, s.Model
+
+	ctx, cancel := context.WithCancel(context.Background())
+	e.cancels[sessionID] = cancel
+	e.mu.Unlock()
+
+	e.publishTurn(sessionID, turnID, false)
+
+	go e.run(ctx, sessionID, turnID, keyName, model, history)
+	return turnID, nil
+}
+
+// Cancel stops the turn in flight, keeping whatever has arrived.
+func (e *Engine) Cancel(sessionID string) {
+	e.mu.Lock()
+	cancel := e.cancels[sessionID]
+	e.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// run drives one turn from request to terminal state.
+//
+// Every exit path ends in finish, which is the only place a turn becomes terminal. One exit means
+// one place where the end time gets set, the event gets marked final and the cancel gets released,
+// which is the difference between a turn that always closes out and one that closes out on the
+// paths somebody remembered.
+func (e *Engine) run(
+	ctx context.Context, sessionID, turnID, keyName, model string, history []core.Message,
+) {
+	defer func() {
+		e.mu.Lock()
+		delete(e.cancels, sessionID)
+		e.mu.Unlock()
+	}()
+
+	client, id, err := e.resolver.Resolve(keyName, model)
+	if err != nil {
+		e.finish(sessionID, turnID, core.TurnFailed, err, core.Usage{}, "")
+		return
+	}
+
+	stream, err := client.Stream(ctx, core.Request{
+		Model:    model,
+		Messages: history,
+	})
+	if err != nil {
+		e.finish(sessionID, turnID, core.TurnFailed, err, core.Usage{}, client.Name())
+		return
+	}
+	defer func() { _ = stream.Close() }()
+
+	e.update(sessionID, turnID, func(t *core.Turn) {
+		t.State = core.TurnStreaming
+		t.Provider = client.Name()
+	})
+
+	for stream.Next() {
+		event := stream.Event()
+
+		switch event.Kind {
+		case core.EventText:
+			e.update(sessionID, turnID, func(t *core.Turn) { t.Text += event.Text })
+
+		case core.EventThinking:
+			e.update(sessionID, turnID, func(t *core.Turn) { t.Thinking += event.Text })
+
+		case core.EventNotice:
+			// A fallback to another provider. Recorded on the turn rather than merged into the
+			// reply, because it came from Canopy and reads as the model speaking otherwise.
+			e.update(sessionID, turnID, func(t *core.Turn) {
+				t.Text += fmt.Sprintf("\n[%s]\n", event.Text)
+			})
+
+		case core.EventToolCall:
+			e.update(sessionID, turnID, func(t *core.Turn) {
+				t.ToolCalls = append(t.ToolCalls, *event.ToolCall)
+			})
+
+		case core.EventDone:
+			usage, _ := pricing.Apply(id, event.Usage)
+			e.finish(sessionID, turnID,
+				core.TurnStateFromStopReason(event.StopReason), event.Err, usage, client.Name())
+			return
+		}
+	}
+
+	// A stream that ended without a done event is a bug in a provider adapter, not a completed
+	// turn. Left as failed rather than complete, because the alternative is presenting an answer
+	// nobody can vouch for as finished.
+	err = stream.Err()
+	if err == nil {
+		err = errors.New("the provider stopped without saying how the turn ended")
+	}
+	e.finish(sessionID, turnID, core.TurnFailed, err, core.Usage{}, client.Name())
+}
+
+// update applies a change to a turn and publishes a coalescable notification.
+func (e *Engine) update(sessionID, turnID string, change func(*core.Turn)) {
+	e.mu.Lock()
+	turn := e.findLocked(sessionID, turnID)
+	if turn == nil {
+		e.mu.Unlock()
+		return
+	}
+	change(turn)
+	e.sessions[sessionID].UpdatedAt = e.events.Now()
+	e.mu.Unlock()
+
+	e.publishTurn(sessionID, turnID, false)
+}
+
+// finish closes a turn out.
+//
+// The only path to a terminal state, and the only place that publishes a final event. A final event
+// may never be coalesced, so this is what guarantees the last thing anyone hears about a turn is how
+// it ended rather than that it was streaming.
+func (e *Engine) finish(
+	sessionID, turnID string, state core.TurnState, err error, usage core.Usage, provider string,
+) {
+	e.mu.Lock()
+	turn := e.findLocked(sessionID, turnID)
+	if turn == nil || turn.State.Terminal() {
+		// Already closed out. Publishing a second final event for the same turn would report a
+		// finished turn as finishing again, which reads as a new answer arriving.
+		e.mu.Unlock()
+		return
+	}
+
+	now := e.events.Now()
+	turn.State = state
+	turn.EndedAt = now
+	turn.Usage = usage
+	if provider != "" {
+		turn.Provider = provider
+	}
+	if err != nil {
+		turn.Error = err.Error()
+	}
+	// Validate requires a reason on a failed turn, and a turn that failed with no error attached
+	// would otherwise be an invalid state nobody could explain.
+	if state == core.TurnFailed && turn.Error == "" {
+		turn.Error = "the turn failed without an explanation"
+	}
+	e.sessions[sessionID].UpdatedAt = now
+	e.mu.Unlock()
+
+	e.publishTurn(sessionID, turnID, true)
+}
+
+func (e *Engine) findLocked(sessionID, turnID string) *core.Turn {
+	s, ok := e.sessions[sessionID]
+	if !ok {
+		return nil
+	}
+	for i := range s.Turns {
+		if s.Turns[i].ID == turnID {
+			return &s.Turns[i]
+		}
+	}
+	return nil
+}
+
+func (e *Engine) publishTurn(sessionID, turnID string, final bool) {
+	e.events.Publish(core.Event{
+		Kind:      core.EventTurnUpdated,
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Final:     final,
+	})
+}
+
+// summarise turns the first message into a session title.
+func summarise(prompt string) string {
+	const limit = 48
+
+	title := strings.Join(strings.Fields(prompt), " ")
+	if len(title) <= limit {
+		return title
+	}
+	// Cut at a word boundary where there is one nearby, since a title chopped mid word looks like
+	// a rendering fault rather than a deliberate truncation.
+	cut := title[:limit]
+	if space := strings.LastIndex(cut, " "); space > limit/2 {
+		cut = cut[:space]
+	}
+	return cut + "..."
+}

@@ -1365,6 +1365,44 @@ already think in git. "Go back three turns and try it the other way" is currentl
 session with lost context, or an argument with an agent that has already committed to an approach.
 At A5 a fork becomes a second agent on a second branch, which is where it earns its place.
 
+### A3-08 Session engine
+`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`scope: internal/session/, internal/store/`
+
+Deliverable: the thing the interface talks to. Owns every session, runs a turn in the background,
+folds the provider stream into the authoritative view as it arrives, and publishes one notification
+per update.
+
+Acceptance: a turn streams into the snapshot and is readable while still arriving. Cancelling keeps
+the partial and marks it. One turn per session at a time. Every terminal state publishes a final
+event.
+
+`verify: claude [x]   codex [ ]`
+
+notes: **added 2026-07-26.** Not in the original plan because A3-01 said sessions live in "the
+existing snapshot store", and the only store that existed was the fake from P1. A3-03 needs
+something real to talk to and A3-02 is persistence rather than runtime, so this is the piece
+between them.
+
+`Send` returns as soon as the turn is registered rather than when the answer arrives, because a
+terminal that blocked until the reply landed could not draw the reply landing. Everything after
+that point reaches the interface through the snapshot and the event stream, which is what lets the
+interface hold no conversation state of its own.
+
+Every exit path from a turn goes through one `finish`, which is the only place a turn becomes
+terminal. One exit means one place that sets the end time, marks the event final and releases the
+cancel, rather than three paths somebody remembered and a fourth they did not.
+
+`ErrBusy` is its own error rather than a generic failure, because the caller's response differs: a
+second message while the first is still streaming is a person typing ahead, and the interface
+should queue rather than show something that reads as broken.
+
+The event broker moved to `internal/store` as part of this. It was inside the P1 fake, and there
+are now two stores that need it with persistence to follow. Coalescing is subtle enough that two
+copies would drift, and the way they would drift is a dropped final transition under load, which is
+the one failure the design exists to prevent. The fake's own event tests still pass unchanged,
+which is what makes the extraction safe to believe.
+
 ### PG-A3 Phase A3 gate
 `status: todo | depends: A3-00, A3-04, A3-05, A3-06`
 
