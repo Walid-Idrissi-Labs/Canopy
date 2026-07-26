@@ -111,8 +111,9 @@ D-23 and the retired tasks table at the bottom.
 Done and carrying forward: P0-01 to P0-07 and P1-01 to P1-07. The core contract, the state machine,
 the roll-up, the fake store, the headless harness and the dashboard.
 
-Codex: **A2 is the obvious thing to claim.** It is independent of A1, because a provider client can
-take a key as a parameter long before there is a registry to fetch one from. A3 depends on A2.
+Codex: A2 is largely written, so **A2-05 usage and cost accounting is the obvious thing to claim**,
+and A2-07 and A2-08 after it. A2-05 is independent of everything in flight: it needs a dated price
+table and the token counts the two clients already report. A3 depends on A2.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
@@ -124,8 +125,9 @@ push.
 Read this before claiming anything.
 
 **Canopy is a terminal coding agent built for running several agents at once.** Provider keys go in
-by name, agents are dispatched from the conversation, each gets its own worktree and branch, you
-watch and steer several at a time, and Canopy knows which of them actually produced working code.
+by name, agents are dispatched from the conversation, you watch and steer several at a time, and
+Canopy knows which of them actually produced working code. Isolating an agent on its own worktree
+and branch is an option you reach for when you want it, not the standard way agents run.
 
 Same category as OpenCode and Claude Code, plus agentic parallelism and git as first class
 concerns rather than afterthoughts.
@@ -981,21 +983,46 @@ notes: exact rather than inferred, because Canopy makes the request. A stale pri
 to put a wrong number on screen, which is why it carries its date.
 
 ### A2-06 OpenAI compatible provider and local models
-`status: todo | owner: none | branch: none | depends: A2-02`
-`scope: internal/provider/openai/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`scope: internal/provider/openai/, cmd/canopy/ask.go`
 
 Deliverable: the chat completions API with tool calls and streaming, and a configurable base URL.
 
 Acceptance: the same agent code runs unchanged on both providers. A base URL override reaches a non
 OpenAI endpoint. Ollama and one hosted third party both work.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: one task covers most of the field. Kimi, MiniMax, DeepSeek, Groq, OpenRouter and most local
 runtimes speak this API. Building it second, rather than after five Anthropic only phases, is what
 stops provider assumptions baking into the agent loop. Tool calling differs in shape between the
 two APIs but not in meaning, and that difference belongs behind the interface, never in
 `internal/agent`.
+
+Hand rolled, unlike A2-02, per D-30. The surface needed is small, and pointing an SDK written for
+one vendor at arbitrary base URLs is the case those SDKs handle worst.
+
+Four things this had to get right that the Anthropic client did not:
+
+1. **Tool calls arrive as fragments.** An index, sometimes an id, sometimes a name, and the
+   arguments a few characters at a time across many chunks. They are accumulated and emitted whole,
+   because half a JSON argument string is not something a caller can act on. Emitted in index
+   order, because map iteration is random and a caller executing them should see them in the order
+   the model asked for.
+2. **`content_filter` is this family's refusal**, and like Anthropic's it arrives on a successful
+   response. Mapped to `StopRefusal`, so a declined request is never presented as an answered one.
+3. **Usage has to be asked for.** Without `stream_options.include_usage` most implementations
+   report nothing at all on a streamed request, and a turn with no usage cannot be costed.
+4. **Effort and sampling parameters are deliberately not sent.** There is no effort field this
+   family agrees on and several reject unknown fields outright, which would break exactly the
+   providers this client exists to reach. Recorded here so the gap is a decision, not an oversight.
+
+Base URL is required rather than defaulted: this provider *is* its endpoint. Which provider gets
+spoken is decided by the credential, not by a flag, which is the point of naming keys. There is no
+default model for the same reason a base URL has none, so `-model` is required and says so.
+
+The acceptance line's "Ollama and one hosted third party both work" needs a person at a terminal,
+so it belongs to PG-A2 alongside A2-04's live check, not to this box.
 
 ### A2-07 Prompt caching
 `status: todo | owner: none | branch: none | depends: A2-05`

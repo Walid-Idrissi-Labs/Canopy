@@ -14,6 +14,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
 
 const askUsage = `canopy ask - send one message to a provider
@@ -24,7 +25,7 @@ usage:
 
 flags:
   -key string      which stored credential to use (default: the only one, if there is one)
-  -model string    model id (default: the provider's default)
+  -model string    model id (required for openai-compatible keys, which have no default)
   -effort string   low, medium, high, xhigh or max
   -system string   system prompt
 
@@ -69,11 +70,16 @@ func runAsk(args []string, out io.Writer) error {
 		return err
 	}
 
-	ref, err := resolveKey(store, *keyName)
+	meta, err := resolveKey(store, *keyName)
 	if err != nil {
 		return err
 	}
-	secret, err := store.Get(ref)
+	secret, err := store.Get(meta.Ref)
+	if err != nil {
+		return err
+	}
+
+	client, err := newClient(meta, secret, *model)
 	if err != nil {
 		return err
 	}
@@ -83,7 +89,6 @@ func runAsk(args []string, out io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	client := anthropic.New(secret)
 	stream, err := client.Stream(ctx, core.Request{
 		Model:  *model,
 		System: *system,
@@ -97,7 +102,7 @@ func runAsk(args []string, out io.Writer) error {
 	}
 	defer func() { _ = stream.Close() }()
 
-	if err := store.MarkUsed(ref); err != nil {
+	if err := store.MarkUsed(meta.Ref); err != nil {
 		// Worth saying, not worth failing the request over: the answer is what was asked for.
 		fmt.Fprintf(os.Stderr, "warning: could not record key usage: %v\n", err)
 	}
@@ -207,49 +212,60 @@ func readPrompt(args []string) (string, error) {
 	return prompt, nil
 }
 
+// newClient builds the provider client a credential points at.
+//
+// The credential decides, not a flag. That is the whole point of naming keys: `-key nemotron`
+// carries its provider and endpoint with it, so nothing above has to be told which API to speak.
+func newClient(meta core.KeyMetadata, secret core.Secret, model string) (core.ProviderClient, error) {
+	switch meta.Ref.Provider {
+	case core.ProviderAnthropic:
+		return anthropic.New(secret), nil
+
+	case core.ProviderOpenAICompatible:
+		// No default model here, deliberately. Anthropic has one because we know what runs there;
+		// this provider is whatever endpoint the user pointed it at, and guessing a model name for
+		// someone else's gateway would fail with a confusing 404 instead of a clear message.
+		if model == "" {
+			return nil, fmt.Errorf(
+				"key %q is an %s credential, which has no default model, so name one with -model "+
+					"(for example -model nvidia/llama-3.3-nemotron-super-49b-v1)",
+				meta.Ref.Name, meta.Ref.Provider)
+		}
+		return openai.New(meta.BaseURL, secret, openai.WithName(meta.Ref.Name)), nil
+
+	default:
+		return nil, fmt.Errorf("key %q has provider %q, which this build does not know how to reach",
+			meta.Ref.Name, meta.Ref.Provider)
+	}
+}
+
 // resolveKey picks which credential to use.
 //
 // With one stored credential the choice is obvious and asking would be pointless. With several it
 // refuses and lists them, rather than picking one: silently choosing which key gets billed is not
 // a decision this should make on someone's behalf.
-func resolveKey(store *keys.Store, name string) (core.KeyRef, error) {
+func resolveKey(store *keys.Store, name string) (core.KeyMetadata, error) {
 	if name != "" {
-		meta, err := store.Metadata(core.KeyRef{Name: name})
-		if err != nil {
-			return core.KeyRef{}, err
-		}
-		return meta.Ref, nil
+		return store.Metadata(core.KeyRef{Name: name})
 	}
 
 	all, err := store.List()
 	if err != nil {
-		return core.KeyRef{}, err
+		return core.KeyMetadata{}, err
 	}
 
-	var usable []core.KeyMetadata
-	for _, meta := range all {
-		if meta.Ref.Provider == core.ProviderAnthropic {
-			usable = append(usable, meta)
-		}
-	}
-
-	switch len(usable) {
+	switch len(all) {
 	case 0:
-		if len(all) > 0 {
-			return core.KeyRef{}, errors.New(
-				"no anthropic credential is stored. `canopy ask` only speaks to Anthropic so far, " +
-					"other providers arrive in A2-06. Add one with `canopy keys add claude`")
-		}
-		return core.KeyRef{}, errors.New(
+		return core.KeyMetadata{}, errors.New(
 			"no credentials stored. Add one with `canopy keys add claude`")
 	case 1:
-		return usable[0].Ref, nil
+		return all[0], nil
 	default:
-		names := make([]string, len(usable))
-		for i, meta := range usable {
+		names := make([]string, len(all))
+		for i, meta := range all {
 			names[i] = meta.Ref.Name
 		}
-		return core.KeyRef{}, fmt.Errorf(
+		return core.KeyMetadata{}, fmt.Errorf(
 			"several credentials could be used (%s), so pick one with -key. "+
 				"Choosing which key gets billed is not a decision to make silently",
 			strings.Join(names, ", "))

@@ -161,3 +161,54 @@ func TestAskRejectsUnknownEffort(t *testing.T) {
 		t.Errorf("the error should list the valid levels, got %q", err)
 	}
 }
+
+// The credential decides which API is spoken. Getting this wrong would mean sending an Anthropic
+// request to somebody's NVIDIA endpoint, which fails in a way that reads like a broken key.
+func TestClientIsChosenByTheCredential(t *testing.T) {
+	anthropicKey := core.KeyMetadata{
+		Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic},
+	}
+	client, err := newClient(anthropicKey, core.NewSecret("x"), "")
+	if err != nil {
+		t.Fatalf("an anthropic key with no model should work, since it has a default: %v", err)
+	}
+	if client.Name() != "anthropic" {
+		t.Errorf("client = %q, want anthropic", client.Name())
+	}
+
+	compatible := core.KeyMetadata{
+		Ref:     core.KeyRef{Name: "nemotron", Provider: core.ProviderOpenAICompatible},
+		BaseURL: "https://integrate.api.nvidia.com/v1",
+	}
+	client, err = newClient(compatible, core.NewSecret("x"), "some/model")
+	if err != nil {
+		t.Fatalf("newClient: %v", err)
+	}
+	// Named after the key, so usage and errors attribute to "nemotron" rather than to a URL or to a
+	// generic label shared by every endpoint in this family.
+	if client.Name() != "nemotron" {
+		t.Errorf("client = %q, want the key name", client.Name())
+	}
+}
+
+// Guessing a model name for somebody else's gateway produces a 404 that reads like a broken key.
+func TestOpenAICompatibleRequiresAModel(t *testing.T) {
+	meta := core.KeyMetadata{
+		Ref:     core.KeyRef{Name: "nemotron", Provider: core.ProviderOpenAICompatible},
+		BaseURL: "https://integrate.api.nvidia.com/v1",
+	}
+	_, err := newClient(meta, core.NewSecret("x"), "")
+	if err == nil {
+		t.Fatal("a compatible key with no model should be refused, not guessed at")
+	}
+	if !strings.Contains(err.Error(), "-model") {
+		t.Errorf("the error should say how to fix it, got %q", err)
+	}
+}
+
+func TestUnknownProviderIsRefused(t *testing.T) {
+	meta := core.KeyMetadata{Ref: core.KeyRef{Name: "k", Provider: core.Provider("mystery")}}
+	if _, err := newClient(meta, core.NewSecret("x"), "m"); err == nil {
+		t.Fatal("an unknown provider should be refused rather than defaulted to one of them")
+	}
+}
