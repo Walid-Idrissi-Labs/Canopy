@@ -2269,8 +2269,8 @@ Fan-out at A6-05 requires this. Ranking three agents on one task is meaningless 
 editing the same files.
 
 ### A5-06 Per agent view and switching
-`status: todo | owner: none | branch: none | depends: A5-05, A3-03`
-`scope: internal/tui/`
+`status: partial | owner: Claude | branch: feat/agent-runtime | depends: A5-05, A3-03`
+`scope: internal/tui/agents/`
 
 Deliverable: a list of agents, switch into any one's conversation, come back out.
 
@@ -2280,6 +2280,30 @@ needing input is visibly distinct from one working.
 `verify: claude [ ]   codex [ ]`
 
 notes: selection stays keyed by ID rather than row index, for the reason established in P1-07.
+
+**Three layouts, as Walid asked for**, because they answer different questions and no single one
+answers all three. List is "what is everyone doing", one line each. Split is "watch two of them",
+for when two agents are working on related things and the interesting part is how their answers
+differ. Focus is "read one properly", full width. `1`, `2`, `3` go straight to one, and `v` cycles
+for people who would rather not remember three keys.
+
+**Split shows two, not four.** A terminal split four ways gives each pane twenty columns, and twenty
+columns of a code discussion is not readable. When even two will not fit it falls back to focus
+rather than drawing something torn, which is the same reasoning as refusing to draw below the
+minimum terminal size.
+
+**The cursor follows the agent, not the position.** The ordering moves as agents change state: one
+that starts waiting jumps to the top. A cursor holding index 3 would follow the row rather than the
+agent somebody was looking at, and when its agent disappears entirely it falls back to the top
+rather than to the same index, because the same index is now a different agent.
+
+Every state is a word as well as a colour. A row of coloured dots is meaningless in a pasted bug
+report and invisible to anyone who has turned colour off.
+
+**Still to do:** pressing enter on an agent to switch into its conversation, and `n` to start a new
+one. The screen and the registry behind it are done and tested; the two keys need the chat screen to
+be able to change which session it is showing, which is a small change to `chat.Model` that belongs
+with the session switcher.
 
 ### A5-07 Steering without interrupting
 `status: todo | owner: none | branch: none | depends: A5-06`

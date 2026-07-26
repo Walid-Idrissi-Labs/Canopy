@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
@@ -16,6 +17,7 @@ type screen int
 const (
 	screenSplash screen = iota
 	screenChat
+	screenAgents
 	screenDashboard
 	screenKeys
 )
@@ -52,6 +54,7 @@ type App struct {
 	cameFrom screen
 
 	chat      chat.Model
+	agents    agentsui.Model
 	dashboard Model
 	keys      keysui.Model
 
@@ -87,6 +90,7 @@ func NewApp(
 func (a *App) resize(dim Dimensions) {
 	a.dim = dim
 	a.chat.SetSize(dim.Width, dim.BodyHeight())
+	a.agents.SetSize(dim.Width, dim.BodyHeight())
 }
 
 func (a App) Init() tea.Cmd {
@@ -131,6 +135,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			a.chat, cmd = a.chat.Update(key)
 			return a, cmd
+		case screenAgents:
+			var cmd tea.Cmd
+			a.agents, cmd = a.agents.Update(key)
+			return a, cmd
 		case screenKeys:
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
@@ -159,6 +167,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var chatCmd tea.Cmd
 	a.chat, chatCmd = a.chat.Update(msg)
 	cmds = append(cmds, chatCmd)
+
+	// The agents view keeps up too, so switching to it shows the current state rather than the
+	// state it had when you last looked.
+	a.agents, _ = a.agents.Update(msg)
 
 	a.keys, _ = a.keys.Update(msg)
 	return a, tea.Batch(cmds...)
@@ -197,8 +209,24 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 				a.cameFrom = screenChat
 				a.screen = screenKeys
 			} else {
-				a.screen = screenDashboard
+				a.screen = screenAgents
 			}
+			return true, a, nil
+		}
+
+	case screenAgents:
+		switch msg.String() {
+		case "esc", "q":
+			a.screen = screenChat
+			return true, a, nil
+		case "w":
+			// The worktree monitor, which is a different question from the agent list: one is about
+			// what the agents are doing and the other about what state the code is in.
+			a.screen = screenDashboard
+			return true, a, nil
+		case "K":
+			a.cameFrom = screenAgents
+			a.screen = screenKeys
 			return true, a, nil
 		}
 
@@ -209,7 +237,7 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			a.screen = screenKeys
 			return true, a, nil
 		case "esc", "tab":
-			a.screen = screenChat
+			a.screen = screenAgents
 			return true, a, nil
 		case "k":
 			// Only when it is unambiguous. "k" is also move-up, so it opens the credential screen
@@ -247,6 +275,11 @@ func (a App) View() string {
 	}
 
 	switch a.screen {
+	case screenAgents:
+		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(),
+			Keys(a.dim.Width, "j/k", "move", "v", "layout", "esc", "chat", "w", "worktrees",
+				"K", "keys"))
+
 	case screenChat:
 		// The keys mean something different while a question is up, so the footer says so rather
 		// than listing commands that are not currently in effect.
@@ -260,7 +293,7 @@ func (a App) View() string {
 		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
 	default:
 		return Frame(a.dim, "canopy", a.dashboard.Context(), a.dashboard.Body(),
-			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc", "back"))
+			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc", "agents"))
 	}
 }
 
@@ -271,6 +304,8 @@ func (a App) Screen() string {
 		return "splash"
 	case screenChat:
 		return "chat"
+	case screenAgents:
+		return "agents"
 	case screenKeys:
 		return "keys"
 	default:

@@ -49,6 +49,7 @@ func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 type stubEngine struct {
 	session core.Session
 	sent    []string
+	agents  []session.AgentStatus
 }
 
 func (e *stubEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -71,6 +72,10 @@ func (e *stubEngine) Apply(string, session.CompactionResult) error { return nil 
 func (e *stubEngine) Pending(string) (session.Prompt, bool) { return session.Prompt{}, false }
 
 func (e *stubEngine) Answer(string, bool, bool) bool { return false }
+
+// The stub implements the agents view's engine too, so the app level tests exercise the real path
+// rather than a screen that was never constructed.
+func (e *stubEngine) AgentStatuses() []session.AgentStatus { return e.agents }
 
 // launch builds the application past the splash and at a known size, which is the state every
 // test below actually cares about. Tests should not wait on a timer.
@@ -148,12 +153,19 @@ func TestSwitchingBetweenScreens(t *testing.T) {
 	}
 
 	app = key(app, "ctrl+d")
-	if app.(tui.App).Screen() != "dashboard" {
-		t.Fatal("ctrl+d should open the agents view")
+	if app.(tui.App).Screen() != "agents" {
+		t.Fatalf("ctrl+d opened %q, want the agents view", app.(tui.App).Screen())
 	}
 	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if app.(tui.App).Screen() != "chat" {
-		t.Error("esc should return to chat from the dashboard too")
+		t.Error("esc should return to chat from the agents view too")
+	}
+
+	// The worktree monitor is a different question from the agent list: one is about what the
+	// agents are doing and the other about what state the code is in.
+	app = key(key(app, "ctrl+d"), "w")
+	if app.(tui.App).Screen() != "dashboard" {
+		t.Errorf("w opened %q, want the worktree monitor", app.(tui.App).Screen())
 	}
 }
 
@@ -163,7 +175,7 @@ func TestLowercaseKDoesNotHijackNavigation(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := key(launch(store, withOneKey()), "ctrl+d")
+	app := key(key(launch(store, withOneKey()), "ctrl+d"), "w")
 
 	app = key(app, "j")
 	app = key(app, "k")
@@ -178,7 +190,7 @@ func TestDashboardKeepsUpdatingBehindTheCredentialScreen(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := key(launch(store, withOneKey()), "ctrl+d")
+	app := key(key(launch(store, withOneKey()), "ctrl+d"), "w")
 	waiting := app.(tui.App).SubscribeCmd()
 
 	app = key(app, "K")
@@ -265,9 +277,14 @@ func TestEveryScreenSaysHowToReachCredentials(t *testing.T) {
 		t.Errorf("chat should say how to reach credentials:\n%s", chatView)
 	}
 
-	dashboard := plain(key(launch(store, withOneKey()), "ctrl+d").View())
+	agents := plain(key(launch(store, withOneKey()), "ctrl+d").View())
+	if !strings.Contains(agents, "keys") {
+		t.Errorf("the agents view should say how to reach credentials:\n%s", agents)
+	}
+
+	dashboard := plain(key(key(launch(store, withOneKey()), "ctrl+d"), "w").View())
 	if !strings.Contains(dashboard, "credentials") {
-		t.Errorf("the dashboard should say how to reach credentials:\n%s", dashboard)
+		t.Errorf("the worktree monitor should say how to reach credentials:\n%s", dashboard)
 	}
 }
 

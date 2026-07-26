@@ -86,11 +86,19 @@ func runChat() error {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
 	}
 
-	// One session to start in. Several sessions and the agents view arrive at A5; the engine
-	// already holds a list rather than a single conversation, so that is a screen rather than a
-	// rewrite.
+	// The session you land in is an agent like any other, registered so it appears in the agents
+	// view rather than being a special case the list has to know about. Called "main" because that
+	// is what somebody would call the one they are talking to.
 	keyName := resolver.DefaultKeyName()
-	engine.Create(keyName, defaultModelFor(keyStore, keyName))
+	if _, err := engine.AddAgent(session.Agent{
+		Name:    "main",
+		KeyName: keyName,
+		Model:   defaultModelFor(keyStore, keyName),
+		Dir:     dir,
+		Trust:   core.TrustStandard,
+	}); err != nil {
+		return fmt.Errorf("starting the first agent: %w", err)
+	}
 
 	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
 }
