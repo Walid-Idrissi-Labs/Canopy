@@ -36,7 +36,7 @@ within about two seconds of an edit, without restarting anything.
 An error is not a failure. Stale is not a failure. "No tests configured" is never "tests passed".
 
 **Worktree manager independent.** Canopy monitors worktrees made by git, a script, an editor, or
-any agent tool. It does not want to own them.
+any agent tool, and in v0.1 it never modifies them.
 
 **Terminal first and local.** No account, no hosted control plane, no desktop app. Works over SSH.
 
