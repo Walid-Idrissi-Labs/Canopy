@@ -10,6 +10,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
 
@@ -41,10 +42,32 @@ func (f *fakeKeyStore) Remove(ref core.KeyRef) error {
 func (f *fakeKeyStore) BackendName() string        { return "test" }
 func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 
+// stubEngine stands in for the session engine. The app level tests are about routing and chrome,
+// not about conversations, so it answers with an empty session and records nothing.
+type stubEngine struct {
+	session core.Session
+	sent    []string
+}
+
+func (e *stubEngine) Session(string) (core.Session, bool) { return e.session, true }
+
+func (e *stubEngine) Send(_, prompt string) (string, error) {
+	e.sent = append(e.sent, prompt)
+	return "turn-1", nil
+}
+
+func (e *stubEngine) Cancel(string) {}
+
+func (e *stubEngine) Events(uint64) <-chan core.Event { return make(chan core.Event) }
+
 // launch builds the application past the splash and at a known size, which is the state every
 // test below actually cares about. Tests should not wait on a timer.
 func launch(store core.SnapshotStore, keyStore keysui.Store) tea.Model {
-	app := tui.NewApp(store, keyStore).DismissSplash()
+	return launchWith(store, keyStore, &stubEngine{})
+}
+
+func launchWith(store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine) tea.Model {
+	app := tui.NewApp(store, keyStore, engine, "myproject", "claude").DismissSplash()
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return next
 }
@@ -74,17 +97,20 @@ func TestFirstRunWithNoKeysOpensOnCredentials(t *testing.T) {
 	}
 }
 
-func TestWithKeysOpensOnTheDashboard(t *testing.T) {
+// Chat is home. Opening on the dashboard would put the least common activity first and make Canopy
+// look like something you watch rather than something you talk to.
+func TestWithKeysOpensOnChat(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
 	app := launch(store, withOneKey()).(tui.App)
 
-	if app.Screen() != "dashboard" {
-		t.Errorf("opened on %q, want the dashboard", app.Screen())
+	if app.Screen() != "chat" {
+		t.Errorf("opened on %q, want chat", app.Screen())
 	}
-	if !strings.Contains(plain(app.View()), "feat-login") {
-		t.Error("the dashboard should be showing")
+	view := plain(app.View())
+	if !strings.Contains(view, "Canopy") || !strings.Contains(view, "Type a message") {
+		t.Errorf("the chat screen should introduce itself:\n%s", view)
 	}
 }
 
@@ -94,17 +120,28 @@ func TestSwitchingBetweenScreens(t *testing.T) {
 
 	app := launch(store, withOneKey())
 
-	app = key(app, "K")
+	// Navigation out of chat is on control keys, because every printable key belongs to the message
+	// box. A plain "K" has to be typeable in a message.
+	app = key(app, "ctrl+k")
 	if app.(tui.App).Screen() != "keys" {
-		t.Fatal("K should open the credential screen")
+		t.Fatal("ctrl+k should open the credential screen")
 	}
 	if !strings.Contains(plain(app.View()), "claude") {
 		t.Error("the credential should be listed")
 	}
 
 	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if app.(tui.App).Screen() != "chat" {
+		t.Error("esc should go back to chat, which is home")
+	}
+
+	app = key(app, "ctrl+d")
 	if app.(tui.App).Screen() != "dashboard" {
-		t.Error("esc should go back to the dashboard")
+		t.Fatal("ctrl+d should open the agents view")
+	}
+	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if app.(tui.App).Screen() != "chat" {
+		t.Error("esc should return to chat from the dashboard too")
 	}
 }
 
@@ -114,7 +151,7 @@ func TestLowercaseKDoesNotHijackNavigation(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := launch(store, withOneKey())
+	app := key(launch(store, withOneKey()), "ctrl+d")
 
 	app = key(app, "j")
 	app = key(app, "k")
@@ -129,7 +166,7 @@ func TestDashboardKeepsUpdatingBehindTheCredentialScreen(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := launch(store, withOneKey())
+	app := key(launch(store, withOneKey()), "ctrl+d")
 	waiting := app.(tui.App).SubscribeCmd()
 
 	app = key(app, "K")
@@ -205,12 +242,20 @@ func TestAddingAKeyInTheInterfaceReachesTheStore(t *testing.T) {
 	}
 }
 
-func TestDashboardShowsHowToReachCredentials(t *testing.T) {
+// Every screen has to say how to get to the credential screen, since a key is the one thing
+// without which nothing else works.
+func TestEveryScreenSaysHowToReachCredentials(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	if !strings.Contains(plain(launch(store, withOneKey()).View()), "credentials") {
-		t.Error("the dashboard should say how to get to the credential screen")
+	chatView := plain(launch(store, withOneKey()).View())
+	if !strings.Contains(chatView, "keys") {
+		t.Errorf("chat should say how to reach credentials:\n%s", chatView)
+	}
+
+	dashboard := plain(key(launch(store, withOneKey()), "ctrl+d").View())
+	if !strings.Contains(dashboard, "credentials") {
+		t.Errorf("the dashboard should say how to reach credentials:\n%s", dashboard)
 	}
 }
 
@@ -220,7 +265,7 @@ func TestSplashAppearsAndClears(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := tui.NewApp(store, withOneKey())
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 	if app.Screen() != "splash" {
 		t.Fatalf("launched on %q, want the splash", app.Screen())
 	}
@@ -231,8 +276,14 @@ func TestSplashAppearsAndClears(t *testing.T) {
 	// Any key dismisses it, and is swallowed rather than acted on: the first keystroke after
 	// launch is usually impatience, not a command.
 	next := key(app, "j")
-	if next.(tui.App).Screen() != "dashboard" {
-		t.Error("a keystroke should dismiss the splash")
+	if next.(tui.App).Screen() != "chat" {
+		t.Errorf("a keystroke should dismiss the splash and land on chat, got %q",
+			next.(tui.App).Screen())
+	}
+	// And is swallowed rather than typed into the message box, or the first impatient keypress
+	// would end up in the message somebody is about to write.
+	if got := next.(tui.App).ChatInput(); got != "" {
+		t.Errorf("the dismissing keystroke landed in the input box as %q", got)
 	}
 }
 
@@ -240,7 +291,7 @@ func TestSplashGoesToCredentialsWhenThereAreNone(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := key(tui.NewApp(store, &fakeKeyStore{}), "j")
+	app := key(tui.NewApp(store, &fakeKeyStore{}, &stubEngine{}, "myproject", ""), "j")
 	if app.(tui.App).Screen() != "keys" {
 		t.Errorf("with no credentials the splash should lead to the credential screen, got %q",
 			app.(tui.App).Screen())
@@ -254,7 +305,7 @@ func TestLayoutFillsAndReflows(t *testing.T) {
 	defer store.Close()
 
 	for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}, {200, 60}} {
-		app := tui.NewApp(store, withOneKey()).DismissSplash()
+		app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
 		next, _ := app.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 
 		lines := strings.Split(plain(next.View()), "\n")
@@ -277,7 +328,7 @@ func TestTooSmallSaysSoRatherThanRenderingBadly(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := tui.NewApp(store, withOneKey()).DismissSplash()
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
 
 	view := plain(next.View())

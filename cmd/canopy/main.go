@@ -19,7 +19,7 @@ var version = "dev"
 const usage = `canopy - a local verification cockpit for parallel git worktrees
 
 usage:
-  canopy               open the dashboard
+  canopy               open a chat in this directory
   canopy keys          manage provider credentials
   canopy ask           send one message to a provider and stream the reply
   canopy snapshot      print the current project snapshot as JSON
@@ -51,7 +51,7 @@ func run(args []string) error {
 			printUsage(os.Stdout)
 			return nil
 		}
-		return runDashboard()
+		return runChat()
 	}
 
 	command := args[0]
@@ -90,8 +90,8 @@ func run(args []string) error {
 	}
 
 	switch command {
-	case "dashboard", "ui":
-		return runDashboard()
+	case "dashboard", "ui", "chat":
+		return runChat()
 	case "snapshot":
 		return runSnapshot(os.Stdout)
 	case "watch":

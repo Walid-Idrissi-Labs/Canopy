@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
 
@@ -14,6 +15,7 @@ type screen int
 
 const (
 	screenSplash screen = iota
+	screenChat
 	screenDashboard
 	screenKeys
 )
@@ -29,10 +31,14 @@ type splashDoneMsg struct{}
 
 // App is the top level model. It owns which screen is showing and routes messages to it.
 //
-// The dashboard and the credential screen are kept as separate models rather than one growing
-// model, because they share nothing except the terminal. Merging them would mean every keystroke
-// handler needing to know which mode it was in, which is how a TUI turns into one large switch
-// nobody wants to touch.
+// Chat is the home screen. Running `canopy` in a directory opens a conversation there, and
+// everything else is somewhere you go from it. Opening on the dashboard instead would put the
+// least common activity first and make Canopy look like something you watch rather than something
+// you talk to.
+//
+// The screens are separate models rather than one growing model, because they share nothing except
+// the terminal. Merging them would mean every keystroke handler knowing which mode it was in,
+// which is how a TUI turns into one large switch nobody wants to touch.
 type App struct {
 	screen screen
 
@@ -40,6 +46,12 @@ type App struct {
 	// the splash never has to know anything about credentials.
 	afterSplash screen
 
+	// cameFrom is where escape goes back to. Recorded rather than assumed, because the credential
+	// screen is reachable from both chat and the dashboard, and always returning to one of them
+	// would throw away where somebody actually was.
+	cameFrom screen
+
+	chat      chat.Model
 	dashboard Model
 	keys      keysui.Model
 
@@ -48,26 +60,39 @@ type App struct {
 
 // NewApp builds the application.
 //
-// A run with no credentials opens on the credential screen. An empty dashboard would be
-// technically correct and useless: the first thing a new user needs is not a list of nothing, it
-// is the one action that makes the rest of the program work.
-func NewApp(store core.SnapshotStore, keyStore keysui.Store) App {
+// A run with no credentials still opens on the credential screen, and leaving it lands on chat. The
+// empty state is the one moment where a form beats a conversation: an agent with no key can be
+// talked to and cannot answer, and finding that out by typing a message and watching it fail is a
+// worse introduction than being asked for the one thing that makes the rest work.
+func NewApp(
+	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+) App {
 	app := App{
 		screen:      screenSplash,
-		afterSplash: screenDashboard,
+		afterSplash: screenChat,
+		chat:        chat.New(engine, "session-1", dir, keyName),
 		dashboard:   New(store),
 		keys:        keysui.New(keyStore),
+		cameFrom:    screenChat,
 		dim:         Dimensions{Width: 80, Height: 24},
 	}
 	if app.keys.IsEmpty() {
 		app.afterSplash = screenKeys
 	}
+
+	app.resize(app.dim)
 	return app
+}
+
+func (a *App) resize(dim Dimensions) {
+	a.dim = dim
+	a.chat.SetSize(dim.Width, dim.BodyHeight())
 }
 
 func (a App) Init() tea.Cmd {
 	return tea.Batch(
 		a.dashboard.Init(),
+		a.chat.Init(),
 		tea.Tick(splashDuration, func(time.Time) tea.Msg { return splashDoneMsg{} }),
 	)
 }
@@ -75,7 +100,7 @@ func (a App) Init() tea.Cmd {
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
-		a.dim = Dimensions{Width: m.Width, Height: m.Height}
+		a.resize(Dimensions{Width: m.Width, Height: m.Height})
 	case splashDoneMsg:
 		if a.screen == screenSplash {
 			a.screen = a.afterSplash
@@ -99,9 +124,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// A keystroke belongs to the screen in front and to nothing else.
 		//
 		// Forwarding keys to every screen looks harmless and is not: the dashboard quits on esc,
-		// so typing a credential and pressing esc to cancel the field would exit the program and
-		// lose the session. Screens that are not visible do not get keys.
+		// so typing a message and pressing esc to stop a turn would exit the program and lose the
+		// session. Screens that are not visible do not get keys.
 		switch a.screen {
+		case screenChat:
+			var cmd tea.Cmd
+			a.chat, cmd = a.chat.Update(key)
+			return a, cmd
 		case screenKeys:
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
@@ -115,32 +144,70 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Everything else goes to both, so the dashboard keeps consuming engine events while another
-	// screen is in front. A dashboard that stopped listening whenever you looked elsewhere would
-	// be stale the moment you came back.
+	// Everything else goes to every screen, so each keeps consuming its own events while another
+	// is in front. A dashboard that stopped listening whenever you looked elsewhere would be stale
+	// the moment you came back, and a chat that stopped listening would lose a reply that arrived
+	// while you were reading the credential list.
+	var cmds []tea.Cmd
+
 	updated, cmd := a.dashboard.Update(msg)
 	if next, ok := updated.(Model); ok {
 		a.dashboard = next
 	}
+	cmds = append(cmds, cmd)
+
+	var chatCmd tea.Cmd
+	a.chat, chatCmd = a.chat.Update(msg)
+	cmds = append(cmds, chatCmd)
+
 	a.keys, _ = a.keys.Update(msg)
-	return a, cmd
+	return a, tea.Batch(cmds...)
 }
 
 // routeKey handles screen switching, and reports whether it consumed the key.
+//
+// Chat is the awkward case and it is worth saying why. Every printable key belongs to the message
+// box, so navigation away from chat has to be on keys that are not printable. Anything else would
+// mean the letter that opens the dashboard could never be typed in a message.
 func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	switch a.screen {
+	case screenChat:
+		switch msg.String() {
+		case "ctrl+c":
+			// Quits only when nothing is running. With a turn in flight the first press stops the
+			// turn, because that is what somebody hitting it during a long reply almost always
+			// means, and quitting instead would throw the conversation away.
+			if a.chat.Working() {
+				a.chat, _ = a.chat.Update(tea.KeyMsg{Type: tea.KeyEsc})
+				return true, a, nil
+			}
+			return true, a, tea.Quit
+		case "ctrl+k":
+			a.cameFrom = screenChat
+			a.screen = screenKeys
+			return true, a, nil
+		case "ctrl+d":
+			a.screen = screenDashboard
+			return true, a, nil
+		}
+
 	case screenDashboard:
-		if msg.String() == "k" {
+		switch msg.String() {
+		case "K":
+			a.cameFrom = screenDashboard
+			a.screen = screenKeys
+			return true, a, nil
+		case "esc", "tab":
+			a.screen = screenChat
+			return true, a, nil
+		case "k":
 			// Only when it is unambiguous. "k" is also move-up, so it opens the credential screen
 			// only from a dashboard that has nothing to move around in.
 			if len(a.dashboard.Snapshot().Workspaces) == 0 {
+				a.cameFrom = screenDashboard
 				a.screen = screenKeys
 				return true, a, nil
 			}
-		}
-		if msg.String() == "K" {
-			a.screen = screenKeys
-			return true, a, nil
 		}
 
 	case screenKeys:
@@ -151,7 +218,7 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "esc", "tab":
-			a.screen = screenDashboard
+			a.screen = a.cameFrom
 			return true, a, nil
 		case "q", "ctrl+c":
 			return true, a, tea.Quit
@@ -169,11 +236,15 @@ func (a App) View() string {
 	}
 
 	switch a.screen {
+	case screenChat:
+		return Frame(a.dim, "canopy", a.chat.Context(), a.chat.Body(),
+			Keys("enter", "send", "esc", "stop", "ctrl+d", "agents", "ctrl+k", "keys",
+				"ctrl+c", "quit"))
 	case screenKeys:
 		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
 	default:
 		return Frame(a.dim, "canopy", a.dashboard.Context(), a.dashboard.Body(),
-			Keys("j/k", "move", "K", "credentials", "r", "refresh", "q", "quit"))
+			Keys("j/k", "move", "K", "credentials", "r", "refresh", "esc", "back to chat"))
 	}
 }
 
@@ -182,6 +253,8 @@ func (a App) Screen() string {
 	switch a.screen {
 	case screenSplash:
 		return "splash"
+	case screenChat:
+		return "chat"
 	case screenKeys:
 		return "keys"
 	default:
@@ -196,6 +269,12 @@ func (a App) Screen() string {
 // for that reason and no other.
 func (a App) SubscribeCmd() tea.Cmd { return a.dashboard.Init() }
 
+// ChatInput exposes what has been typed into the message box. For tests.
+func (a App) ChatInput() string { return a.chat.InputValue() }
+
+// ChatSubscribeCmd is the same, for the chat screen's own event stream.
+func (a App) ChatSubscribeCmd() tea.Cmd { return a.chat.SubscribeCmd() }
+
 // DismissSplash skips the launch screen. For tests, which should not wait on a timer.
 func (a App) DismissSplash() App {
 	if a.screen == screenSplash {
@@ -205,8 +284,11 @@ func (a App) DismissSplash() App {
 }
 
 // RunApp starts the full application.
-func RunApp(store core.SnapshotStore, keyStore keysui.Store) error {
-	program := tea.NewProgram(NewApp(store, keyStore), tea.WithAltScreen())
+func RunApp(
+	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+) error {
+	program := tea.NewProgram(
+		NewApp(store, keyStore, engine, dir, keyName), tea.WithAltScreen())
 	_, err := program.Run()
 	return err
 }

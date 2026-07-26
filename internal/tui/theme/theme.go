@@ -54,6 +54,12 @@ type Theme struct {
 	Border lipgloss.Style
 	Footer lipgloss.Style
 	Key    lipgloss.Style
+
+	// Cursor stands in for the terminal's own cursor, which cannot be positioned inside composed
+	// text without tracking every style's effect on the offset. A reversed cell is what terminal
+	// editors fall back to, and it survives a theme change because it takes its colours from
+	// whatever is already there.
+	Cursor lipgloss.Style
 }
 
 // Default is the built-in palette, adapting to a light or dark terminal.
@@ -87,6 +93,7 @@ func New(p Palette) Theme {
 		Border:   lipgloss.NewStyle().Foreground(p.Border),
 		Footer:   lipgloss.NewStyle().Foreground(p.Muted),
 		Key:      lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
+		Cursor:   lipgloss.NewStyle().Reverse(true),
 	}
 }
 

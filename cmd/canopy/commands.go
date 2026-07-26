@@ -7,20 +7,28 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 )
 
-// runDashboard starts the interactive dashboard.
+// runChat opens Canopy on a conversation in the current directory.
 //
-// Nothing here knows the store is fake. The dashboard is handed a core.SnapshotStore and that is
-// all it ever sees, which is what lets the real engine drop in later without the UI changing.
-func runDashboard() error {
+// This is what `canopy` with no arguments does, and the change of home screen is the point: a
+// conversation is the common activity, and opening on a monitor made Canopy look like something you
+// watch rather than something you talk to.
+//
+// Nothing here knows the workspace store is fake. Every screen is handed an interface and that is
+// all it ever sees, which is what lets the real engine drop in at A5 without the UI changing.
+func runChat() error {
 	store := fake.New()
 	defer store.Close()
 
@@ -49,7 +57,39 @@ func runDashboard() error {
 		return err
 	}
 
-	return tui.RunApp(store, keyStore)
+	resolver := session.NewKeyResolver(keyStore)
+	engine := session.New(resolver)
+	defer engine.Close()
+
+	// One session to start in. Several sessions and the agents view arrive at A5; the engine
+	// already holds a list rather than a single conversation, so that is a screen rather than a
+	// rewrite.
+	keyName := resolver.DefaultKeyName()
+	engine.Create(keyName, defaultModelFor(keyStore, keyName))
+
+	dir, err := os.Getwd()
+	if err != nil {
+		dir = ""
+	}
+
+	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
+}
+
+// defaultModelFor picks the model a new session starts on.
+//
+// Anthropic has a default worth using, so an empty string means "the client's own". An OpenAI
+// compatible endpoint has none, and guessing a model name for somebody else's gateway produces a
+// confusing 404 rather than a clear message, so it is left empty and the first turn says what is
+// missing.
+func defaultModelFor(store *keys.Store, name string) string {
+	if name == "" {
+		return ""
+	}
+	meta, err := store.Metadata(core.KeyRef{Name: name})
+	if err != nil || meta.Ref.Provider != core.ProviderAnthropic {
+		return ""
+	}
+	return anthropic.DefaultModel
 }
 
 func runSnapshot(out io.Writer) error {

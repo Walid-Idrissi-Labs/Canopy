@@ -1289,8 +1289,8 @@ one storage decision buys four features. Schema migrations from day one, since t
 change and a tool that loses your history on upgrade is not one anyone keeps.
 
 ### A3-03 Chat view
-`status: todo | owner: none | branch: none | depends: A3-01`
-`scope: internal/tui/chat/`
+`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`scope: internal/tui/chat/, internal/tui/app.go, cmd/canopy/`
 
 Deliverable: message list, live streaming, input box, scrollback. **This becomes the home screen**:
 running `canopy` in a directory opens a chat there, and every other screen is somewhere you go from
@@ -1300,10 +1300,43 @@ Acceptance: a reply renders token by token without flicker, follows the tail unl
 scrolled up, and survives a resize. `canopy` with no arguments lands here, not on the dashboard.
 Someone who has never used it can install it, run it and start working without reading anything.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: reuses the model, event loop and 80 column discipline from P1-07. This package still talks
 to core and nothing else.
+
+The screen holds no conversation state. It reads the session from the engine on every refresh, and
+there is no local copy being appended to as events arrive, which is exactly why a coalesced or
+dropped notification cannot lose a token: the next refresh reads whatever is there now. The spinner
+tick doubles as that refresh beat, so the screen catches up even during a stretch where coalescing
+delivered nothing.
+
+Four decisions worth keeping:
+
+1. **Navigation out of chat is on control keys only.** Every printable key belongs to the message
+   box, so a plain letter opening another screen would mean that letter could never be typed in a
+   message. `ctrl+d` for agents, `ctrl+k` for credentials.
+2. **`esc` stops the turn rather than leaving the screen**, and `ctrl+c` stops before it quits.
+   Somebody hitting either during a long reply means stop, and navigating away or exiting would
+   abandon a running turn out of sight or throw the conversation away.
+3. **A failed send keeps the message in the box.** Clearing it would mean retyping what was just
+   written because a provider was busy.
+4. **Escape from the credential screen returns where you came from**, tracked rather than assumed,
+   because that screen is reachable from both chat and the dashboard.
+
+The transcript asks the turn state what a reply is rather than deciding for itself. `Whole()` is
+true for exactly one state, and every other one gets a label: stopped, declined, cut off, or the
+failure reason. A completed answer carries no label at all, because a line under every reply saying
+"complete" trains people to stop reading the ones that matter.
+
+The message box is hand written rather than pulled from a widget library, because the cursor has to
+sit inside wrapped text. A single line field that scrolls sideways is the wrong shape for what
+people type here, which is several sentences and sometimes a pasted stack trace.
+
+One bug worth recording because it was invisible in every test that did not measure: the box and
+the text inside it computed their widths from two different constants, so at 80 columns the box came
+out 81 wide and wrapped the entire frame. Both now come from `boxChrome`. The layout test that
+measures every line at three terminal sizes is what caught it.
 
 ### A3-04 Markdown and code rendering
 `status: todo | owner: none | branch: none | depends: A3-03`
