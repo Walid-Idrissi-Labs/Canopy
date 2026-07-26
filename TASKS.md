@@ -2091,7 +2091,7 @@ Build A5-05 through A5-10 first if you want agents working sooner. The isolation
 first only because A6 needs them.
 
 ### A5-01 Worktree discovery
-`status: todo | owner: none | branch: none | depends: PG-A4`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: PG-A4`
 `scope: internal/git/`
 
 Deliverable: discover the primary checkout and existing worktrees via
@@ -2100,24 +2100,54 @@ Deliverable: discover the primary checkout and existing worktrees via
 Acceptance: a temp repository with three worktrees is discovered in full, and the primary is
 identified and protected.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: was P2-01, unchanged.
 
+**Canopy discovers worktrees; it does not assume it created them.** Somebody may already have three
+for reasons of their own, and the primary checkout is theirs twice over. So discovery reads and never
+writes, and ownership is recorded rather than inferred.
+
+The record is a **marker file, not a naming convention**, because a naming convention is something a
+user can accidentally satisfy: somebody whose own worktree happens to be called `canopy-feature`
+should not find Canopy willing to delete it. A test creates exactly that worktree by hand and checks
+Canopy refuses to remove it, with and without force.
+
+The marker lives in the worktree's **git directory**, not in the worktree. In a linked worktree
+`.git` is a file containing a pointer rather than a directory, so there is nothing to write into
+there. A test caught that immediately. Resolving the real git directory also keeps the marker out of
+`git status`, so there is nothing for a user to wonder about in their own repository.
+
+Workspace IDs are derived from the path and hashed. Derived so a worktree keeps its ID across
+restarts; hashed because the ID appears in events, transcripts and audit entries, and an absolute
+path carries somebody's home directory name into every one of them.
+
 ### A5-02 Branch, HEAD, dirty state
-`status: todo | owner: none | branch: none | depends: A5-01`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-01`
 `scope: internal/git/`
 
 Deliverable: per worktree branch or detached HEAD, HEAD SHA, dirty counts, last activity.
 
 Acceptance: correct for clean, dirty, untracked only, and detached HEAD.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: was P2-02, unchanged.
 
+The dirty digest is built from the status output **and the modification times of what it names**, so
+an edit that reverts a file to its committed content still changes it. That is deliberate: the
+question the digest answers is "has anything happened here since we last looked", and a round trip
+edit is something happening.
+
+A clean tree gets an empty digest rather than a hash of nothing, so a clean tree at the same commit
+compares equal to itself across runs, which is what `RevisionKey.Equal` needs to not report a
+permanent false stale.
+
+Status is read with `-z`, because filenames containing newlines are legal and do exist, and without
+it one such file becomes two entries and every count is wrong from then on.
+
 ### A5-03 Create and remove a worktree
-`status: todo | owner: none | branch: none | depends: A5-02`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-02`
 `scope: internal/git/`
 
 Deliverable: create a worktree and branch for an agent, remove it afterwards.
@@ -2125,10 +2155,30 @@ Deliverable: create a worktree and branch for an agent, remove it afterwards.
 Acceptance: removal refuses on a dirty worktree without explicit confirmation. The primary checkout
 can never be removed. A failed creation leaves nothing behind.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: previously forbidden outright, now required. The guards from that exclusion survive as
 behaviour: never touch the primary, never remove a dirty tree silently.
+
+Three refusals, in order, each answering a way somebody loses work:
+
+1. **Never the primary**, at any level of confirmation. It is the user's own checkout.
+2. **Never one Canopy did not create.** Finding a worktree is not the same as owning it, and force
+   does not change that.
+3. **Never a dirty one without saying so.** Uncommitted work is work, and an agent's abandoned
+   experiment is sometimes the only copy of an idea. The refusal names what is there, because "it is
+   dirty" is not a decision anybody can make.
+
+Being unable to tell whether a worktree is dirty is treated as a refusal too. The safe reading of "I
+do not know whether there is work here" is that there might be.
+
+Worktrees are created **beside** the repository, never inside it. One nested in the primary checkout
+appears in every glob, every grep and every build, and the first thing anybody notices is their test
+suite running twice.
+
+A failed creation leaves nothing behind: the marker is written last, and if writing it fails the
+worktree is removed. A half created worktree is worse than none, because it is a directory that looks
+usable, is not registered as Canopy's, and will never be cleaned up.
 
 ### A5-04 Worktree environment setup
 `status: todo | owner: none | branch: none | depends: A5-03`
