@@ -1421,17 +1421,47 @@ out 81 wide and wrapped the entire frame. Both now come from `boxChrome`. The la
 measures every line at three terminal sizes is what caught it.
 
 ### A3-04 Markdown and code rendering
-`status: todo | owner: none | branch: none | depends: A3-03`
-`scope: internal/tui/chat/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-03`
+`scope: internal/tui/chat/markdown.go, internal/tui/theme/`
 
 Deliverable: readable code blocks with syntax highlighting, plus inline markdown.
 
 Acceptance: a long code block wraps or scrolls without breaking the layout, and stays readable with
 colour disabled.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: none
+notes: **written by a Sonnet agent working in parallel, reviewed and integrated by Claude.** Recorded
+because who wrote a piece of code is worth knowing when reading it back, and because the parallel
+working turned up a coordination problem worth learning from. See the note at the end.
+
+No new dependencies. Glamour and chroma were both available and neither was taken: the highlighter
+is a keyword, string, comment and number lexer written here, which is what a terminal transcript
+needs and roughly a thousandth of the surface. It handles Go, Python, JavaScript and TypeScript,
+JSON and shell, and falls back to unhighlighted for anything else.
+
+Two design points from the implementation:
+
+- **Structural markers are kept literally rather than replaced by colour.** A heading still reads
+  `# Heading`, a list item still starts `- `. That satisfies "readable with colour disabled"
+  directly rather than by having a second code path for it, and the two cannot then disagree.
+- **Text is wrapped before it is styled, never after.** The hard break path cuts by rune position,
+  and a pre styled string's rune positions do not line up with escape code boundaries, so styling
+  first would cut a line in the middle of a colour sequence.
+
+Known limits, recorded rather than hidden: no cross line lexer state, so a block comment or an
+unterminated string that spans a wrap boundary falls back to plain text after the break; no nested
+emphasis; TypeScript reuses the JavaScript keyword table.
+
+The reply is rendered as markdown and **the question is not**. What somebody typed is what they
+typed, and rendering their asterisks as emphasis would change their own words back at them.
+
+**Coordination note.** Two agents were editing `internal/tui/chat/` at the same time. Nothing was
+lost, but the markdown files were swept into commit `2a83944`, whose message is about the tool
+contract and says nothing about markdown. The history is therefore misleading at that commit and is
+left that way deliberately: the branch is shared and rewriting pushed history unsupervised is worse
+than a wrong commit message. Recorded here so the record is right even where the log is not. The
+lesson for next time is to give a parallel agent a package nobody else is in.
 
 ### A3-05 Cancel a turn in flight
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-03`

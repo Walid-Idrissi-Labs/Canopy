@@ -109,3 +109,33 @@ asking is worse than a large file, and the file is text so it compresses well an
 **What would change it:** a cap, an age based prune, or simply a `canopy history size` so people can
 see it before it surprises them. Given Walid is storage aware this probably wants deciding rather
 than deferring.
+
+---
+
+## Q-08 Commit 2a83944 has a misleading message
+
+It says "add the tool contract and the file tools" and also contains `internal/tui/chat/markdown.go`
+and its tests, written by a parallel agent. Two agents were working in the same package and the
+staging swept them in.
+
+**Decided in the meantime:** left alone. The branch is shared and pushed, and rewriting pushed
+history without a human present is a worse outcome than one commit whose message is incomplete. It
+is recorded in A3-04's notes so the record is accurate even where the log is not.
+
+**What would change it:** if the four of us decide the history matters more, `feat/agent-runtime` can
+be rebased before merge, since nothing has been built on it outside this branch.
+
+---
+
+## Q-09 Permission decisions have no interface yet
+
+`internal/permission` decides, remembers approvals and records an audit trail. Nothing in the TUI
+asks the user anything yet, so an `Ask` outcome currently has nobody to ask.
+
+**Decided in the meantime:** the model is built and tested first, because the prompt is the easy
+part and getting the decisions wrong is the expensive part. The tool use loop at A4-05 is what will
+surface it.
+
+**What matters when it does get built:** the prompt has to show the scope being approved in the
+words the user will recognise, and the narrowest scope has to be the default. Offering "allow all"
+as the obvious button is how "yes" comes to mean "yes to everything" without anybody deciding that.

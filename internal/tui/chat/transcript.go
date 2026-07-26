@@ -101,9 +101,10 @@ func renderTurn(turn core.Turn, width int, spinner string) []string {
 
 	if turn.Text != "" {
 		lines = append(lines, "")
-		for _, line := range wrap(turn.Text, width) {
-			lines = append(lines, t.Body.Render(line))
-		}
+		// The reply goes through the markdown renderer; the question above does not. What somebody
+		// typed is what they typed, and rendering their asterisks as emphasis would change their
+		// own words back at them.
+		lines = append(lines, RenderMarkdown(turn.Text, width)...)
 	}
 
 	for _, call := range turn.ToolCalls {

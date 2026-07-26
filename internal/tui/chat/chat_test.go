@@ -538,3 +538,49 @@ func TestAFailedCompactionIsReported(t *testing.T) {
 type errNotEnough struct{}
 
 func (errNotEnough) Error() string { return "there is not enough history to compact yet" }
+
+// The reply goes through the markdown renderer and the question does not. What somebody typed is
+// what they typed, and rendering their asterisks as emphasis would change their own words back at
+// them.
+func TestTheReplyIsRenderedAsMarkdownAndTheQuestionIsNot(t *testing.T) {
+	exchange := turn("t1",
+		"why does *this* not work?",
+		"Because of the loop:\n\n```go\nfor i := range xs {\n    go f(i)\n}\n```\n\nUse a copy.",
+		core.TurnComplete)
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{exchange}}}
+
+	m := model(engine)
+	m.SetSize(80, 40)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	view := plain(m.Body())
+	if !strings.Contains(view, "for i := range xs") {
+		t.Errorf("the code block is missing from the reply:\n%s", view)
+	}
+	// The question keeps its own asterisks, since they are the user's characters.
+	if !strings.Contains(view, "*this*") {
+		t.Errorf("the question was reformatted:\n%s", view)
+	}
+}
+
+// A code block wider than the terminal would push the whole frame out and everything above it would
+// scroll away, which reads as the program breaking rather than as a long line.
+func TestALongCodeLineInAReplyStaysInsideTheFrame(t *testing.T) {
+	long := "```go\nfunc x() { " + strings.Repeat("someVeryLongIdentifier + ", 40) + "0 }\n```"
+	engine := &fakeEngine{session: core.Session{
+		ID: "s1", Turns: []core.Turn{turn("t1", "show me", long, core.TurnComplete)},
+	}}
+
+	for _, width := range []int{60, 80, 120} {
+		m := chat.New(engine, "s1", "myproject", "claude")
+		m.SetSize(width, 40)
+		m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+		for i, line := range strings.Split(m.Body(), "\n") {
+			if got := len([]rune(plain(line))); got > width {
+				t.Errorf("at width %d, line %d is %d columns:\n%s", width, i, got, plain(line))
+				break
+			}
+		}
+	}
+}
