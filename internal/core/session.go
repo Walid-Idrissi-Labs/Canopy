@@ -310,9 +310,17 @@ func (s Session) Compacted() (Compaction, bool) {
 // Uses Sum rather than folding from a zero value, because Usage has no identity element: an empty
 // running total and a turn nobody could price are the same value, so folding from zero would report
 // a fully priced session as unpriced.
+//
+// **Only settled turns count.** A turn still in flight has not been priced yet, and its empty usage
+// reads as "we could not price this" to Sum, which poisons the total. The visible effect was the
+// cost figure in the header vanishing every time somebody sent a message and reappearing when the
+// reply landed, which looks like the number is unreliable rather than like it is not in yet.
 func (s Session) Usage() Usage {
 	usages := make([]Usage, 0, len(s.Turns))
 	for _, turn := range s.Turns {
+		if !turn.State.Terminal() {
+			continue
+		}
 		usages = append(usages, turn.Usage)
 	}
 	return Sum(usages...)

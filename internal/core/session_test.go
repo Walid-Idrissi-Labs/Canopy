@@ -318,3 +318,28 @@ func TestTurnEventsCoalescePerTurnNotPerSession(t *testing.T) {
 			"could be that it was streaming")
 	}
 }
+
+// A turn still in flight has not been priced yet, and its empty usage reads as "we could not price
+// this" to Sum, which poisons the total. The visible effect was the cost in the header vanishing
+// every time somebody sent a message, which looks like an unreliable number rather than a pending
+// one.
+func TestAnInFlightTurnDoesNotPoisonTheSessionCost(t *testing.T) {
+	session := Session{ID: "s1", Turns: []Turn{
+		{
+			ID: "t1", State: TurnComplete, StartedAt: now, EndedAt: now,
+			Usage: Usage{InputTokens: 1000, OutputTokens: 100, CostUSD: 0.02, CostKnown: true},
+		},
+		{ID: "t2", State: TurnStreaming, StartedAt: now},
+	}}
+
+	usage := session.Usage()
+	if !usage.CostKnown {
+		t.Error("the settled turn was priced, so the total so far is known")
+	}
+	if usage.CostUSD != 0.02 {
+		t.Errorf("cost = %v, want the settled turn's", usage.CostUSD)
+	}
+	if usage.InputTokens != 1000 {
+		t.Errorf("tokens = %d, want only the settled turn counted", usage.InputTokens)
+	}
+}
