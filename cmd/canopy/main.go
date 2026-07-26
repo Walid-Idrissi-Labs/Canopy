@@ -19,6 +19,7 @@ var version = "dev"
 const usage = `canopy - a local verification cockpit for parallel git worktrees
 
 usage:
+  canopy               open the dashboard
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
   canopy demo          drive the stale flip and show it happening
@@ -38,9 +39,17 @@ func main() {
 }
 
 func run(args []string) error {
+	// No arguments opens the dashboard, since that is what someone typing "canopy" wants.
+	//
+	// Unless there is no terminal to open it in. Piped output, CI and cron all end up here, and
+	// the raw failure is "could not open a new TTY: device not configured", which tells the
+	// reader nothing about what they did or what to do instead.
 	if len(args) == 0 {
-		printUsage(os.Stdout)
-		return nil
+		if !isTerminal(os.Stdout) {
+			printUsage(os.Stdout)
+			return nil
+		}
+		return runDashboard()
 	}
 
 	command := args[0]
@@ -68,6 +77,8 @@ func run(args []string) error {
 	}
 
 	switch command {
+	case "dashboard", "ui":
+		return runDashboard()
 	case "snapshot":
 		return runSnapshot(os.Stdout)
 	case "watch":
@@ -78,6 +89,18 @@ func run(args []string) error {
 		printUsage(os.Stderr)
 		return fmt.Errorf("unknown command %q", command)
 	}
+}
+
+// isTerminal reports whether f is attached to a terminal.
+//
+// Checked through the file mode rather than by pulling in a dependency, since the only question
+// being asked is whether opening an interactive UI can possibly work.
+func isTerminal(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 // printUsage writes the usage text. A failure to print usage is not worth failing the process

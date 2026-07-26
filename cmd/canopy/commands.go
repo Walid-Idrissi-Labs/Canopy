@@ -13,7 +13,39 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 )
+
+// runDashboard starts the interactive dashboard.
+//
+// Nothing here knows the store is fake. The dashboard is handed a core.SnapshotStore and that is
+// all it ever sees, which is what lets the real engine drop in later without the UI changing.
+func runDashboard() error {
+	store := fake.New()
+	defer store.Close()
+
+	store.SetClock(time.Now)
+
+	// Without something changing, the dashboard would be a still image and would demonstrate
+	// nothing. Editing a worktree on a timer is the behaviour worth watching anyway, since it is
+	// what turns green results stale.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		ticker := time.NewTicker(6 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				_ = store.Touch("ws-refactor-api")
+			}
+		}
+	}()
+
+	return tui.Run(store)
+}
 
 func runSnapshot(out io.Writer) error {
 	store := fake.New()

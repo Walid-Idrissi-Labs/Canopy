@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | P1-07, the first dashboard | `feat/dashboard` | none |
+| Claude | none, P1-07 handed off for review | `feat/dashboard` | none |
 | Codex | none | none | none |
 
 PG-0 is signed by Walid and phase 1 is underway. P1-01 through P1-05 are done and in review on
@@ -517,17 +517,45 @@ revision it actually covered. Every service reports liveness and readiness separ
 once real discovery lands in P2-01.
 
 ### P1-07 First dashboard against the fake
-`status: claimed | owner: Claude | branch: feat/dashboard | depends: P1-05`
-`scope: internal/tui/`
+`status: review | owner: Claude | branch: feat/dashboard | depends: P1-05`
+`scope: internal/tui/, cmd/canopy/`
 
 Deliverable: a Bubble Tea dashboard listing the fake's workspaces with test state and freshness,
 driven only through the SnapshotStore interface.
 
 Acceptance: renders four rows, and imports no package other than internal/core.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: first dependencies land here, bubbletea v1.3.10 and lipgloss v1.1.0. `canopy` with no
+arguments opens the dashboard, `canopy dashboard` does the same explicitly.
+
+The import rule is enforced by a test that parses the package's own non-test files and fails on
+any internal import except `internal/core`. Worth having because the first accidental import will
+compile perfectly well, and the whole value of the contract is that this package cannot tell the
+fake from the real engine.
+
+Decisions in here worth Codex's attention:
+
+1. **Selection is held by workspace ID, not row index.** Worktrees appear and disappear outside
+   Canopy, so an index quietly starts pointing at a different workspace than the user chose.
+   Acting on the wrong workspace is about the worst bug this product could have. That is P4-10's
+   acceptance criterion met early, and it has a test.
+2. **The selected row explains itself.** The roll-up reason is rendered under the table, so a
+   verdict is never shown without the evidence that produced it. The caveat line surfaces failing
+   optional evidence that a green row would otherwise hide.
+3. **Verified reads YES or NO, not a bare tick.** A tick alone invites the eye to see a green
+   shape and stop looking. The word pushes the reader on to the columns that say why.
+4. **Column widths are fixed and budgeted to 80 columns**, so a state change can never shift a
+   column and make the table twitch. There is a test asserting no line exceeds 80, which caught
+   the layout being 81 wide and hiding it by truncating the `VERIFIED` heading to `VERI...`.
+
+Two things fixed while building this rather than deferred:
+
+- `canopy` with no arguments falls back to printing usage when stdout is not a terminal. It
+  previously failed with "could not open a new TTY: device not configured", which tells a reader
+  nothing about what they did.
+- The D-10 glyph table in DECISIONS.md was ASCII placeholders. Updated to what actually shipped.
 
 ### P1-08 Integration, the stale flip
 `status: todo | owner: none | branch: none | depends: P1-06, P1-07`

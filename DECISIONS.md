@@ -159,28 +159,35 @@ Test states:
 
 | State | Label | Glyph | Reads as |
 |---|---|---|---|
-| passing | PASS | v | verified green for the current code |
-| failing | FAIL | x | the suite ran and did not pass |
+| passing | PASS | check | verified green for the current code |
+| failing | FAIL | cross | the suite ran and did not pass |
 | stale | STALE | ~ | needs a re-run, not broken and not trusted |
-| running | RUN | ... | in flight |
-| queued | QUEUED | > | waiting to start |
+| running | RUN | > | in flight |
+| queued | QUEUED | middle dot | waiting to start |
 | error | ERROR | ! | could not run, distinct from failing |
 | cancelled | CANCEL | - | stopped by the user |
 | unknown | UNKNOWN | ? | evidence cannot be trusted |
-| not-configured | NOT SET | . | nothing was ever configured to run |
+| not-configured | NOT SET | blank | nothing was ever configured to run |
 
 Service states:
 
 | State | Label | Glyph |
 |---|---|---|
-| healthy | UP | ^ |
-| unhealthy | SICK | v |
+| healthy | UP | check |
+| unhealthy | SICK | cross |
 | starting | START | > |
-| stopping | STOP | < |
-| stopped | DOWN | _ |
-| crashed | CRASH | x |
+| stopping | STOP | - |
+| stopped | DOWN | middle dot |
+| crashed | CRASH | ! |
 | unknown | UNKNOWN | ? |
-| not-configured | NOT SET | . |
+| not-configured | NOT SET | blank |
+
+The workspace roll-up reads YES or NO rather than a bare tick, because a tick alone invites the
+eye to see a green shape and stop looking, while the word pushes the reader on to the columns
+that say which evidence produced it.
+
+Every glyph is single width so a state change can never shift a column. Implemented in
+internal/tui/styles.go as of P1-07.
 
 Final glyph choice belongs to the TUI work and may use box drawing or Nerd Font characters
 instead, as long as every state stays distinguishable without color. The words above are fixed.
