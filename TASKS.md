@@ -278,7 +278,7 @@ Goal: the shared types exist, the state machine is proven by tests, and the dash
 flips a row to stale, all before any real git or process code is written.
 
 ### P1-01 Core domain types
-`status: todo | owner: none | branch: none | depends: PG-0`
+`status: review | owner: Claude | branch: feat/core-contract | depends: PG-0`
 `scope: internal/core/*.go`
 
 Deliverable: RevisionKey, WorkspaceSnapshot, WorkspaceOwnership, TestRun, TestState,
@@ -288,10 +288,29 @@ in the corrections document sections 3.2 and 3.3, no extras and no omissions.
 Acceptance: every state string in 3.2 and 3.3 has a constant, and a test asserts the full set so
 it fails if one is added or removed without updating it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: shared contract file. Per the collaboration rules, changing it later needs a short joint
 design discussion, not a unilateral commit.
+
+Four decisions in here are worth Codex arguing with, because they are judgement calls rather than
+transcriptions of the corrections document:
+
+1. `RevisionKey.Equal` returns false when either side is unknown, including unknown against
+   unknown. If two unknowns compared equal, a result captured while the revision was uncomputable
+   would keep matching forever and sit there green. Prefer a spurious stale over a spurious pass.
+2. `Observation` is a three valued type instead of a bool, used for process liveness and
+   readiness. A bool zero value is false, and false reads as "no", so an unfilled field would
+   assert something we never observed.
+3. Events carry no state payload, only a subject and a sequence. If an event carried its own copy
+   of the state it could disagree with the snapshot, and then two things would each claim to be
+   authoritative with no way to tell which was lying.
+4. `Event.CoalesceKey` returns empty for final transitions, so they can never be dropped under
+   load. Intermediate updates are safe to drop because the snapshot is authoritative.
+
+Extra types beyond the corrections list: `Observation`, `DirtyState`, `TestSnapshot`,
+`ServiceSnapshot`, `ProbeKind`, `ConfigState`, `TrustState`. The last two are v0.1 scope per
+corrections section 8 items 12 and 13, and are here now so phase 3 is not a contract change.
 
 ### P1-02 Core interfaces
 `status: todo | owner: none | branch: none | depends: P1-01`
