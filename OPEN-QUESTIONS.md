@@ -1,5 +1,40 @@
 # Open questions
 
+## What happened overnight, 26 to 27 July
+
+Walid asked for unsupervised work through the night on `feat/agent-runtime`, with everything
+committed as it went and the decisions written down rather than explained in the morning. This is
+the orientation; the reasoning for each piece is in that task's notes in TASKS.md.
+
+**28 commits.** Phase A3 is complete and phase A4 is complete except for the interface work that
+depends on A5. Phase A5's git foundations are done.
+
+What now exists that did not last night:
+
+- **Sessions persist.** SQLite, migrations from the first version, full text search across every
+  conversation. `canopy search <words>`.
+- **An agent does work.** It reads and writes files, runs commands, uses git, and fetches pages.
+  Eleven tools. Proved against a real provider, not only against scripted streams.
+- **Permissions decide, and ask.** Per agent trust levels, a prompt in the transcript, an audit
+  trail of every call including the refused ones.
+- **Nothing is silently lost.** Compaction announces itself and keeps the history. Every turn is
+  checkpointed so it can be undone. A cancelled turn keeps its partial and says it is partial.
+- **Markdown and syntax highlighting** in replies, written by a Sonnet agent working in parallel.
+
+Four things worth a second pair of eyes, in order:
+
+1. **Q-08**, a commit with a misleading message that I chose not to rewrite unsupervised.
+2. **Q-09**, whether `a` (approve everything of this shape) is too easy to reach on the prompt.
+3. **Q-06**, the 148 MB SQLite dependency, given Walid is storage aware.
+4. **Q-01**, whether a rate of zero should be allowed for a genuinely free endpoint.
+
+**Six real bugs were found by tests rather than by review**, and each is recorded where it happened.
+The two most instructive: a cancelled turn reported itself as failed on both providers, which only a
+live test could catch; and the tool loop hung for ten minutes because it read past the done event,
+which only showed up because a scripted stream blocked where a real one returns false.
+
+---
+
 Things that need a person, kept here rather than guessed at. Each one says what was decided in the
 meantime so nothing is blocked waiting for an answer, and what would change if the answer is
 different.

@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A4 tools and permissions, working overnight | `feat/agent-runtime` | none |
+| Claude | A5, many agents. A3 and A4 done overnight | `feat/agent-runtime` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -111,9 +111,12 @@ D-23 and the retired tasks table at the bottom.
 Done and carrying forward: P0-01 to P0-07 and P1-01 to P1-07. The core contract, the state machine,
 the roll-up, the fake store, the headless harness and the dashboard.
 
-Codex: A2 is largely written, so **A2-05 usage and cost accounting is the obvious thing to claim**,
-and A2-07 and A2-08 after it. A2-05 is independent of everything in flight: it needs a dated price
-table and the token counts the two clients already report. A3 depends on A2.
+Codex: A2, A3 and A4 are done. **A5-05 through A5-10 are the obvious things to claim**, which is the
+agent registry, dispatch and the views over several agents. A5-01 to A5-04 are the isolation half and
+are mine; the registry does not depend on them, so the two halves can proceed at once.
+
+A6 verification is also entirely free: it depends on A5-05 for the agent list and on nothing else
+that is in flight.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
