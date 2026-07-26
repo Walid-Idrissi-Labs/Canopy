@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | none, A1 complete and awaiting PG-A1 | `feat/keys-and-profiles` | none |
+| Claude | A1-05, key management in the TUI | `feat/keys-tui` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -753,11 +753,35 @@ provider boundary the credential is already in scope, so the scrub is local and 
 A2-03 lands. That is intentional: it forces the limitation to be re-examined rather than quietly
 outliving the documentation that describes it.
 
+### A1-05 Key management in the TUI
+`status: claimed | owner: Claude | branch: feat/keys-tui | depends: A1-03`
+`scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
+
+Deliverable: add, list, test and remove credentials without leaving the interface. Reachable from
+the dashboard, and shown on first run when no credentials exist yet.
+
+Acceptance: a key can be added entirely in the TUI, with the value masked as it is typed and never
+present in any rendered frame. The provider is chosen from a list rather than typed. A base URL is
+requested only for providers that need one. Removal confirms first. On first run with no keys, the
+interface says so and offers to add one rather than presenting an empty dashboard.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **added 2026-07-26 at Walid's request**, after A1 was otherwise finished. Recorded as a new
+task rather than folded into A1-03 so the change is visible.
+
+The CLI stays. Piping from a password manager is a real workflow and a TUI cannot replace it.
+
+The masked input field is the risk here. The value exists as a plain string in the model while
+being typed, which is the one place in this design where that is unavoidable, so it is cleared as
+soon as it reaches the store and the redaction suite from A1-04 is extended to cover the frames
+rendered while typing.
+
 ### PG-A1 Phase A1 gate
-`status: review | depends: A1-01, A1-02, A1-03, A1-04`
+`status: todo | depends: A1-01, A1-02, A1-03, A1-04, A1-05`
 
 Both supervisors add a key, restart, confirm it survived, and fail to find it anywhere in Canopy's
-own output.
+own output. Adding is done once from the command line and once from the TUI.
 
 `signed: walid [ ]   classmate [ ]`
 
