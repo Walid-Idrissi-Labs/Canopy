@@ -148,7 +148,9 @@ func TestRunRejectsUnknownCommandsAndSources(t *testing.T) {
 	if err := run([]string{"version"}); err != nil {
 		t.Errorf("version: %v", err)
 	}
+	// With no terminal attached, no arguments falls back to usage instead of failing with a
+	// TTY error nobody can act on. Tests never have a terminal, so this exercises that path.
 	if err := run(nil); err != nil {
-		t.Errorf("no arguments should print usage, not fail: %v", err)
+		t.Errorf("no arguments without a terminal should print usage, not fail: %v", err)
 	}
 }
