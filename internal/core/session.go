@@ -247,6 +247,14 @@ type Compaction struct {
 	TokensAfter  int
 }
 
+// ForkRef points at a conversation branched off this one.
+type ForkRef struct {
+	SessionID string
+	// AtTurnID is the last turn the two sessions have in common.
+	AtTurnID string
+	At       time.Time
+}
+
 // Session is one conversation.
 type Session struct {
 	ID string
@@ -263,6 +271,19 @@ type Session struct {
 	Model   string
 
 	Turns []Turn
+
+	// ForkedFrom, ForkedAt and ForkedWhen record where this conversation came from, empty on a
+	// session that was started rather than forked.
+	//
+	// Recorded on both ends rather than only on the child, because the question gets asked from
+	// both directions: "where did this come from" when reading a fork, and "what did I try from
+	// here" when reading the original. A one sided record answers half of it.
+	ForkedFrom string
+	ForkedAt   string
+	ForkedWhen time.Time
+
+	// Forks are the conversations branched off this one.
+	Forks []ForkRef
 
 	// Compactions are every summarisation this session has been through, oldest first.
 	//

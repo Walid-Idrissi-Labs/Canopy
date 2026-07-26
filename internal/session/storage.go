@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -120,6 +120,24 @@ var migrations = []string{
 		tokens_before INTEGER NOT NULL DEFAULT 0,
 		tokens_after  INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (session_id, ordinal)
+	);
+	`,
+
+	// Added when forking landed.
+	`
+	ALTER TABLE sessions ADD COLUMN forked_from TEXT NOT NULL DEFAULT '';
+	ALTER TABLE sessions ADD COLUMN forked_at   TEXT NOT NULL DEFAULT '';
+	ALTER TABLE sessions ADD COLUMN forked_when INTEGER NOT NULL DEFAULT 0;
+
+	-- The child could be derived by querying sessions for a matching forked_from, and is stored
+	-- explicitly anyway. A fork whose child has been deleted should still show that something was
+	-- tried from here and is gone, rather than silently reading as though it never happened.
+	CREATE TABLE forks (
+		session_id  TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+		fork_id     TEXT NOT NULL,
+		at_turn_id  TEXT NOT NULL,
+		at          INTEGER NOT NULL,
+		PRIMARY KEY (session_id, fork_id)
 	);
 	`,
 }
@@ -219,8 +237,9 @@ func (s *Storage) SaveSession(session core.Session) error {
 		return errors.New("a session needs an ID to be saved")
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO sessions (id, title, workspace_id, key_name, model, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sessions (id, title, workspace_id, key_name, model, created_at, updated_at,
+		                      forked_from, forked_at, forked_when)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
 			workspace_id = excluded.workspace_id,
@@ -228,11 +247,48 @@ func (s *Storage) SaveSession(session core.Session) error {
 			model = excluded.model,
 			updated_at = excluded.updated_at`,
 		session.ID, session.Title, session.WorkspaceID, session.KeyName, session.Model,
-		unix(session.CreatedAt), unix(session.UpdatedAt))
+		unix(session.CreatedAt), unix(session.UpdatedAt),
+		session.ForkedFrom, session.ForkedAt, unix(session.ForkedWhen))
 	if err != nil {
 		return fmt.Errorf("saving session %s: %w", session.ID, err)
 	}
-	return s.saveCompactions(session)
+	if err := s.saveCompactions(session); err != nil {
+		return err
+	}
+	return s.saveForks(session)
+}
+
+func (s *Storage) saveForks(session core.Session) error {
+	for _, fork := range session.Forks {
+		if _, err := s.db.Exec(`
+			INSERT INTO forks (session_id, fork_id, at_turn_id, at) VALUES (?, ?, ?, ?)
+			ON CONFLICT(session_id, fork_id) DO NOTHING`,
+			session.ID, fork.SessionID, fork.AtTurnID, unix(fork.At)); err != nil {
+			return fmt.Errorf("saving fork %s of session %s: %w", fork.SessionID, session.ID, err)
+		}
+	}
+	return nil
+}
+
+func (s *Storage) loadForks(sessionID string) ([]core.ForkRef, error) {
+	rows, err := s.db.Query(`
+		SELECT fork_id, at_turn_id, at FROM forks WHERE session_id = ? ORDER BY at`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("loading the forks of session %s: %w", sessionID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []core.ForkRef
+	for rows.Next() {
+		var fork core.ForkRef
+		var at int64
+		if err := rows.Scan(&fork.SessionID, &fork.AtTurnID, &at); err != nil {
+			return nil, err
+		}
+		fork.At = fromUnix(at)
+		out = append(out, fork)
+	}
+	return out, rows.Err()
 }
 
 // saveCompactions writes the summarisation history.
@@ -351,11 +407,13 @@ func (s *Storage) Load(id string) (core.Session, error) {
 	var session core.Session
 	var created, updated int64
 
+	var forkedWhen int64
 	err := s.db.QueryRow(`
-		SELECT id, title, workspace_id, key_name, model, created_at, updated_at
+		SELECT id, title, workspace_id, key_name, model, created_at, updated_at,
+		       forked_from, forked_at, forked_when
 		FROM sessions WHERE id = ?`, id).
 		Scan(&session.ID, &session.Title, &session.WorkspaceID, &session.KeyName, &session.Model,
-			&created, &updated)
+			&created, &updated, &session.ForkedFrom, &session.ForkedAt, &forkedWhen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.Session{}, fmt.Errorf("%q: %w", id, ErrNoSession)
 	}
@@ -364,6 +422,7 @@ func (s *Storage) Load(id string) (core.Session, error) {
 	}
 	session.CreatedAt = fromUnix(created)
 	session.UpdatedAt = fromUnix(updated)
+	session.ForkedWhen = fromUnix(forkedWhen)
 
 	turns, err := s.loadTurns(id)
 	if err != nil {
@@ -376,6 +435,12 @@ func (s *Storage) Load(id string) (core.Session, error) {
 		return core.Session{}, err
 	}
 	session.Compactions = compactions
+
+	forks, err := s.loadForks(id)
+	if err != nil {
+		return core.Session{}, err
+	}
+	session.Forks = forks
 	return session, nil
 }
 

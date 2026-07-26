@@ -1486,8 +1486,8 @@ false green. Compaction is always visible, and it never destroys history, it onl
 gets sent.
 
 ### A3-07 Session forking
-`status: todo | owner: none | branch: none | depends: A3-02`
-`scope: internal/session/, internal/tui/chat/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-02`
+`scope: internal/session/fork.go, internal/core/session.go, internal/session/storage.go`
 
 Deliverable: fork a session at any turn into a new one that shares history up to that point and
 diverges after.
@@ -1495,12 +1495,33 @@ diverges after.
 Acceptance: forking does not modify the original. Both sessions are independently resumable. The
 fork point is recorded and visible in both.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **added 2026-07-26.** The natural companion to branch per agent, and it maps onto how people
 already think in git. "Go back three turns and try it the other way" is currently either a fresh
 session with lost context, or an argument with an agent that has already committed to an approach.
 At A5 a fork becomes a second agent on a second branch, which is where it earns its place.
+
+Turns are copied rather than shared. A shared backing array would mean the next turn appended to
+either session could land in the other, which is the exact failure forking exists to avoid, and it
+would be intermittent rather than obvious.
+
+The fork point is recorded on **both** ends, because the question gets asked from both directions:
+"where did this come from" when reading a fork, and "what did I try from here" when reading the
+original. A one sided record answers half of it. The `forks` table is stored explicitly rather than
+derived from a `forked_from` query, so a fork whose child has been deleted still shows that
+something was tried from here and is gone, rather than reading as though it never happened.
+
+Two refusals:
+
+- **Forking from a turn still in flight.** It would copy an answer that is still arriving, and the
+  copy would stop growing while the original kept going: two conversations meant to be identical up
+  to a point, differing at that point.
+- **Carrying a compaction the fork does not cover.** It would tell the model that turns which are
+  not there have been summarised, and the summary would describe a conversation the fork never had.
+
+No interface yet. The mechanism and its persistence are done and tested; the screen for choosing a
+turn to fork from belongs with the session switcher, which is A5 work.
 
 ### A3-08 Session engine
 `status: review | owner: Claude | branch: feat/providers (merged) | depends: A3-01`

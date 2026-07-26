@@ -205,6 +205,7 @@ func (e *Engine) Session(id string) (core.Session, bool) {
 func copySession(s core.Session) core.Session {
 	s.Turns = append([]core.Turn(nil), s.Turns...)
 	s.Compactions = append([]core.Compaction(nil), s.Compactions...)
+	s.Forks = append([]core.ForkRef(nil), s.Forks...)
 	return s
 }
 
