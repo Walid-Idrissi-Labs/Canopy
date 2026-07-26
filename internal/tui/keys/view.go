@@ -12,12 +12,16 @@ import (
 // The rule this whole file is written under: the secret being typed is never printed. Its length
 // is shown as dots so the user can see that typing is registering, which is the only feedback a
 // masked field can honestly give.
+// View renders the screen standalone, with its own chrome.
 func (m Model) View() string {
-	var b strings.Builder
+	return styleTitle.Render("Credentials") +
+		styleMuted.Render("   "+m.store.BackendName()) + "\n" +
+		m.Body() + "\n\n" + styleMuted.Render("  "+m.Footer())
+}
 
-	b.WriteString(styleTitle.Render("Credentials"))
-	b.WriteString(styleMuted.Render("   " + m.store.BackendName()))
-	b.WriteString("\n")
+// Body is the screen's content, without chrome. The application frame supplies the rest.
+func (m Model) Body() string {
+	var b strings.Builder
 
 	if m.store.UsingInsecureBackend() {
 		b.WriteString(styleWarn.Render(
@@ -41,10 +45,11 @@ func (m Model) View() string {
 		b.WriteString(styleOK.Render("  " + m.status))
 	}
 
-	b.WriteString("\n\n")
-	b.WriteString(styleMuted.Render("  " + m.footer()))
 	return b.String()
 }
+
+// Footer is the key hint line for the current mode.
+func (m Model) Footer() string { return m.footer() }
 
 func (m Model) viewList() string {
 	if len(m.keys) == 0 {

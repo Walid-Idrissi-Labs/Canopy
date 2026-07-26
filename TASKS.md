@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A3-00, the application shell | `feat/tui-shell` | none |
+| Claude | none, A3-00 done, A2 next | `feat/tui-shell` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -965,7 +965,7 @@ token and cost figures for each.
 Goal: it looks and feels like the product, and nothing is lost when you quit.
 
 ### A3-00 Application shell
-`status: claimed | owner: Claude | branch: feat/tui-shell | depends: none`
+`status: review | owner: Claude | branch: feat/tui-shell | depends: none`
 `scope: internal/tui/`
 
 Deliverable: the frame everything else lives in. A splash on launch, a layout that fills and
@@ -978,11 +978,36 @@ Screens share one header, footer and key handling. No colour is written at a cal
 a theme is a data change rather than a refactor. Everything still reads correctly with colour
 disabled.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: **added 2026-07-26 at Walid's request.** The dashboard from P1-07 renders a few lines into
 whatever space it is given, which was right for proving the contract and is not what the product
-should feel like. The comparison is Claude Code, Codex CLI, Gemini CLI and OpenCode: full screen,
+should feel like.
+
+Screens now return `Body()`, `Context()` and `Footer()` and the frame composes them, so chrome is
+written once. Each keeps a standalone `View()` for driving it directly in tests.
+
+`internal/tui/theme` is the only place a colour is constructed, and names are by meaning rather
+than appearance: `Danger` survives a theme change, `red` does not. Styles are built once when a
+theme is selected rather than per render, which matters once several agents are streaming.
+
+Below 60x12 the application refuses to draw and says why. That is the honest option: a squeezed
+layout produces wrapped, overlapping output that reads as a rendering bug, and a user cannot tell
+that apart from the program being broken.
+
+Three things worth noting:
+
+1. **The splash prints the name as text as well as art.** Block letters are unreadable to a screen
+   reader, unrecognisable in a narrow terminal and unsearchable in a pasted bug report.
+2. **Any key dismisses the splash and is then swallowed.** The first keystroke after launch is
+   usually impatience rather than a command, and acting on it would land the user somewhere they
+   did not ask for.
+3. **`Init` now batches the event subscription with the splash timer**, and a batched command
+   yields a `tea.BatchMsg` rather than the event, so tests driving the event path need the
+   subscription alone. `SubscribeCmd` exists for that and nothing else.
+
+The frame owns the footer indent rather than each caller, after one screen rendered flush left
+while the others did not. The comparison is Claude Code, Codex CLI, Gemini CLI and OpenCode: full screen,
 composed, obviously a program rather than a script.
 
 Themes ship at A9-03 but are **provisioned here**. The expensive version of theming is retrofitting

@@ -10,6 +10,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
+	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
 
 // fakeKeyStore is the credential half, with no keychain involved.
@@ -40,6 +41,14 @@ func (f *fakeKeyStore) Remove(ref core.KeyRef) error {
 func (f *fakeKeyStore) BackendName() string        { return "test" }
 func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 
+// launch builds the application past the splash and at a known size, which is the state every
+// test below actually cares about. Tests should not wait on a timer.
+func launch(store core.SnapshotStore, keyStore keysui.Store) tea.Model {
+	app := tui.NewApp(store, keyStore).DismissSplash()
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	return next
+}
+
 func withOneKey() *fakeKeyStore {
 	return &fakeKeyStore{keys: []core.KeyMetadata{{
 		Ref:         core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic},
@@ -54,7 +63,7 @@ func TestFirstRunWithNoKeysOpensOnCredentials(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := tui.NewApp(store, &fakeKeyStore{})
+	app := launch(store, &fakeKeyStore{}).(tui.App)
 
 	if app.Screen() != "keys" {
 		t.Errorf("first run opened on %q, want the credential screen", app.Screen())
@@ -69,7 +78,7 @@ func TestWithKeysOpensOnTheDashboard(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := tui.NewApp(store, withOneKey())
+	app := launch(store, withOneKey()).(tui.App)
 
 	if app.Screen() != "dashboard" {
 		t.Errorf("opened on %q, want the dashboard", app.Screen())
@@ -83,7 +92,7 @@ func TestSwitchingBetweenScreens(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	var app tea.Model = tui.NewApp(store, withOneKey())
+	app := launch(store, withOneKey())
 
 	app = key(app, "K")
 	if app.(tui.App).Screen() != "keys" {
@@ -105,7 +114,7 @@ func TestLowercaseKDoesNotHijackNavigation(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	var app tea.Model = tui.NewApp(store, withOneKey())
+	app := launch(store, withOneKey())
 
 	app = key(app, "j")
 	app = key(app, "k")
@@ -120,8 +129,8 @@ func TestDashboardKeepsUpdatingBehindTheCredentialScreen(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	var app tea.Model = tui.NewApp(store, withOneKey())
-	waiting := app.(tui.App).Init()
+	app := launch(store, withOneKey())
+	waiting := app.(tui.App).SubscribeCmd()
 
 	app = key(app, "K")
 	if app.(tui.App).Screen() != "keys" {
@@ -146,7 +155,7 @@ func TestKeystrokesAreNotStolenWhileTyping(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	var app tea.Model = tui.NewApp(store, &fakeKeyStore{})
+	app := launch(store, &fakeKeyStore{})
 	app = key(app, "a") // start adding
 
 	for _, letter := range []string{"q", "e", "s", "c"} {
@@ -172,7 +181,7 @@ func TestAddingAKeyInTheInterfaceReachesTheStore(t *testing.T) {
 	defer store.Close()
 
 	keyStore := &fakeKeyStore{}
-	var app tea.Model = tui.NewApp(store, keyStore)
+	app := launch(store, keyStore)
 
 	app = key(app, "a")
 	for _, r := range "kimi" {
@@ -200,7 +209,82 @@ func TestDashboardShowsHowToReachCredentials(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	if !strings.Contains(plain(tui.NewApp(store, withOneKey()).View()), "credentials") {
+	if !strings.Contains(plain(launch(store, withOneKey()).View()), "credentials") {
 		t.Error("the dashboard should say how to get to the credential screen")
+	}
+}
+
+// The splash is the first thing anyone sees, so it has to appear, get out of the way on its own,
+// and get out of the way faster if the user is quicker than the timer.
+func TestSplashAppearsAndClears(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	app := tui.NewApp(store, withOneKey())
+	if app.Screen() != "splash" {
+		t.Fatalf("launched on %q, want the splash", app.Screen())
+	}
+	if !strings.Contains(plain(app.View()), "Canopy") {
+		t.Errorf("the splash should show the name:\n%s", plain(app.View()))
+	}
+
+	// Any key dismisses it, and is swallowed rather than acted on: the first keystroke after
+	// launch is usually impatience, not a command.
+	next := key(app, "j")
+	if next.(tui.App).Screen() != "dashboard" {
+		t.Error("a keystroke should dismiss the splash")
+	}
+}
+
+func TestSplashGoesToCredentialsWhenThereAreNone(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	app := key(tui.NewApp(store, &fakeKeyStore{}), "j")
+	if app.(tui.App).Screen() != "keys" {
+		t.Errorf("with no credentials the splash should lead to the credential screen, got %q",
+			app.(tui.App).Screen())
+	}
+}
+
+// The application fills the terminal and reflows, rather than printing a few lines wherever it
+// happens to be.
+func TestLayoutFillsAndReflows(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}, {200, 60}} {
+		app := tui.NewApp(store, withOneKey()).DismissSplash()
+		next, _ := app.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+
+		lines := strings.Split(plain(next.View()), "\n")
+		if len(lines) < size.h-2 {
+			t.Errorf("at %dx%d the view is %d lines, which does not fill the terminal",
+				size.w, size.h, len(lines))
+		}
+		for i, line := range lines {
+			if width := len([]rune(line)); width > size.w {
+				t.Errorf("at %dx%d line %d is %d columns wide:\n%s", size.w, size.h, i, width, line)
+			}
+		}
+	}
+}
+
+// Refusing to draw below a minimum is the honest option. A squeezed layout produces wrapped,
+// overlapping output that reads as a rendering bug, and the user cannot tell that apart from the
+// program being broken.
+func TestTooSmallSaysSoRatherThanRenderingBadly(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	app := tui.NewApp(store, withOneKey()).DismissSplash()
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+
+	view := plain(next.View())
+	if !strings.Contains(view, "too small") {
+		t.Errorf("a tiny terminal should say so:\n%s", view)
+	}
+	if strings.Contains(view, "WORKSPACE") {
+		t.Error("the table should not be drawn into a space it cannot fit")
 	}
 }

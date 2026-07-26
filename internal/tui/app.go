@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"time"
+
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -11,9 +13,19 @@ import (
 type screen int
 
 const (
-	screenDashboard screen = iota
+	screenSplash screen = iota
+	screenDashboard
 	screenKeys
 )
+
+// splashDuration is how long the launch screen stays before the application appears.
+//
+// Short on purpose. A splash is worth a moment of recognition and nothing more, and any key
+// dismisses it, so nobody who is in a hurry ever waits.
+const splashDuration = 900 * time.Millisecond
+
+// splashDoneMsg ends the splash.
+type splashDoneMsg struct{}
 
 // App is the top level model. It owns which screen is showing and routes messages to it.
 //
@@ -22,9 +34,16 @@ const (
 // handler needing to know which mode it was in, which is how a TUI turns into one large switch
 // nobody wants to touch.
 type App struct {
-	screen    screen
+	screen screen
+
+	// afterSplash is the screen to show once the launch screen clears, decided at construction so
+	// the splash never has to know anything about credentials.
+	afterSplash screen
+
 	dashboard Model
 	keys      keysui.Model
+
+	dim Dimensions
 }
 
 // NewApp builds the application.
@@ -34,21 +53,45 @@ type App struct {
 // is the one action that makes the rest of the program work.
 func NewApp(store core.SnapshotStore, keyStore keysui.Store) App {
 	app := App{
-		dashboard: New(store),
-		keys:      keysui.New(keyStore),
+		screen:      screenSplash,
+		afterSplash: screenDashboard,
+		dashboard:   New(store),
+		keys:        keysui.New(keyStore),
+		dim:         Dimensions{Width: 80, Height: 24},
 	}
 	if app.keys.IsEmpty() {
-		app.screen = screenKeys
+		app.afterSplash = screenKeys
 	}
 	return app
 }
 
 func (a App) Init() tea.Cmd {
-	return a.dashboard.Init()
+	return tea.Batch(
+		a.dashboard.Init(),
+		tea.Tick(splashDuration, func(time.Time) tea.Msg { return splashDoneMsg{} }),
+	)
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch m := msg.(type) {
+	case tea.WindowSizeMsg:
+		a.dim = Dimensions{Width: m.Width, Height: m.Height}
+	case splashDoneMsg:
+		if a.screen == screenSplash {
+			a.screen = a.afterSplash
+		}
+		return a, nil
+	}
+
 	if key, ok := msg.(tea.KeyMsg); ok {
+		// Any key dismisses the splash, and is then not passed on. Swallowing it is deliberate:
+		// the first keystroke after launch is usually impatience rather than a command, and acting
+		// on it would mean landing somewhere you did not ask for.
+		if a.screen == screenSplash {
+			a.screen = a.afterSplash
+			return a, nil
+		}
+
 		if handled, next, cmd := a.routeKey(key); handled {
 			return next, cmd
 		}
@@ -118,20 +161,47 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 }
 
 func (a App) View() string {
+	if a.screen == screenSplash {
+		return Splash(a.dim, "a terminal coding agent for running several at once")
+	}
+	if !a.dim.Usable() {
+		return TooSmall(a.dim)
+	}
+
 	switch a.screen {
 	case screenKeys:
-		return a.keys.View()
+		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
 	default:
-		return a.dashboard.View() + "\n" + styleFooter.Render("  K credentials")
+		return Frame(a.dim, "canopy", a.dashboard.Context(), a.dashboard.Body(),
+			Keys("j/k", "move", "K", "credentials", "r", "refresh", "q", "quit"))
 	}
 }
 
 // Screen reports which view is in front. For tests.
 func (a App) Screen() string {
-	if a.screen == screenKeys {
+	switch a.screen {
+	case screenSplash:
+		return "splash"
+	case screenKeys:
 		return "keys"
+	default:
+		return "dashboard"
 	}
-	return "dashboard"
+}
+
+// SubscribeCmd returns the command that waits on the next engine event.
+//
+// Init batches this with the splash timer, and a batched command yields a tea.BatchMsg rather than
+// the event itself, so a test driving the event path needs the subscription on its own. Exported
+// for that reason and no other.
+func (a App) SubscribeCmd() tea.Cmd { return a.dashboard.Init() }
+
+// DismissSplash skips the launch screen. For tests, which should not wait on a timer.
+func (a App) DismissSplash() App {
+	if a.screen == screenSplash {
+		a.screen = a.afterSplash
+	}
+	return a
 }
 
 // RunApp starts the full application.
