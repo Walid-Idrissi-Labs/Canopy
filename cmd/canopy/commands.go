@@ -1,0 +1,179 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
+	"text/tabwriter"
+	"time"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
+)
+
+func runSnapshot(out io.Writer) error {
+	store := fake.New()
+	defer store.Close()
+
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(newProjectView(store.Snapshot()))
+}
+
+func runWatch(out io.Writer) error {
+	store := fake.New()
+	defer store.Close()
+
+	// The fake's clock is frozen so its tests stay deterministic. Watching a live stream is the
+	// one place that is unhelpful, since every event would carry the same timestamp and there
+	// would be no way to see how far apart they arrived.
+	store.SetClock(time.Now)
+
+	// Snapshot first, then subscribe from its sequence. In that order nothing can happen in the
+	// gap between reading the state and starting to listen for changes to it.
+	snap := store.Snapshot()
+	events := store.Events(snap.Sequence)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	fmt.Fprintf(os.Stderr, "watching from sequence %d, interrupt to stop\n", snap.Sequence)
+
+	// Nothing else drives the fake, so without this the command would sit silent forever and
+	// prove nothing. Editing a worktree every couple of seconds is the behaviour worth watching
+	// anyway: it is what turns green results stale.
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = store.Touch("ws-refactor-api")
+			}
+		}
+	}()
+
+	encoder := json.NewEncoder(out)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case ev, ok := <-events:
+			if !ok {
+				return nil
+			}
+			if err := encoder.Encode(eventView(ev)); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+type eventLine struct {
+	Sequence    uint64    `json:"sequence"`
+	At          time.Time `json:"at"`
+	Kind        string    `json:"kind"`
+	WorkspaceID string    `json:"workspaceId,omitempty"`
+	TestName    string    `json:"testName,omitempty"`
+	ServiceName string    `json:"serviceName,omitempty"`
+	RunID       string    `json:"runId,omitempty"`
+	Final       bool      `json:"final,omitempty"`
+}
+
+func eventView(ev core.Event) eventLine {
+	return eventLine{
+		Sequence:    ev.Sequence,
+		At:          ev.At,
+		Kind:        ev.Kind.String(),
+		WorkspaceID: ev.WorkspaceID,
+		TestName:    ev.TestName,
+		ServiceName: ev.ServiceName,
+		RunID:       ev.RunID,
+		Final:       ev.Final,
+	}
+}
+
+// runDemo shows the thing the whole project is built around: a green result becoming stale the
+// moment the code underneath it changes, with nothing re-run and nothing restarted.
+func runDemo(out io.Writer) error {
+	store := fake.New()
+	defer store.Close()
+
+	const target = "ws-refactor-api"
+
+	snap := store.Snapshot()
+	events := store.Events(snap.Sequence)
+
+	fmt.Fprintln(out, "before the edit")
+	printTable(out, store.Snapshot())
+
+	if err := store.Touch(target); err != nil {
+		return fmt.Errorf("editing %s: %w", target, err)
+	}
+
+	// Wait for the notification rather than sleeping, so this demonstrates the event path rather
+	// than merely outrunning it.
+	deadline := time.After(5 * time.Second)
+	for waiting := true; waiting; {
+		select {
+		case ev, ok := <-events:
+			if !ok {
+				return fmt.Errorf("the event stream closed before the change arrived")
+			}
+			if ev.Kind == core.EventRevisionChanged && ev.WorkspaceID == target {
+				fmt.Fprintf(out, "\nedited %s, event #%d %s\n\n", target, ev.Sequence, ev.Kind)
+				waiting = false
+			}
+		case <-deadline:
+			return fmt.Errorf("timed out waiting for the revision change event")
+		}
+	}
+
+	fmt.Fprintln(out, "after the edit")
+	printTable(out, store.Snapshot())
+
+	w, ok := store.Snapshot().Workspace(target)
+	if !ok {
+		return fmt.Errorf("workspace %s disappeared", target)
+	}
+	rollup := core.RollUp(w)
+	if rollup.Tests != core.TestStale {
+		return fmt.Errorf("expected %s to be stale, got %s", target, rollup.Tests)
+	}
+	fmt.Fprintf(out, "\n%s went from passing to stale without anything being re-run.\nreason: %s\n",
+		target, rollup.Reason)
+	return nil
+}
+
+func printTable(out io.Writer, snap core.ProjectSnapshot) {
+	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "  WORKSPACE\tBRANCH\tREVISION\tTESTS\tSERVICES\tVERIFIED")
+
+	for _, workspace := range snap.Workspaces {
+		rollup := core.RollUp(workspace)
+
+		verified := "no"
+		if rollup.Green {
+			verified = "yes"
+		}
+
+		services := rollup.Services.String()
+		if rollup.ServicesTotal > 0 {
+			services = fmt.Sprintf("%s %d/%d", rollup.Services, rollup.ServicesUp, rollup.ServicesTotal)
+		}
+		tests := rollup.Tests.String()
+		if rollup.TestsTotal > 0 {
+			tests = fmt.Sprintf("%s %d/%d", rollup.Tests, rollup.TestsPassing, rollup.TestsTotal)
+		}
+
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%s\n",
+			workspace.Name, workspace.Branch, workspace.Revision.Short(), tests, services, verified)
+	}
+	_ = w.Flush()
+}

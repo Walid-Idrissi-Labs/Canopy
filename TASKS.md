@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | P1-06, the headless harness | `feat/core-contract` | none |
+| Claude | none, P1-01 to P1-06 handed off for review | `feat/core-contract` | none |
 | Codex | none | none | none |
 
 PG-0 is signed by Walid and phase 1 is underway. P1-01 through P1-05 are done and in review on
@@ -462,8 +462,8 @@ recover by taking a fresh snapshot. The real store needs a bounded history to ho
 properly, and until it does, the recovery property in P4-11 is only half proven.
 
 ### P1-06 Headless engine harness
-`status: todo | owner: none | branch: none | depends: P1-02`
-`scope: cmd/canopy/, debug subcommand`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-02`
+`scope: cmd/canopy/`
 
 Deliverable: a CLI that prints the current ProjectSnapshot as JSON and streams events, so the
 engine is testable without the TUI.
@@ -471,9 +471,35 @@ engine is testable without the TUI.
 Acceptance: running it against the fake prints four workspaces and streams a revision change
 event.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
 notes: required by collaboration rule 9, the engine has to be exercisable independently of the UI.
+
+Three commands. `canopy snapshot` prints the project as JSON, `canopy watch` streams events as
+JSON lines, `canopy demo` drives the stale flip and prints a before and after table.
+
+`canopy demo` is worth running before touching anything else. It is the entire product argument in
+one screen, and it currently works:
+
+```
+before the edit
+  WORKSPACE     BRANCH        REVISION      TESTS           SERVICES        VERIFIED
+  feat-login    feat/login    a1b2c3d       passing 1/1     healthy 1/1     yes
+  fix-cache     fix/cache     b2c3d4e       failing 0/1     healthy 1/1     no
+  refactor-api  refactor/api  c3d4e5f       passing 1/1     not-configured  yes
+  spike-search  spike/search  d4e5f6a       not-configured  not-configured  no
+
+after the edit
+  refactor-api  refactor/api  c3d4e5f+edit  stale 0/1       not-configured  no
+```
+
+The JSON reports **derived** state, not stored state. Printing what is on the record would show a
+run marked passing and leave the reader to work out that it no longer applies, which is the
+confusion this product exists to remove. Every test carries its state, its reason, and the
+revision it actually covered. Every service reports liveness and readiness separately.
+
+`-source` exists and rejects anything except `fake`, so nothing silently falls back to fake data
+once real discovery lands in P2-01.
 
 ### P1-07 First dashboard against the fake
 `status: todo | owner: none | branch: none | depends: P1-05`
