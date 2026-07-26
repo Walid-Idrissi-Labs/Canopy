@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,10 +45,28 @@ type Engine struct {
 	resolver Resolver
 	events   *store.Broker
 
+	// storage is optional. An engine without one still works completely and forgets everything on
+	// exit, which is what the tests want and what a first run before the config directory exists
+	// gets. Persistence being optional rather than assumed is also what stops a storage failure
+	// from taking the conversation down with it.
+	storage *Storage
+
+	// onStorageError is how a persistence failure reaches somebody. Losing the ability to save is
+	// worth saying and is not worth ending a turn over: the answer on screen is still the answer.
+	onStorageError func(error)
+
+	// writes counts the saves in flight, so shutdown can wait for them.
+	//
+	// Needed because a turn becomes visibly terminal a moment before it is on disk: the state is set
+	// under the lock and the write happens after it is released, so that a disk write never blocks
+	// the interface from reading. Anything that watches for a turn to finish and then shuts down
+	// would otherwise close the database out from under that write.
+	writes sync.WaitGroup
+
 	nextID int
 }
 
-// New builds an engine.
+// New builds an engine that forgets everything when it exits.
 func New(resolver Resolver) *Engine {
 	return &Engine{
 		sessions: map[string]*core.Session{},
@@ -55,6 +74,54 @@ func New(resolver Resolver) *Engine {
 		resolver: resolver,
 		events:   store.NewBroker(),
 	}
+}
+
+// WithStorage attaches persistence and loads whatever is already there.
+//
+// Loading at attach time rather than lazily, because the alternative is a session list that fills in
+// after the interface has already drawn an empty one, which reads as history having been lost.
+func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
+	e.mu.Lock()
+	e.storage = storage
+	e.onStorageError = onError
+	e.mu.Unlock()
+
+	saved, err := storage.List()
+	if err != nil {
+		return err
+	}
+
+	// Oldest first, so the in memory order matches the order sessions were created and the numeric
+	// part of a generated ID keeps meaning what it looks like it means.
+	for i := len(saved) - 1; i >= 0; i-- {
+		full, err := storage.Load(saved[i].ID)
+		if err != nil {
+			return err
+		}
+		e.mu.Lock()
+		e.sessions[full.ID] = &full
+		e.order = append(e.order, full.ID)
+		e.nextID = max(e.nextID, idNumber(full.ID))
+		e.mu.Unlock()
+	}
+	return nil
+}
+
+// idNumber reads the counter out of a generated session ID.
+//
+// Needed because the counter has to carry across restarts. Without it the first session of a new
+// run would be called session-1 again and collide with the one already on disk, silently appending
+// tonight's turns to a conversation from last week.
+func idNumber(id string) int {
+	rest, ok := strings.CutPrefix(id, "session-")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // SetClock replaces the clock. Only useful in tests.
@@ -65,7 +132,11 @@ func (e *Engine) Events(afterSequence uint64) <-chan core.Event {
 	return e.events.Subscribe(afterSequence)
 }
 
-// Close stops every running turn and shuts the event stream down.
+// Close stops every running turn, finishes writing, and shuts the event stream down.
+//
+// It closes the storage it was given, because WithStorage hands ownership over. Two owners of one
+// database handle is how a file gets closed while something else is still writing to it, which is
+// exactly the bug the write counter here exists to prevent.
 func (e *Engine) Close() {
 	e.mu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(e.cancels))
@@ -73,10 +144,23 @@ func (e *Engine) Close() {
 		cancels = append(cancels, cancel)
 	}
 	e.cancels = map[string]context.CancelFunc{}
+	storage := e.storage
+	e.storage = nil
 	e.mu.Unlock()
 
 	for _, cancel := range cancels {
 		cancel()
+	}
+
+	// Every cancelled turn still writes its interrupted state, so this waits for those too. Without
+	// it, quitting during a reply would lose the partial that cancelling went to the trouble of
+	// keeping.
+	e.writes.Wait()
+
+	if storage != nil {
+		if err := storage.Close(); err != nil && e.onStorageError != nil {
+			e.onStorageError(err)
+		}
 	}
 	e.events.Close()
 }
@@ -133,8 +217,46 @@ func (e *Engine) Create(keyName, model string) core.Session {
 	out := copySession(*s)
 	e.mu.Unlock()
 
+	e.persistSession(out)
 	e.events.Publish(core.Event{Kind: core.EventSessionsChanged, SessionID: s.ID})
 	return out
+}
+
+// Sessions and turns are written at two moments and no others: when a turn starts, so the question
+// survives a crash, and when it reaches a terminal state, so the answer does. Nothing is written per
+// token. That would turn one streamed reply into thousands of transactions to buy a guarantee
+// nobody asked for, which is that the last few words of a reply still arriving when the process
+// died should also be kept.
+
+// persist runs one write against whatever storage is attached, counting it so shutdown can wait.
+//
+// The counter is taken under the same lock that reads the storage handle. Taking it afterwards
+// would leave a window where Close sees no writes outstanding and closes the database a moment
+// before this one starts.
+func (e *Engine) persist(write func(*Storage) error) {
+	e.mu.Lock()
+	storage, report := e.storage, e.onStorageError
+	if storage != nil {
+		e.writes.Add(1)
+	}
+	e.mu.Unlock()
+
+	if storage == nil {
+		return
+	}
+	defer e.writes.Done()
+
+	if err := write(storage); err != nil && report != nil {
+		report(err)
+	}
+}
+
+func (e *Engine) persistSession(session core.Session) {
+	e.persist(func(s *Storage) error { return s.SaveSession(session) })
+}
+
+func (e *Engine) persistTurn(sessionID string, ordinal int, turn core.Turn) {
+	e.persist(func(s *Storage) error { return s.SaveTurn(sessionID, ordinal, turn) })
 }
 
 // ErrBusy is returned when a session already has a turn in flight.
@@ -188,8 +310,13 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancels[sessionID] = cancel
+	started := s.Turns[len(s.Turns)-1]
+	ordinal := len(s.Turns) - 1
+	saved := copySession(*s)
 	e.mu.Unlock()
 
+	e.persistSession(saved)
+	e.persistTurn(sessionID, ordinal, started)
 	e.publishTurn(sessionID, turnID, false)
 
 	go e.run(ctx, sessionID, turnID, keyName, model, history)
@@ -347,10 +474,24 @@ func (e *Engine) finish(
 	if state == core.TurnFailed && turn.Error == "" {
 		turn.Error = "the turn failed without an explanation"
 	}
-	e.sessions[sessionID].UpdatedAt = now
+	session := e.sessions[sessionID]
+	session.UpdatedAt = now
+	finished, ordinal := *turn, indexOfLocked(session, turnID)
+	saved := copySession(*session)
 	e.mu.Unlock()
 
+	e.persistTurn(sessionID, ordinal, finished)
+	e.persistSession(saved)
 	e.publishTurn(sessionID, turnID, true)
+}
+
+func indexOfLocked(session *core.Session, turnID string) int {
+	for i := range session.Turns {
+		if session.Turns[i].ID == turnID {
+			return i
+		}
+	}
+	return len(session.Turns) - 1
 }
 
 func (e *Engine) findLocked(sessionID, turnID string) *core.Turn {

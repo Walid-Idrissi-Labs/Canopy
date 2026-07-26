@@ -22,6 +22,7 @@ usage:
   canopy               open a chat in this directory
   canopy keys          manage provider credentials
   canopy ask           send one message to a provider and stream the reply
+  canopy search        find a message across every saved conversation
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
   canopy demo          drive the stale flip and show it happening
@@ -64,6 +65,11 @@ func run(args []string) error {
 	// ask owns its own flags too, so it is dispatched before the shared flag set sees them.
 	if command == "ask" {
 		return runAsk(args[1:], os.Stdout)
+	}
+	// search takes its query as free text, which the shared flag set would try to parse as flags
+	// the moment somebody searched for something beginning with a dash.
+	if command == "search" || command == "find" {
+		return runSearch(args[1:], os.Stdout)
 	}
 
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)

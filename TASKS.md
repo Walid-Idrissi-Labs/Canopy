@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A3, chat and persistence | `feat/providers` | none |
+| Claude | A3 onward, working overnight | `feat/agent-runtime` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -820,7 +820,7 @@ Goal: a real message reaches a real provider and a real reply streams back, on m
 vendor.
 
 ### A2-01 Provider interface
-`status: review | owner: Claude | branch: feat/providers | depends: A1-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A1-01`
 `scope: internal/core/`
 
 Deliverable: the interface an agent session talks to. Streaming, cancellable, provider agnostic,
@@ -859,7 +859,7 @@ any total it is summed into. A partial sum shown as a figure is a wrong number o
 worse than an absent one.
 
 ### A2-02 Anthropic client
-`status: review | owner: Claude | branch: feat/providers | depends: A2-01, A1-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-01, A1-02`
 `scope: internal/provider/anthropic/`
 
 Deliverable: the Messages API with streaming, using a named key.
@@ -901,7 +901,7 @@ built from, so an error constructed without one panics. That would turn a provid
 lost session and everything in it. `safeMessage` guards it and falls back to naming the status.
 
 ### A2-03 Error taxonomy
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: internal/core/, internal/provider/`
 
 Deliverable: provider failures mapped to distinct states: authentication, rate limited, overloaded,
@@ -935,7 +935,7 @@ local and complete. `TestFreeTextFieldsAreNotScrubbed` in `cmd/canopy` will fail
 and should then be narrowed to the fields this package does not own.
 
 ### A2-04 One shot ask
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: cmd/canopy/`
 
 Deliverable: `canopy ask "..."` streams a reply to stdout.
@@ -969,7 +969,7 @@ With several usable credentials it refuses and lists them rather than picking on
 choosing which key gets billed is not a decision to make on someone's behalf.
 
 ### A2-05 Usage and cost accounting
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: internal/pricing/, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: tokens in, out and cached, plus cost, per request, attributed to key and agent.
@@ -1010,7 +1010,7 @@ one, the standard rate is used: overstating cost is the safer error, because und
 spend that is really happening.
 
 ### A2-09 User supplied prices
-`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-05`
 `scope: internal/keys/, internal/pricing/, internal/core/key.go, cmd/canopy/keys.go`
 
 Deliverable: a rate can be attached to a stored credential, so an endpoint Canopy has no table entry
@@ -1056,7 +1056,7 @@ left on the key, since a figure Canopy invented on somebody's behalf is exactly 
 prevent.
 
 ### A2-06 OpenAI compatible provider and local models
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: internal/provider/openai/, cmd/canopy/ask.go`
 
 Deliverable: the chat completions API with tool calls and streaming, and a configurable base URL.
@@ -1098,7 +1098,7 @@ The acceptance line's "Ollama and one hosted third party both work" needs a pers
 so it belongs to PG-A2 alongside A2-04's live check, not to this box.
 
 ### A2-07 Prompt caching
-`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-05`
 `scope: internal/provider/anthropic/, internal/pricing/, cmd/canopy/ask.go`
 
 Deliverable: cache long stable prefixes such as system prompts and file context where the provider
@@ -1138,7 +1138,7 @@ Worth noticing later: caching is the thing that degrades silently. If a breakpoi
 nothing breaks, the bill just goes up. That is why the saving is on screen rather than in a log.
 
 ### A2-08 Provider fallback chains
-`status: review | owner: Claude | branch: feat/providers | depends: A2-03`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-03`
 `scope: internal/provider/chain.go, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: a profile may list ordered fallbacks. On overload or rate limit, try the next key or
@@ -1269,7 +1269,7 @@ least common activity first and makes Canopy look like something you watch rathe
 you talk to.
 
 ### A3-01 Session and conversation types
-`status: review | owner: Claude | branch: feat/providers | depends: A2-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-01`
 `scope: internal/core/session.go, internal/core/event.go, internal/core/project.go`
 
 Deliverable: `Session`, `Message`, `Role`, `Turn` and `AgentState`, held in the existing snapshot
@@ -1315,8 +1315,8 @@ view. Two stores would mean two reads, and two reads mean a moment where the ans
 before and half from after.
 
 ### A3-02 Session storage
-`status: todo | owner: none | branch: none | depends: A3-01`
-`scope: internal/session/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-01`
+`scope: internal/session/storage.go, internal/session/engine.go, cmd/canopy/`
 
 Deliverable: SQLite persistence. Every session, turn, tool call and usage record written as it
 happens. Resume by id. Full text search across history.
@@ -1324,14 +1324,54 @@ happens. Resume by id. Full text search across history.
 Acceptance: killing the process mid turn loses at most the in flight turn. Resuming restores the
 conversation exactly. Search finds a message across sessions.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: sessions, audit trail, cost history and run reports are all queries over the same data, so
 one storage decision buys four features. Schema migrations from day one, since the schema will
 change and a tool that loses your history on upgrade is not one anyone keeps.
 
+**Written twice per turn, not per token.** Once when the turn starts, so the question is on disk
+before the answer is asked for, and once when it reaches a terminal state. Per token writing would
+turn one streamed reply into thousands of transactions to buy a guarantee nobody asked for, which is
+that the last few words of a reply still arriving when the process died should also be kept. What
+was asked for is "at most the turn in flight", and this is exactly that.
+
+Six decisions worth keeping:
+
+1. **`modernc.org/sqlite`, the pure Go driver.** The cgo one is a smaller download and would make
+   `go install` fail on any machine without a C toolchain, which is most of them. Costs about 9 MB
+   of binary and 148 MB in the module cache. Flagged to Walid, who is storage aware. See Q-06.
+2. **Migrations from the first version**, tracked in `PRAGMA user_version`, each in its own
+   transaction. The alternative is discovering you need them while holding somebody's history in a
+   shape you cannot read.
+3. **A newer schema is refused rather than downgraded.** Running an older build over a newer file
+   silently drops whatever the newer one added, and the user finds out when their history has holes.
+4. **One connection.** SQLite answers concurrent writers with "database is locked", which is what
+   two agents finishing turns at once would produce. Serialising costs nothing at this scale and
+   removes a class of intermittent failure that is miserable to reproduce.
+5. **An external content FTS5 index**, so text is stored once rather than twice, with the trigger
+   set that keeps it honest. Without the delete trigger a search keeps returning a conversation the
+   user deleted, which people notice and do not forgive.
+6. **A turn that was in flight when the process died comes back as interrupted.** Nothing is going
+   to finish it, and left as streaming it would spin forever on screen and make the session fail its
+   own validation.
+
+`Engine.Close` waits for outstanding writes and closes the storage it was given. A turn becomes
+visibly terminal a moment before it is on disk, because the state is set under the lock and the
+write happens after it is released so that a disk write never blocks the interface from reading.
+**A test caught exactly this**: it watched a turn finish, closed storage, and hit "database is
+closed" from a write still in flight.
+
+`canopy ask` deliberately does not persist. It is a diagnostic for checking a key or a model, and
+filling somebody's searchable history with throwaway key checks would be noise.
+
+Proved live end to end, not only against scripted streams: `TestLiveHistorySurvivesARestart` asks a
+real provider for a sentence, quits, reopens the file and finds the reply by full text search. The
+text a real model returns is what actually goes through the index, and a reply full of punctuation
+or code fences is the case a hand written fixture never covers.
+
 ### A3-03 Chat view
-`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A3-01`
 `scope: internal/tui/chat/, internal/tui/app.go, cmd/canopy/`
 
 Deliverable: message list, live streaming, input box, scrollback. **This becomes the home screen**:
@@ -1441,7 +1481,7 @@ session with lost context, or an argument with an agent that has already committ
 At A5 a fork becomes a second agent on a second branch, which is where it earns its place.
 
 ### A3-08 Session engine
-`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A3-01`
 `scope: internal/session/, internal/store/`
 
 Deliverable: the thing the interface talks to. Owns every session, runs a turn in the background,

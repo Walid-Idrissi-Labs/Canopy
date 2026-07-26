@@ -79,3 +79,33 @@ two real bugs on its first run that no scripted test could have found, both abou
 **Decided in the meantime:** skipped by default, never run in CI, and no secret is in the repository.
 
 **What would change it:** whether to run them on a schedule against a cheap model, and who pays.
+
+---
+
+## Q-06 SQLite costs 148 MB in the module cache
+
+`modernc.org/sqlite` is the pure Go driver, chosen so `go install` works on a machine with no C
+toolchain, which is most of them. It ships transpiled C for every platform, so the module is large
+even though only about 9 MB reaches the binary.
+
+**Decided in the meantime:** taken, because D-24 chose SQLite and full text search over history is
+in PG-A3's acceptance line. Walid was told the same day, since he is storage aware.
+
+**What would change it:** dropping to an append only file format. That would cost full text search,
+which would have to become a linear scan or be cut. The alternative cgo driver is much smaller but
+breaks `go install` for anyone without a compiler, which is the wrong trade for a tool people are
+meant to try out.
+
+---
+
+## Q-07 History is kept forever and nothing prunes it
+
+Every session and turn stays in `history.db` until somebody deletes it. There is no retention
+policy, no size cap, and no `canopy history prune`.
+
+**Decided in the meantime:** unbounded, because throwing away somebody's conversations without
+asking is worse than a large file, and the file is text so it compresses well and grows slowly.
+
+**What would change it:** a cap, an age based prune, or simply a `canopy history size` so people can
+see it before it surprises them. Given Walid is storage aware this probably wants deciding rather
+than deferring.

@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -61,6 +63,13 @@ func runChat() error {
 	engine := session.New(resolver)
 	defer engine.Close()
 
+	// History is attached if it can be, and the program runs without it if it cannot. A disk
+	// problem should cost you the ability to look back at old conversations, not the ability to
+	// have a new one.
+	if err := attachHistory(engine); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: history is not being saved: %v\n", err)
+	}
+
 	// One session to start in. Several sessions and the agents view arrive at A5; the engine
 	// already holds a list rather than a single conversation, so that is a screen rather than a
 	// rewrite.
@@ -73,6 +82,65 @@ func runChat() error {
 	}
 
 	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
+}
+
+// attachHistory gives the engine somewhere to persist to.
+func attachHistory(engine *session.Engine) error {
+	path, err := session.DefaultPath()
+	if err != nil {
+		return err
+	}
+	storage, err := session.OpenStorage(path)
+	if err != nil {
+		return err
+	}
+	// A write that fails mid session is reported once and does not end anything. The answer on
+	// screen is still the answer, and taking the conversation down because a disk was full would be
+	// the tail wagging the dog.
+	return engine.WithStorage(storage, func(err error) {
+		fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
+	})
+}
+
+// runSearch finds a message across every stored conversation.
+func runSearch(args []string, out io.Writer) error {
+	query := strings.TrimSpace(strings.Join(args, " "))
+	if query == "" {
+		return errors.New("what are you looking for? For example `canopy search bcrypt`")
+	}
+
+	path, err := session.DefaultPath()
+	if err != nil {
+		return err
+	}
+	storage, err := session.OpenStorage(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = storage.Close() }()
+
+	hits, err := storage.Search(query, 30)
+	if err != nil {
+		return err
+	}
+	if len(hits) == 0 {
+		_, err := fmt.Fprintf(out, "Nothing in your history matches %q.\n", query)
+		return err
+	}
+
+	w := &errWriter{w: out}
+	for _, hit := range hits {
+		title := hit.SessionTitle
+		if title == "" {
+			title = hit.SessionID
+		}
+		w.printf("%s  %s\n", hit.At.Local().Format("2006-01-02 15:04"), title)
+		// The excerpt keeps SQLite's markers around the matched words rather than being styled
+		// here, since a command writing to a pipe should not be emitting colour.
+		w.printf("  %s\n\n", strings.ReplaceAll(
+			strings.ReplaceAll(hit.Excerpt, "<<", ""), ">>", ""))
+	}
+	return w.err
 }
 
 // defaultModelFor picks the model a new session starts on.
