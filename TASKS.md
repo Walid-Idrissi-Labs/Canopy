@@ -389,8 +389,8 @@ first is a possible hole in the contract itself:
    unrelated process on the same port, which is handled by the instance identity check.
 
 ### P1-04 Roll-up rules
-`status: todo | owner: none | branch: none | depends: P1-03`
-`scope: internal/core/rollup*.go`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-03`
+`scope: internal/core/rollup.go`
 
 Deliverable: the workspace level green indicator, implementing corrections section 3.4.
 
@@ -399,9 +399,32 @@ matching the current RevisionKey, every required service healthy, and no require
 unknown, stale or missing. Optional evidence (`required: false`) never blocks green. Tests and
 services stay separately addressable.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: `Green` is computed from required evidence only, while the two aggregate columns report the
+worst state across everything configured. They are separate fields because section 3.4 says a
+single green icon must not hide which evidence is absent.
+
+Three additions and calls for Codex:
+
+1. **`Rollup.Caveat` is an addition beyond section 3.4.** It names non-blocking problems that
+   exist even when green, such as a failing optional test. Without it there is a real hole: a user
+   who marked a test optional months ago sees a green row forever and never learns it has been
+   broken the whole time. That is exactly the failure section 3.4 warns about, arriving through
+   the optional flag instead of through the icon.
+2. **A workspace where nothing is marked required is not green.** Corrections says optional
+   evidence does not block green, which read literally would make an all-optional workspace green
+   with nothing verified at all. That is the product's central lie, an unconfigured worktree
+   looking like a tested one, so it returns not green with the reason "nothing is marked
+   required". Worth confirming this is the intended reading.
+3. **Severity ordering is a product decision, not a transcription.** Tests rank failing, error,
+   unknown, stale, running, queued, passing, not-configured. Services rank crashed, unhealthy,
+   unknown, stopped, stopping, starting, healthy, not-configured. An unrecognised state outranks
+   everything, on the grounds that a state we have never heard of should read as a problem rather
+   than as fine. Argue the ordering if you disagree, particularly stale above running.
+
+The reason lists every blocker rather than the first one found, since someone fixing a workspace
+wants the whole list.
 
 ### P1-05 Fake snapshot store
 `status: todo | owner: none | branch: none | depends: P1-02, P1-04`
