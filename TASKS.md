@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | none, A1 complete and awaiting PG-A1 | `feat/keys-tui` | none |
+| Claude | none, A3-00 done, A2 next | `feat/tui-shell` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -964,6 +964,59 @@ token and cost figures for each.
 
 Goal: it looks and feels like the product, and nothing is lost when you quit.
 
+### A3-00 Application shell
+`status: review | owner: Claude | branch: feat/tui-shell | depends: none`
+`scope: internal/tui/`
+
+Deliverable: the frame everything else lives in. A splash on launch, a layout that fills and
+reflows with the terminal, consistent chrome across screens, and a styling layer where every
+colour resolves through one palette.
+
+Acceptance: the interface occupies the full terminal and reflows on resize with no artefacts, down
+to 80x24 and up to a large window. A splash appears on launch and gives way to the application.
+Screens share one header, footer and key handling. No colour is written at a call site, so adding
+a theme is a data change rather than a refactor. Everything still reads correctly with colour
+disabled.
+
+`verify: claude [x] 2026-07-26   codex [ ]`
+
+notes: **added 2026-07-26 at Walid's request.** The dashboard from P1-07 renders a few lines into
+whatever space it is given, which was right for proving the contract and is not what the product
+should feel like.
+
+Screens now return `Body()`, `Context()` and `Footer()` and the frame composes them, so chrome is
+written once. Each keeps a standalone `View()` for driving it directly in tests.
+
+`internal/tui/theme` is the only place a colour is constructed, and names are by meaning rather
+than appearance: `Danger` survives a theme change, `red` does not. Styles are built once when a
+theme is selected rather than per render, which matters once several agents are streaming.
+
+Below 60x12 the application refuses to draw and says why. That is the honest option: a squeezed
+layout produces wrapped, overlapping output that reads as a rendering bug, and a user cannot tell
+that apart from the program being broken.
+
+Three things worth noting:
+
+1. **The splash prints the name as text as well as art.** Block letters are unreadable to a screen
+   reader, unrecognisable in a narrow terminal and unsearchable in a pasted bug report.
+2. **Any key dismisses the splash and is then swallowed.** The first keystroke after launch is
+   usually impatience rather than a command, and acting on it would land the user somewhere they
+   did not ask for.
+3. **`Init` now batches the event subscription with the splash timer**, and a batched command
+   yields a `tea.BatchMsg` rather than the event, so tests driving the event path need the
+   subscription alone. `SubscribeCmd` exists for that and nothing else.
+
+The frame owns the footer indent rather than each caller, after one screen rendered flush left
+while the others did not. The comparison is Claude Code, Codex CLI, Gemini CLI and OpenCode: full screen,
+composed, obviously a program rather than a script.
+
+Themes ship at A9-03 but are **provisioned here**. The expensive version of theming is retrofitting
+it after two hundred call sites have picked their own colours. One palette from the start makes it
+a data change later, and costs nothing now.
+
+Placed at the head of A3 because the chat interface is what will live inside it, and building the
+frame after the contents is the more expensive order.
+
 ### A3-01 Session and conversation types
 `status: todo | owner: none | branch: none | depends: A2-01`
 `scope: internal/core/`
@@ -1071,7 +1124,7 @@ session with lost context, or an argument with an agent that has already committ
 At A5 a fork becomes a second agent on a second branch, which is where it earns its place.
 
 ### PG-A3 Phase A3 gate
-`status: todo | depends: A3-04, A3-05, A3-06`
+`status: todo | depends: A3-00, A3-04, A3-05, A3-06`
 
 Both supervisors hold a real conversation, quit, resume it, and search their history. **This is the
 milestone that settles whether the product feels like what we set out to build.**
@@ -1255,8 +1308,16 @@ read the audit trail.
 
 # Phase A5: many agents
 
-Goal: the differentiator. Several agents working in parallel, each isolated, all visible, all
-steerable.
+Goal: the differentiator. Several agents working in parallel, all visible, all steerable.
+
+**Isolation is a mode, not the definition of an agent.** An agent runs in your repository by
+default, exactly as any single agent tool does. A5-01 through A5-04 build the optional isolated
+mode, where an agent gets its own worktree and branch. That is necessary when several agents would
+touch the same files, and required for fan-out at A6-05. It is not required to have an agent, and
+the registry at A5-05 does not depend on it.
+
+Build A5-05 through A5-10 first if you want agents working sooner. The isolation tasks are ordered
+first only because A6 needs them.
 
 ### A5-01 Worktree discovery
 `status: todo | owner: none | branch: none | depends: PG-A4`
@@ -1324,17 +1385,43 @@ isolate a database, Redis, a queue or an OAuth callback, and Canopy supplies tem
 without promising isolation it cannot deliver.
 
 ### A5-05 Agent registry
-`status: todo | owner: none | branch: none | depends: A5-04, A3-01`
+`status: todo | owner: none | branch: none | depends: A3-01`
 `scope: internal/agent/`
 
-Deliverable: named agents, each bound to a worktree, a profile, a key and a session.
+Deliverable: named agents, each bound to a profile, a key, a session and a working directory. The
+working directory defaults to the repository, and is a worktree only for agents put into isolated
+mode.
 
-Acceptance: several agents run concurrently without touching each other's worktrees or sessions.
-Usage and cost are attributed per agent.
+Acceptance: several agents run concurrently in the same repository without their sessions
+interfering. Usage and cost are attributed per agent. An agent can be created without any worktree
+existing for it.
 
 `verify: claude [ ]   codex [ ]`
 
 notes: where the named key model from A1 pays off.
+
+**Deliberately does not depend on the isolation tasks.** Coupling the registry to worktree creation
+would make "run an agent" mean "make a branch", which is not how anyone works most of the time and
+would have made the common case pay for the rare one.
+
+### A5-11 Isolated agent mode
+`status: todo | owner: none | branch: none | depends: A5-05, A5-03, A5-04`
+`scope: internal/agent/`
+
+Deliverable: opt an agent into its own worktree and branch, and return it afterwards.
+
+Acceptance: an isolated agent's file and shell tools cannot reach outside its worktree, and cannot
+reach another agent's. A non isolated agent works in the repository as normal. Ending an isolated
+agent offers to keep or remove the worktree, and never removes a dirty one silently.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **added 2026-07-26.** This is the seam that was previously assumed rather than built,
+because the plan treated every agent as isolated. Making it explicit is what lets the ordinary
+case stay ordinary.
+
+Fan-out at A6-05 requires this. Ranking three agents on one task is meaningless if they are all
+editing the same files.
 
 ### A5-06 Per agent view and switching
 `status: todo | owner: none | branch: none | depends: A5-05, A3-03`

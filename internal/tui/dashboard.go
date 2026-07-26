@@ -179,22 +179,52 @@ func (m Model) SelectedWorkspace() (core.WorkspaceSnapshot, bool) {
 	return m.snapshot.Workspace(m.selectedID)
 }
 
+// Body is the screen's content, without any chrome.
+//
+// The application frame supplies the header and footer, so a screen that drew its own would end up
+// with two of each, and any change to the chrome would have to be made once per screen.
+func (m Model) Body() string {
+	if len(m.snapshot.Workspaces) == 0 {
+		return m.renderEmpty()
+	}
+	return m.renderTable() + "\n" + m.renderDetail()
+}
+
+// Context is what the frame shows next to the title: which repository, and anything wrong with it.
+func (m Model) Context() string {
+	context := m.snapshot.RepoRoot
+	if context == "" {
+		context = "no repository"
+	}
+
+	status := ""
+	switch {
+	case m.snapshot.ConfigState == core.ConfigInvalid:
+		reason := m.snapshot.ConfigError
+		if reason == "" {
+			reason = "configuration is invalid"
+		}
+		status = "config invalid: " + reason
+	case m.snapshot.ConfigState == core.ConfigMissing:
+		status = "no configuration, nothing to run"
+	case !m.snapshot.TrustState.AllowsExecution():
+		status = "not approved to run commands (" + m.snapshot.TrustState.String() + ")"
+	}
+
+	if status != "" {
+		return context + "  |  " + status
+	}
+	return context
+}
+
+// View renders the screen standalone, with its own chrome. Used when the dashboard is driven
+// directly rather than inside the application frame.
 func (m Model) View() string {
 	var b strings.Builder
 
 	b.WriteString(m.renderTitle())
 	b.WriteString("\n\n")
-
-	if len(m.snapshot.Workspaces) == 0 {
-		b.WriteString(m.renderEmpty())
-		b.WriteString("\n\n")
-		b.WriteString(m.renderFooter())
-		return b.String()
-	}
-
-	b.WriteString(m.renderTable())
-	b.WriteString("\n")
-	b.WriteString(m.renderDetail())
+	b.WriteString(m.Body())
 	b.WriteString("\n")
 	b.WriteString(m.renderFooter())
 
