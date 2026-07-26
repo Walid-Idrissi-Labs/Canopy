@@ -1,0 +1,21 @@
+# Build output
+/canopy
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+vendor/
+
+# Local Canopy state (trust records live outside observed repos, but never commit any that leak in)
+.canopy/
+canopy.local.yaml
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# macOS
+.DS_Store
