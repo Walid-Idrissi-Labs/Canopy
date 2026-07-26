@@ -96,8 +96,11 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | P0-01, P0-03, P0-04 | main (bootstrap) | none |
+| Claude | P0-02 | main (bootstrap) | acceptance needs the first pull request to run CI |
 | Codex | none | none | none |
+
+P0-01, P0-03 and P0-04 are in review and waiting on Codex to verify. Phase 1 is blocked on PG-0,
+which needs P0-05, P0-06 and P0-07 done first, and all three of those need a human.
 
 Next integration checkpoint: not yet scheduled, see D-12 in DECISIONS.md
 
@@ -125,7 +128,7 @@ Goal: a repository that builds, tests and lints, with the product decisions reco
 pairs signed off on the corrected scope.
 
 ### P0-01 Repository scaffold
-`status: claimed | owner: Claude | branch: main | depends: none`
+`status: review | owner: Claude | branch: main | depends: none`
 `scope: go.mod, LICENSE, README.md, .gitignore, package skeleton`
 
 Deliverable: MIT LICENSE, README.md stating the corrected positioning with no "only tool" claim,
@@ -134,9 +137,12 @@ layout.
 
 Acceptance: `go build ./...` and `go vet ./...` both succeed on a clean clone.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: build, vet, gofmt -l and go test all clean locally. Every package carries a doc.go stating
+its responsibility and its v0.1 boundary, so the scope limits are visible from inside the code and
+not only from this file. Module path is github.com/Walid-Idrissi-Labs/Canopy and stays provisional
+until D-15 settles the name.
 
 ### P0-02 CI pipeline
 `status: todo | owner: none | branch: none | depends: P0-01`
@@ -150,10 +156,12 @@ the pipeline fail.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: none
+notes: the workflow is committed but acceptance is not demonstrated yet, since it needs a real
+pull request to run. Deliberately left unticked. No .golangci.yml, so golangci-lint runs on its
+defaults. Add a config later only if the defaults prove too loose.
 
 ### P0-03 DECISIONS.md
-`status: claimed | owner: Claude | branch: main | depends: none`
+`status: review | owner: Claude | branch: main | depends: none`
 `scope: DECISIONS.md`
 
 Deliverable: all fifteen questions from the corrections document section 14 answered, plus an
@@ -161,12 +169,15 @@ explicit record of which review round gaps were resolved by citation and which a
 
 Acceptance: no question left unanswered, and every open item names who has to answer it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: Codex should look hardest at D-05, D-06 and D-09. Those three resolve contradictions
+between corrections sections 7, 8 and 9 by reading round 2 as confirmed, and if that reading is
+wrong the scope is wrong. D-16 through D-19 are recorded as open on purpose rather than defaulted
+quietly.
 
 ### P0-04 This task ledger
-`status: claimed | owner: Claude | branch: main | depends: none`
+`status: review | owner: Claude | branch: main | depends: none`
 `scope: TASKS.md`
 
 Deliverable: ordered tasks for phases 0 to 6, the claim protocol, the dual verification protocol
@@ -175,9 +186,11 @@ and the phase gates.
 Acceptance: Codex can read this file and correctly claim, implement and verify a task without
 further instruction.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: acceptance is only really proven once Codex claims and completes a task through this
+protocol without needing it explained. Treat the first Codex claim as the actual test of this
+file, and change the protocol if it gets in the way.
 
 ### P0-05 Branch protection on main
 `status: todo | owner: none | branch: none | depends: P0-02`
