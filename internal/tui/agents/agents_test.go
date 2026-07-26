@@ -17,6 +17,8 @@ var at = time.Date(2026, time.July, 27, 3, 0, 0, 0, time.UTC)
 type fakeEngine struct {
 	statuses []session.AgentStatus
 	sessions map[string]core.Session
+	added    []session.Agent
+	addErr   error
 }
 
 func (e *fakeEngine) AgentStatuses() []session.AgentStatus { return e.statuses }
@@ -24,6 +26,17 @@ func (e *fakeEngine) AgentStatuses() []session.AgentStatus { return e.statuses }
 func (e *fakeEngine) Session(id string) (core.Session, bool) {
 	s, ok := e.sessions[id]
 	return s, ok
+}
+
+func (e *fakeEngine) AddAgent(agent session.Agent) (session.Agent, error) {
+	if e.addErr != nil {
+		return session.Agent{}, e.addErr
+	}
+	agent.SessionID = "s-" + agent.Name
+	e.added = append(e.added, agent)
+	e.statuses = append(e.statuses, session.AgentStatus{Agent: agent, State: core.AgentIdle})
+	e.sessions[agent.SessionID] = conversation("nothing yet")
+	return agent, nil
 }
 
 func status(name string, state core.AgentState, title string) session.AgentStatus {
@@ -303,5 +316,119 @@ func TestNavigationWraps(t *testing.T) {
 	m = key(m, "j")
 	if selected, _ := m.Selected(); selected.Agent.Name != "one" {
 		t.Errorf("moving down from the bottom gave %q, want it to wrap", selected.Agent.Name)
+	}
+}
+
+// Which screen is showing belongs to the application, and a view that could change it would be one
+// that can put the program somewhere the application never agreed to.
+func TestOpeningAnAgentAsksRatherThanActs(t *testing.T) {
+	m := model(engine(
+		status("parser", core.AgentWorking, "task"),
+		status("docs", core.AgentIdle, "task"),
+	))
+	m = key(m, "j")
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter on an agent should ask to open it")
+	}
+
+	msg, ok := cmd().(agents.SwitchMsg)
+	if !ok {
+		t.Fatalf("enter produced %T, want a switch request", cmd())
+	}
+	if msg.AgentName != "docs" || msg.SessionID != "s-docs" {
+		t.Errorf("switch = %+v, want the selected agent", msg)
+	}
+}
+
+// The first thing somebody wants from a second agent is another of what they already have.
+func TestCreatingAnAgent(t *testing.T) {
+	e := engine(status("main", core.AgentIdle, "the first one"))
+	m := model(e)
+	m.SetDefaults("claude", "claude-opus-5", "/work/project")
+
+	m = key(m, "n")
+	if !m.Naming() {
+		t.Fatal("n should start naming a new agent")
+	}
+	// Said plainly, because somebody naming their second agent has no other way to find out what it
+	// will be using.
+	if !strings.Contains(plain(m.Body()), "claude") {
+		t.Errorf("the prompt does not say what the new agent will use:\n%s", plain(m.Body()))
+	}
+
+	for _, r := range "parser" {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if len(e.added) != 1 {
+		t.Fatalf("%d agents created, want 1", len(e.added))
+	}
+	if e.added[0].Name != "parser" {
+		t.Errorf("created %q", e.added[0].Name)
+	}
+	if e.added[0].KeyName != "claude" || e.added[0].Model != "claude-opus-5" {
+		t.Errorf("the new agent did not inherit the defaults: %+v", e.added[0])
+	}
+	if m.Naming() {
+		t.Error("the naming prompt is still up after the agent was created")
+	}
+	// And the cursor lands on the agent that was just made, since that is what somebody is about to
+	// do something with.
+	if selected, _ := m.Selected(); selected.Agent.Name != "parser" {
+		t.Errorf("selected %q after creating, want the new agent", selected.Agent.Name)
+	}
+}
+
+// Both reasons this fails are things the person typing can fix in a keystroke, and clearing the box
+// would make them retype a name they nearly had.
+func TestAFailedCreationKeepsTheName(t *testing.T) {
+	e := engine(status("main", core.AgentIdle, ""))
+	e.addErr = errTaken{}
+	m := model(e)
+
+	m = key(m, "n")
+	for _, r := range "main" {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if !m.Naming() {
+		t.Error("a failed creation closed the prompt")
+	}
+	view := plain(m.Body())
+	if !strings.Contains(view, "already") {
+		t.Errorf("the reason is not on screen:\n%s", view)
+	}
+	if !strings.Contains(view, "main") {
+		t.Errorf("the typed name was lost:\n%s", view)
+	}
+}
+
+type errTaken struct{}
+
+func (errTaken) Error() string { return `there is already an agent called "main"` }
+
+// An agent called "wesc" could never be typed if the navigation keys stayed live.
+func TestNamingTakesTheKeyboard(t *testing.T) {
+	m := model(engine(status("main", core.AgentIdle, "")))
+
+	m = key(m, "n")
+	for _, r := range "v2w" {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	if m.Mode() != agents.ModeList {
+		t.Errorf("mode = %v, want the layout keys to have gone into the name", m.Mode())
+	}
+	if !strings.Contains(plain(m.Body()), "v2w") {
+		t.Errorf("the keystrokes did not reach the name:\n%s", plain(m.Body()))
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.Naming() {
+		t.Error("esc should cancel naming")
 	}
 }

@@ -88,9 +88,11 @@ type Model struct {
 	// which is the state it returns to whenever a new message is sent.
 	scroll int
 
-	// dir and keyName are context for the welcome screen and the header.
-	dir     string
-	keyName string
+	// dir and keyName are context for the welcome screen and the header, and agentName says which
+	// agent's conversation this is once there is more than one.
+	dir       string
+	keyName   string
+	agentName string
 
 	// err is the last thing that went wrong at this layer, such as a refused send. Failures inside
 	// a turn live on the turn instead, where they stay attached to what they describe.
@@ -385,6 +387,26 @@ func (m Model) Session() core.Session { return m.session }
 // Working reports whether a turn is in flight.
 func (m Model) Working() bool { return m.working }
 
+// SetSession points this screen at a different conversation.
+//
+// The scroll position and the half typed message are cleared with it. Carrying either across would
+// mean arriving in one agent's conversation scrolled to a position from another's, and finding text
+// in the box that was meant for somebody else.
+func (m *Model) SetSession(sessionID, label string) {
+	if sessionID == m.sessionID {
+		return
+	}
+	m.sessionID = sessionID
+	m.agentName = label
+	m.scroll = 0
+	m.err = ""
+	m.input.Clear()
+	m.refresh()
+}
+
+// SessionID is the conversation being shown.
+func (m Model) SessionID() string { return m.sessionID }
+
 // Awaiting reports whether a question is on screen. The frame uses it to change the footer, since
 // the keys mean something different while one is up.
 func (m Model) Awaiting() bool { return m.awaiting }
@@ -529,6 +551,11 @@ func (m Model) inputBox() string {
 // Context is what the frame shows beside the title.
 func (m Model) Context() string {
 	parts := []string{}
+	if m.agentName != "" {
+		// First, because with several agents the question "whose conversation am I in" comes before
+		// every other thing this line says.
+		parts = append(parts, m.agentName)
+	}
 	if m.dir != "" {
 		parts = append(parts, m.dir)
 	}

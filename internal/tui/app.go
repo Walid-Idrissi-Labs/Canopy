@@ -103,6 +103,13 @@ func (a App) Init() tea.Cmd {
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
+	case agentsui.SwitchMsg:
+		// The agents view asks and the application decides, which is what keeps "which screen is
+		// showing" in one place.
+		a.chat.SetSession(m.SessionID, m.AgentName)
+		a.screen = screenChat
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.resize(Dimensions{Width: m.Width, Height: m.Height})
 	case splashDoneMsg:
@@ -215,6 +222,11 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 
 	case screenAgents:
+		// While a name is being typed every key belongs to the field, including the ones that would
+		// otherwise navigate, or an agent called "wesc" could never be typed.
+		if a.agents.Naming() {
+			return false, a, nil
+		}
 		switch msg.String() {
 		case "esc", "q":
 			a.screen = screenChat
@@ -276,9 +288,12 @@ func (a App) View() string {
 
 	switch a.screen {
 	case screenAgents:
-		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(),
-			Keys(a.dim.Width, "j/k", "move", "v", "layout", "esc", "chat", "w", "worktrees",
-				"K", "keys"))
+		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
+			"esc", "chat", "w", "worktrees")
+		if a.agents.Naming() {
+			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
+		}
+		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(), footer)
 
 	case screenChat:
 		// The keys mean something different while a question is up, so the footer says so rather

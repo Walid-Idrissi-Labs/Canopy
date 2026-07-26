@@ -52,6 +52,21 @@ func (m Mode) String() string {
 type Engine interface {
 	AgentStatuses() []session.AgentStatus
 	Session(id string) (core.Session, bool)
+
+	// AddAgent starts a new agent. Its error is shown rather than swallowed, because the two
+	// reasons it fails, a name already taken and a name that is not allowed, are both things the
+	// person typing can fix immediately.
+	AddAgent(agent session.Agent) (session.Agent, error)
+}
+
+// SwitchMsg asks the application to open an agent's conversation.
+//
+// A message rather than a direct call, because which screen is showing belongs to the application
+// and a view that could change it would be a view that can put the program somewhere the
+// application did not agree to.
+type SwitchMsg struct {
+	SessionID string
+	AgentName string
 }
 
 // Model is the agents screen.
@@ -71,6 +86,16 @@ type Model struct {
 	height int
 
 	statuses []session.AgentStatus
+
+	// naming is the new agent flow: a name being typed, and the reason the last attempt failed.
+	naming bool
+	draft  string
+	err    string
+
+	// defaults are what a new agent inherits, since there is nowhere to choose them yet.
+	keyName string
+	model   string
+	dir     string
 }
 
 // New builds the agents view.
@@ -78,6 +103,15 @@ func New(engine Engine) Model {
 	m := Model{engine: engine, width: 80, height: 24}
 	m.refresh()
 	return m
+}
+
+// SetDefaults says what a new agent inherits.
+//
+// Inherited from the agent you are looking at rather than asked for, because the first thing
+// somebody wants from a second agent is another of what they already have. Choosing a different
+// credential or model per agent is a real thing to want and belongs with a profile picker.
+func (m *Model) SetDefaults(keyName, model, dir string) {
+	m.keyName, m.model, m.dir = keyName, model, dir
 }
 
 // SetSize tells the model how much room it has.
@@ -94,7 +128,26 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Naming takes the keyboard while it is happening, or the letters of the name would be read as
+	// layout commands and typing "split" would change the layout three times.
+	if m.naming {
+		return m.typeName(key)
+	}
+
 	switch key.String() {
+	case "enter":
+		// Switching is a message to the application rather than something this view does, since
+		// which screen is showing is not this view's to decide.
+		if status, selected := m.Selected(); selected {
+			name, id := status.Agent.Name, status.Agent.SessionID
+			return m, func() tea.Msg { return SwitchMsg{SessionID: id, AgentName: name} }
+		}
+	case "n":
+		m.naming = true
+		m.draft = ""
+		m.err = ""
+		return m, nil
+
 	case "j", "down":
 		m.move(1)
 	case "k", "up":
@@ -119,6 +172,54 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 	return m, nil
 }
+
+// typeName handles the keys while a new agent is being named.
+func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
+	switch key.Type {
+	case tea.KeyEsc:
+		m.naming = false
+		m.draft = ""
+		return m, nil
+
+	case tea.KeyEnter:
+		agent, err := m.engine.AddAgent(session.Agent{
+			Name:    strings.TrimSpace(m.draft),
+			KeyName: m.keyName,
+			Model:   m.model,
+			Dir:     m.dir,
+		})
+		if err != nil {
+			// The name stays in the box. Both reasons this fails are things the person typing can
+			// fix in a keystroke, and clearing it would make them retype a name they nearly had.
+			m.err = err.Error()
+			return m, nil
+		}
+		m.naming = false
+		m.draft = ""
+		m.err = ""
+		m.anchored = agent.Name
+		m.refresh()
+		return m, nil
+
+	case tea.KeyBackspace:
+		if runes := []rune(m.draft); len(runes) > 0 {
+			m.draft = string(runes[:len(runes)-1])
+		}
+		return m, nil
+
+	case tea.KeyRunes:
+		m.draft += string(key.Runes)
+		return m, nil
+
+	case tea.KeySpace:
+		m.draft += " "
+		return m, nil
+	}
+	return m, nil
+}
+
+// Naming reports whether a name is being typed, so the frame can change its footer.
+func (m Model) Naming() bool { return m.naming }
 
 func (m *Model) move(by int) {
 	if len(m.statuses) == 0 {
@@ -182,6 +283,9 @@ func (m Model) Count() int { return len(m.statuses) }
 
 // Body renders the screen.
 func (m Model) Body() string {
+	if m.naming {
+		return m.namePrompt()
+	}
 	if m.engine == nil || len(m.statuses) == 0 {
 		return m.empty()
 	}
@@ -193,6 +297,35 @@ func (m Model) Body() string {
 	default:
 		return m.list()
 	}
+}
+
+// namePrompt is the new agent flow.
+func (m Model) namePrompt() string {
+	t := theme.Current()
+
+	var b strings.Builder
+	b.WriteString(t.Title.Render("New agent"))
+	b.WriteString("\n\n")
+	b.WriteString(t.Muted.Render("What should it be called? Something you would say out loud."))
+	b.WriteString("\n\n")
+	b.WriteString("  " + t.Body.Render(m.draft) + t.Cursor.Render(" "))
+	b.WriteString("\n\n")
+
+	if m.err != "" {
+		b.WriteString(t.Danger.Render("  " + m.err))
+		b.WriteString("\n\n")
+	}
+
+	// Said plainly, because somebody naming their second agent has no other way to find out what it
+	// will be using.
+	if m.keyName != "" {
+		b.WriteString(t.Muted.Render("  It will use " + m.keyName))
+		if m.model != "" {
+			b.WriteString(t.Muted.Render(" on " + m.model))
+		}
+		b.WriteString(t.Muted.Render(", the same as the one you are looking at."))
+	}
+	return b.String()
 }
 
 func (m Model) empty() string {

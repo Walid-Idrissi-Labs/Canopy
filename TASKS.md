@@ -2269,8 +2269,8 @@ Fan-out at A6-05 requires this. Ranking three agents on one task is meaningless 
 editing the same files.
 
 ### A5-06 Per agent view and switching
-`status: partial | owner: Claude | branch: feat/agent-runtime | depends: A5-05, A3-03`
-`scope: internal/tui/agents/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-05, A3-03`
+`scope: internal/tui/agents/, internal/tui/chat/, internal/tui/app.go`
 
 Deliverable: a list of agents, switch into any one's conversation, come back out.
 
@@ -2300,10 +2300,20 @@ rather than to the same index, because the same index is now a different agent.
 Every state is a word as well as a colour. A row of coloured dots is meaningless in a pasted bug
 report and invisible to anyone who has turned colour off.
 
-**Still to do:** pressing enter on an agent to switch into its conversation, and `n` to start a new
-one. The screen and the registry behind it are done and tested; the two keys need the chat screen to
-be able to change which session it is showing, which is a small change to `chat.Model` that belongs
-with the session switcher.
+`enter` opens an agent's conversation and `n` starts a new one. Opening is a **message to the
+application** rather than something the view does, because which screen is showing belongs in one
+place and a view that could change it is one that can put the program somewhere the application
+never agreed to.
+
+A new agent inherits the credential and model of the one you are looking at, and the prompt says so.
+The first thing somebody wants from a second agent is another of what they already have; choosing
+differently per agent is a real thing to want and belongs with a profile picker. A failed creation
+keeps the typed name, since both reasons it fails are fixable in a keystroke and clearing the box
+would make somebody retype a name they nearly had.
+
+Changing which conversation the chat screen shows clears the scroll position and the half typed
+message with it. Carrying either across would mean arriving in one agent's conversation scrolled to
+a position from another's, and finding text in the box that was meant for somebody else.
 
 ### A5-07 Steering without interrupting
 `status: todo | owner: none | branch: none | depends: A5-06`
