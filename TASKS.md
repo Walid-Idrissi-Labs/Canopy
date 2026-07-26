@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | none, A3-00 done, A2 next | `feat/tui-shell` | none |
+| Claude | A2, the provider layer | `feat/providers` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -1017,6 +1017,12 @@ a data change later, and costs nothing now.
 Placed at the head of A3 because the chat interface is what will live inside it, and building the
 frame after the contents is the more expensive order.
 
+**The entry point is provisional.** It currently opens on the dashboard, or on credentials when
+there are none. Once A3-03 lands, **chat becomes the home screen** and the dashboard becomes a view
+reached from it. Recorded 2026-07-26 after Walid pointed out that opening on a monitor puts the
+least common activity first and makes Canopy look like something you watch rather than something
+you talk to.
+
 ### A3-01 Session and conversation types
 `status: todo | owner: none | branch: none | depends: A2-01`
 `scope: internal/core/`
@@ -1053,10 +1059,13 @@ change and a tool that loses your history on upgrade is not one anyone keeps.
 `status: todo | owner: none | branch: none | depends: A3-01`
 `scope: internal/tui/chat/`
 
-Deliverable: message list, live streaming, input box, scrollback.
+Deliverable: message list, live streaming, input box, scrollback. **This becomes the home screen**:
+running `canopy` in a directory opens a chat there, and every other screen is somewhere you go from
+it.
 
 Acceptance: a reply renders token by token without flicker, follows the tail unless the user has
-scrolled up, and survives a resize.
+scrolled up, and survives a resize. `canopy` with no arguments lands here, not on the dashboard.
+Someone who has never used it can install it, run it and start working without reading anything.
 
 `verify: claude [ ]   codex [ ]`
 
@@ -1490,20 +1499,29 @@ to a misparsed 20 instead of 2. Enforcement before the request rather than after
 between a guardrail and a receipt. An estimate presented more confidently than the data supports
 would be its own small lie, so the range carries its basis.
 
-### A5-10 Split screen agent views
+### A5-10 Agents view
 `status: todo | owner: none | branch: none | depends: A5-06`
-`scope: internal/tui/`
+`scope: internal/tui/agents/`
 
-Deliverable: several agents at once in split panes, two up and four up, focus by keyboard and by
-mouse.
+Deliverable: one screen showing every running agent, in **three modes the user switches between**:
 
-Acceptance: four agents stream simultaneously without tearing. Focus follows a click. Layout
-degrades sensibly on a narrow terminal. Keyboard remains sufficient for everything.
+- **tabbed**, one agent at a time, tab and shift-tab to move
+- **split**, several at once in panes, two up and four up
+- **list**, a compact row per agent showing what each is currently doing
+
+Acceptance: four agents stream simultaneously in split mode without tearing. Switching modes keeps
+the same agent focused. Focus follows a click. Layout degrades sensibly on a narrow terminal, and
+split falls back to tabbed when there is not room. Keyboard remains sufficient for everything.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: this is what makes running many agents feel like supervising rather than tab switching. Four
-live streams into one terminal is also where the coalescing rules from P1-01 stop being
+notes: three modes rather than one because they answer different questions. Tabbed is for working
+with one agent while others run. Split is for watching two compete. List is for "what is everything
+doing right now" at a glance, which is the question you have most often with six agents going.
+
+Reached from the chat, which is the home screen. This is where the P1-07 dashboard ends up living.
+
+Four live streams into one terminal is also where the coalescing rules from P1-01 stop being
 theoretical. Mouse support is additive only, since the tool has to stay usable over ssh where mouse
 reporting may not survive.
 
