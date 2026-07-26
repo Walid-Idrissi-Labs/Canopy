@@ -117,14 +117,39 @@ func runAsk(args []string, out io.Writer) error {
 }
 
 // pricer turns a model identity into the function that costs a turn.
+//
+// The note is what the figure alone cannot say: why there is no figure, or how old the numbers
+// behind it are. Both are the difference between a number somebody can act on and one they should
+// not.
 func pricer(id pricing.ModelID) func(core.Usage) (core.Usage, string) {
 	return func(usage core.Usage) (core.Usage, string) {
 		usage, reason := pricing.Apply(id, usage)
-		if reason == "" {
-			reason = pricing.StalenessNote(time.Now())
+		if reason != "" {
+			return usage, reason
 		}
-		return usage, reason
+		if note := pricing.StalenessNote(time.Now()); note != "" {
+			return usage, note
+		}
+		// Caching is invisible unless it is reported, and an invisible saving is one nobody
+		// notices has stopped happening.
+		if saving, ok := pricing.Saving(id, usage); ok {
+			return usage, cacheNote(saving)
+		}
+		return usage, ""
 	}
+}
+
+// cacheNote describes what caching did to this turn's bill.
+//
+// It says "spent" rather than hiding a negative saving, because the turn that fills a cache really
+// does pay a premium, and a report that only ever shows good news is one nobody can calibrate
+// against.
+func cacheNote(saving float64) string {
+	if saving < 0 {
+		return fmt.Sprintf("caching cost $%.4f extra on this turn, which later turns read back",
+			-saving)
+	}
+	return fmt.Sprintf("caching saved $%.4f on this turn", saving)
 }
 
 // drain writes the reply as it arrives and reports how the turn ended.

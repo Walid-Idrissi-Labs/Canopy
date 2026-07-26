@@ -175,3 +175,53 @@ func TestEveryRateIsCoherent(t *testing.T) {
 		}
 	}
 }
+
+// Caching is only worth having if you can see it working, and the honest version of "see it
+// working" includes the turn where it costs money.
+func TestCacheSavingIsNetAndCanBeNegative(t *testing.T) {
+	id := ModelID{Provider: core.ProviderAnthropic, Model: "claude-opus-5"}
+
+	// The first turn writes the cache and pays the write premium for nothing yet.
+	first, ok := Saving(id, core.Usage{InputTokens: 100, CacheWriteTokens: 10_000})
+	if !ok {
+		t.Fatal("a turn that touched the cache on a priced model has a knowable saving")
+	}
+	if first >= 0 {
+		t.Errorf("filling a cache costs more than plain input, so the first turn is a loss, got %v", first)
+	}
+
+	// Every turn after reads it back at a fraction of the input rate.
+	later, ok := Saving(id, core.Usage{InputTokens: 100, CacheReadTokens: 10_000})
+	if !ok {
+		t.Fatal("expected a knowable saving")
+	}
+	if later <= 0 {
+		t.Errorf("reading a cache is cheaper than resending the tokens, got %v", later)
+	}
+	// Which is why caching is worth doing at all: a single read more than repays the premium paid
+	// to write the same tokens, so a session pays for the cache on its second turn.
+	if later <= -first {
+		t.Errorf("a read saved %v against a write premium of %v, so caching would never pay back",
+			later, -first)
+	}
+}
+
+func TestSavingIsSilentWhenItCannotBeKnown(t *testing.T) {
+	// Nothing cached, nothing to say.
+	if _, ok := Saving(ModelID{Provider: core.ProviderAnthropic, Model: "claude-opus-5"},
+		core.Usage{InputTokens: 100}); ok {
+		t.Error("a turn that cached nothing has no saving to report")
+	}
+
+	// No rate, so no counterfactual to compare against.
+	unpriced := NewModelID(core.ProviderOpenAICompatible, "https://openrouter.ai/api/v1", "x")
+	if _, ok := Saving(unpriced, core.Usage{CacheReadTokens: 10_000}); ok {
+		t.Error("without a rate there is nothing to compare the saving against")
+	}
+
+	// Free is free either way, so a saving figure would be noise.
+	local := NewModelID(core.ProviderOpenAICompatible, "http://localhost:11434/v1", "x")
+	if _, ok := Saving(local, core.Usage{CacheReadTokens: 10_000}); ok {
+		t.Error("a saving on something that was already free is not worth printing")
+	}
+}

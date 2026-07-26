@@ -167,6 +167,35 @@ func (r Rates) Cost(usage core.Usage) float64 {
 		float64(usage.CacheWriteTokens)*r.CacheWrite) / perMillion
 }
 
+// CacheSaving is what caching changed about a turn's bill, positive when it saved money.
+//
+// Net, and it can be negative. A cache write costs more than plain input, so the turn that fills a
+// cache genuinely pays a premium and this says so. The turn that reads it back pays a tenth. Netting
+// them per turn rather than reporting only the reads is the honest version: it makes the first turn
+// of a session look like the investment it is, instead of hiding the cost and showing only the
+// return.
+func (r Rates) CacheSaving(usage core.Usage) float64 {
+	const perMillion = 1_000_000.0
+	saved := float64(usage.CacheReadTokens) * (r.Input - r.CacheRead)
+	premium := float64(usage.CacheWriteTokens) * (r.CacheWrite - r.Input)
+	return (saved - premium) / perMillion
+}
+
+// Saving reports what caching did to a turn's bill, and whether that is knowable.
+//
+// Unknowable is the common case outside Anthropic: without a rate there is no counterfactual to
+// compare against, so the answer is silence rather than zero.
+func Saving(id ModelID, usage core.Usage) (float64, bool) {
+	if usage.CacheReadTokens == 0 && usage.CacheWriteTokens == 0 {
+		return 0, false
+	}
+	rates, ok := Lookup(id)
+	if !ok || (rates == Free) {
+		return 0, false
+	}
+	return rates.CacheSaving(usage), true
+}
+
 // Apply fills in the cost fields on a usage record.
 //
 // The second return is why the cost is unknown, empty when it is known. Saying "cost unknown" with

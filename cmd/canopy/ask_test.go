@@ -243,3 +243,24 @@ func TestUsageIsPricedFromTheCredential(t *testing.T) {
 		t.Error("an unpriced turn should say why, otherwise it reads as a broken tool")
 	}
 }
+
+// An invisible saving is one nobody notices has stopped happening, which is the failure mode
+// caching has: it degrades silently and the bill just goes up.
+func TestCachingIsReported(t *testing.T) {
+	price := pricer(pricing.NewModelID(core.ProviderAnthropic, "", "claude-opus-5"))
+
+	_, note := price(core.Usage{InputTokens: 500, OutputTokens: 100, CacheReadTokens: 20_000})
+	if !strings.Contains(note, "saved") {
+		t.Errorf("a turn that read from cache should say what it saved, got %q", note)
+	}
+
+	_, note = price(core.Usage{InputTokens: 500, OutputTokens: 100, CacheWriteTokens: 20_000})
+	if !strings.Contains(note, "extra") {
+		t.Errorf("the turn that fills a cache pays a premium and should say so, got %q", note)
+	}
+
+	_, note = price(core.Usage{InputTokens: 500, OutputTokens: 100})
+	if note != "" {
+		t.Errorf("a turn that touched no cache has nothing to report, got %q", note)
+	}
+}

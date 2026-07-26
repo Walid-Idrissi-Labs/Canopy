@@ -89,12 +89,7 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 	}
 
 	if req.System != "" {
-		// The cache breakpoint goes on the system prompt because it is the largest stable prefix,
-		// and everything after it is what varies per turn.
-		params.System = []sdk.TextBlockParam{{
-			Text:         req.System,
-			CacheControl: sdk.NewCacheControlEphemeralParam(),
-		}}
+		params.System = []sdk.TextBlockParam{{Text: req.System}}
 	}
 
 	if effort := mapEffort(req.Effort); effort != "" {
@@ -118,6 +113,8 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 	if tools := buildTools(req.Tools); len(tools) > 0 {
 		params.Tools = tools
 	}
+
+	markCacheBreakpoints(&params)
 
 	// Sampling parameters are deliberately never set. Current models reject temperature, top_p and
 	// top_k with a 400, and AgentProfile still carries a Temperature field from A1-01. Dropping it
@@ -202,6 +199,50 @@ func buildTools(tools []core.ToolDefinition) []sdk.ToolUnionParam {
 		}})
 	}
 	return out
+}
+
+// markCacheBreakpoints places cache controls on the parts of a request that repeat.
+//
+// A prompt is sent in a fixed order: tools, then system, then messages. A breakpoint caches
+// everything before it, so the useful places are the boundaries between what stays the same and
+// what changes. Which for a coding agent is nearly everything: the tool definitions and the project
+// system prompt are identical on every turn of every session, and the conversation so far is
+// identical to what it was one turn ago plus an increment.
+//
+// Three of the four available breakpoints get used:
+//
+//  1. **The last tool.** Tool schemas for a coding agent run to thousands of tokens and never
+//     change within a session. Cheapest win here by a wide margin.
+//  2. **The system prompt**, which also picks up the tools before it.
+//  3. **The end of the previous exchange**, so each turn reads the whole conversation so far from
+//     cache and only writes the increment. Skipped on a short conversation, where there is no
+//     prefix worth caching and the breakpoint would just cost a write.
+//
+// A breakpoint on the newest message is deliberately not placed. It would write a cache entry that
+// the next turn immediately invalidates by appending to it, paying the write premium for a read
+// that never happens.
+func markCacheBreakpoints(params *sdk.MessageNewParams) {
+	if n := len(params.Tools); n > 0 {
+		if tool := params.Tools[n-1].OfTool; tool != nil {
+			tool.CacheControl = sdk.NewCacheControlEphemeralParam()
+		}
+	}
+
+	if n := len(params.System); n > 0 {
+		params.System[n-1].CacheControl = sdk.NewCacheControlEphemeralParam()
+	}
+
+	// Fewer than three messages is a first turn or close to it, where the history is smaller than
+	// the minimum the API will cache and a breakpoint buys nothing.
+	if len(params.Messages) < 3 {
+		return
+	}
+	previous := params.Messages[len(params.Messages)-2]
+	if n := len(previous.Content); n > 0 {
+		if control := previous.Content[n-1].GetCacheControl(); control != nil {
+			*control = sdk.NewCacheControlEphemeralParam()
+		}
+	}
 }
 
 func mapEffort(effort core.Effort) sdk.OutputConfigEffort {

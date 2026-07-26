@@ -368,3 +368,125 @@ func TestMalformedSDKErrorDoesNotPanic(t *testing.T) {
 		t.Errorf("the fallback should at least name the status, got %q", got.Message)
 	}
 }
+
+// hasCache reports whether a marshalled request carries a breakpoint in a named section.
+func cacheBreakpoints(t *testing.T, params sdk.MessageNewParams) (tools, system, messages int) {
+	t.Helper()
+
+	for _, tool := range params.Tools {
+		if tool.OfTool != nil && tool.OfTool.CacheControl.Type != "" {
+			tools++
+		}
+	}
+	for _, block := range params.System {
+		if block.CacheControl.Type != "" {
+			system++
+		}
+	}
+	for _, msg := range params.Messages {
+		for _, block := range msg.Content {
+			if control := block.GetCacheControl(); control != nil && control.Type != "" {
+				messages++
+			}
+		}
+	}
+	return tools, system, messages
+}
+
+// Tool schemas for a coding agent run to thousands of tokens and are identical on every turn, so
+// this is the cheapest saving available and the easiest one to forget.
+func TestToolsAndSystemAreCached(t *testing.T) {
+	client := New(core.NewSecret(canary))
+	params, err := client.buildParams(core.Request{
+		Model:    "claude-opus-5",
+		System:   "you are a coding agent",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "hi"}},
+		Tools: []core.ToolDefinition{
+			{Name: "read", Description: "read a file", InputSchema: []byte(`{"type":"object"}`)},
+			{Name: "write", Description: "write a file", InputSchema: []byte(`{"type":"object"}`)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+
+	tools, system, _ := cacheBreakpoints(t, params)
+	if tools != 1 {
+		t.Errorf("%d tool breakpoints, want exactly 1 on the last tool", tools)
+	}
+	if system != 1 {
+		t.Errorf("%d system breakpoints, want 1", system)
+	}
+	// The breakpoint belongs on the last tool, since a breakpoint caches everything before it and
+	// one on the first tool would leave the rest uncached.
+	if last := params.Tools[len(params.Tools)-1].OfTool; last == nil || last.CacheControl.Type == "" {
+		t.Error("the breakpoint should be on the last tool, so it covers all of them")
+	}
+}
+
+// A breakpoint on the newest message would write an entry that the next turn immediately
+// invalidates by appending to it, paying the write premium for a read that never happens.
+func TestConversationPrefixIsCachedButNotTheNewestTurn(t *testing.T) {
+	client := New(core.NewSecret(canary))
+
+	short, err := client.buildParams(core.Request{
+		Model:    "claude-opus-5",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	if _, _, messages := cacheBreakpoints(t, short); messages != 0 {
+		t.Errorf("%d message breakpoints on a first turn, want 0: there is no prefix worth caching "+
+			"and the breakpoint would only cost a write", messages)
+	}
+
+	long, err := client.buildParams(core.Request{
+		Model: "claude-opus-5",
+		Messages: []core.Message{
+			{Role: core.RoleUser, Text: "first"},
+			{Role: core.RoleAssistant, Text: "answer"},
+			{Role: core.RoleUser, Text: "second"},
+			{Role: core.RoleAssistant, Text: "answer"},
+			{Role: core.RoleUser, Text: "newest"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	_, _, messages := cacheBreakpoints(t, long)
+	if messages != 1 {
+		t.Fatalf("%d message breakpoints, want exactly 1", messages)
+	}
+
+	newest := long.Messages[len(long.Messages)-1]
+	for _, block := range newest.Content {
+		if control := block.GetCacheControl(); control != nil && control.Type != "" {
+			t.Error("the newest message must not carry a breakpoint, since the next turn appends " +
+				"to it and invalidates whatever was written")
+		}
+	}
+}
+
+// The API allows four, and going over is a 400 rather than a degraded response.
+func TestBreakpointsStayWithinTheLimit(t *testing.T) {
+	client := New(core.NewSecret(canary))
+	params, err := client.buildParams(core.Request{
+		Model:  "claude-opus-5",
+		System: "system",
+		Messages: []core.Message{
+			{Role: core.RoleUser, Text: "a"},
+			{Role: core.RoleAssistant, Text: "b"},
+			{Role: core.RoleUser, Text: "c"},
+		},
+		Tools: []core.ToolDefinition{{Name: "t", InputSchema: []byte(`{"type":"object"}`)}},
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+
+	tools, system, messages := cacheBreakpoints(t, params)
+	if total := tools + system + messages; total > 4 {
+		t.Errorf("%d breakpoints, and the API rejects more than 4", total)
+	}
+}

@@ -1071,18 +1071,44 @@ The acceptance line's "Ollama and one hosted third party both work" needs a pers
 so it belongs to PG-A2 alongside A2-04's live check, not to this box.
 
 ### A2-07 Prompt caching
-`status: todo | owner: none | branch: none | depends: A2-05`
-`scope: internal/provider/`
+`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`scope: internal/provider/anthropic/, internal/pricing/, cmd/canopy/ask.go`
 
 Deliverable: cache long stable prefixes such as system prompts and file context where the provider
 supports it.
 
 Acceptance: cached tokens are reported separately in usage, and the saving is visible.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: large cost saving for small effort, and it compounds with several agents sharing a project
 system prompt.
+
+A prompt is sent in a fixed order, tools then system then messages, and a breakpoint caches
+everything before it. So the useful places are the boundaries between what stays the same and what
+changes, which for a coding agent is nearly everything. Three of the four available breakpoints are
+used: the last tool definition, the system prompt, and the end of the previous exchange.
+
+Two placements were deliberately avoided:
+
+- **Nothing on the newest message.** It would write an entry that the next turn invalidates by
+  appending to it, paying the write premium for a read that never happens.
+- **Nothing on a conversation shorter than three messages.** There is no prefix worth caching yet
+  and the breakpoint would only cost a write. A test asserts both, since either would be invisible
+  in normal use and would show up only as a bill.
+
+The saving is reported net and can be negative. A cache write costs more than plain input, so the
+turn that fills a cache genuinely pays a premium and the interface says "caching cost $x extra on
+this turn, which later turns read back". Reporting only the reads would be the flattering version
+and would make the numbers impossible to calibrate against. A single read more than repays the
+premium on the same tokens, so a session pays for its cache on the second turn.
+
+The OpenAI compatible client sends nothing for this: caching is automatic on the endpoints in that
+family that do it at all, and we hold no rates for them, so there is no counterfactual to report a
+saving against. `pricing.Saving` stays silent rather than printing a zero.
+
+Worth noticing later: caching is the thing that degrades silently. If a breakpoint stops matching,
+nothing breaks, the bill just goes up. That is why the saving is on screen rather than in a log.
 
 ### A2-08 Provider fallback chains
 `status: todo | owner: none | branch: none | depends: A2-03`
