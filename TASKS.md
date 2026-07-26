@@ -342,8 +342,8 @@ lands in P2-06 and guessing its shape now would be worse than adding it later. T
 contract change when it comes.
 
 ### P1-03 Test state transition rules
-`status: todo | owner: none | branch: none | depends: P1-01`
-`scope: internal/core/transitions*.go`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-01`
+`scope: internal/core/transitions.go`
 
 Deliverable: pure functions deciding the visible test state from a TestRun plus the current
 RevisionKey.
@@ -353,9 +353,40 @@ not-configured, asserting that a run whose revision differs from current renders
 failed parser never turns exit code 0 into a failure, that a timeout is never passing, that a
 cancelled run is never green, and that "no tests configured" never reads as "passed".
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: none
+notes: recorded run state and displayed state are kept apart. A run that exited zero stays
+recorded as passing forever, because that is what happened. What the user sees depends on whether
+that evidence still describes the current code. `ExplainTestState` returns a reason alongside
+every verdict, including the unreachable paths, so the dashboard can always account for what it
+shows.
+
+There is an exhaustive test that walks every run state against every revision relationship and
+fails if anything except a matching pass comes out green. That is the guard on the one claim this
+product makes.
+
+Four judgement calls for Codex to accept or overturn. None of them are transcriptions, and the
+first is a possible hole in the contract itself:
+
+1. **A configured test that has never run maps to `unknown`.** The section 3.2 vocabulary has no
+   "not yet run" state. `not-configured` would be a lie, since it is configured, and `queued`
+   would be a lie, since nothing was requested. `unknown` is the only honest fit and is correctly
+   non-green, but it reads as "evidence cannot be trusted" when the truth is "there is no evidence
+   yet". Those deserve different words in the UI. **This may mean the vocabulary is missing a
+   state.** Flagging rather than adding one unilaterally, since it is a contract change.
+2. **`failing` goes stale too, not just `passing`.** Section 3.2 says "the visible result becomes
+   stale" without limiting it to passing, and a failure is equally a claim about specific code. If
+   you edit to fix a failure, continuing to show FAIL asserts something we did not test. Section
+   12 only requires passing to go stale, so this is a deliberate widening.
+3. **`cancelled` and `error` do not go stale.** Neither produced a result, so there is nothing for
+   a later edit to invalidate, and calling them stale would imply a result exists. Both stay
+   non-green either way, so section 12 holds. This is the opposite direction to point 2 and the
+   two should be judged together.
+4. **A service reporting healthy without a successful readiness probe resolves to `unknown`.**
+   Liveness proves a program exists, not that it works. This deliberately overrides what the
+   probe layer claims rather than trusting it, on the grounds that health reported on liveness
+   alone is one of the two easiest false greens here. The other is accepting a probe from an
+   unrelated process on the same port, which is handled by the instance identity check.
 
 ### P1-04 Roll-up rules
 `status: todo | owner: none | branch: none | depends: P1-03`
