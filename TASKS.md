@@ -313,18 +313,33 @@ Extra types beyond the corrections list: `Observation`, `DirtyState`, `TestSnaps
 corrections section 8 items 12 and 13, and are here now so phase 3 is not a contract change.
 
 ### P1-02 Core interfaces
-`status: todo | owner: none | branch: none | depends: P1-01`
-`scope: internal/core/*.go`
+`status: review | owner: Claude | branch: feat/core-contract | depends: P1-01`
+`scope: internal/core/interfaces.go`
 
 Deliverable: WorkspaceSource, RevisionTracker, TestRunner, HealthChecker and SnapshotStore,
 exactly as specified in the corrections document section 10.
 
 Acceptance: compiles, and the fake from P1-05 satisfies all five.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-26   codex [ ]`
 
-notes: do not design PTY, merge, PR or worktree removal interfaces. Explicitly forbidden at this
-stage.
+notes: signatures are verbatim from section 10, nothing added. Do not design PTY, merge, PR or
+worktree removal interfaces, explicitly forbidden at this stage. Second half of acceptance is
+demonstrated by P1-05.
+
+Error semantics are documented on each method rather than left to implementers, since they are
+where a false green would sneak in. Three rules:
+
+- `RevisionTracker.Current` returns the zero key plus an error on failure, never a partly filled
+  key that would report itself as known.
+- `TestRunner.Start` errors only when the run could not begin. A command that starts and fails is
+  a successful Start followed by a run reaching failing. A missing binary is error, not failing.
+- `HealthChecker.Check` returns a health with state unknown and a filled failure reason alongside
+  its error, never a zero value, so a caller that ignores the error still holds something honest.
+
+One interface is knowingly absent: reading a log buffer, which P2-10 needs. The buffer design
+lands in P2-06 and guessing its shape now would be worse than adding it later. Treat it as a
+contract change when it comes.
 
 ### P1-03 Test state transition rules
 `status: todo | owner: none | branch: none | depends: P1-01`
