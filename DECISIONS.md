@@ -359,6 +359,47 @@ captured verbatim into the log buffers.
 This boundary goes in LIMITATIONS.md plainly rather than being left to be inferred. Claiming
 redaction that is not enforceable would be the same category of error as a false green.
 
+## D-21 What the finished product is. Decided 2026-07-26.
+
+Recorded because it was previously only implied, and because it reverses a stated non-goal.
+
+**Canopy is an agent runtime.** In the finished product it holds provider API keys as named
+credentials and makes the API calls itself, in the same category as OpenCode and Claude Code. It
+does not spawn someone else's agent CLI and watch the output.
+
+An agent session is assigned a key by name, so naming an agent `claude` runs it against the key
+registered for Anthropic while another agent runs on a different key, provider or account. Because
+Canopy owns the request, per agent token and cost accounting is exact rather than inferred, and
+budget limits are enforceable rather than advisory.
+
+This reverses SPEC.md section 3, which said "not an agent itself, it drives existing agent CLIs".
+That bullet is now marked as reversed and applies to v0.1 only.
+
+**Nothing about v0.1 changes.** v0.1 spawns no agents, holds no keys and makes no API calls, per
+D-02 and the v0.1 exclusion list. The build order is unchanged: the truth engine first. The reason
+is stronger under this decision rather than weaker, since an agent runtime nobody can trust is a
+worse Claude Code, while one that ranks its own agents by whether their code actually passes is
+something no incumbent currently does.
+
+Three consequences that have to be designed for before any of it is built, listed here so they are
+not discovered late:
+
+1. **The trust model does not cover agent execution.** D-04 and the trust contract govern commands
+   *the user wrote* in a config file. An agent runtime executes commands a *model* generated, which
+   is a different threat model and needs its own permission design: per tool approval, path
+   restrictions, an allow and deny model for shell execution, and an audit trail. Shipping agent
+   execution under the current trust contract would claim a protection that does not exist, which
+   is the same class of error as a false green.
+2. **Key custody needs a real answer** before a single key is accepted. OS keychain, never
+   plaintext on disk, never in logs, never in a snapshot or an exported run report. See D-20 for
+   the boundary Canopy can and cannot enforce.
+3. **The positioning changes.** "Worktree manager independent, works beside your existing agent
+   tool" is a v0.1 property, not a permanent one. The finished product competes with Claude Squad
+   and Orca directly, rather than sitting alongside them. That is worth stating plainly, because
+   avoiding that fight was the stated reason for the observe first cut in the first place.
+
+Full write up in FEATURES.md section 10.
+
 ---
 
 ## Appendix: where the settled scope comes from
