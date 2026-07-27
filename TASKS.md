@@ -2999,6 +2999,17 @@ editing a file, without helping them.
 notes: the person doing the walkthrough should not be either of you, and should not be told which
 key does what. Watching where they stop is the entire value of the gate.
 
+**The next release is cut when this phase closes, and not before.** Walid's call on 2026-07-27:
+`v0.1.0-alpha.2` goes out once M-01, M-03 and M-06 are done. M-01 is specifically watching the
+system tools run against a real provider with somebody looking, and tagging before it means
+shipping a build whose central feature nobody has seen work. That is the same mistake as the two
+bugs found on 2026-07-26, both of which passed their tests and failed the first person who touched
+them.
+
+The prerelease label is automatic now. `v0.1.0-alpha.1` published as a stable release because
+`release: prerelease: auto` was missing, which is fixed, but that release is still mislabelled on
+GitHub until somebody ticks the box by hand. Homebrew waits for the first non-prerelease tag.
+
 ---
 
 # Phase A8: advanced orchestration and extensibility
