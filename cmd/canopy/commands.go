@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	agentpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -93,14 +94,23 @@ func runChat() error {
 	// view rather than being a special case the list has to know about. Called "main" because that
 	// is what somebody would call the one they are talking to.
 	keyName := resolver.DefaultKeyName()
-	if _, err := engine.AddAgent(context.Background(), session.Agent{
+	main, err := engine.AddAgent(context.Background(), session.Agent{
 		Name:    "main",
 		KeyName: keyName,
 		Model:   defaultModelFor(keyStore, keyName),
 		Dir:     dir,
 		Trust:   core.TrustStandard,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("starting the first agent: %w", err)
+	}
+
+	// Dispatch is attached after the first agent exists, because the confirmation has to be asked of
+	// the person watching that particular session, and the session id is what routes it there.
+	if registry, ok := engine.Tools(); ok {
+		if err := attachDispatch(engine, keyStore, registry, main.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: agents cannot be started from the chat: %v\n", err)
+		}
 	}
 
 	// Verification is what the review screen reads. Its absence is normal: outside a repository
@@ -186,6 +196,12 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 			return nil, err
 		}
 	}
+	// One task list per registry, which is one per agent worktree. Shared between two agents it
+	// would show each of them the other's plan, which is worse than showing neither.
+	if err := registry.Register(agentpkg.TodoTool(agentpkg.NewTodoList())); err != nil {
+		return nil, err
+	}
+
 	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
 	// the ones that can be governed per argument should be reached for before the one that cannot.
 	if err := registry.Register(tools.ShellTool(workspace)); err != nil {

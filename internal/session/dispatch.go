@@ -361,3 +361,155 @@ func (t *spawnTool) warnings(request Dispatch, estimate Estimate) []string {
 	}
 	return warnings
 }
+
+// MaxConcurrentAgents is how many agents may run at once.
+//
+// A number rather than no limit, because the failure mode without one is silent: eight agents each
+// running a test suite on a laptop makes every one of them slower, and the person watching sees a
+// tool that has become sluggish rather than a limit they chose to exceed.
+const MaxConcurrentAgents = 8
+
+// Estimate is what a fan out is expected to cost, from this project's own history.
+//
+// Deliberately crude, and the basis says so. Cost per turn is measured from turns that actually
+// happened here, and the number of turns an agent takes is a range wide enough to be honest about
+// not knowing. A narrow range computed from four samples would look like a measurement.
+func (e *Engine) Estimate(_ string, count int) Estimate {
+	const (
+		fewestTurns = 4
+		mostTurns   = 25
+	)
+
+	var costs []float64
+	e.mu.Lock()
+	for _, id := range e.order {
+		for _, turn := range e.sessions[id].Turns {
+			if turn.Usage.CostKnown && turn.Usage.CostUSD > 0 {
+				costs = append(costs, turn.Usage.CostUSD)
+			}
+		}
+	}
+	e.mu.Unlock()
+
+	if len(costs) < 3 {
+		// Three is not a statistical threshold, it is the point below which showing a number would be
+		// pretending. One expensive turn is not a rate.
+		return Estimate{Basis: fmt.Sprintf(
+			"there is not enough cost history here to estimate, %d priced turns so far", len(costs))}
+	}
+
+	sort.Float64s(costs)
+	median := costs[len(costs)/2]
+
+	return Estimate{
+		Low:     median * fewestTurns * float64(count),
+		High:    median * mostTurns * float64(count),
+		Samples: len(costs),
+		Basis: fmt.Sprintf("from %d priced turns here at a median of $%.3f, assuming %d to %d turns per agent",
+			len(costs), median, fewestTurns, mostTurns),
+	}
+}
+
+// Concurrency reports how many agents are running and how many may.
+func (e *Engine) Concurrency() (int, int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	running := 0
+	for _, agent := range e.agents {
+		if session, ok := e.sessions[agent.SessionID]; ok {
+			if _, active := session.Active(); active {
+				running++
+			}
+		}
+	}
+	return running, MaxConcurrentAgents
+}
+
+// Spawn creates the agents a confirmed dispatch asked for and hands each of them the task.
+//
+// Named from the task rather than numbered, so six rows in the agents view are distinguishable at a
+// glance. The suffix is what keeps them unique when the same task is fanned out.
+func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
+	running, limit := e.Concurrency()
+	if running+request.Count > limit {
+		return nil, fmt.Errorf("%d agents are already running and the limit is %d", running, limit)
+	}
+
+	template, err := e.dispatchTemplate(request.Profile)
+	if err != nil {
+		return nil, err
+	}
+
+	created := make([]Agent, 0, request.Count)
+	for i := range request.Count {
+		agent := template
+		agent.Name = dispatchName(request.Task, i, request.Count)
+		agent.Isolated = request.Isolated
+
+		started, err := e.AddAgent(ctx, agent)
+		if err != nil {
+			// Whatever was created stays created rather than being unwound. Half a fan out is
+			// something a person can look at and act on; silently removing agents that had already
+			// started work would destroy it to tidy up.
+			return created, fmt.Errorf("after creating %d of %d agents: %w", len(created), request.Count, err)
+		}
+		created = append(created, started)
+
+		if _, err := e.Send(started.SessionID, request.Task); err != nil {
+			return created, fmt.Errorf("%s was created but could not be given the task: %w", started.Name, err)
+		}
+	}
+	return created, nil
+}
+
+// dispatchTemplate is the credential, model and trust a spawned agent starts from.
+func (e *Engine) dispatchTemplate(profile string) (Agent, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// The trust level comes from an existing agent on the same profile where there is one, so a fan
+	// out inherits the posture somebody already chose rather than resetting to a default they would
+	// have to notice and change six times.
+	for _, agent := range e.agents {
+		if agent.KeyName == profile {
+			return Agent{KeyName: profile, Model: agent.Model, Trust: agent.Trust, Dir: agent.Dir}, nil
+		}
+	}
+	for _, agent := range e.agents {
+		return Agent{KeyName: profile, Model: agent.Model, Trust: agent.Trust, Dir: agent.Dir}, nil
+	}
+	return Agent{}, fmt.Errorf("there is no agent to copy a working directory from yet")
+}
+
+// dispatchName turns a task into something readable in a list of six.
+func dispatchName(task string, index, total int) string {
+	words := strings.Fields(strings.ToLower(task))
+
+	var parts []string
+	for _, word := range words {
+		trimmed := strings.Trim(word, ".,:;!?\"'()[]")
+		// Short words carry no meaning in a two word label and "the-auth" reads worse than "auth".
+		if len(trimmed) < 4 || len(parts) == 2 {
+			continue
+		}
+		clean := make([]rune, 0, len(trimmed))
+		for _, r := range trimmed {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				clean = append(clean, r)
+			}
+		}
+		if len(clean) >= 4 {
+			parts = append(parts, string(clean))
+		}
+	}
+
+	name := strings.Join(parts, "-")
+	if name == "" {
+		name = "agent"
+	}
+	if total > 1 {
+		name = fmt.Sprintf("%s-%d", name, index+1)
+	}
+	return name
+}

@@ -13,10 +13,15 @@ import (
 	"os"
 	"time"
 
+	"net/url"
+
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/verify"
 )
@@ -154,4 +159,102 @@ func loadProject(dir string) config.Project {
 		return config.Project{}
 	}
 	return project
+}
+
+// profiles lists the credentials an agent can be started on.
+//
+// Built here rather than in the engine because the engine has never known what a credential is: it
+// is handed a resolver and asks it for a client. Keeping that boundary means the dispatch tool can
+// be tested with a fake that has no keychain in it.
+type profiles struct {
+	store  *keys.Store
+	engine *session.Engine
+}
+
+func (p profiles) Profiles() []session.Profile {
+	stored, err := p.store.List()
+	if err != nil {
+		return nil
+	}
+
+	out := make([]session.Profile, 0, len(stored))
+	for _, meta := range stored {
+		id := pricing.ModelID{
+			Provider: meta.Ref.Provider,
+			Model:    defaultModelFor(p.store, meta.Ref.Name),
+			Host:     hostOf(meta.BaseURL),
+		}
+		_, priced := pricing.Apply(id, core.Usage{OutputTokens: 1})
+
+		out = append(out, session.Profile{
+			Name:  meta.Ref.Name,
+			Model: defaultModelFor(p.store, meta.Ref.Name),
+			// Apply returns a reason when it could not price the request, so an empty reason is the
+			// only thing that means a rate is actually known. Asking the table twice, once for the
+			// rate and once for the reason, would be two places to disagree.
+			Priced: priced == "",
+		})
+	}
+	return out
+}
+
+func (p profiles) Estimate(task string, count int) session.Estimate {
+	return p.engine.Estimate(task, count)
+}
+
+func (p profiles) Concurrency() (int, int) { return p.engine.Concurrency() }
+
+func (p profiles) Spawn(ctx context.Context, request session.Dispatch) ([]session.Agent, error) {
+	return p.engine.Spawn(ctx, request)
+}
+
+// hostOf is the host part of a base URL, which is what the pricing table keys an endpoint on.
+func hostOf(baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
+}
+
+// attachDispatch lets one agent start others from the conversation.
+//
+// Registered on the orchestrating agent only, and after its session exists, because the
+// confirmation has to be asked of the person watching that session. Spawned agents deliberately do
+// not get these tools: an agent that can spawn agents that can spawn agents is A8-01, which has its
+// own design and its own limits, and inheriting it by accident here would mean a fan out could
+// multiply without anybody having agreed to it.
+func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.ToolRegistry, sessionID string) error {
+	source := profiles{store: store, engine: engine}
+
+	confirm := func(c session.Confirmation) bool {
+		// Routed through the same approver the tool calls use, so there is one place a person answers
+		// questions rather than two that behave differently. The question text carries the count, the
+		// profile, the task, the estimate and the warnings, because every one of those is a thing
+		// that could be wrong and this is the last moment to catch it.
+		question := c.Question() + "\n" + c.Estimate.Summary()
+		for _, warning := range c.Warnings {
+			question += "\n" + warning
+		}
+		return engine.Approve(context.Background(), permission.Request{
+			SessionID: sessionID,
+			AgentID:   sessionID,
+			Tool:      "spawn_agents",
+			Kind:      core.ToolExecute,
+			Command:   question,
+		}, permission.Decision{
+			Outcome: permission.Ask,
+			Reason:  "starting agents spends money and creates worktrees",
+		})
+	}
+
+	for _, tool := range session.DispatchTools(source, confirm) {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	return nil
 }

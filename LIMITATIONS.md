@@ -65,19 +65,27 @@ be rediscovered by getting burned by it.
 
 ## Agents and isolation
 
-- Natural language dispatch, the exact feature the README demonstrates ("use 2 claude sonnet agents
-  for the auth refactor"), is not built yet (A5-08). Today an agent is created one at a time from
-  the interface; describing a task and having Canopy resolve names, counts, and worktrees from it
-  does not happen yet.
+- Natural language dispatch caps a single request at six agents, and the whole run at eight running
+  at once. Asking for more is refused rather than trimmed. The counts are blast radius limits rather
+  than measured capacity, so they may be wrong for your machine in either direction.
 
-- Cost preview and budget guardrails before spawning agents are not built yet (A5-09). Nothing
-  currently estimates a cost range before an agent starts, and nothing pauses an agent automatically
-  at a spending cap.
+- A spawned agent cannot spawn agents of its own. That is deliberate for 0.1: nested dispatch is
+  A8-01 and needs its own limits, and inheriting it by accident would let one confirmation multiply
+  into an unbounded fan out.
 
-- Steering, queuing guidance that arrives at the next turn boundary without stopping the current
-  one, is not built yet (A5-07). The only mechanism that exists today is interrupt: stopping a turn
-  outright and keeping the partial output. Injecting a mid-course correction right now means
-  throwing away whatever the agent was in the middle of working out.
+- The cost estimate shown before spawning is crude and says so. It is a median cost per turn from
+  turns that actually ran in this session, multiplied by a range of four to twenty five turns per
+  agent. Below three priced turns it shows no number at all. It does not know anything about the
+  task you are about to give, so a one line fix and a rewrite get the same range.
+
+- Spending caps count only what Canopy can price. A request on a profile with no known rate is
+  recorded as uncosted rather than as free, and the status line says the total is a floor, but the
+  cap itself cannot stop spending it cannot see.
+
+- Steering delivers guidance at the next turn boundary, which is not the same as immediately. An
+  agent that is thirty seconds into a long tool call gets your correction when that turn ends, not
+  when you type it. Interrupt is the mechanism for "stop now" and it discards nothing except the
+  rest of the turn.
 
 - Nothing enforces worktree confinement on the git tools yet. They run git with the workspace as the
   working directory, which is correct, but nothing stops a path argument from naming something git
@@ -222,13 +230,38 @@ be rediscovered by getting burned by it.
   on quit has been run as its own gate yet. Individual tasks exercise pieces of this already, but
   nothing has verified all of it together in one sweep (A9-01, A9-02).
 
+- The release workflow has never run. The GoReleaser config, the tag workflow and the makefile are
+  written and the config parses, but no tag has been pushed, so the first release is also the first
+  test of it.
+
+- The worktree monitor screen still reads from a fake project rather than from your repository. The
+  real verification state lives on the review screen. So do the `snapshot`, `watch` and `demo`
+  subcommands.
+
 - There is no run report yet: no single command that produces a markdown summary of an agent's
   changes, test results, and cost suitable for a pull request body (A8-08).
 
-- Diff review, a commit helper that drafts a message from the diff, and a view showing which files
-  several agents have all touched, are not in the interface yet (A7-01, A7-02, A7-03). Reviewing and
-  committing an agent's work today means using your own git tooling outside Canopy once the agent
-  has finished, even though the agent itself used Canopy's structured git tools to get there.
+- The commit helper stages everything in the worktree. There is no way to commit a subset, because
+  partial staging needs a way to select hunks and that is its own screen. A half version that
+  silently staged whole files would be worse, since the difference only shows up in what was
+  committed.
+
+- The conflict radar reports overlap, not conflict. It says which files more than one agent has
+  changed; it does not run a merge, so two agents editing different functions in one file appear as
+  an overlap even though git will merge them without complaint. It is a statement about right now,
+  not a prediction about the merge.
+
+- The commit message drafter never writes the subject line. It derives the conventional commit type
+  and scope from the files and leaves the sentence to you. An edit that adds no new file is drafted
+  as a chore rather than a fix, because a diff cannot tell a feature from a bug fix.
+
+- The project configuration file is JSON, so it cannot carry comments. That is a real loss for a
+  file people edit by hand, and the alternative was a dependency on a YAML or TOML parser for a file
+  with about eight fields in it.
+
+- The task list an agent keeps as it works is not shown in its own pane yet. The list exists, the
+  agent maintains it through a tool, and it appears in the transcript, but the dedicated display is
+  not wired (A4-10).
 
 ## Platform
 

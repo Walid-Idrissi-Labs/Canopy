@@ -776,3 +776,13 @@ func summarise(prompt string) string {
 	}
 	return cut + "..."
 }
+
+// Tools returns the engine's tool registry, and whether one is attached.
+//
+// Exposed so a caller can add tools after construction. The dispatch tools need a session id to
+// route their confirmation to, and that does not exist until the first agent does.
+func (e *Engine) Tools() (*core.ToolRegistry, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.tools, e.tools != nil
+}
