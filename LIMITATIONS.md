@@ -175,9 +175,6 @@ be rediscovered by getting burned by it.
   setting to turn it on and no screen for reviewing a plan before approving it. Nothing calls it
   yet, so it cannot currently be reached from the running program (A4-09).
 
-- A visible, per-agent task list, the thing that makes a long agent run and several agents at once
-  followable rather than four scrolling walls of text, is not built yet (A4-10).
-
 - The shell tool is not confined by construction the way the file tools are. It hands the permission
   model an opaque command string that can do anything your account can do; whatever stops it is the
   trust level, not a boundary the tool itself enforces. "Confined" is the trust level that denies

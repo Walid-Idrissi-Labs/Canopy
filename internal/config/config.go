@@ -60,6 +60,13 @@ type Project struct {
 	// Instructions are prepended to every agent's system prompt in this project.
 	Instructions string `json:"instructions"`
 
+	// Commands are reusable prompts invoked as /name, and Hooks run something when a state
+	// transition actually happens. Both are declared before the work that fills them in, so that
+	// two pairs building A8-04 and A8-05 at the same time never add adjacent lines to this struct.
+	// The types and their checks live in commands.go and hooks.go respectively.
+	Commands []Command `json:"commands"`
+	Hooks    []Hook    `json:"hooks"`
+
 	// Trust is the default trust level for agents here: read-only, confined, standard or broad.
 	// Empty means Canopy's own default rather than the most permissive one.
 	Trust string `json:"trust"`
@@ -146,7 +153,11 @@ func (p Project) Validate() error {
 	default:
 		return fmt.Errorf("%q is not a trust level: use read-only, confined, standard or broad", p.Trust)
 	}
-	return nil
+
+	if err := p.validateCommands(); err != nil {
+		return err
+	}
+	return p.validateHooks()
 }
 
 // insideWorktree refuses a path that would reach outside the project.

@@ -120,8 +120,39 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | Phase M complete, all six in review. Next is A9-01 and A9-02 | `feat/mvp-usability` | none |
-| Codex | A4/A5 permission and confinement review | `feat/permissions-and-confinement` | D-33 settled the contract; fixes still need the other agent's independent rerun |
+| Claude | Rerunning the A4-04, A4-06 and A5-11 findings, then A8-06 and A8-05 | `feat/hooks-and-mcp` | none |
+| Codex | A8-04 and A8-07, plus independent verification of A6-05 and A5-09 | `feat/commands-and-cost` | none |
+
+### 2.1 File boundary for this round
+
+Both pairs are building at the same time, so the two hot files get a single owner rather than a
+convention nobody can enforce. Recorded here because the last merge stopped compiling in exactly one
+of them.
+
+| Pair | Owns |
+|---|---|
+| Codex and Ali | `internal/tui/**`, including `app.go` and `help.go` |
+| Claude and Walid | `internal/agent`, `internal/tools`, `internal/config`, `cmd/canopy` |
+
+`internal/core` is frozen for both sides. Changing it needs a joint discussion first, which is the
+rule P1-01 already set and which matters more now that two branches are open at once.
+
+If one pair needs something on the other's side, ask rather than reaching across. A key or a screen
+Claude needs gets wired by Codex, in one commit, along with its row in the help table.
+
+Two conventions that follow from the merge on 2026-07-27:
+
+- **Merge `main` into your branch every day, not at the end.** `feat/permissions-and-confinement`
+  was cut from `0bc7308` and never took `main` again, which turned what would have been several
+  trivial merges into one manual resolution across four files.
+- **On a conflict in DECISIONS.md, OPEN-QUESTIONS.md, or a task block, keep both sides.** They are
+  additive prose and both changes are real. **In code, do not.** Keeping both sides of a conflict in
+  `app.go` is what left an `else if` with no closing brace and failed gofmt, build, vet and test at
+  once.
+
+The dependency rule for this round, by supervisor decision: a dependency counts as satisfied at
+`review`. Read literally, section 1.3 plus an unsigned PG-A7 makes every remaining task unclaimable,
+which is not what the rule is for.
 
 
 
@@ -140,9 +171,11 @@ commit helper and the conflict radar are on screen behind `r` from the agent lis
 A9-05 came forward because A6 needed project configuration and 0.1 needs packaging and an honest
 limitations document.
 
-What is left, in the order it is worth doing. **A9-01 and A9-02**, the robustness sweep, which is
-what makes it feel finished rather than assembled. Then **A8**, the extensibility layer, which is the
-ceiling rather than the floor. **Phase M is built** as of 2026-07-27 and is what made the program
+What is left, in the order it is worth doing. **Codex's three blocked findings first**, because two
+of them are permission bugs, the fixes are pushed, and nobody has independently rerun them. Then
+**A8**, the extensibility layer, which is the ceiling rather than the floor and which PG-A8 gates.
+Then **A9-01 and A9-02**, the robustness sweep, which is what makes it feel finished rather than
+assembled and which waits on that gate. **Phase M is built** as of 2026-07-27 and is what made the program
 usable by somebody who did not build it. **A4-07** is still blocked on Q-11, **A4-09** has an
 engine with no screen, and **A4-10** hands its remaining half to M-03.
 
