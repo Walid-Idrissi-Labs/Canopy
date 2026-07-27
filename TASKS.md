@@ -2975,14 +2975,29 @@ from a fresh snapshot, and every error says what to do next.
 notes: carries forward P4-08 to P4-12. P1-07 already meets the 80 column and selection criteria.
 
 ### A9-03 Themes and help
-`status: todo | owner: none | branch: none | depends: A9-02`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A9-02`
 
 Acceptance: at least two themes, both passing the no colour requirement. A keybinding overlay
 covering every binding.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: none
+notes: the second theme is monochrome, and it exists to prove the first one is not cheating. Every
+state carries a word and a single width glyph, and a palette with no colour in it is the test of
+that: if the interface is unreadable there, a meaning is being carried by a hue and it was already
+invisible to a colour blind reader and to anybody running with NO_COLOR set. The test asserts it for
+both palettes rather than for the default one.
+
+The overlay is generated from one table, so a binding that is added and not listed is a table nobody
+edited rather than a screen somebody forgot. Exhaustive on purpose: one that lists most of the keys
+teaches people it cannot be trusted, and then they stop opening it.
+
+Question mark opens it, and only when nothing is being typed into, or a message containing one could
+never be written. Any key closes it, because somebody who opened it by accident should not have to
+find the one key that closes it.
+
+Not done: choosing a theme. The palette is switchable and both are tested, but there is no setting
+and no key for it, so the monochrome one is currently reachable only from code.
 
 ### A9-04 Honest limitations document
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A9-01, A9-02`

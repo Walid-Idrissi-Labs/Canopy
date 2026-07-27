@@ -367,3 +367,36 @@ func TestTooSmallSaysSoRatherThanRenderingBadly(t *testing.T) {
 		t.Error("the table should not be drawn into a space it cannot fit")
 	}
 }
+
+// Help is reachable from everywhere and leaves on any key, because somebody who opened it by
+// accident should not have to find the one key that closes it.
+func TestHelpOpensFromAnyScreenAndLeavesOnAnyKey(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
+
+	// From chat, where a question mark belongs to the message box and must not open anything.
+	typed, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if typed.(tui.App).Screen() == "help" {
+		t.Error("a question mark typed into a message opened the help screen")
+	}
+	if !strings.Contains(typed.(tui.App).ChatInput(), "?") {
+		t.Errorf("the question mark did not reach the message box: %q", typed.(tui.App).ChatInput())
+	}
+
+	// From the agents view, where it is not being typed into anything.
+	agents, _ := app.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	opened, _ := agents.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if opened.(tui.App).Screen() != "help" {
+		t.Fatalf("? from the agents view landed on %q", opened.(tui.App).Screen())
+	}
+	if !strings.Contains(plain(opened.(tui.App).View()), "worktree monitor") {
+		t.Error("the overlay is on screen but does not list the bindings")
+	}
+
+	closed, _ := opened.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	if closed.(tui.App).Screen() != "agents" {
+		t.Errorf("leaving help landed on %q, want where it was opened from", closed.(tui.App).Screen())
+	}
+}

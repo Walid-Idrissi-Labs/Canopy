@@ -137,3 +137,53 @@ var current = New(Default)
 
 // Set replaces the active theme.
 func Set(p Palette) { current = New(p) }
+
+// Monochrome is the second theme, and the one that proves the first is not cheating.
+//
+// Every state in Canopy is identified by a word and a glyph, and colour is only ever an accelerant.
+// A palette with no colour in it at all is the test of that claim: if the interface is unreadable
+// here, then somewhere a meaning is being carried by a hue, and it was already invisible to a
+// colour blind reader and to anybody running with NO_COLOR set.
+//
+// It is also the honest choice on a terminal whose own palette fights the default one, which is
+// most of the sixteen colour ones.
+var Monochrome = Palette{
+	Name:      "mono",
+	Text:      lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Muted:     lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	Accent:    lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Success:   lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Danger:    lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Warning:   lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	Info:      lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	Border:    lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
+	Highlight: lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#222222"},
+
+	CodeKeyword: lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	CodeString:  lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	CodeComment: lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
+	CodeNumber:  lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+}
+
+// All returns every theme that ships.
+func All() []Palette { return []Palette{Default, Monochrome} }
+
+// ByName returns a theme by name, and whether it exists.
+func ByName(name string) (Palette, bool) {
+	for _, palette := range All() {
+		if palette.Name == name {
+			return palette, true
+		}
+	}
+	return Palette{}, false
+}
+
+// Names returns every theme name, for an error message that tells somebody what they could have
+// typed instead.
+func Names() []string {
+	names := make([]string, 0, len(All()))
+	for _, palette := range All() {
+		names = append(names, palette.Name)
+	}
+	return names
+}

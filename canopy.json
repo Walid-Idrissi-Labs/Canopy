@@ -1,0 +1,32 @@
+{
+  "base": "main",
+  "setup": "go mod download",
+  "setup_timeout": "5m",
+  "tests": [
+    {
+      "name": "build",
+      "command": "go build ./...",
+      "required": true,
+      "timeout": "5m"
+    },
+    {
+      "name": "unit",
+      "command": "go test -race -count=1 ./...",
+      "required": true,
+      "timeout": "15m"
+    },
+    {
+      "name": "vet",
+      "command": "go vet ./...",
+      "required": true,
+      "timeout": "5m"
+    },
+    {
+      "name": "lint",
+      "command": "golangci-lint run ./...",
+      "timeout": "5m"
+    }
+  ],
+  "instructions": "Comments explain why a choice was made, not what a line does. No em dashes anywhere, including commit messages. Match the density and idiom of the surrounding code. A test asserts a behaviour somebody would care about losing, and says in its failure message what the loss would be.",
+  "trust": "standard"
+}

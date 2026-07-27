@@ -21,6 +21,7 @@ const (
 	screenDashboard
 	screenReview
 	screenKeys
+	screenHelp
 )
 
 // splashDuration is how long the launch screen stays before the application appears.
@@ -48,6 +49,10 @@ type App struct {
 	// afterSplash is the screen to show once the launch screen clears, decided at construction so
 	// the splash never has to know anything about credentials.
 	afterSplash screen
+
+	// helpFrom is where the help overlay returns to. Separate from cameFrom, because help is
+	// reachable from the credential screen too and one field would send you to the wrong place.
+	helpFrom screen
 
 	// cameFrom is where escape goes back to. Recorded rather than assumed, because the credential
 	// screen is reachable from both chat and the dashboard, and always returning to one of them
@@ -142,6 +147,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// on it would mean landing somewhere you did not ask for.
 		if a.screen == screenSplash {
 			a.screen = a.afterSplash
+			return a, nil
+		}
+
+		// Help is answered before anything else, and any key leaves it. Somebody who opened it by
+		// accident should not have to find the one key that closes it.
+		if a.screen == screenHelp {
+			a.screen = a.helpFrom
+			return a, nil
+		}
+		// Not while something is being typed into, or a message containing a question mark could
+		// never be written.
+		if key.String() == "?" && !a.typing() {
+			a.helpFrom, a.screen = a.screen, screenHelp
 			return a, nil
 		}
 
@@ -319,6 +337,25 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	return false, a, nil
 }
 
+// typing reports whether a keystroke currently belongs to a text field.
+//
+// Asked in one place, because the answer is the same for every global key and getting it wrong
+// means a character somebody typed opened a screen instead.
+func (a App) typing() bool {
+	switch a.screen {
+	case screenChat:
+		return true
+	case screenAgents:
+		return a.agents.Naming()
+	case screenKeys:
+		return a.keys.Adding()
+	case screenReview:
+		return a.review.Pane() == "commit"
+	default:
+		return false
+	}
+}
+
 func (a App) View() string {
 	if a.screen == screenSplash {
 		return Splash(a.dim, "a terminal coding agent for running several at once")
@@ -328,9 +365,12 @@ func (a App) View() string {
 	}
 
 	switch a.screen {
+	case screenHelp:
+		return Frame(a.dim, "canopy", "keys", Help(a.dim), Keys(a.dim.Width, "any key", "back"))
+
 	case screenAgents:
 		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
-			"esc", "chat", "w", "worktrees", "r", "review")
+			"esc", "chat", "w", "worktrees", "r", "review", "?", "keys")
 		if a.agents.Naming() {
 			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
 		}
@@ -367,6 +407,8 @@ func (a App) Screen() string {
 		return "agents"
 	case screenReview:
 		return "review"
+	case screenHelp:
+		return "help"
 	case screenKeys:
 		return "keys"
 	default:
