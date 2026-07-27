@@ -120,7 +120,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A4-04, A4-06 and A5-11 rerun and back in review. Next is A8-06, then A8-05 | `verify/permission-rerun`, then `feat/hooks-and-mcp` | none |
+| Claude | A8-06 then A8-05. A9-01 and the A3-06 and A5-06 acceptance run alongside | `feat/hooks-and-mcp` | none |
 | Codex | A8-04 and A8-07, plus independent verification of A6-05 and A5-09 | `feat/commands-and-cost` | none |
 
 ### 2.1 File boundary for this round
@@ -3286,8 +3286,8 @@ Acceptance: a project command is available in that project only. Arguments are s
 notes: cheap once chat exists, and the first thing power users ask for.
 
 ### A8-05 Hooks and automations
-`status: todo | owner: none | branch: none | depends: A8-03, PG-A6`
-`scope: internal/agent/`
+`status: claimed | owner: Claude | branch: feat/hooks-and-mcp | depends: A8-03, PG-A6`
+`scope: internal/agent/hooks.go, internal/config/hooks.go, internal/session/`
 
 Deliverable: run something on an event. Tests green, auto commit. Tests red, notify. Agent idle,
 nudge.
@@ -3301,8 +3301,8 @@ notes: where verification and orchestration compound. The truth engine is what m
 trustworthy, so hooks firing on unverified state would poison both.
 
 ### A8-06 MCP client
-`status: todo | owner: none | branch: none | depends: A4-04`
-`scope: internal/tools/mcp/`
+`status: claimed | owner: Claude | branch: feat/hooks-and-mcp | depends: A4-04`
+`scope: internal/tools/mcp/, internal/config/mcp.go, internal/config/config.go`
 
 Deliverable: connect to MCP servers and expose their tools to agents.
 
