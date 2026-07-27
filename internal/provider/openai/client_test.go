@@ -447,21 +447,24 @@ func TestCancellingMidStreamIsNotAFailure(t *testing.T) {
 // instead is the watchdog itself, which is where the logic lives, at a millisecond.
 
 // The classification is what matters and it can be checked without waiting two minutes.
+//
+// Cancellation is observed through a channel rather than a bool set by the callback. The bool was
+// both a data race and a flake: the guard marks itself fired and releases its lock before calling
+// cancel, so a test that polls Fired and then reads the bool can look in the window between the two
+// and see a watchdog that fired without cancelling. Waiting for the callback removes the window,
+// because fired is already set by the time the callback runs.
 func TestAStallIsNotACancellation(t *testing.T) {
-	cancelled := false
-	guard := newStallGuard(func() { cancelled = true }, time.Millisecond)
+	cancelled := make(chan struct{})
+	guard := newStallGuard(func() { close(cancelled) }, time.Millisecond)
 
-	deadline := time.After(2 * time.Second)
-	for !guard.Fired() {
-		select {
-		case <-deadline:
-			t.Fatal("the watchdog never fired")
-		case <-time.After(time.Millisecond):
-		}
+	select {
+	case <-cancelled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the watchdog never cancelled the request, so the read would still be blocked")
 	}
-	if !cancelled {
-		t.Error("the watchdog fired without cancelling the request, so the read would still be " +
-			"blocked")
+	if !guard.Fired() {
+		t.Error("the request was cancelled but the guard does not report firing, so a stall would " +
+			"be reported as the user pressing escape")
 	}
 
 	// And once stopped it stays quiet, so a finished stream does not leave a timer running.
