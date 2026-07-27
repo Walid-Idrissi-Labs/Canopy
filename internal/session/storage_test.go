@@ -496,3 +496,97 @@ func TestACheckpointSurvivesARestart(t *testing.T) {
 		t.Errorf("the checkpoint was lost on restart: %q", loaded.Turns[0].Checkpoint)
 	}
 }
+
+// M-03. The task list is most of what makes a long run followable, and a long run is exactly the
+// kind you close the laptop on. Without persisting it the list would be complete right up until you
+// quit and then come back empty, which is worse than never showing one.
+func TestATaskListSurvivesARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+
+	first, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+	saved := core.Session{
+		ID:        "s1",
+		CreatedAt: storedAt,
+		UpdatedAt: storedAt,
+		Tasks: []core.Task{
+			{Text: "read the poller", State: core.TaskDone, Outcome: "it polls every two seconds"},
+			{Text: "add the flag", State: core.TaskInProgress},
+		},
+	}
+	if err := first.SaveSession(saved); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+
+	loaded, err := second.Load("s1")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Tasks) != 2 {
+		t.Fatalf("%d tasks survived, want 2: %+v", len(loaded.Tasks), loaded.Tasks)
+	}
+	if loaded.Tasks[0].Outcome != "it polls every two seconds" {
+		t.Errorf("the outcome did not survive: %q", loaded.Tasks[0].Outcome)
+	}
+	if loaded.Tasks[1].State != core.TaskInProgress {
+		t.Errorf("the state did not survive: %q", loaded.Tasks[1].State)
+	}
+}
+
+// A session written before the task list existed has no value in that column, and opening it must
+// not fail. The migration gives it a default; this is the test that says so.
+func TestASessionWithNoTasksLoadsCleanly(t *testing.T) {
+	storage := testStorage(t)
+
+	if err := storage.SaveSession(core.Session{
+		ID: "s1", CreatedAt: storedAt, UpdatedAt: storedAt,
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+
+	loaded, err := storage.Load("s1")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Tasks) != 0 {
+		t.Errorf("a session with no tasks came back with %+v", loaded.Tasks)
+	}
+}
+
+// A task list is a display. Refusing to open a conversation because its progress summary is
+// malformed would trade the conversation for the summary of it.
+func TestAMalformedTaskListDoesNotBlockTheConversation(t *testing.T) {
+	storage := testStorage(t)
+
+	if err := storage.SaveSession(core.Session{
+		ID: "s1", CreatedAt: storedAt, UpdatedAt: storedAt,
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if _, err := storage.db.Exec(`UPDATE sessions SET tasks = ? WHERE id = ?`,
+		"{not json at all", "s1"); err != nil {
+		t.Fatalf("corrupting the column: %v", err)
+	}
+
+	loaded, err := storage.Load("s1")
+	if err != nil {
+		t.Fatalf("a conversation would not open because its task list was malformed: %v", err)
+	}
+	if loaded.ID != "s1" {
+		t.Errorf("the conversation loaded as %q", loaded.ID)
+	}
+	if len(loaded.Tasks) != 0 {
+		t.Errorf("a malformed list came back as %+v", loaded.Tasks)
+	}
+}

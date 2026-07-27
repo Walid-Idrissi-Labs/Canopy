@@ -69,6 +69,11 @@ func (s TodoState) Glyph() string {
 type Todo struct {
 	Text  string
 	State TodoState
+
+	// Outcome is what actually happened, recorded when the item closes. See core.Task.Outcome for
+	// why it exists: without it every finished item says "done", which is a progress bar rather
+	// than a report.
+	Outcome string
 }
 
 // TodoList is an agent's task list.
@@ -108,6 +113,13 @@ func (l *TodoList) Replace(items []Todo) error {
 		if item.State == TodoInProgress {
 			inProgress++
 		}
+		if item.Outcome != "" && item.State != TodoDone {
+			// An outcome on an item that has not finished is a claim about something that has not
+			// happened yet, which is the same class of untruth as a test result reported for code
+			// that was never run.
+			return fmt.Errorf("the item at position %d records an outcome but is %s, "+
+				"so mark it done or drop the outcome", i+1, item.State)
+		}
 	}
 	if inProgress > 1 {
 		return fmt.Errorf("%d items are in progress at once, which makes the list a record of "+
@@ -118,6 +130,23 @@ func (l *TodoList) Replace(items []Todo) error {
 	l.items = append([]Todo(nil), items...)
 	l.mu.Unlock()
 	return nil
+}
+
+// Tasks is the list in the shape the rest of the program uses.
+//
+// The conversion exists so nothing outside this package has to know about TodoState, and so the
+// screen can render a task list without importing the machinery that produces one.
+func (l *TodoList) Tasks() []core.Task {
+	items := l.Items()
+	out := make([]core.Task, 0, len(items))
+	for _, item := range items {
+		out = append(out, core.Task{
+			Text:    item.Text,
+			State:   core.TaskState(item.State),
+			Outcome: item.Outcome,
+		})
+	}
+	return out
 }
 
 // Summary is the one line form, for a row in a list of agents.
@@ -165,6 +194,13 @@ type todoTool struct{ list *TodoList }
 
 func (t *todoTool) Name() string { return "set_tasks" }
 
+// Tasks makes the tool itself a core.TaskReporter.
+//
+// The registry holds tools, not the things behind them, so a Tasks method on the list alone leaves
+// the engine looking at a registry full of tools none of which reports a task list. That is exactly
+// what happened, and the list was maintained correctly and displayed nowhere.
+func (t *todoTool) Tasks() []core.Task { return t.list.Tasks() }
+
 // Kind is read, which looks wrong for a tool that writes something and is not.
 //
 // The permission model asks about reaching the world: files, commands, the network. This writes a
@@ -204,8 +240,9 @@ func (t *todoTool) Schema() json.RawMessage {
 func (t *todoTool) Run(_ context.Context, input json.RawMessage) (core.ToolResult, error) {
 	var args struct {
 		Tasks []struct {
-			Text  string `json:"text"`
-			State string `json:"state"`
+			Text    string `json:"text"`
+			State   string `json:"state"`
+			Outcome string `json:"outcome"`
 		} `json:"tasks"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
@@ -214,7 +251,11 @@ func (t *todoTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 
 	items := make([]Todo, 0, len(args.Tasks))
 	for _, task := range args.Tasks {
-		items = append(items, Todo{Text: strings.TrimSpace(task.Text), State: TodoState(task.State)})
+		items = append(items, Todo{
+			Text:    strings.TrimSpace(task.Text),
+			State:   TodoState(task.State),
+			Outcome: strings.TrimSpace(task.Outcome),
+		})
 	}
 	if err := t.list.Replace(items); err != nil {
 		return core.ToolResult{Content: err.Error(), IsError: true}, nil

@@ -453,6 +453,11 @@ func (m Model) detail(status session.AgentStatus) string {
 	switch {
 	case status.Waiting != "":
 		return "waiting: " + status.Waiting
+	case len(status.Tasks) > 0:
+		// Ahead of the title, because a task list is what the agent says it is doing now and a
+		// title is what the conversation was about when it started. With eight agents running, the
+		// first is the question and the second is trivia.
+		return truncate(core.TaskSummary(status.Tasks), m.width-40)
 	case status.Title != "":
 		return truncate(status.Title, m.width-40)
 	case status.Turns == 0:

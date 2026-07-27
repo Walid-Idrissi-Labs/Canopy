@@ -578,6 +578,14 @@ func (e *Engine) run(
 		state = core.TurnFailed
 		reason = errors.New(outcome.LimitHit)
 	}
+	// A stop reason that maps to failure but carries no explanation leaves the user with "the turn
+	// failed without an explanation", which is true and useless. Naming the reason at least says
+	// which vocabulary to go and look it up in, and that string comes from the provider adapter
+	// rather than from here, so it is the provider's own word for what happened.
+	if state == core.TurnFailed && reason == nil {
+		reason = fmt.Errorf("the provider ended the turn with %q, which is not a way a turn "+
+			"finishes successfully", outcome.Stop)
+	}
 
 	e.finish(sessionID, turnID, state, reason, usage, client.Name())
 }
@@ -643,6 +651,42 @@ func (o *turnObserver) ToolFinished(_ core.ToolCall, result core.ToolResult) {
 		t.ToolResults = append(t.ToolResults, result)
 		t.State = core.TurnStreaming
 	})
+	o.engine.refreshTasks(o.sessionID)
+}
+
+// refreshTasks copies the agent's task list onto the session.
+//
+// Pulled after every tool call rather than pushed by the tool that owns the list. A push would mean
+// the task tool holding a reference to the session it was given to, which is backwards: tools are
+// handed to sessions, not the other way round, and the tool that knew about its session is the one
+// that would break the moment an agent moved into a worktree with its own registry.
+//
+// Reading the registry for this session rather than a single global one is what keeps two agents'
+// lists apart. Sharing one would show each of them the other's plan, which is worse than showing
+// neither.
+func (e *Engine) refreshTasks(sessionID string) {
+	e.mu.Lock()
+	tools, _ := e.toolsForLocked(sessionID)
+	if tools == nil {
+		e.mu.Unlock()
+		return
+	}
+	tasks := tools.Tasks()
+
+	s, ok := e.sessions[sessionID]
+	if !ok || core.TasksEqual(s.Tasks, tasks) {
+		// Unchanged, which is the overwhelmingly common case: almost no tool call touches the task
+		// list, and publishing anyway would redraw the whole screen on every file read.
+		e.mu.Unlock()
+		return
+	}
+	s.Tasks = tasks
+	s.UpdatedAt = e.events.Now()
+	out := copySession(*s)
+	e.mu.Unlock()
+
+	e.persistSession(out)
+	e.events.Publish(core.Event{Kind: core.EventSessionsChanged, SessionID: sessionID})
 }
 
 func (o *turnObserver) StepFinished(usage core.Usage) {

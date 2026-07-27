@@ -201,6 +201,10 @@ type AgentStatus struct {
 
 	// Waiting is what it is blocked on, when it is blocked on a person.
 	Waiting string
+
+	// Tasks is the list the agent is keeping, if it keeps one. Carried on the status rather than
+	// fetched separately by the screen, so one read of the engine answers everything a row needs.
+	Tasks []core.Task
 }
 
 // AgentStatuses summarises every agent, the ones needing attention first.
@@ -220,6 +224,7 @@ func (e *Engine) AgentStatuses() []AgentStatus {
 			status.Turns = len(session.Turns)
 			status.Usage = session.Usage()
 			status.Title = session.Title
+			status.Tasks = session.Tasks
 		}
 		if prompt, waiting := e.Pending(agent.SessionID); waiting {
 			// Waiting on a person is its own state rather than a flavour of working, because an

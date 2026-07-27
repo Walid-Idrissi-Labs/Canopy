@@ -120,8 +120,10 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | Phase M. M-02, M-04 and M-05 in review. M-01, M-03 and M-06 next | `feat/mvp-usability` | none |
+| Claude | Phase M complete, all six in review. Next is A9-01 and A9-02 | `feat/mvp-usability` | none |
 | Codex | A4/A5 permission and confinement review | `feat/permissions-and-confinement` | D-33 settled the contract; fixes still need the other agent's independent rerun |
+
+
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
 git, not a worktree monitor. Phases 0 and 1 are unchanged and still done. Old phases 2 to 6 are
@@ -138,10 +140,10 @@ commit helper and the conflict radar are on screen behind `r` from the agent lis
 A9-05 came forward because A6 needed project configuration and 0.1 needs packaging and an honest
 limitations document.
 
-What is left, in the order it is worth doing. **Phase M**, added 2026-07-27, which is what makes the
-program usable by somebody who did not build it. Then **A9-01 and A9-02**, the robustness sweep,
-which is what makes it feel finished rather than assembled. Then **A8**, the extensibility layer,
-which is the ceiling rather than the floor. **A4-07** is still blocked on Q-11, **A4-09** has an
+What is left, in the order it is worth doing. **A9-01 and A9-02**, the robustness sweep, which is
+what makes it feel finished rather than assembled. Then **A8**, the extensibility layer, which is the
+ceiling rather than the floor. **Phase M is built** as of 2026-07-27 and is what made the program
+usable by somebody who did not build it. **A4-07** is still blocked on Q-11, **A4-09** has an
 engine with no screen, and **A4-10** hands its remaining half to M-03.
 
 **Nothing in this file is `done`.** There are 69 tasks in `review`, 25 in `todo`, three in
@@ -2884,7 +2886,7 @@ The bar is deliberately not polish. It is that nothing in the first ten minutes 
 source to get past.
 
 ### M-01 System tools, proven from the chat
-`status: todo | owner: none | branch: none | depends: A4-02, A4-03, A4-06`
+`status: review | owner: Claude | branch: feat/mvp-usability | depends: A4-02, A4-03, A4-06`
 `scope: internal/tools/, internal/tui/chat/`
 
 Deliverable: reading, writing and running things works from a real conversation, and is followable
@@ -2895,16 +2897,28 @@ command, and each call is visible in the transcript with its arguments, its outc
 took. A refused call leaves the turn recoverable rather than ending it. A tool that fails returns
 text the model can act on. Output too large to show is truncated with the amount hidden stated.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: the tools themselves are built. `read_file`, `edit_file`, `write_file`, `glob`, `grep`, the
-git tools, the web tools and the shell are all registered in `toolsFor`, behind the permission
-model, with the shell deliberately last. What has never happened is a real model calling them in a
-real conversation with somebody watching. That is the task. Whatever is missing is discovered by
-doing it rather than guessed at now.
+notes: the tools themselves were already built. What had never happened is a real model calling
+them in a real conversation with somebody watching.
 
-The visible half is the part worth building carefully. A tool call that shows as a spinner and then
-nothing teaches people to distrust the program, and they are right to.
+**It does now, and it was worth doing.** `cmd/canopy/live_test.go` drives the whole stack against a
+stored credential, skipped unless `CANOPY_LIVE_KEY` is set so it never runs in CI. Against
+nvidia/nemotron-3-ultra-550b-a55b the model read a seeded file, decided on its own to write a
+corrected one, and the file was there afterwards. Two tool calls, both rendered.
+
+The visible half was the real work, and it was missing entirely: a tool call rendered as `[read_file]`
+and nothing else. It now shows which file or command, whether it worked, and how long it took.
+Arguments are summarised generically rather than from a table of known tools, so anything added
+later, MCP included, gets a label instead of a bare name. Results are paired to calls by ID rather
+than by position, since they come back in whatever order the tools finish. Output is summarised, not
+printed: a thousand line file in the conversation buries the reply underneath it.
+
+Two things came out of running it that no fake would ever have produced. Sub-millisecond calls
+rendered as "0ms", which reads as a measurement that failed rather than a call that was fast, and
+most calls are that fast. And a turn that ends on a stop reason mapping to failure with nothing
+attached showed "the turn failed without an explanation", which is true and useless; it now names
+the provider's own stop reason.
 
 ### M-02 Input history
 `status: review | owner: Claude | branch: feat/mvp-usability | depends: A3-02`
@@ -2948,7 +2962,7 @@ of scrolling, and the wheel reaching screens other than the one in front. The la
 missing test rather than a bug, which is the point of running them.
 
 ### M-03 Task list, detailed and on screen
-`status: todo | owner: none | branch: none | depends: A4-10`
+`status: review | owner: Claude | branch: feat/mvp-usability | depends: A4-10`
 `scope: internal/agent/todo.go, internal/tui/`
 
 Deliverable: a task list the agent maintains as it works, detailed enough to follow a long run
@@ -2959,10 +2973,24 @@ the turn it changed. It survives quitting and reopening. A list longer than the 
 than pushing the conversation off screen. A completed item can carry what actually happened, not
 only that it is done.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: takes over the remaining half of A4-10, which built the engine and stopped at the screen.
 A4-10 stays partial and points here rather than being reopened.
+
+The list reaches the screen on the session snapshot, which is the same path everything else takes,
+and persists in one JSON column added by migration 5. The engine pulls it from the tool registry
+after each tool call rather than the tool pushing it, because a tool holding a reference to its
+session is the thing that breaks the moment an agent moves into a worktree with its own registry.
+Reading the registry for that session is also what keeps two agents' lists apart.
+
+Writing the plumbing test found the wiring bug it was written to find: `Tasks()` was on the list and
+the registry holds tools, so the engine saw a registry full of tools none of which reported a task
+list. The list was maintained correctly and displayed nowhere.
+
+A list longer than six items collapses to where the work is rather than being cut off at an
+arbitrary item, since the end of a list is where the unfinished work lives. The pane is measured out
+of the conversation's height, so it can never push the message box off the bottom.
 
 The one genuinely better idea than the obvious version: an item records its outcome when it closes,
 so a finished list reads as an account of what happened rather than a list of intentions that all
@@ -3032,7 +3060,7 @@ Below twenty five columns the art is dropped rather than clipped. Half a tree lo
 is broken; the wordmark alone looks deliberate.
 
 ### M-06 The first ten minutes
-`status: todo | owner: none | branch: none | depends: M-01, M-02, M-04, A9-03`
+`status: review | owner: Claude | branch: feat/mvp-usability | depends: M-01, M-02, M-04, A9-03`
 `scope: internal/tui/`
 
 Deliverable: the interface explains itself well enough that a new user gets to a working agent
@@ -3044,18 +3072,44 @@ says what to press to leave it. Starting with no credential says what to do inst
 empty list. Every error names what to do next. Nothing is reachable only by a key that appears in
 no footer and no help screen.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: the acceptance criterion is a person, not a checklist, and it is meant to be run on someone
 who was not in the room while it was built. Every one of the three bugs found on 2026-07-26 passed
 its tests and failed the first person who touched it.
 
-**One of these landed early, on 2026-07-27, because M-04 could not be finished around it.** `?` did
-not open the help overlay from chat: the check that stops a keystroke being stolen out of a message
-treated the chat screen as always being typed into, so the one key that lists every other key could
-not be pressed from the screen the program opens on. It now opens help when the message box is
-empty, since with nothing typed there is no message for it to be part of, and the footer says which
-of the two meanings is currently in effect. The rest of this task is untouched.
+**Audited on 2026-07-27 by reading every screen against the question above, then fixed.** In order
+of how badly each one would stop somebody.
+
+**The worktree monitor was showing invented data.** `runChat` handed the dashboard `fake.New()`,
+which seeds four worktrees called feat-login, fix-cache, refactor-api and spike-search, rooted at
+"/repo", and a goroutine edited one of them every six seconds to make the screen look alive. It was
+the right call when there was no real engine to read from and it stopped being the right call the
+moment there was one. Nothing on screen said any of it was invented. For a program whose whole
+argument is that it will not show a state the evidence does not support, a screen of fabricated
+evidence is the worst available bug. It now reads the same verifier the review screen reads, so the
+two cannot disagree, and outside a repository it says so instead of telling you to run
+`git worktree add` in a directory that is not one.
+
+**`q` on the worktree monitor quit the program outright**, with no confirmation, from a screen two
+keystrokes away from an hour long conversation. It was undocumented in both the footer and the help
+overlay, and it contradicted the agents screen where `q` means back. Intercepted at the application
+rather than changed at the far end, because the standalone monitor's `q` is correct for what it is.
+
+**The agents footer said `? keys`**, which reads as credentials and opens the help overlay. The key
+that opens credentials from there is `K` and it was in no footer at all.
+
+**`?` did not open the help overlay from chat**, because the check that stops a keystroke being
+stolen out of a message treated chat as always being typed into. So the one key that lists every
+other key could not be pressed from the screen the program opens on. It now opens help when the
+message box is empty, and the footer says which of the two meanings is in effect.
+
+**The help overlay was not exhaustive and did not fit.** It was missing `1`/`2`/`3` and `tab` on the
+agents screen, `K` on two screens, and six of the eight keys the credential screen handles, while
+claiming `ctrl+c` worked everywhere when two screens ignore it. It was also taller than the terminal
+and had been since it was written, so the bindings past the fold were unreachable. It now lays out
+in two columns where they fit, measured rather than assumed, falls back to one where they do not,
+and scrolls with `j` and `k` while any other key still closes it.
 
 Scoped by that criterion rather than by taste, or this becomes the task that is never finished. It
 is pre-alpha. The bar is that nothing blocks you, not that everything is beautiful.
@@ -3379,3 +3433,4 @@ status or verification updates.
 | 2026-07-26 | Claude | Re-planned. Canopy is an agent runtime, so phases 2 to 6 became A1 to A7. Phases 0 and 1 untouched. Surviving tasks keep their old IDs in their notes, and a retired tasks table records where each one went. |
 | 2026-07-26 | Claude | Expanded to A1 to A9 after a full spec and features review. Added persistence, compaction, fallback chains, session forking, plan mode, checkpoints, web tools, sub agents, handoff, MCP, hooks, slash commands, skills, diff review, commit helper, conflict radar, cost preview, ready-to-review queue. Restored the environment setup contract as A5-04, which the previous re-plan dropped in error. |
 | 2026-07-27 | Claude | Added phase M between A7 and A8, from Walid using the built program rather than its tests. Six tasks: system tools proven from the chat, input history, a detailed task list on screen, a new conversation key, a better logo, and the first ten minutes. Runs before A8. A4-10 hands its remaining half to M-03 and stays partial. Nothing renumbered. |
+| 2026-07-27 | Claude | Phase M built. Added `internal/tui/brand` for the mark, `internal/core/task.go` for the shared task shape, `cmd/canopy/worktrees.go` for a real worktree store, and `cmd/canopy/live_test.go` for the opt-in provider test. Storage schema went to version 5 for the task column. |

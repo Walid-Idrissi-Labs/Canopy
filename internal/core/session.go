@@ -280,6 +280,13 @@ type Session struct {
 
 	Turns []Turn
 
+	// Tasks is the list the agent maintains as it works, if it maintains one.
+	//
+	// On the session rather than held beside it, so it reaches the screen through the same snapshot
+	// as everything else and survives a restart through the same storage. A second channel for the
+	// one summary a person is actually reading would be a second thing to keep in step.
+	Tasks []Task
+
 	// ForkedFrom, ForkedAt and ForkedWhen record where this conversation came from, empty on a
 	// session that was started rather than forked.
 	//

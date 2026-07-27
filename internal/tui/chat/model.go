@@ -529,10 +529,17 @@ func (m Model) transcript() []string {
 	return lines
 }
 
-// transcriptHeight is how many lines are left for the conversation once the input box has taken
-// what it needs.
+// transcriptHeight is how many lines are left for the conversation once the input box and the task
+// pane have taken what they need.
+//
+// The task pane is measured rather than assumed, so a list that grows does not push the message box
+// off the bottom of the terminal. That is the failure this arithmetic exists to prevent, and it is
+// invisible until somebody with a seven item list cannot see what they are typing.
 func (m Model) transcriptHeight() int {
 	h := m.height - m.input.Height() - 1 // one line for the status row
+	if pane := m.taskPane(); pane != "" {
+		h -= strings.Count(pane, "\n") + 1
+	}
 	if h < 1 {
 		return 1
 	}
@@ -569,10 +576,66 @@ func (m Model) Body() string {
 		b.WriteString(strings.Repeat("\n", pad))
 	}
 
+	if tasks := m.taskPane(); tasks != "" {
+		b.WriteString("\n")
+		b.WriteString(tasks)
+	}
 	b.WriteString("\n")
 	b.WriteString(m.statusRow(len(lines) - end))
 	b.WriteString("\n")
 	b.WriteString(m.inputBox())
+	return b.String()
+}
+
+// maxTaskLines is how tall the task pane may grow before it summarises instead.
+//
+// Six, which covers most lists. Beyond that the pane would be competing with the conversation for
+// the screen, and the conversation wins: somebody who wants the whole list can read it, and
+// somebody watching an agent work needs to see what it is saying.
+const maxTaskLines = 6
+
+// taskPane is the agent's task list, drawn between the conversation and the message box.
+//
+// Between them rather than in the transcript, because the transcript scrolls and this must not. A
+// task list that scrolls out of view is a task list you have to go looking for, and the entire
+// value of it is answering "where is this up to" without going looking for anything.
+func (m Model) taskPane() string {
+	tasks := m.session.Tasks
+	if len(tasks) == 0 {
+		return ""
+	}
+	t := theme.Current()
+
+	// A long list collapses to what is happening now plus the counts, rather than being cut off at
+	// an arbitrary item. Truncating would hide the end of the list, and the end is where the
+	// unfinished work is.
+	if len(tasks) > maxTaskLines {
+		return t.Info.Render("  tasks  ") + t.Body.Render(core.TaskSummary(tasks))
+	}
+
+	var b strings.Builder
+	for i, task := range tasks {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+
+		style := t.Muted
+		switch task.State {
+		case core.TaskInProgress:
+			// The one that is happening now is the line the eye should land on.
+			style = t.Body
+		case core.TaskDone:
+			style = t.Muted
+		}
+
+		line := "  [" + task.State.Glyph() + "] " + task.Text
+		if task.Outcome != "" {
+			// The outcome is what makes a finished list worth reading, so it is on the same line as
+			// the item rather than folded away behind a key nobody presses.
+			line += ", " + task.Outcome
+		}
+		b.WriteString(style.Render(truncate(line, m.width-2)))
+	}
 	return b.String()
 }
 

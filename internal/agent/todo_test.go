@@ -167,3 +167,42 @@ func TestTheListIsSafeToReadWhileTheAgentWrites(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+// M-03. An outcome on an item that has not finished is a claim about something that has not
+// happened yet, which is the same class of untruth as a test result reported for code never run.
+func TestAnOutcomeOnAnUnfinishedItemIsRefused(t *testing.T) {
+	list := NewTodoList()
+
+	err := list.Replace([]Todo{
+		{Text: "still going", State: TodoInProgress, Outcome: "found the bug"},
+	})
+	if err == nil {
+		t.Fatal("an in-progress item was allowed to record what it found")
+	}
+	if !strings.Contains(err.Error(), "outcome") {
+		t.Errorf("the refusal does not say what is wrong: %v", err)
+	}
+}
+
+// The outcome has to survive the trip into the shape the rest of the program reads, or the field
+// exists in the tool and nowhere a person can see it.
+func TestTheOutcomeReachesTheSharedShape(t *testing.T) {
+	list := NewTodoList()
+	if err := list.Replace([]Todo{
+		{Text: "read the poller", State: TodoDone, Outcome: "it polls every two seconds"},
+		{Text: "add the flag", State: TodoInProgress},
+	}); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+
+	tasks := list.Tasks()
+	if len(tasks) != 2 {
+		t.Fatalf("%d tasks, want 2", len(tasks))
+	}
+	if tasks[0].Outcome != "it polls every two seconds" {
+		t.Errorf("the outcome did not survive: %q", tasks[0].Outcome)
+	}
+	if tasks[0].State != core.TaskDone || tasks[1].State != core.TaskInProgress {
+		t.Errorf("the states did not survive: %+v", tasks)
+	}
+}
