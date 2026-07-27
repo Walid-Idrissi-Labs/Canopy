@@ -3235,8 +3235,8 @@ command at execution time out of values Canopy does not control, and the point o
 committed is that a reviewer can read it and know what it will do.
 
 ### A8-04 Custom slash commands
-`status: todo | owner: none | branch: none | depends: A8-03`
-`scope: internal/agent/, internal/tui/`
+`status: claimed | owner: Codex | branch: feat/commands-and-cost | depends: A8-03`
+`scope: internal/config/commands.go, internal/tui/, internal/agent/ only if expansion cannot stay at the input boundary`
 
 Deliverable: user defined reusable prompts as `/commands`, per project and globally.
 
@@ -3245,6 +3245,13 @@ Acceptance: a project command is available in that project only. Arguments are s
 `verify: claude [ ]   codex [ ]`
 
 notes: cheap once chat exists, and the first thing power users ask for.
+
+**Claimed 2026-07-27 by Codex.** The round file boundary is collision control, not permission to
+ship half a feature. Command discovery, completion, argument expansion and visible invocation belong
+at the chat input boundary. Project/global precedence and substitution rules belong beside the
+`config.Command` type. If the expanded prompt can enter the existing send path without changing
+`internal/agent`, that package stays untouched; otherwise the smallest explicit seam will be
+coordinated and documented.
 
 ### A8-05 Hooks and automations
 `status: todo | owner: none | branch: none | depends: A8-03, PG-A6`
@@ -3277,8 +3284,8 @@ so the multi agent core is built on tools we control. The permission point is no
 third party tool is exactly the thing that most needs the same scrutiny as our own.
 
 ### A8-07 Cost versus outcome
-`status: todo | owner: none | branch: none | depends: PG-A6`
-`scope: internal/tui/`
+`status: claimed | owner: Codex | branch: feat/commands-and-cost | depends: PG-A6`
+`scope: internal/tui/, read-only session and verification interfaces; internal/core remains frozen`
 
 Deliverable: did the more expensive model actually pass more tests, on this project's own history.
 
@@ -3289,6 +3296,11 @@ data.
 
 notes: only meaningful because A2 makes cost exact and A6 makes outcome exact. Almost nothing else
 can answer this honestly.
+
+**Claimed 2026-07-27 by Codex.** This view will consume the existing exact-cost and current-evidence
+contracts rather than add a second scoring model. Unknown cost, stale evidence and undersized
+samples remain named states, not zeroes. Any missing read interface will be added at the narrowest
+existing owner rather than widening `internal/core`.
 
 ### A8-08 Run report export
 `status: todo | owner: none | branch: none | depends: PG-A6`
