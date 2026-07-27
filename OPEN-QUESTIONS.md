@@ -226,19 +226,25 @@ common case of checking a library version. It cannot discover a page it has neve
 
 ---
 
-## Q-12 Nothing enforces worktree confinement on the git tools
+## Q-12 Direct and isolated workspace boundaries
 
-The git tools run git with the workspace as the working directory, which is the right directory.
-Nothing stops a path argument from naming something git tracks elsewhere through a submodule, and
-nothing stops an agent operating on the primary checkout if that is where it was started.
+Originally the Git tools only ran with the workspace as their working directory. Nothing stopped a
+path argument from naming something outside it, and the documents disagreed about whether an agent
+could operate on the primary checkout when that was where Canopy started.
 
-**Decided in the meantime:** left as is and recorded rather than claimed, because A5-03 is where
-worktrees become real and the confinement has something to be confined to. Claiming it now would be
-worse than the gap.
+**Original interim decision:** leave it recorded rather than claim confinement before A5-03 made
+worktrees real.
 
-**What it means today:** an agent started in the primary checkout can commit to the primary
-checkout. That is what somebody running `canopy` in their own repository is asking for, so it is not
-wrong yet, but it stops being right the moment several agents exist.
+**What it means today:** a direct agent started in the primary checkout can commit there when trust
+permits it. Concurrent editing and fan-out require isolated worktrees. The current creation screen
+still needs the explicit direct-mode warning required by D-33.
+
+**Resolved 2026-07-27 by D-33:** structured path arguments exposed by `git_add` and `git_diff` pass
+through `Workspace.Resolve` on `feat/permissions-and-confinement`. A direct agent deliberately uses
+the repository where Canopy started, which may be the primary checkout. An isolated agent's
+structured tools are rooted at its Canopy-owned worktree. Worktree lifecycle code never manages the
+primary checkout or an unowned worktree. Shell remains explicitly outside this guarantee because
+Canopy does not sandbox child processes.
 
 ---
 
@@ -310,3 +316,11 @@ accident, because isolation needed the same lookup.
 **Worth doing in review:** a deliberate sweep for the same shape elsewhere, particularly anything on
 `Agent` or in `internal/permission`. A wrong answer there is a permission that was believed to be in
 force and was not, which is the worst category of quiet failure in this codebase.
+
+**Codex review 2026-07-27:** the sweep found three more instances. `git_branch` could create and
+switch branches at read-only trust because its mutating field was not represented in the permission
+request. A one-time `y` approval was stored as a session grant by the loop. Workspace path refusals
+were recorded as allowed operations that ran and failed. Restricted agents were also shown tools
+their trust level structurally denied. Proposed fixes and mutation-resistant tests are on
+`feat/permissions-and-confinement`; this question stays open until those changes receive an
+independent rerun.

@@ -344,9 +344,6 @@ func (l *Loop) invoke(
 				IsError: true,
 			})
 		}
-		if l.Grants != nil {
-			l.Grants.Grant(decision.Scope)
-		}
 		entry.Outcome = permission.Allow
 	}
 
@@ -359,6 +356,14 @@ func (l *Loop) invoke(
 			Content: fmt.Sprintf("%s could not run: %v", call.Name, err),
 			IsError: true,
 		})
+	}
+
+	if result.Refused {
+		entry.Outcome = permission.Deny
+		entry.Reason = result.Content
+		result.IsError = true
+		result.CallID = call.ID
+		return finish(result)
 	}
 
 	entry.Ran = true

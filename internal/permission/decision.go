@@ -64,12 +64,10 @@ type Request struct {
 	Tool string
 	Kind core.ToolKind
 
-	// Paths are the workspace paths the call touches, already resolved. Empty for calls that touch
-	// none.
+	// Paths are the path arguments the call touches. Empty for calls that touch none.
 	//
-	// Resolved rather than as written, because an approval for `src/main.go` must not be satisfied
-	// by `src/../src/main.go` or by a symlink, and comparing unresolved strings is how that
-	// happens.
+	// These describe approval scope. The tool remains responsible for resolving every path against
+	// its workspace before performing an operation, and reports a refusal if it escapes.
 	Paths []string
 
 	// Command is the shell command, for execute calls. Empty otherwise.
@@ -213,8 +211,8 @@ func allowedWithoutAsking(req Request, level core.TrustLevel) bool {
 
 	case core.ToolWrite:
 		// Confined and above write inside their own workspace without asking. The confinement is
-		// what makes this safe, and it is enforced in the tools rather than here: a path that
-		// reached this function has already been resolved inside the workspace.
+		// what makes this safe, and it is enforced in the tools rather than here. A tool that
+		// cannot resolve a path inside its workspace refuses before performing the operation.
 		return level.AllowsWrites()
 
 	case core.ToolGit:

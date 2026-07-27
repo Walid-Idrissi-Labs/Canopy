@@ -114,6 +114,20 @@ func TestAPathThatLooksLikeAFlagIsRefused(t *testing.T) {
 	}
 }
 
+// Git itself often refuses paths outside the worktree, but delegating the boundary to Git leaves
+// behavior dependent on repository layout and submodules. Structured tools validate their own path
+// arguments before starting the process.
+func TestGitPathArgumentsCannotEscapeTheWorkspace(t *testing.T) {
+	_, tools := gitWorkspace(t)
+
+	for _, name := range []string{"git_add", "git_diff"} {
+		result := call(t, tools[name], map[string]any{"path": "../outside.txt"})
+		if !result.IsError || !result.Refused {
+			t.Errorf("%s returned %+v, want a confinement refusal", name, result)
+		}
+	}
+}
+
 // Git's own error for a bad ref name is written for somebody who has read the ref format
 // documentation, and a model reading it tries something adjacent rather than something correct.
 func TestABadBranchNameIsRefusedWithAReadableReason(t *testing.T) {
@@ -160,15 +174,16 @@ func TestGitToolsAreClassifiedForThePermissionModel(t *testing.T) {
 		}
 	}
 
-	// Reading is a read, staging and committing are writes, and anything that can move you off
-	// your work is git, which is the kind that gets gated separately.
+	// Reading is a read. Staging, committing and branch creation are writes. The branch tool can
+	// also list, but its maximum capability is creating and switching branches, so classifying the
+	// mixed operation as read or ordinary git would let a read-only agent change Git state.
 	for name, want := range map[string]core.ToolKind{
 		"git_status": core.ToolRead,
 		"git_diff":   core.ToolRead,
 		"git_log":    core.ToolRead,
 		"git_add":    core.ToolWrite,
 		"git_commit": core.ToolWrite,
-		"git_branch": core.ToolGit,
+		"git_branch": core.ToolWrite,
 	} {
 		if kinds[name] != want {
 			t.Errorf("%s is %q, want %q", name, kinds[name], want)

@@ -128,6 +128,12 @@ type ToolResult struct {
 	// IsError marks a failure. A failed tool still gets a result, so the model can adjust rather
 	// than wait.
 	IsError bool
+	// Refused marks a call that the tool rejected before performing its operation.
+	//
+	// Kept distinct from IsError because the audit trail must not describe a path-confinement
+	// refusal as an allowed operation that ran and failed. It is still an error to the model, but
+	// it is a denial when answering what the agent actually did.
+	Refused bool
 }
 
 // ToolDefinition describes a tool to the model.

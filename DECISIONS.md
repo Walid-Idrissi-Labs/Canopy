@@ -438,8 +438,10 @@ A9, adding persistence, compaction, git workflow and the extensibility layer. Se
 **Decisions this supersedes or changes:**
 
 - **D-02 is now false as written.** v0.1 is not a companion for existing worktrees. Canopy creates
-  and removes worktrees for its agents at A5-03, which the old plan forbade outright. The guards
-  survive as behaviour: never touch the primary checkout, never remove a dirty worktree silently.
+  and removes worktrees for its agents at A5-03, which the old plan forbade outright. The lifecycle
+  guards survive as behaviour: never manage the primary checkout and never remove a dirty worktree
+  silently. D-33 later distinguishes that lifecycle guarantee from a direct agent intentionally
+  operating in the workspace where Canopy started.
 - **D-06 is deferred.** Observe-only service health is not on the path. When it returns, the
   question of whether Canopy starts services reopens, because an agent runtime that owns a worktree
   has a much better claim to owning its dev server than a passive monitor did.
@@ -637,20 +639,80 @@ every total unknown.
 
 ---
 
+## D-33 Direct and isolated agents have different workspace contracts. Decided 2026-07-27.
+
+Canopy supports two deliberate ways for an agent to work. They are product modes, not two names for
+the same safety guarantee.
+
+**Direct mode** uses the repository where Canopy was started as the agent's workspace. That may be
+the primary checkout. It is the ordinary one-person, one-agent workflow, and an agent may modify that
+workspace when its trust level permits it. The interface must identify direct mode and its workspace
+before a write-capable agent runs. Direct mode must never be described as isolated.
+
+**Isolated mode** creates a Canopy-owned worktree and builds that agent's structured tool registry
+against the worktree root. File tools and path-scoped Git tools refuse paths outside that root,
+including the primary checkout and another agent's worktree. Fan-out and any workflow in which
+several agents may edit concurrently require isolated mode; silently falling back to a shared
+checkout is a refusal, not a convenience.
+
+**The shell is not contained in either mode.** It starts in the selected workspace, but its command
+is opaque and runs with the user's operating-system permissions. It can use `..`, an absolute path,
+or another program to reach outside an isolated worktree. Read-only and confined trust therefore do
+not expose shell. Standard trust asks for the exact command; broad trust runs it without asking.
+Those levels control permission and visibility, not operating-system containment. A future sandbox
+would be a new decision, not a documentation synonym for the current permission model.
+
+**Primary-checkout lifecycle protection remains absolute.** Canopy's worktree manager never removes,
+resets, force-checks-out, or otherwise takes ownership of the primary checkout or a worktree it did
+not create. A direct agent editing the workspace the user selected is agent tool execution, not
+worktree lifecycle management. The interface and audit trail must keep that distinction visible.
+
+This resolves four conflicting statements:
+
+- D-22's surviving guard, "never touch the primary checkout", is narrowed to worktree lifecycle
+  operations. It does not prohibit an explicitly direct agent from editing its selected workspace.
+- A1-01's statement that no trust level permits touching the primary checkout is replaced by the
+  combination of workspace mode and trust level above.
+- A4-06 must distinguish a direct workspace from an isolated worktree instead of claiming every Git
+  tool always runs away from the primary checkout.
+- A5-11 must claim structural confinement only for structured tools. It must state the shell
+  exception rather than promise a sandbox Canopy does not have.
+
+The word **confined** names a trust level with a restricted tool surface: reads and writes inside
+the assigned workspace, with shell and destructive Git denied. It does not mean that Canopy places
+arbitrary child processes in a sandbox.
+
+This is a cross-cutting safety contract. A future change to workspace selection, tool kinds, trust
+levels, shell execution, worktree ownership, or approval scope must update this decision, the
+affected TASKS.md acceptance blocks, README.md, LIMITATIONS.md, and the direct/isolated by
+trust-level tests in the same branch. If those sources disagree, the task is blocked until the
+supervisors decide; an agent must not silently choose whichever sentence matches the code.
+
+---
+
 ## Appendix: where the settled scope comes from
 
-Three documents govern this project and they do not carry equal weight.
+The repository has two current authorities:
 
-1. Canopy-Pre-Build-Corrections.md is the correction layer. Where it conflicts with anything else,
-   it wins. It is the source of the truth contract, the trust model, the v0.1 scope cut, the phase
-   plan and the acceptance tests.
-2. Canopy-Review-Round2-Confirmed-by-Codex.md accepts roughly ninety percent of the corrections
-   and records the positions on the array versus single command question, the probe versus manage
-   boundary, and the absence of framework parsers.
-3. SPEC.md and ROADMAP.md are the original plan and are substantially superseded. The original
-   MVP, the "only tool that shows health" positioning, the port model and the original phase order
-   are all obsolete. Read them for background, never as instructions.
+1. **DECISIONS.md governs settled product and engineering choices.** A later numbered decision must
+   name what it supersedes. Code or task prose cannot silently reverse one.
+2. **TASKS.md governs implementation state, ownership, acceptance and independent verification.**
+   It may expand a decision into executable criteria, but it cannot contradict one.
 
-FEATURES.md is a north star brainstorm and explicitly not a build list. Nothing in it is approved.
+The private planning documents are sources and history, not a second live ledger:
+
+- Canopy-Pre-Build-Corrections.md supplied the truth, trust and safety foundations. They remain in
+  force unless a later numbered repository decision explicitly changes them.
+- Canopy-Review-Round2-Confirmed-by-Codex.md refined stale, test and service semantics.
+- Canopy-Replan-Agent-Runtime.md deliberately pivoted the product to a credential-holding agent
+  runtime.
+- SPEC.md v2 and FEATURES.md v2 drove A1 through A9, after which this file and TASKS.md became the
+  maintained authorities.
+- The old SPEC.md and ROADMAP.md are historical. Read them for provenance, never as current
+  instructions.
+
+If a private source and a repository authority disagree, record the discrepancy and follow the
+later explicit repository decision. If chronology or intent is unclear, block the task and ask the
+supervisors instead of choosing silently.
 
 These documents are kept outside this repository, private to the maintainers.

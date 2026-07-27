@@ -80,6 +80,7 @@ type countingTool struct {
 	schema string
 	answer string
 	fail   bool
+	refuse bool
 	runErr error
 
 	mu    sync.Mutex
@@ -105,7 +106,7 @@ func (t *countingTool) Run(_ context.Context, input json.RawMessage) (core.ToolR
 	if t.runErr != nil {
 		return core.ToolResult{}, t.runErr
 	}
-	return core.ToolResult{Content: t.answer, IsError: t.fail}, nil
+	return core.ToolResult{Content: t.answer, IsError: t.fail || t.refuse, Refused: t.refuse}, nil
 }
 
 func (t *countingTool) count() int {
@@ -272,6 +273,37 @@ func TestADeniedToolIsReportedToTheModelRatherThanEndingTheTurn(t *testing.T) {
 	}
 	if !told {
 		t.Error("the model was not told why the call did not run, so it cannot adapt")
+	}
+}
+
+// A tool can discover a confinement violation only after decoding and resolving its arguments.
+// That refusal must replace the provisional allow decision in the audit trail.
+func TestAToolRefusalIsAuditedAsDeniedAndNotRun(t *testing.T) {
+	tool := &countingTool{
+		name: "write_file", kind: core.ToolWrite,
+		answer: "that path is outside this agent's workspace", refuse: true,
+	}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		asksFor("write_file", `{"path":"../outside.txt","content":"no"}`),
+		says("I cannot write there."),
+	}}
+
+	l := loop(client, registryWith(tool), core.TrustConfined)
+	if _, err := l.Run(context.Background(), ask("write it"), nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	entries := l.Trail.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	entry := entries[0]
+	if entry.Outcome != permission.Deny || entry.Ran || !entry.Failed {
+		t.Errorf("entry = outcome %s, ran %v, failed %v; want denied, not run, failed",
+			entry.Outcome, entry.Ran, entry.Failed)
+	}
+	if len(l.Trail.Refused()) != 1 {
+		t.Error("the refused-call view omitted the confinement refusal")
 	}
 }
 
@@ -509,8 +541,9 @@ func (r *recorder) StepFinished(core.Usage) {
 	r.steps++
 }
 
-// An approval granted during a turn should not be asked about again in the same turn.
-func TestAnApprovalIsNotAskedForTwice(t *testing.T) {
+// Choosing yes once covers one call. Treating it as a session grant makes the next identical shell
+// command run without being shown, despite the interface labelling that answer "once".
+func TestAOneTimeApprovalIsAskedForAgain(t *testing.T) {
 	tool := &countingTool{name: "run_command", kind: core.ToolExecute, answer: "ran"}
 	client := &scriptedClient{turns: [][]core.StreamEvent{
 		asksFor("run_command", `{"command":"make test"}`),
@@ -528,8 +561,8 @@ func TestAnApprovalIsNotAskedForTwice(t *testing.T) {
 	if _, err := l.Run(context.Background(), ask("go"), nil); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if asked != 1 {
-		t.Errorf("asked %d times for the same command, want 1", asked)
+	if asked != 2 {
+		t.Errorf("asked %d times for two separately approved commands, want 2", asked)
 	}
 	if tool.count() != 2 {
 		t.Errorf("the tool ran %d times, want 2", tool.count())
