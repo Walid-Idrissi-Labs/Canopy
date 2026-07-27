@@ -196,3 +196,104 @@ func TestTheFooterAndTheBoxAgreeThatUpIsHistory(t *testing.T) {
 		t.Error("the recalled message is not visible in the box")
 	}
 }
+
+// The wheel is the conversation's, and the arrow keys are the message box's.
+//
+// In the alternate screen most terminals translate the wheel into arrow key sequences, which is how
+// less scrolls and is fine right up until the arrow keys mean something. Once up recalled the last
+// message, scrolling back to reread an answer would replace what was being typed with an old
+// prompt. Canopy asks for mouse reporting so the wheel arrives as a wheel, and this is the test
+// that says the two never went back to being the same thing.
+func TestTheWheelScrollsAndDoesNotRecallHistory(t *testing.T) {
+	engine := &fakeEngine{}
+	m := press(typeText(model(engine), "an earlier prompt"), tea.KeyEnter)
+	m = typeText(m, "half written")
+
+	m = wheel(m, tea.MouseButtonWheelUp)
+	m = wheel(m, tea.MouseButtonWheelUp)
+
+	if got := m.InputValue(); got != "half written" {
+		t.Errorf("scrolling changed the message box to %q", got)
+	}
+}
+
+// And the other direction: the arrow keys must not scroll the conversation, or reaching for an old
+// prompt would move the view out from under whatever was being read.
+func TestTheArrowKeysDoNotScrollTheConversation(t *testing.T) {
+	engine := &fakeEngine{session: longConversation(30)}
+	m := model(engine)
+
+	if strings.Contains(plain(m.Body()), "more lines below") {
+		t.Fatal("the view does not start at the tail, so this test proves nothing")
+	}
+
+	m = press(m, tea.KeyUp)
+	if got := m.InputValue(); got != "question 29" {
+		t.Fatalf("up recalled %q, so the keys are not doing what this test assumes", got)
+	}
+	if strings.Contains(plain(m.Body()), "more lines below") {
+		t.Errorf("recalling a message scrolled the conversation away from the tail:\n%s",
+			plain(m.Body()))
+	}
+}
+
+func TestTheWheelScrollsTheConversation(t *testing.T) {
+	engine := &fakeEngine{session: longConversation(40)}
+	m := model(engine)
+
+	atTail := plain(m.Body())
+	scrolled := wheel(m, tea.MouseButtonWheelUp)
+	if plain(scrolled.Body()) == atTail {
+		t.Error("a notch of the wheel did not move the conversation")
+	}
+	if !strings.Contains(plain(scrolled.Body()), "more lines below") {
+		t.Errorf("scrolling away from the tail is not reported:\n%s", plain(scrolled.Body()))
+	}
+}
+
+// Spinning the wheel at the top must not build up a count that then takes the same number of
+// notches to come back down, which reads as the scroll having stopped working.
+func TestScrollingPastTheTopComesStraightBack(t *testing.T) {
+	engine := &fakeEngine{session: longConversation(12)}
+	m := model(engine)
+
+	for range 50 {
+		m = wheel(m, tea.MouseButtonWheelUp)
+	}
+	for range 20 {
+		m = wheel(m, tea.MouseButtonWheelDown)
+	}
+
+	if strings.Contains(plain(m.Body()), "more lines below") {
+		t.Errorf("the view is still held above the tail after scrolling back down:\n%s", plain(m.Body()))
+	}
+}
+
+// A click is not a scroll. Anything that is not the wheel has to leave the view where it was.
+func TestAClickDoesNothing(t *testing.T) {
+	engine := &fakeEngine{session: longConversation(20)}
+	m := model(engine)
+
+	before := plain(m.Body())
+	m = wheel(m, tea.MouseButtonLeft)
+	if plain(m.Body()) != before {
+		t.Error("a click moved the conversation")
+	}
+}
+
+func wheel(m chat.Model, button tea.MouseButton) chat.Model {
+	m, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: button})
+	return m
+}
+
+func longConversation(turns int) core.Session {
+	s := core.Session{ID: "s1"}
+	for i := range turns {
+		s.Turns = append(s.Turns, core.Turn{
+			Request: core.Message{Text: fmt.Sprintf("question %d", i)},
+			Text:    fmt.Sprintf("answer %d", i),
+			State:   core.TurnComplete,
+		})
+	}
+	return s
+}

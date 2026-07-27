@@ -2859,7 +2859,21 @@ box, and filing it would put the same message on screen and in the history at on
 recalled message detaches it from the history rather than tracking the edit against the original,
 since the alternative is an edit that silently disappears on the next arrow key.
 
-Both are mutation tested. Dropping the saved draft leaves every other test in the file passing.
+**The wheel had to be separated from the arrow keys, and it was not optional.** In the alternate
+screen most terminals translate the wheel into arrow key sequences, which is how `less` scrolls and
+is fine right up until the arrow keys mean something. The moment up recalled the last message,
+scrolling back to reread an answer replaced what was being typed with an old prompt, and nothing
+downstream can tell the two apart because by then they are the same bytes. Canopy now asks for
+mouse reporting, so the wheel arrives as a wheel and scrolls the conversation, and the arrow keys
+are the message box's alone.
+
+That costs the terminal's own text selection: copying out of Canopy means holding option on macOS
+or shift elsewhere while dragging. It is the standard price a full screen program pays for the
+wheel, and it is recorded in LIMITATIONS.md rather than left to be discovered.
+
+Three guarantees are mutation tested: dropping the saved draft, the wheel recalling history instead
+of scrolling, and the wheel reaching screens other than the one in front. The last of those found a
+missing test rather than a bug, which is the point of running them.
 
 ### M-03 Task list, detailed and on screen
 `status: todo | owner: none | branch: none | depends: A4-10`

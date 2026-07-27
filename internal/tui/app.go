@@ -175,6 +175,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.screen = screenChat
 		return a, nil
 
+	case tea.MouseMsg:
+		// Routed to the screen in front rather than broadcast, for the same reason keystrokes are:
+		// a wheel notch is aimed at what somebody is looking at. Broadcasting would scroll the
+		// conversation behind whatever screen they had actually opened.
+		//
+		// Only chat answers it today. The other screens navigate with j and k and ignoring the
+		// wheel there is what they already did, since before this the wheel was arriving as arrow
+		// keys that none of them bound.
+		if a.screen == screenChat {
+			var cmd tea.Cmd
+			a.chat, cmd = a.chat.Update(m)
+			return a, cmd
+		}
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.resize(Dimensions{Width: m.Width, Height: m.Height})
 	case splashDoneMsg:
@@ -564,8 +579,22 @@ func RunAppWithReview(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	review ReviewSource,
 ) error {
+	// Mouse reporting is asked for so the wheel arrives as a wheel.
+	//
+	// Without it, a terminal in the alternate screen translates the wheel into arrow key sequences,
+	// which is how `less` scrolls and is fine right up until the arrow keys mean something. Once up
+	// recalled the last message, scrolling back to reread an answer replaced what was in the
+	// message box with an old prompt, and there is no way to tell the two apart after the fact
+	// because by then they are the same bytes.
+	//
+	// It costs something and the cost is worth stating. With mouse reporting on, dragging to select
+	// text no longer reaches the terminal, so copying out of Canopy means holding a modifier while
+	// dragging: option on macOS terminals, shift on most others. That is the standard price every
+	// full screen program pays for the wheel, and the trade is worth making in the direction that
+	// does not silently eat what somebody was typing.
 	program := tea.NewProgram(
-		NewAppWithReview(store, keyStore, engine, dir, keyName, review), tea.WithAltScreen())
+		NewAppWithReview(store, keyStore, engine, dir, keyName, review),
+		tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := program.Run()
 	return err
 }

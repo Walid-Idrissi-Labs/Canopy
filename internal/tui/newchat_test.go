@@ -1,6 +1,7 @@
 package tui_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -166,4 +167,61 @@ func TestANewConversationIsRefusedWhileAQuestionIsUp(t *testing.T) {
 	if next.(tui.App).Screen() != "chat" {
 		t.Errorf("the screen moved to %q", next.(tui.App).Screen())
 	}
+}
+
+// A wheel notch is aimed at whatever somebody is looking at. Broadcast to every screen it would
+// scroll the conversation sitting behind the one they actually opened, and they would come back to
+// a view held somewhere they never put it, with no way to tell what moved it.
+func TestTheWheelOnlyReachesTheScreenInFront(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{session: manyTurns(40)}
+	app := launchWith(store, withOneKey(), engine)
+
+	if strings.Contains(plain(app.(tui.App).View()), "more lines below") {
+		t.Fatal("the conversation does not start at the tail, so this test proves nothing")
+	}
+
+	agents, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if agents.(tui.App).Screen() != "agents" {
+		t.Fatalf("ctrl+d landed on %q", agents.(tui.App).Screen())
+	}
+	for range 5 {
+		agents, _ = agents.(tui.App).Update(
+			tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	}
+
+	back, _ := agents.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if view := plain(back.(tui.App).View()); strings.Contains(view, "more lines below") {
+		t.Errorf("scrolling on the agents view moved the conversation behind it:\n%s", view)
+	}
+}
+
+// And on the screen in front it has to actually work, or the routing above is just a way of
+// ignoring the wheel everywhere.
+func TestTheWheelScrollsTheConversationInFront(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{session: manyTurns(40)}
+	app := launchWith(store, withOneKey(), engine)
+
+	scrolled, _ := app.(tui.App).Update(
+		tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	if view := plain(scrolled.(tui.App).View()); !strings.Contains(view, "more lines below") {
+		t.Errorf("the wheel did not scroll the conversation:\n%s", view)
+	}
+}
+
+func manyTurns(n int) core.Session {
+	s := core.Session{ID: "session-1"}
+	for i := range n {
+		s.Turns = append(s.Turns, core.Turn{
+			Request: core.Message{Text: fmt.Sprintf("question %d", i)},
+			Text:    fmt.Sprintf("answer %d", i),
+			State:   core.TurnComplete,
+		})
+	}
+	return s
 }

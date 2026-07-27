@@ -215,10 +215,55 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.refresh()
 		return m, nil
 
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
 	return m, nil
+}
+
+// wheelStep is how many lines one notch of the wheel moves.
+//
+// Three, which is what terminals themselves use when they translate the wheel into arrow keys, so
+// scrolling here feels like scrolling anywhere else. One line per notch reads as the program
+// ignoring most of the gesture.
+const wheelStep = 3
+
+// handleMouse scrolls the conversation.
+//
+// The wheel is the conversation's, and only the conversation's. It used to be the message box's by
+// accident: in the alternate screen most terminals translate the wheel into arrow key sequences, so
+// once up and down recalled what you had sent, scrolling back to reread something replaced what you
+// were typing with an old message. Asking for mouse events is what stops the translation happening,
+// which is the whole reason this exists.
+func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		m.scrollBy(wheelStep)
+	case tea.MouseButtonWheelDown:
+		m.scrollBy(-wheelStep)
+	}
+	return m, nil
+}
+
+// scrollBy moves the view, bounded at both ends.
+//
+// Bounded above by the length of the conversation, because an unbounded count would keep growing
+// while somebody spun the wheel at the top and then take the same number of notches to come back
+// down, which reads as the scroll having stopped working.
+func (m *Model) scrollBy(lines int) {
+	m.scroll += lines
+	if limit := len(m.transcript()); m.scroll > limit {
+		m.scroll = limit
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
 }
 
 // answerPrompt handles the keys that reply to a permission question.
@@ -334,14 +379,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.compact()
 
 	case "pgup":
-		m.scroll += m.transcriptHeight() / 2
+		m.scrollBy(m.transcriptHeight() / 2)
 		return m, nil
 
 	case "pgdown":
-		m.scroll -= m.transcriptHeight() / 2
-		if m.scroll < 0 {
-			m.scroll = 0
-		}
+		m.scrollBy(-m.transcriptHeight() / 2)
 		return m, nil
 
 	case "ctrl+home":
