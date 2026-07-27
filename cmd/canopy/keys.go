@@ -354,11 +354,12 @@ func runKeysList(args []string, out io.Writer) error {
 
 	tab := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	w := &errWriter{w: tab}
-	w.printf("NAME\tPROVIDER\tFINGERPRINT\tRATE\tADDED\tLAST USED\n")
+	w.printf("NAME\tPROVIDER\tMODEL\tFINGERPRINT\tRATE\tADDED\tLAST USED\n")
 	for _, meta := range all {
-		w.printf("%s\t%s\t%s\t%s\t%s\t%s\n",
+		w.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			meta.Ref.Name,
 			meta.Ref.Provider,
+			formatModel(meta),
 			meta.Fingerprint,
 			formatRate(meta),
 			meta.CreatedAt.Format("2006-01-02"),
@@ -373,6 +374,22 @@ func runKeysList(args []string, out io.Writer) error {
 
 	_, err = fmt.Fprintf(out, "\nStored in the %s. Values are never displayed.\n", store.BackendName())
 	return err
+}
+
+// formatModel says which model a credential talks to, and says loudly when it cannot.
+//
+// Loudly, because a credential with no model on a provider that has no default cannot answer a
+// single message, and the place that failure used to surface was the far end of somebody else's
+// gateway complaining about a malformed request.
+func formatModel(meta core.KeyMetadata) string {
+	switch {
+	case meta.Model != "":
+		return meta.Model
+	case meta.Ref.Provider == core.ProviderAnthropic:
+		return anthropic.DefaultModel + " (default)"
+	default:
+		return "NOT SET, run `canopy keys model " + meta.Ref.Name + " <model>`"
+	}
 }
 
 func formatLastUsed(at *time.Time) string {
