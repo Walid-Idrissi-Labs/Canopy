@@ -472,7 +472,7 @@ func TestHelpOpensFromAnyScreenAndLeavesOnAnyKey(t *testing.T) {
 	if opened.(tui.App).Screen() != "help" {
 		t.Fatalf("? from the agents view landed on %q", opened.(tui.App).Screen())
 	}
-	if !strings.Contains(plain(opened.(tui.App).View()), "worktree monitor") {
+	if !strings.Contains(plain(opened.(tui.App).View()), "send") {
 		t.Error("the overlay is on screen but does not list the bindings")
 	}
 

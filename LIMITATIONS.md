@@ -249,9 +249,9 @@ be rediscovered by getting burned by it.
   ignores prerelease versions for `@latest` and every tag so far is one. The binary from `go install`
   and the binary from the releases page are therefore not the same code.
 
-- The worktree monitor screen still reads from a fake project rather than from your repository. The
-  real verification state lives on the review screen. So do the `snapshot`, `watch` and `demo`
-  subcommands.
+- The `snapshot`, `watch` and `demo` subcommands read a fake project rather than your repository.
+  They exist to demonstrate the state machine and they say so. The worktree monitor inside the
+  running program reads your actual repository, as does the review screen.
 
 - There is no run report yet: no single command that produces a markdown summary of an agent's
   changes, test results, and cost suitable for a pull request body (A8-08).
@@ -274,9 +274,9 @@ be rediscovered by getting burned by it.
   file people edit by hand, and the alternative was a dependency on a YAML or TOML parser for a file
   with about eight fields in it.
 
-- The task list an agent keeps as it works is not shown in its own pane yet. The list exists, the
-  agent maintains it through a tool, and it appears in the transcript, but the dedicated display is
-  not wired (A4-10).
+- A task list longer than six items collapses to a one line summary rather than scrolling in place.
+  The whole list is still in the transcript. The pane competes with the conversation for the screen
+  and the conversation wins.
 
 ## Platform
 

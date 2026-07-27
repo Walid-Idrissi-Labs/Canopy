@@ -1,8 +1,12 @@
 package chat
 
 import (
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
@@ -109,13 +113,176 @@ func renderTurn(turn core.Turn, width int, spinner string) []string {
 	}
 
 	for _, call := range turn.ToolCalls {
-		lines = append(lines, t.Info.Render(fmt.Sprintf("  [%s]", call.Name)))
+		lines = append(lines, renderToolCall(call, resultFor(turn, call), width)...)
 	}
 
 	if status := statusLine(turn, spinner); status != "" {
 		lines = append(lines, status)
 	}
 	return lines
+}
+
+// Tool calls, rendered so somebody can follow what the agent actually did.
+//
+// A line saying `[run_command]` and nothing else is the same information as a spinner: it says
+// something happened and refuses to say what. Somebody watching an agent edit their repository
+// needs three things, and they are the three below: which file or command, whether it worked, and
+// how long it took. Without the first they cannot tell an agent reading a file from an agent
+// rewriting it. Without the second a failed call looks exactly like a successful one, which is how
+// an agent ends up looking productive while getting nowhere.
+
+// resultFor pairs a call with its answer.
+//
+// By call ID rather than by position, because a turn can have several calls in flight and the
+// results come back in whatever order the tools finish. Matching by index would attribute one
+// tool's failure to another tool's call, which is worse than showing nothing.
+func resultFor(turn core.Turn, call core.ToolCall) *core.ToolResult {
+	for i := range turn.ToolResults {
+		if turn.ToolResults[i].CallID == call.ID {
+			return &turn.ToolResults[i]
+		}
+	}
+	return nil
+}
+
+func renderToolCall(call core.ToolCall, result *core.ToolResult, width int) []string {
+	t := theme.Current()
+
+	head := t.Info.Render("  " + call.Name)
+	if subject := summariseArguments(call.Input); subject != "" {
+		// Truncated to the width rather than wrapped. The argument line is a label, and a file path
+		// spilling onto three lines turns a glance into a paragraph.
+		head += "  " + t.Muted.Render(truncate(subject, width-len(call.Name)-6))
+	}
+	lines := []string{head}
+
+	// No result yet means it is still running, or waiting on a person. Said in words, because a
+	// call that has been sitting there for a minute and a call that finished instantly look
+	// identical if the only difference is a line that is not there.
+	if result == nil {
+		return append(lines, t.Muted.Render("    running"))
+	}
+
+	timing := formatDuration(result.Duration)
+	if result.IsError {
+		lines = append(lines, t.Danger.Render("    failed after "+timing))
+		// The reason, in the agent's own words. This is the line that says whether the agent is
+		// stuck on something a person can fix, such as a missing tool or a refused permission.
+		for _, line := range wrap(firstLine(result.Content), width-6) {
+			lines = append(lines, t.Muted.Render("    "+line))
+		}
+		return lines
+	}
+
+	summary := "    ok in " + timing
+	if extra := summariseResult(result.Content); extra != "" {
+		summary += ", " + extra
+	}
+	return append(lines, t.Muted.Render(summary))
+}
+
+// argumentOrder is which argument to show when a tool takes several.
+//
+// The one that says what the call is about. A `read_file` call is about its path and an
+// `edit_file` call is also about its path, not about the two blocks of text being swapped, which
+// would fill the screen and say less.
+var argumentOrder = []string{"path", "command", "pattern", "query", "url", "name", "old_path"}
+
+// summariseArguments picks the one argument worth putting on the call line.
+//
+// Generic rather than a table of tools, because the interface renders calls from tools it has never
+// heard of. MCP servers and anything added later go through this same path, and a table would
+// render those as bare names while the built in ones got labels.
+func summariseArguments(input []byte) string {
+	var args map[string]any
+	if err := json.Unmarshal(input, &args); err != nil || len(args) == 0 {
+		return ""
+	}
+
+	for _, key := range argumentOrder {
+		if value, ok := args[key]; ok {
+			if text := scalar(value); text != "" {
+				return text
+			}
+		}
+	}
+
+	// Nothing recognised, so show the keys in a stable order rather than whichever one the map
+	// happened to yield first. An argument line that changes on every redraw reads as flicker.
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if text := scalar(args[key]); text != "" {
+			return key + " " + text
+		}
+	}
+	return ""
+}
+
+// scalar renders an argument value if it is the kind of thing that fits on a line.
+func scalar(value any) string {
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(strings.ReplaceAll(v, "\n", " "))
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(v)
+	default:
+		return ""
+	}
+}
+
+// summariseResult says how much came back, without showing it.
+//
+// The output itself belongs to the model, not to the screen. A read of a thousand line file printed
+// into the conversation buries the reply that follows it, and the reply is the part a person is
+// waiting for. The size is what they actually want to know.
+func summariseResult(content string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	if lines := strings.Count(content, "\n") + 1; lines > 1 {
+		return fmt.Sprintf("%d lines", lines)
+	}
+	return ""
+}
+
+// formatDuration is a length of time at the precision somebody reading it cares about.
+//
+// Milliseconds below a second, one decimal below a minute, and minutes and seconds above it.
+// Nanoseconds on a call that took four minutes is a number nobody can read at a glance, and the
+// glance is the entire point of putting it there.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return "no time"
+	case d < time.Millisecond:
+		// "0ms" reads as a measurement that failed rather than as a call that was fast, and the
+		// fast ones are most of them: reading a small file takes a few hundred microseconds.
+		return "under a ms"
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	default:
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+}
+
+// truncate shortens with an ellipsis, so a long path ends in something rather than simply stopping.
+func truncate(s string, width int) string {
+	if width < 8 {
+		width = 8
+	}
+	runes := []rune(s)
+	if len(runes) <= width {
+		return s
+	}
+	return string(runes[:width-1]) + "…"
 }
 
 // statusLine says how a turn ended, or that it has not.

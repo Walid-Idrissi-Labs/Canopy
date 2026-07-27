@@ -31,6 +31,10 @@ type verification struct {
 	verifier *verify.Verifier
 	poller   *gitpkg.Poller
 	stop     context.CancelFunc
+
+	// store is what the worktree monitor reads. Fed from the same verifier as the review screen, so
+	// the two cannot show different states of the same worktree.
+	store *worktrees
 }
 
 func (v *verification) Close() {
@@ -74,12 +78,17 @@ func startVerification(
 	// The poller feeds the verifier and nothing else, so the two are wired directly rather than
 	// through the event bus. Going through the bus would mean the verifier learning a revision
 	// changed and then asking git what it changed to, which is two reads of the same fact.
+	monitor := newWorktrees(dir, verifier)
 	poller := gitpkg.NewPoller(repo, gitpkg.DefaultPollInterval, func(change gitpkg.Change) {
 		verifier.Observe(context.Background(), change)
+		// Told after the verifier has taken the change, never before. The dashboard reads the
+		// verifier when it is woken, so waking it first would have it read the state from before
+		// the change it was being told about.
+		monitor.changed(change.WorkspaceID)
 	})
 
 	watchCtx, stop := context.WithCancel(ctx)
-	v := &verification{verifier: verifier, poller: poller, stop: stop}
+	v := &verification{verifier: verifier, poller: poller, stop: stop, store: monitor}
 	v.follow(engine)
 
 	// Agents come and go while Canopy runs, so the watched set is refreshed rather than fixed at
@@ -129,6 +138,14 @@ func (v *verification) follow(engine *session.Engine) {
 
 	v.verifier.Watch(subjects)
 	v.poller.Watch(workspaces)
+
+	watched := make([]watchedAgent, 0, len(workspaces))
+	for _, agent := range agents {
+		if agent.Dir != "" {
+			watched = append(watched, watchedAgent{name: agent.Name, path: agent.Dir})
+		}
+	}
+	v.store.follow(watched)
 }
 
 // defaultBranch works out what an agent's work should be measured against.

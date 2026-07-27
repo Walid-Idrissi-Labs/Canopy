@@ -82,6 +82,10 @@ type App struct {
 	// twice does not re-apply it on every keystroke.
 	usingKey string
 
+	// helpScroll is how far down the overlay has been scrolled. Reset when it closes, so opening it
+	// again starts at the top rather than wherever it was left last time.
+	helpScroll int
+
 	// helpFrom is where the help overlay returns to. Separate from cameFrom, because help is
 	// reachable from the credential screen too and one field would send you to the wrong place.
 	helpFrom screen
@@ -208,10 +212,27 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
-		// Help is answered before anything else, and any key leaves it. Somebody who opened it by
-		// accident should not have to find the one key that closes it.
+		// Help is answered before anything else, and any key leaves it except the ones that scroll
+		// it. Somebody who opened it by accident should not have to find the one key that closes it,
+		// and somebody reading it should not be thrown out for trying to see the rest.
 		if a.screen == screenHelp {
-			a.screen = a.helpFrom
+			switch key.String() {
+			case "j", "down":
+				a.helpScroll++
+			case "k", "up":
+				a.helpScroll--
+			case "pgdown", " ":
+				a.helpScroll += a.dim.BodyHeight() / 2
+			case "pgup":
+				a.helpScroll -= a.dim.BodyHeight() / 2
+			default:
+				a.screen = a.helpFrom
+				a.helpScroll = 0
+				return a, nil
+			}
+			if a.helpScroll < 0 {
+				a.helpScroll = 0
+			}
 			return a, nil
 		}
 		// Not while something is being typed into, or a message containing a question mark could
@@ -381,6 +402,14 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 
 	case screenDashboard:
 		switch msg.String() {
+		case "q":
+			// Back, not quit. The dashboard's own key handler quits on `q`, which is right for the
+			// standalone monitor it was written for and wrong here: inside the application `q` means
+			// back everywhere else, and this screen is two keystrokes from a conversation somebody
+			// has been having for an hour. Intercepted rather than changed at the far end, because
+			// the standalone entry point still exists and its `q` is correct.
+			a.screen = screenAgents
+			return true, a, nil
 		case "K":
 			a.cameFrom = screenDashboard
 			a.screen = screenKeys
@@ -484,11 +513,15 @@ func (a App) View() string {
 
 	switch a.screen {
 	case screenHelp:
-		return Frame(a.dim, "canopy", "keys", Help(a.dim), Keys(a.dim.Width, "any key", "back"))
+		footer := Keys(a.dim.Width, "any other key", "back")
+		if HelpHeight(a.dim.Width) > a.dim.BodyHeight() {
+			footer = Keys(a.dim.Width, "j/k", "scroll", "any other key", "back")
+		}
+		return Frame(a.dim, "canopy", "keys", HelpFrom(a.dim, a.helpScroll), footer)
 
 	case screenAgents:
 		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
-			"esc", "chat", "w", "worktrees", "r", "review", "?", "keys")
+			"esc", "chat", "w", "worktrees", "r", "review", "K", "credentials", "?", "help")
 		if a.agents.Naming() {
 			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
 		}
@@ -522,7 +555,8 @@ func (a App) View() string {
 		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
 	default:
 		return Frame(a.dim, "canopy", a.dashboard.Context(), a.dashboard.Body(),
-			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc", "agents"))
+			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc/q", "agents",
+				"?", "help"))
 	}
 }
 
