@@ -22,17 +22,32 @@ type scriptedClient struct {
 	// it is still in flight.
 	gate    chan struct{}
 	openErr error
+
+	// history is guarded because a steering test drives two sessions through one client, so Stream
+	// is genuinely called from two goroutines at once. The rest of the fixture is read only after
+	// construction, which is why only this field needs it.
+	mu      sync.Mutex
 	history []core.Message
 }
 
 func (c *scriptedClient) Name() string { return c.name }
 
 func (c *scriptedClient) Stream(ctx context.Context, req core.Request) (core.Stream, error) {
+	c.mu.Lock()
 	c.history = req.Messages
+	c.mu.Unlock()
+
 	if c.openErr != nil {
 		return nil, c.openErr
 	}
 	return &scriptedStream{events: c.events, gate: c.gate, ctx: ctx}, nil
+}
+
+// History is the messages of the most recent request.
+func (c *scriptedClient) History() []core.Message {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]core.Message(nil), c.history...)
 }
 
 type scriptedStream struct {
@@ -324,15 +339,15 @@ func TestHistoryIsSentWithEachTurn(t *testing.T) {
 	turnID, _ = e.Send(session.ID, "second question")
 	waitForTurn(t, e, session.ID, turnID)
 
-	if len(client.history) != 3 {
+	if len(client.History()) != 3 {
 		t.Fatalf("%d messages sent, want the first exchange plus the new question: %+v",
-			len(client.history), client.history)
+			len(client.History()), client.History())
 	}
-	if client.history[0].Text != "first question" || client.history[1].Text != "first answer" {
-		t.Errorf("history = %+v", client.history)
+	if client.History()[0].Text != "first question" || client.History()[1].Text != "first answer" {
+		t.Errorf("history = %+v", client.History())
 	}
-	if client.history[2].Text != "second question" {
-		t.Errorf("the newest question is not last: %+v", client.history)
+	if client.History()[2].Text != "second question" {
+		t.Errorf("the newest question is not last: %+v", client.History())
 	}
 }
 

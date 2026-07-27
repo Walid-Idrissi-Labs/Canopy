@@ -127,7 +127,7 @@ func (v *Verifier) placementFor(agent string) (core.Placement, bool) {
 
 func rankReason(p core.Placement) string {
 	switch {
-	case p.Passing == p.Required:
+	case p.Required > 0 && p.Passing == p.Required:
 		return fmt.Sprintf("all %d required %s pass for revision %s, %s",
 			p.Required, plural(p.Required, "test", "tests"), p.Revision.Short(), p.Diff.Summary())
 	case p.Passing == 0:
