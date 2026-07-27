@@ -10,7 +10,12 @@
 // change; "red" does not.
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"os"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Palette is the set of colours a theme defines.
 //
@@ -165,7 +170,35 @@ func New(p Palette) Theme {
 // else. Call sites already ask every render.
 func Current() Theme { return current }
 
-var current = New(Default)
+var current = New(fromEnvironment())
+
+// EnvName is the variable that picks a theme by name.
+const EnvName = "CANOPY_THEME"
+
+// fromEnvironment decides which palette to start in.
+//
+// A9-03 shipped two themes, both tested, and no way to reach the second one: it was selectable from
+// code and from nowhere else, which is the same as not existing. This is the smallest thing that
+// fixes that, and it deliberately reads the environment rather than a config file, because the
+// terminal is where this decision is already made for every other program on the machine.
+//
+// NO_COLOR wins over an explicit choice. It is a promise the whole ecosystem makes, the user set it
+// on purpose, and a program that honours it only when nothing else was configured does not honour
+// it. An unrecognised name falls back to the default rather than failing: a typo in an environment
+// variable should not stop the program from starting, and the theme is the one setting where being
+// wrong is immediately visible anyway.
+func fromEnvironment() Palette {
+	// Present and not literally "0" is the convention, so NO_COLOR= empty still counts as set.
+	if value, present := os.LookupEnv("NO_COLOR"); present && value != "0" {
+		return Monochrome
+	}
+	if name := strings.TrimSpace(os.Getenv(EnvName)); name != "" {
+		if palette, ok := ByName(strings.ToLower(name)); ok {
+			return palette
+		}
+	}
+	return Default
+}
 
 // listeners are told when the theme changes.
 //

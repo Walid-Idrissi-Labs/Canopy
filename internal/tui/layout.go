@@ -49,12 +49,18 @@ func Splash(d Dimensions, subtitle string) string {
 	t := theme.Current()
 
 	// The name appears as text as well as art. Block letters are unreadable to a screen reader,
-	// unrecognisable in a narrow terminal, and unsearchable in a pasted bug report.
+	// unrecognisable in a narrow terminal, and unsearchable in a pasted bug report, so the drawn
+	// name is always accompanied by the written one rather than replacing it.
 	var block string
 	if brand.Fits(d.Width) {
 		block = t.Logo.Render(strings.Join(brand.Lines(), "\n")) + "\n\n"
 	}
-	block += t.Title.Render("Canopy") + "\n" + t.Muted.Render(subtitle)
+	if drawn := brand.Wordmark(d.Width); drawn != nil {
+		block += t.Logo.Render(strings.Join(drawn, "\n")) + "\n"
+		block += t.Muted.Render("Canopy") + "\n" + t.Muted.Render(subtitle)
+	} else {
+		block += t.Title.Render("Canopy") + "\n" + t.Muted.Render(subtitle)
+	}
 
 	if !d.Usable() {
 		return block

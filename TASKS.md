@@ -3247,12 +3247,17 @@ session it names and says so plainly when it does not match one.
 notes: **added 2026-07-27.** Blocked on process rather than on design, and the block is temporary.
 
 Every part of this needs a file another branch is open in, which is the one thing section 2.1 exists
-to prevent. An animation in Bubble Tea is a command that reschedules itself from `Update`, and the
+to prevent. `Welcome` is the sharpest example and was found late: it takes a width and no height, so
+it cannot centre anything vertically, and adding the parameter changes its only call site, which is
+in `chat/model.go`. The corner placement is blocked by the same missing argument as the animation
+rather than by the ticker alone. An animation in Bubble Tea is a command that reschedules itself from `Update`, and the
 only two `Update` functions that could own it are `internal/tui/chat/model.go` and
 `internal/tui/app.go`. Starting in a new conversation is decided in `app.go`. The resume code needs
 session storage, which is `internal/session/storage.go`. All four are touched by PR #19.
 
-What was buildable without them is done and is M-07. The frames and the placement can be written in
+The animation frames are built and tested in `brand`, so what is left really is only the wiring:
+`Frame(step)` returns the mark drawn at a step, the tent is pinned so only the fire and smoke move,
+and no two frames are the same picture. What was buildable without them is done and is M-07. The frames and the placement can be written in
 `brand` and `chat/transcript.go`, which are free, so what actually waits here is small: a ticker, a
 startup decision and a command. Recorded rather than started, because taking the conflict to save
 twenty minutes is how the merge on 2026-07-27 stopped compiling.

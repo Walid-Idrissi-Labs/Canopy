@@ -350,30 +350,64 @@ func Welcome(width int, dir, key string) []string {
 	t := theme.Current()
 
 	var lines []string
+	add := func(text string) { lines = append(lines, text) }
+
+	// The mark first, then the name drawn under it. Two pictures rather than one, because the mark
+	// is what you recognise across a room and the letters are what you can actually read, and a
+	// program that only has the first is a shape rather than a brand.
 	for _, line := range brand.Mark(width) {
-		lines = append(lines, t.Logo.Render(line))
+		add(t.Logo.Render(line))
 	}
 	if len(lines) > 0 {
-		lines = append(lines, "")
+		add("")
 	}
 
-	lines = append(lines, t.Title.Render("Canopy"))
-	lines = append(lines, t.Muted.Render(brand.Tagline))
-	lines = append(lines, "")
+	// The name is on the screen as ordinary text whichever form the logo takes. Block letters are
+	// unreadable to a screen reader, unrecognisable in a narrow terminal and unsearchable in a
+	// pasted bug report, so the drawn name never replaces the written one, it only carries the look.
+	caption := brand.Tagline
+	if drawn := brand.Wordmark(width); drawn != nil {
+		pad := indentFor(width, brand.WordmarkWidth)
+		for _, line := range drawn {
+			add(t.Logo.Render(pad + line))
+		}
+		caption = "Canopy, " + brand.Tagline
+	} else {
+		add(t.Title.Render("Canopy"))
+	}
+	add(t.Muted.Render(indentFor(width, len(caption)) + caption))
+	add("")
 
 	if dir != "" {
-		lines = append(lines, t.Muted.Render("working in ")+t.Body.Render(dir))
+		add(t.Muted.Render("working in ") + t.Body.Render(dir))
 	}
 	if key != "" {
-		lines = append(lines, t.Muted.Render("using ")+t.Body.Render(key))
+		add(t.Muted.Render("using ") + t.Body.Render(key))
 	} else {
 		// The one thing that makes the rest of the program work, said plainly rather than left to
 		// be discovered when the first message fails.
-		lines = append(lines, t.Warning.Render("no credential yet")+
-			t.Muted.Render(", press ")+t.Key.Render("ctrl+k")+t.Muted.Render(" to add one"))
+		add(t.Warning.Render("no credential yet") +
+			t.Muted.Render(", press ") + t.Key.Render("ctrl+k") + t.Muted.Render(" to add one"))
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, t.Muted.Render("Type a message and press enter."))
+	add("")
+	add(t.Muted.Render("Type a message and press enter, or ") +
+		t.Key.Render("?") + t.Muted.Render(" for every key."))
 	return lines
+}
+
+// indentFor centres a block of a known width, capped so it does not drift away from the text under
+// it on a very wide terminal.
+//
+// The same cap the mark uses, and for the same reason: a logo alone in the middle of a 200 column
+// window with its caption still over on the left reads as two unrelated things.
+func indentFor(width, block int) string {
+	pad := (width - block) / 2
+	if pad > 6 {
+		pad = 6
+	}
+	if pad <= 0 {
+		return ""
+	}
+	return strings.Repeat(" ", pad)
 }

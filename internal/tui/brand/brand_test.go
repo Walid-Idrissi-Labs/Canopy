@@ -115,3 +115,87 @@ func TestThereIsOneTagline(t *testing.T) {
 		t.Error("the tagline is empty, so both screens will show a blank line under the name")
 	}
 }
+
+// The animation is not driven from anywhere yet, so these are the only thing standing between the
+// frames and a wiring commit that discovers they were wrong all along.
+func TestEveryAnimationFrameIsTheSameSizeAsTheMark(t *testing.T) {
+	still := brand.Lines()
+
+	for step := range brand.Frames {
+		frame := brand.Frame(step)
+		if len(frame) != len(still) {
+			t.Errorf("frame %d has %d rows and the mark has %d", step, len(frame), len(still))
+			continue
+		}
+		for i, line := range frame {
+			if width := len([]rune(line)); width > brand.MarkWidth {
+				// A frame wider than the mark would push the corner it sits in around as it played.
+				t.Errorf("frame %d row %d is %d columns, over the declared %d: %q",
+					step, i, width, brand.MarkWidth, line)
+			}
+			if trimmed := strings.TrimRight(line, " "); trimmed != line {
+				t.Errorf("frame %d row %d carries trailing spaces: %q", step, i, line)
+			}
+		}
+	}
+}
+
+// The tent is the fixed part. If the animation moved it, the logo would jitter in the corner of a
+// screen somebody is trying to think on, which is the opposite of what it is there for.
+//
+// Pinned by column rather than by row, which is the correction this test needed. The obvious
+// version asserts that the top rows never change, on the assumption that the tent is up there and
+// the fire is down at the bottom. It is not: the smoke rises past the peak, so rows 0 to 3 hold
+// tent and smoke at once and every one of them changes every frame. The invariant that actually
+// holds, and the one worth having, is that nothing left of the fire ever moves.
+func TestTheTentDoesNotMoveBetweenFrames(t *testing.T) {
+	// Everything the animation is allowed to touch starts here.
+	const firstMovingColumn = 24
+
+	fixed := func(line string) string {
+		runes := []rune(line)
+		if len(runes) > firstMovingColumn {
+			runes = runes[:firstMovingColumn]
+		}
+		return strings.TrimRight(string(runes), " ")
+	}
+
+	first := brand.Frame(0)
+	for step := 1; step < brand.Frames; step++ {
+		frame := brand.Frame(step)
+		for i := range first {
+			if i >= len(frame) {
+				break
+			}
+			if fixed(frame[i]) != fixed(first[i]) {
+				t.Errorf("the tent moved on row %d between frame 0 and frame %d:\n  %q\n  %q",
+					i, step, fixed(first[i]), fixed(frame[i]))
+			}
+		}
+	}
+}
+
+// A wisp that returns to where it was reads as a loop rather than as smoke.
+func TestNoTwoFramesAreIdentical(t *testing.T) {
+	seen := map[string]int{}
+	for step := range brand.Frames {
+		key := strings.Join(brand.Frame(step), "\n")
+		if other, repeat := seen[key]; repeat {
+			t.Errorf("frames %d and %d are the same picture", other, step)
+		}
+		seen[key] = step
+	}
+}
+
+// The caller is a ticker whose count only goes up, so making every call site remember a modulus is
+// how one of them forgets.
+func TestAStepBeyondTheLastFrameWraps(t *testing.T) {
+	for _, step := range []int{brand.Frames, brand.Frames * 4, -1, -brand.Frames - 1} {
+		if got := brand.Frame(step); len(got) == 0 {
+			t.Errorf("step %d produced nothing", step)
+		}
+	}
+	if strings.Join(brand.Frame(brand.Frames), "\n") != strings.Join(brand.Frame(0), "\n") {
+		t.Error("the animation does not return to its first frame after a full cycle")
+	}
+}
