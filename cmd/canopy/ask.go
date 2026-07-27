@@ -27,7 +27,7 @@ usage:
 
 flags:
   -key string      which stored credential to use (default: the only one, if there is one)
-  -model string    model id (required for openai-compatible keys, which have no default)
+  -model string    model id, overriding whichever one the credential is set to
   -effort string   low, medium, high, xhigh or max
   -system string   system prompt
 
@@ -79,6 +79,13 @@ func runAsk(args []string, out io.Writer) error {
 	secret, err := store.Get(meta.Ref)
 	if err != nil {
 		return err
+	}
+
+	// The credential's own model unless one was named on the command line. The flag still wins,
+	// because trying a different model against a key you already have is most of what this command
+	// is for, and having to change the stored setting to do it would be absurd.
+	if *model == "" {
+		*model = meta.Model
 	}
 
 	client, err := newClient(meta, secret, *model)
