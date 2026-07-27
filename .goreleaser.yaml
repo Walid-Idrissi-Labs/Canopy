@@ -76,25 +76,38 @@ changelog:
     - title: Other changes
       order: 999
 
-# Homebrew tap disabled: Walid-Idrissi-Labs/homebrew-tap does not exist yet. GoReleaser's brew
-# publish step fails the whole release if it cannot push the formula to the tap repository, and a
-# release that fails because a repository was never created is a worse outcome than a release that
-# ships without a formula for a while. Uncomment once the tap repository exists.
+# The Homebrew tap.
 #
-# Note for whoever uncomments this: GoReleaser deprecated the "brews" key in v2.10 in favor of
-# "homebrew_casks". Check the version pinned in release.yml and the current docs before enabling
-# this, rather than assuming the block below is still the recommended shape.
+# skip_upload: auto is what makes this safe to leave switched on. GoReleaser treats a tag containing
+# a hyphen as a prerelease, so v0.1.0-alpha.1 builds and publishes the GitHub release and does not
+# touch the tap at all. The first tag without a hyphen is what pushes a cask, which is the right
+# moment: a formula for a version that changes next week costs more than it earns.
 #
-# brews:
-#   - name: canopy
-#     ids:
-#       - canopy
-#     repository:
-#       owner: Walid-Idrissi-Labs
-#       name: homebrew-tap
-#     directory: Formula
-#     homepage: "https://github.com/Walid-Idrissi-Labs/Canopy"
-#     description: "A terminal coding agent for running several agents at once."
-#     license: "MIT"
-#     test: |
-#       system "#{bin}/canopy", "version"
+# A cask rather than a formula because GoReleaser deprecated `brews` in favour of `homebrew_casks`.
+# The cost is real and worth knowing: casks are macOS only, so Linux users install with `go install`
+# or from the release archive rather than through Homebrew.
+#
+# HOMEBREW_TAP_TOKEN has to be a personal access token with contents write on the tap repository.
+# The workflow's own GITHUB_TOKEN cannot write to a different repository, which is the failure that
+# looks like a permissions bug and is not.
+homebrew_casks:
+  - name: canopy
+    repository:
+      owner: Walid-Idrissi-Labs
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    skip_upload: auto
+    homepage: "https://github.com/Walid-Idrissi-Labs/Canopy"
+    description: "A terminal coding agent for running several agents at once"
+    hooks:
+      post:
+        install: |
+          # The binary is not signed or notarised, so macOS quarantines anything downloaded through
+          # a cask and kills it on first run with a message about the developer being unverified.
+          # Removing the attribute is what every unsigned cask does. Signing it properly needs an
+          # Apple Developer account, which is a decision rather than an oversight.
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/canopy"]
+          end

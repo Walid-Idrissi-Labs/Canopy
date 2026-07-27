@@ -15,9 +15,25 @@ for Windows rather than approximated, and that has not happened yet.
 - An API key for at least one provider: Anthropic directly, or any OpenAI-compatible endpoint
   (for example Kimi or MiniMax). Add one with `canopy keys add` after installing.
 
+A credential on anything other than Anthropic also needs a model, since there is no default anybody
+could guess for somebody else's gateway:
+
+```sh
+canopy keys add nim -provider openai-compatible \
+  -base-url https://integrate.api.nvidia.com/v1 -model minimaxai/minimax-m2.7
+canopy keys list      # the MODEL column says NOT SET where one is missing
+```
+
 ## Homebrew
 
-Not available yet. A tap will be added once one exists; until then, use one of the options below.
+Not available yet, and it will not be until the first release without a prerelease suffix. The tap
+is configured and waiting; see RELEASING.md for what has to exist before it publishes. When it does:
+
+```sh
+brew install Walid-Idrissi-Labs/tap/canopy
+```
+
+macOS only. Homebrew casks do not install on Linux, so use one of the options below there.
 
 ## Option 1: go install
 
