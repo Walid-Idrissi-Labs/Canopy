@@ -319,9 +319,13 @@ func TestEveryScreenSaysHowToReachCredentials(t *testing.T) {
 		t.Errorf("chat should say how to reach credentials:\n%s", chatView)
 	}
 
-	// The agents view's footer is full of things specific to it, so the credential screen is
-	// reachable with K but not advertised there. Chat and the worktree monitor both say so, and
-	// those are the two screens somebody sits on.
+	// The agents view was exempt while its footer had no room, and Phase M put K on it. Leaving the
+	// exemption behind would have quietly stopped testing a screen that had started advertising the
+	// key, which is the worst of both: no coverage and a comment saying none was wanted.
+	agentsView := plain(key(launch(store, withOneKey()), "ctrl+d").View())
+	if !strings.Contains(agentsView, "credentials") {
+		t.Errorf("the agents view should say how to reach credentials:\n%s", agentsView)
+	}
 
 	dashboard := plain(key(key(launch(store, withOneKey()), "ctrl+d"), "w").View())
 	if !strings.Contains(dashboard, "credentials") {
