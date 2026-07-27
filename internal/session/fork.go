@@ -83,6 +83,7 @@ func (e *Engine) Fork(sessionID, throughTurnID string) (core.Session, error) {
 
 	e.sessions[forked.ID] = forked
 	e.order = append(e.order, forked.ID)
+	e.projects[forked.ID] = e.projects[source.ID]
 
 	out := copySession(*forked)
 	origin := copySession(*source)

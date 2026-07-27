@@ -73,10 +73,21 @@ be rediscovered by getting burned by it.
   A8-01 and needs its own limits, and inheriting it by accident would let one confirmation multiply
   into an unbounded fan out.
 
-- The cost estimate shown before spawning is crude and says so. It is a median cost per turn from
-  turns that actually ran in this session, multiplied by a range of four to twenty five turns per
-  agent. Below three priced turns it shows no number at all. It does not know anything about the
-  task you are about to give, so a one line fix and a rewrite get the same range.
+- The cost estimate shown before spawning is crude and says so. It finds priced turns from this
+  project's persisted history with overlapping significant task words, takes their median, and
+  multiplies it by a range of four to twenty five turns per agent. Below three similar priced turns
+  it shows no number at all. This lexical match is not semantic similarity: differently worded work
+  may be excluded, and two tasks sharing vocabulary may still have very different difficulty.
+
+- Cost versus outcome is observational and local. A sample is one session at one currently verified
+  revision, so repeated revisions from one long session are not statistically independent. Unknown
+  provider cost and stale or unknown evidence are excluded and named. The view refuses a conclusion
+  until two models have at least three exact samples each, but that threshold prevents the smallest
+  anecdotes from being presented as findings; it does not turn the result into a controlled study.
+  A session that switched models is excluded because its accumulated cost cannot honestly be
+  attributed to either model alone.
+  Project identity is derived from the cleaned startup path, so moving a repository or launching
+  Canopy from a different linked worktree begins a separate history rather than joining it by remote.
 
 - Spending caps count only what Canopy can price. A request on a profile with no known rate is
   recorded as uncosted rather than as free, and the status line says the total is a floor, but the
@@ -208,10 +219,11 @@ be rediscovered by getting burned by it.
   commitment; it would take a measurable drop in output quality on a large codebase to revisit
   (D-27).
 
-- The whole extensibility layer is unbuilt: no MCP client, so no third-party tools; no hooks or
-  automations that fire on a state change; no custom slash commands; no committed project
-  configuration file for profiles or permission posture; no shareable skills format (A8-03 through
-  A8-09). Everything an agent can do today comes from the eleven built-in tools.
+- Most of the extensibility layer is unbuilt: no MCP client, so no third-party tools; no hooks or
+  automations that fire on a state change; no committed project configuration file for profiles or
+  permission posture; no shareable skills format (A8-03, A8-05, A8-06, A8-09). Custom slash
+  commands are prompts only: they do not register tools, execute shell, or provide a general
+  template language. Everything an agent can execute still comes from the eleven built-in tools.
 
 ## Storage
 

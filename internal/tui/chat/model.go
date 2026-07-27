@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -48,6 +49,12 @@ type Engine interface {
 	// UseCredential points this conversation at a different credential and model.
 	UseCredential(sessionID, keyName, model string) error
 }
+
+// Commands is the catalog resolved for this chat's project.
+//
+// Re-exported at the input boundary so the application shell can carry it without depending on the
+// configuration package directly.
+type Commands = config.CommandSet
 
 // EventMsg carries an engine notification into the update loop.
 type EventMsg struct{ Event core.Event }
@@ -115,6 +122,11 @@ type Model struct {
 	// prompt is the tool call waiting on an answer, when there is one.
 	prompt   session.Prompt
 	awaiting bool
+
+	// commands is resolved for the project this screen belongs to. Expansion happens here, at the
+	// input boundary, so the engine receives an ordinary prompt and no model or tool path gains a
+	// second command language.
+	commands config.CommandSet
 }
 
 // New builds a chat model over an engine and a session.
@@ -366,6 +378,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "enter":
 		return m.send()
 
+	case "tab":
+		if m.completeCommand() {
+			return m, nil
+		}
+		return m, nil
+
 	case "esc":
 		// Stops the turn rather than leaving the screen. With a reply streaming, escape means stop,
 		// and a screen that navigated away instead would abandon a running turn out of sight.
@@ -402,12 +420,67 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) completeCommand() bool {
+	value := m.input.Value()
+	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") ||
+		strings.ContainsAny(value, " \t\r\n") {
+		return false
+	}
+	prefix := strings.TrimPrefix(value, "/")
+	var matches []config.ResolvedCommand
+	for _, command := range m.commands.All() {
+		if strings.HasPrefix(command.Name, prefix) {
+			matches = append(matches, command)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		m.err = fmt.Sprintf("no command begins with /%s; type /commands to list the commands available here",
+			prefix)
+	case 1:
+		m.input.SetValue("/" + matches[0].Name + " ")
+		m.notice = matches[0].Description
+		m.err = ""
+	default:
+		names := make([]string, 0, len(matches))
+		for _, command := range matches {
+			names = append(names, "/"+command.Name)
+		}
+		m.notice = strings.Join(names, "  ")
+		m.err = ""
+	}
+	return true
+}
+
 func (m Model) send() (Model, tea.Cmd) {
 	if m.input.Empty() {
 		return m, nil
 	}
 
-	prompt := m.input.Value()
+	typed := m.input.Value()
+	trimmed := strings.TrimSpace(typed)
+	if trimmed == "/commands" {
+		m.notice = commandListing(m.commands)
+		m.err = ""
+		m.input.Clear()
+		return m, nil
+	}
+
+	prompt := typed
+	if strings.HasPrefix(prompt, "//") {
+		// One extra slash is the explicit escape for a literal prompt beginning with slash.
+		prompt = strings.TrimPrefix(prompt, "/")
+	} else {
+		expanded, invocation, err := m.commands.Expand(prompt)
+		if err != nil {
+			m.err = err.Error()
+			return m, nil
+		}
+		if invocation {
+			prompt = expanded
+		}
+	}
+
 	if _, err := m.engine.Send(m.sessionID, prompt); err != nil {
 		// The message stays in the box. Clearing it on a failure would mean somebody has to retype
 		// what they just wrote because a provider was busy.
@@ -417,14 +490,31 @@ func (m Model) send() (Model, tea.Cmd) {
 
 	// Filed only once the engine has accepted it, so a message that was refused is still in the box
 	// rather than in the box and in the history, which is one message showing up twice.
-	m.input.Remember(prompt)
+	// History remembers what the person typed, not the expanded body. Pressing up should offer
+	// `/review auth` again rather than a page of generated prompt text.
+	m.input.Remember(typed)
 	m.input.Clear()
 	// Sending returns to the tail. Someone who scrolled up to read something old and then asked a
 	// question is asking about now.
 	m.scroll = 0
 	m.err = ""
+	m.notice = ""
 	m.refresh()
 	return m, nil
+}
+
+func commandListing(commands config.CommandSet) string {
+	all := commands.All()
+	if len(all) == 0 {
+		return "no custom commands are available here"
+	}
+
+	var lines []string
+	for _, command := range all {
+		lines = append(lines, fmt.Sprintf("/%s — %s (%s)",
+			command.Name, command.Description, command.Scope))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // refresh re-reads the session from the engine.
@@ -475,6 +565,9 @@ func (m *Model) SetSession(sessionID, label string) {
 // For the application around this screen, which sometimes needs to say something about the
 // conversation without owning any of the conversation's rendering.
 func (m *Model) SetNotice(text string) { m.notice = text }
+
+// SetCommands installs the already resolved global and project command catalog.
+func (m *Model) SetCommands(commands config.CommandSet) { m.commands = commands }
 
 // Notice is what is currently being said. For tests.
 func (m Model) Notice() string { return m.notice }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"net/url"
+	"sync"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -23,6 +24,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/verify"
 )
 
@@ -35,6 +37,141 @@ type verification struct {
 	// store is what the worktree monitor reads. Fed from the same verifier as the review screen, so
 	// the two cannot show different states of the same worktree.
 	store *worktrees
+}
+
+// reviewInsights joins the two exact contracts needed by A8-07: the verifier owns current test
+// evidence, and the session engine owns exact provider cost plus persisted project history.
+type reviewInsights struct {
+	*verify.Verifier
+	engine    *session.Engine
+	projectID string
+	mu        sync.Mutex
+	recorded  map[string]session.OutcomeSample
+}
+
+type modelUsageState int
+
+const (
+	noModelUsage modelUsageState = iota
+	singleModelUsage
+	mixedModelUsage
+)
+
+func (r *reviewInsights) CostOutcomes() (tui.CostOutcomeHistory, error) {
+	ranking := r.Rank()
+	statuses := make(map[string]session.AgentStatus)
+	for _, status := range r.engine.AgentStatuses() {
+		statuses[status.Agent.Name] = status
+	}
+
+	for _, placement := range ranking.Ranked {
+		status, ok := statuses[placement.Agent]
+		if !ok {
+			continue
+		}
+		conversation, ok := r.engine.Session(status.Agent.SessionID)
+		if !ok {
+			continue
+		}
+		model, usage, state := sessionModelUsage(conversation)
+		switch state {
+		case mixedModelUsage:
+			continue
+		case noModelUsage:
+			continue
+		}
+		sample := session.OutcomeSample{
+			ProjectID: r.projectID,
+			SessionID: status.Agent.SessionID,
+			Revision:  placement.Revision.String(),
+			Agent:     placement.Agent,
+			Model:     model,
+			CostUSD:   usage.CostUSD,
+			CostKnown: usage.CostKnown,
+			Passing:   placement.Passing,
+			Required:  placement.Required,
+		}
+		if err := r.recordOutcome(sample); err != nil {
+			return tui.CostOutcomeHistory{}, err
+		}
+	}
+
+	samples, err := r.engine.OutcomeHistory(r.projectID)
+	if err != nil {
+		return tui.CostOutcomeHistory{}, err
+	}
+	out := tui.CostOutcomeHistory{CurrentUnranked: len(ranking.Unranked)}
+	for _, placement := range ranking.Ranked {
+		status, ok := statuses[placement.Agent]
+		if !ok {
+			continue
+		}
+		conversation, ok := r.engine.Session(status.Agent.SessionID)
+		if !ok {
+			continue
+		}
+		_, _, state := sessionModelUsage(conversation)
+		switch state {
+		case mixedModelUsage:
+			out.CurrentMixedModel++
+		case noModelUsage:
+			out.CurrentNoUsage++
+		}
+	}
+	for _, sample := range samples {
+		out.Samples = append(out.Samples, tui.CostOutcome{
+			Model: sample.Model, CostUSD: sample.CostUSD, CostKnown: sample.CostKnown,
+			Passing: sample.Passing, Required: sample.Required,
+		})
+	}
+	return out, nil
+}
+
+func (r *reviewInsights) recordOutcome(sample session.OutcomeSample) error {
+	key := sample.SessionID + "|" + sample.Revision
+	r.mu.Lock()
+	if previous, ok := r.recorded[key]; ok && previous == sample {
+		r.mu.Unlock()
+		return nil
+	}
+	r.mu.Unlock()
+
+	if err := r.engine.RecordOutcome(sample); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	if r.recorded == nil {
+		r.recorded = make(map[string]session.OutcomeSample)
+	}
+	r.recorded[key] = sample
+	r.mu.Unlock()
+	return nil
+}
+
+func sessionModelUsage(conversation core.Session) (string, core.Usage, modelUsageState) {
+	var models = make(map[string]bool)
+	unknownModel := false
+	for _, turn := range conversation.Turns {
+		if !turn.State.Terminal() {
+			continue
+		}
+		model := turn.Model
+		if model == "" {
+			unknownModel = true
+			continue
+		}
+		models[model] = true
+	}
+	if unknownModel || len(models) == 0 {
+		return "", core.Usage{}, noModelUsage
+	}
+	if len(models) > 1 {
+		return "", core.Usage{}, mixedModelUsage
+	}
+	for model := range models {
+		return model, conversation.Usage(), singleModelUsage
+	}
+	panic("unreachable")
 }
 
 func (v *verification) Close() {
@@ -176,6 +313,19 @@ func loadProject(dir string) config.Project {
 		return config.Project{}
 	}
 	return project
+}
+
+// loadCommands resolves the user-level catalog with this project's definitions.
+//
+// A broken global file degrades only the global layer. Project commands still work and the warning
+// names the exact file, which is more useful than making every repository refuse to start because
+// one optional convenience file has a typo.
+func loadCommands(project []config.Command) config.CommandSet {
+	global, _, err := config.LoadGlobalCommands()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: global slash commands are not available: %v\n", err)
+	}
+	return config.ResolveCommands(global, project)
 }
 
 // profiles lists the credentials an agent can be started on.

@@ -51,7 +51,7 @@ func dispatching(t *testing.T, answer bool) (*spawnTool, *fakeDispatcher, *[]Con
 			{Name: "nim", Model: "minimaxai/minimax-m2.7"},
 		},
 		estimate: Estimate{Low: 0.40, High: 1.20, Samples: 18,
-			Basis: "based on 18 similar turns in this project"},
+			Basis: "based on 18 similar turns in this project", Confidence: "high"},
 		limit: 8,
 	}
 
@@ -119,6 +119,9 @@ func TestTheConfirmationShowsCountProfileTaskAndCost(t *testing.T) {
 	}
 	if !strings.Contains(summary, "18 similar turns") {
 		t.Errorf("the estimate does not say what it is based on: %q", summary)
+	}
+	if !strings.Contains(summary, "high confidence") {
+		t.Errorf("the estimate does not name its confidence: %q", summary)
 	}
 }
 

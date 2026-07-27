@@ -2615,7 +2615,7 @@ Acceptance: the estimate names what it is based on and how confident it is, and 
 when there is not enough history to estimate. A cap pauses before the next request rather than
 reporting the overspend afterwards. A paused agent can be resumed with a raised cap.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [x] 2026-07-27`
 
 notes: **added 2026-07-26.** Enforcement before the request rather than after is the difference
 between a guardrail and a receipt.
@@ -2628,9 +2628,17 @@ A request on a profile with no known rate is counted as uncosted rather than cou
 that has silently not been counting half the requests is worse than no cap, because it reads as
 reassurance, and Budget.Status says so.
 
-The estimate is crude and says so: a median cost per turn from turns that actually happened here,
-times a range of four to twenty five turns per agent. Below three priced turns it shows no number at
-all rather than pretending one expensive turn is a rate.
+The estimate is crude and says so: a median cost per turn from this project's turns whose
+significant task words overlap, times a range of four to twenty five turns per agent. Below three
+similar priced turns it shows no number at all rather than pretending one expensive turn is a rate.
+
+**Independent Codex verification 2026-07-27.** The cap path passed focused race tests: it refuses
+before registering the next turn, preserves the prior transcript, and resumes after a raised cap.
+The estimate did not meet its own prose: it ignored the task and sampled every loaded session from
+the shared history database. Fixed on `feat/commands-and-cost` by assigning new sessions a project
+identity, filtering to that project, matching significant task words, naming confidence, and
+refusing below three similar priced turns. Cross-project, unrelated-task and undersized-history
+tests cover the correction.
 
 ### A5-10 Agents view
 `status: review | owner: Claude | branch: feat/agent-runtime (merged) | depends: A5-06`
@@ -2783,7 +2791,7 @@ current revision, with diff size as a tiebreak.
 Acceptance: the ranking refuses to rank anything whose evidence is stale or unknown rather than
 guessing. The reason for each placement is visible.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [x] 2026-07-27`
 
 notes: **the strategic argument for the entire project.** Orca fans out across agents. Nobody
 appears to use test truth to rank the results.
@@ -2798,6 +2806,11 @@ changes that both pass, the shorter one has less to review and less to be wrong.
 Mutation tested. Turning the refusal into an ordinary "did not pass" makes two tests fail, and the
 mutant produced exactly the failure mode the design exists to prevent: a stale agent ranked second
 with "no required test passes", which reads as a verdict about its code.
+
+**Independent Codex verification 2026-07-27.** Focused race-enabled tests independently exercised
+passing-before-failing order, diff-size tiebreaks, stale refusal, never-run refusal and unknown
+revision refusal. Source tracing confirmed that only current required-test verdicts enter the
+ranked slice; unranked entries retain their visible refusal reason.
 
 ### A6-06 Ready to review queue
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-04`
@@ -3235,14 +3248,14 @@ command at execution time out of values Canopy does not control, and the point o
 committed is that a reviewer can read it and know what it will do.
 
 ### A8-04 Custom slash commands
-`status: claimed | owner: Codex | branch: feat/commands-and-cost | depends: A8-03`
+`status: review | owner: Codex | branch: feat/commands-and-cost | depends: A8-03`
 `scope: internal/config/commands.go, internal/tui/, internal/agent/ only if expansion cannot stay at the input boundary`
 
 Deliverable: user defined reusable prompts as `/commands`, per project and globally.
 
 Acceptance: a project command is available in that project only. Arguments are substituted safely.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [ ]   codex [x] 2026-07-27`
 
 notes: cheap once chat exists, and the first thing power users ask for.
 
@@ -3252,6 +3265,13 @@ at the chat input boundary. Project/global precedence and substitution rules bel
 `config.Command` type. If the expanded prompt can enter the existing send path without changing
 `internal/agent`, that package stays untouched; otherwise the smallest explicit seam will be
 coordinated and documented.
+
+**Built 2026-07-27 by Codex.** Project commands in `canopy.json` shadow the optional global
+`commands.json` definition only for that run. `/commands` lists the active name, description and
+scope; `//` escapes a literal slash. `$ARGUMENTS` is copied literally in one non-recursive pass, and
+arguments are appended visibly when no placeholder exists. Unknown commands remain in the input
+box and never reach the model. Both files are strict, and a broken global file degrades only that
+layer with a warning. D-34, README and limitations record the contract.
 
 ### A8-05 Hooks and automations
 `status: todo | owner: none | branch: none | depends: A8-03, PG-A6`
@@ -3284,7 +3304,7 @@ so the multi agent core is built on tools we control. The permission point is no
 third party tool is exactly the thing that most needs the same scrutiny as our own.
 
 ### A8-07 Cost versus outcome
-`status: claimed | owner: Codex | branch: feat/commands-and-cost | depends: PG-A6`
+`status: review | owner: Codex | branch: feat/commands-and-cost | depends: PG-A6`
 `scope: internal/tui/, read-only session and verification interfaces; internal/core remains frozen`
 
 Deliverable: did the more expensive model actually pass more tests, on this project's own history.
@@ -3292,7 +3312,7 @@ Deliverable: did the more expensive model actually pass more tests, on this proj
 Acceptance: the comparison names its sample size and refuses to draw a conclusion from too little
 data.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [ ]   codex [x] 2026-07-27`
 
 notes: only meaningful because A2 makes cost exact and A6 makes outcome exact. Almost nothing else
 can answer this honestly.
@@ -3301,6 +3321,14 @@ can answer this honestly.
 contracts rather than add a second scoring model. Unknown cost, stale evidence and undersized
 samples remain named states, not zeroes. Any missing read interface will be added at the narrowest
 existing owner rather than widening `internal/core`.
+
+**Built 2026-07-27 by Codex.** The review cycle now includes a project-only cost-versus-outcome
+pane. It persists one idempotent observation per session and verified revision, groups exact samples
+by model, shows median cost, required-test pass share and green count, and names unknown-cost and
+currently unrankable exclusions. Sessions that switched models are excluded rather than charged to
+their current model. It refuses a conclusion until at least two models have three exact
+samples each and labels a positive result as association rather than causation. SQLite schema 6
+adds explicit project scoping and the outcome table; `internal/core` remains unchanged.
 
 ### A8-08 Run report export
 `status: todo | owner: none | branch: none | depends: PG-A6`

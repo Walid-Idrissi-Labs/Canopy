@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 5
+const schemaVersion = 6
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -154,6 +154,29 @@ var migrations = []string{
 	// back empty, which is worse than not showing one. The list is most of what makes a long run
 	// followable, and a long run is exactly the kind you close the laptop on.
 	`ALTER TABLE sessions ADD COLUMN tasks TEXT NOT NULL DEFAULT '[]';`,
+
+	// Added for project-scoped cost evidence. The session store is shared across every directory
+	// Canopy opens, so a claim based on "this project" needs an explicit project key rather than an
+	// accidental sample of every conversation on the machine.
+	`
+	ALTER TABLE sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
+	CREATE INDEX sessions_by_project ON sessions (project_id);
+
+	CREATE TABLE cost_outcomes (
+		project_id  TEXT NOT NULL,
+		session_id  TEXT NOT NULL,
+		revision    TEXT NOT NULL,
+		agent       TEXT NOT NULL,
+		model       TEXT NOT NULL,
+		cost_usd    REAL NOT NULL DEFAULT 0,
+		cost_known  INTEGER NOT NULL DEFAULT 0,
+		passing     INTEGER NOT NULL,
+		required    INTEGER NOT NULL,
+		observed_at INTEGER NOT NULL,
+		PRIMARY KEY (project_id, session_id, revision)
+	);
+	CREATE INDEX cost_outcomes_by_project ON cost_outcomes (project_id, observed_at);
+	`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -247,23 +270,34 @@ func (s *Storage) Close() error {
 
 // SaveSession writes a session's own details, without its turns.
 func (s *Storage) SaveSession(session core.Session) error {
+	return s.SaveSessionForProject(session, "")
+}
+
+// SaveSessionForProject writes a session and associates it with the project that created it.
+//
+// An empty project does not erase an existing association. Older callers and migrations therefore
+// cannot turn scoped history back into machine-wide history by saving a title or task list.
+func (s *Storage) SaveSessionForProject(session core.Session, projectID string) error {
 	if session.ID == "" {
 		return errors.New("a session needs an ID to be saved")
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (id, title, workspace_id, key_name, model, created_at, updated_at,
-		                      forked_from, forked_at, forked_when, tasks)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                      forked_from, forked_at, forked_when, tasks, project_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
 			workspace_id = excluded.workspace_id,
 			key_name = excluded.key_name,
 			model = excluded.model,
 			updated_at = excluded.updated_at,
-			tasks = excluded.tasks`,
+			tasks = excluded.tasks,
+			project_id = CASE WHEN excluded.project_id <> '' THEN excluded.project_id
+			                  ELSE sessions.project_id END`,
 		session.ID, session.Title, session.WorkspaceID, session.KeyName, session.Model,
 		unix(session.CreatedAt), unix(session.UpdatedAt),
-		session.ForkedFrom, session.ForkedAt, unix(session.ForkedWhen), encodeTasks(session.Tasks))
+		session.ForkedFrom, session.ForkedAt, unix(session.ForkedWhen), encodeTasks(session.Tasks),
+		projectID)
 	if err != nil {
 		return fmt.Errorf("saving session %s: %w", session.ID, err)
 	}
@@ -271,6 +305,24 @@ func (s *Storage) SaveSession(session core.Session) error {
 		return err
 	}
 	return s.saveForks(session)
+}
+
+func (s *Storage) projectIDs() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT id, project_id FROM sessions WHERE project_id <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("loading session project identities: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var sessionID, projectID string
+		if err := rows.Scan(&sessionID, &projectID); err != nil {
+			return nil, err
+		}
+		out[sessionID] = projectID
+	}
+	return out, rows.Err()
 }
 
 func (s *Storage) saveForks(session core.Session) error {

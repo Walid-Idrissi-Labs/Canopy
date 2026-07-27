@@ -5,7 +5,8 @@ branches when they need it, and knowing which of them actually produced working 
 
 > **Status: pre-alpha.** Everything on this page is built and tested, except where
 > [LIMITATIONS.md](LIMITATIONS.md) says otherwise, and that document is worth reading before this
-> one. The extensibility layer is not built at all. Development is tracked in
+> one. Most of the extensibility layer is not built; custom prompt commands are the first exception.
+> Development is tracked in
 > [TASKS.md](TASKS.md), and the decisions behind it in [DECISIONS.md](DECISIONS.md).
 
 ## Install
@@ -128,9 +129,42 @@ The part that makes it honest is the refusal. An agent whose worktree changed af
 not placed fourth, it is not placed at all, and the ranking says why. That is more often than you
 might expect, because the branch that looked best is usually the one still being worked on.
 
-Canopy runs the test commands you configure in `canopy.json` and has no idea what your project's are
+Canopy runs the test commands you configure in `canopy.json` and has no idea what your project's tests are
 until you tell it. On a repository it has never seen, the honest answer is "nothing is configured",
 not a green tick.
+
+The review screen also compares model cost with verified outcomes from this repository's own
+history. It records a sample only when the evidence describes the current revision, excludes
+unknown provider costs, names the sample size, and refuses a conclusion until at least two models
+have three exact samples each. The result is an association in local history, not a claim that the
+model caused the outcome.
+
+## Reusable prompt commands
+
+Project commands live in `canopy.json`:
+
+```json
+{
+  "commands": [
+    {
+      "name": "review",
+      "description": "review one subsystem against its tests",
+      "prompt": "Review this subsystem carefully and run its relevant tests:\n$ARGUMENTS"
+    }
+  ]
+}
+```
+
+Invoke that as `/review authentication`. Type `/commands` to list the definitions active in the
+current repository; tab completes a unique command name and lists ambiguous matches. `//text` sends
+the literal prompt `/text` instead of treating it as a command.
+
+Global commands use the same `{"commands": [...]}` shape under the platform user config directory:
+`~/Library/Application Support/canopy/commands.json` on macOS or
+`$XDG_CONFIG_HOME/canopy/commands.json` on Linux. `CANOPY_COMMANDS_FILE` overrides the path. A
+project definition with the same name wins only for that project. `$ARGUMENTS` is replaced literally
+in one pass; there is no template evaluation or shell interpolation. When the placeholder is
+absent, arguments are appended under an `Arguments:` heading.
 
 ## What it will not do
 

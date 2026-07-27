@@ -113,6 +113,12 @@ type Engine struct {
 	budgets    *budgets
 	agentTools map[string]*core.ToolRegistry
 
+	// projectID is the repository this run belongs to, and projects remembers that identity per
+	// session across restarts. The history database is shared across repositories; without this,
+	// "this project's cost history" is actually every conversation on the machine.
+	projectID string
+	projects  map[string]string
+
 	nextID int
 }
 
@@ -124,7 +130,15 @@ func New(resolver Resolver) *Engine {
 		resolver: resolver,
 		events:   store.NewBroker(),
 		budgets:  newBudgets(),
+		projects: make(map[string]string),
 	}
+}
+
+// SetProjectID scopes new sessions and cost analysis to one project.
+func (e *Engine) SetProjectID(projectID string) {
+	e.mu.Lock()
+	e.projectID = projectID
+	e.mu.Unlock()
 }
 
 // WithStorage attaches persistence and loads whatever is already there.
@@ -155,6 +169,16 @@ func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
 		e.nextID = max(e.nextID, idNumber(full.ID))
 		e.mu.Unlock()
 	}
+
+	projects, err := storage.projectIDs()
+	if err != nil {
+		return err
+	}
+	e.mu.Lock()
+	for sessionID, projectID := range projects {
+		e.projects[sessionID] = projectID
+	}
+	e.mu.Unlock()
 	return nil
 }
 
@@ -364,6 +388,7 @@ func (e *Engine) Create(keyName, model string) core.Session {
 	}
 	e.sessions[s.ID] = s
 	e.order = append(e.order, s.ID)
+	e.projects[s.ID] = e.projectID
 	out := copySession(*s)
 	e.mu.Unlock()
 
@@ -402,7 +427,10 @@ func (e *Engine) persist(write func(*Storage) error) {
 }
 
 func (e *Engine) persistSession(session core.Session) {
-	e.persist(func(s *Storage) error { return s.SaveSession(session) })
+	e.mu.Lock()
+	projectID := e.projects[session.ID]
+	e.mu.Unlock()
+	e.persist(func(s *Storage) error { return s.SaveSessionForProject(session, projectID) })
 }
 
 func (e *Engine) persistTurn(sessionID string, ordinal int, turn core.Turn) {

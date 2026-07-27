@@ -89,6 +89,10 @@ type Estimate struct {
 
 	// Basis says in words what the number came from, or why there is not one.
 	Basis string
+
+	// Confidence is deliberately coarse. A sample of a dozen local turns cannot justify decimals
+	// pretending to be a statistical model.
+	Confidence string
 }
 
 // Known reports whether there is enough history for the range to mean anything.
@@ -99,7 +103,8 @@ func (e Estimate) Summary() string {
 	if !e.Known() {
 		return e.Basis
 	}
-	return fmt.Sprintf("about $%.2f to $%.2f, %s", e.Low, e.High, e.Basis)
+	return fmt.Sprintf("about $%.2f to $%.2f, %s confidence, %s",
+		e.Low, e.High, e.Confidence, e.Basis)
 }
 
 // Confirmation is everything a person needs to see before agents are created.
@@ -374,17 +379,21 @@ const MaxConcurrentAgents = 8
 // Deliberately crude, and the basis says so. Cost per turn is measured from turns that actually
 // happened here, and the number of turns an agent takes is a range wide enough to be honest about
 // not knowing. A narrow range computed from four samples would look like a measurement.
-func (e *Engine) Estimate(_ string, count int) Estimate {
+func (e *Engine) Estimate(task string, count int) Estimate {
 	const (
 		fewestTurns = 4
 		mostTurns   = 25
 	)
 
 	var costs []float64
+	wanted := taskWords(task)
 	e.mu.Lock()
 	for _, id := range e.order {
+		if e.projects[id] == "" || e.projects[id] != e.projectID {
+			continue
+		}
 		for _, turn := range e.sessions[id].Turns {
-			if turn.Usage.CostKnown && turn.Usage.CostUSD > 0 {
+			if turn.Usage.CostKnown && turn.Usage.CostUSD > 0 && similarTask(wanted, taskWords(turn.Request.Text)) {
 				costs = append(costs, turn.Usage.CostUSD)
 			}
 		}
@@ -395,19 +404,59 @@ func (e *Engine) Estimate(_ string, count int) Estimate {
 		// Three is not a statistical threshold, it is the point below which showing a number would be
 		// pretending. One expensive turn is not a rate.
 		return Estimate{Basis: fmt.Sprintf(
-			"there is not enough cost history here to estimate, %d priced turns so far", len(costs))}
+			"there is not enough similar cost history in this project to estimate, %d priced turns matched",
+			len(costs))}
 	}
 
 	sort.Float64s(costs)
 	median := costs[len(costs)/2]
 
+	confidence := "low"
+	if len(costs) >= 15 {
+		confidence = "high"
+	} else if len(costs) >= 6 {
+		confidence = "medium"
+	}
 	return Estimate{
-		Low:     median * fewestTurns * float64(count),
-		High:    median * mostTurns * float64(count),
-		Samples: len(costs),
-		Basis: fmt.Sprintf("from %d priced turns here at a median of $%.3f, assuming %d to %d turns per agent",
+		Low:        median * fewestTurns * float64(count),
+		High:       median * mostTurns * float64(count),
+		Samples:    len(costs),
+		Confidence: confidence,
+		Basis: fmt.Sprintf("from %d similar priced turns in this project at a median of $%.3f, assuming %d to %d turns per agent",
 			len(costs), median, fewestTurns, mostTurns),
 	}
+}
+
+func taskWords(text string) map[string]bool {
+	stop := map[string]bool{
+		"and": true, "for": true, "from": true, "into": true, "the": true, "this": true,
+		"that": true, "with": true, "you": true, "your": true,
+	}
+	out := make(map[string]bool)
+	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return r < 'a' || r > 'z'
+	}) {
+		if len(word) >= 3 && !stop[word] {
+			out[word] = true
+		}
+	}
+	return out
+}
+
+func similarTask(wanted, candidate map[string]bool) bool {
+	if len(wanted) == 0 || len(candidate) == 0 {
+		return false
+	}
+	common := 0
+	for word := range wanted {
+		if candidate[word] {
+			common++
+		}
+	}
+	if len(wanted) == 1 {
+		return common == 1
+	}
+	return common >= 2 || float64(common)/float64(len(wanted)) >= 0.4
 }
 
 // Concurrency reports how many agents are running and how many may.

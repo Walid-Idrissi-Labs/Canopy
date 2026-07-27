@@ -41,6 +41,8 @@ func bindings() []section {
 		}},
 		{"chat", []binding{
 			{"enter", "send"},
+			{"/commands", "list reusable prompts active in this project"},
+			{"//", "send a literal prompt beginning with slash"},
 			{"esc", "interrupt the turn, keeping what has arrived"},
 			{"ctrl+c", "stop the turn, or quit when nothing is running"},
 			{"up / down", "walk back through what you have sent here"},
@@ -71,7 +73,7 @@ func bindings() []section {
 		{"review", []binding{
 			{"j / k", "move"},
 			{"enter", "open the changes, then a file"},
-			{"tab", "cycle the queue, the ranking and the overlap"},
+			{"tab", "cycle the queue, ranking, cost outcome and overlap"},
 			{"c", "commit, from the file list"},
 			{"K", "credentials"},
 			{"esc", "back one level"},
