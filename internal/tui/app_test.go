@@ -3,6 +3,7 @@ package tui_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
@@ -52,6 +54,8 @@ type stubEngine struct {
 	agents  []session.AgentStatus
 	added   []session.Agent
 	using   [2]string
+	created int
+	asking  bool
 }
 
 func (e *stubEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -71,7 +75,12 @@ func (e *stubEngine) Compact(context.Context, string) (session.CompactionResult,
 
 func (e *stubEngine) Apply(string, session.CompactionResult) error { return nil }
 
-func (e *stubEngine) Pending(string) (session.Prompt, bool) { return session.Prompt{}, false }
+func (e *stubEngine) Pending(string) (session.Prompt, bool) {
+	if !e.asking {
+		return session.Prompt{}, false
+	}
+	return session.Prompt{Request: permission.Request{Tool: "run_command", Kind: core.ToolExecute}}, true
+}
 
 func (e *stubEngine) Answer(string, bool, bool) bool { return false }
 
@@ -92,6 +101,22 @@ func (e *stubEngine) AddAgent(_ context.Context, agent session.Agent) (session.A
 func (e *stubEngine) UseCredential(_, keyName, model string) error {
 	e.using = [2]string{keyName, model}
 	return nil
+}
+
+// Create hands back a session that is genuinely different from the one before it, since a stub
+// returning the same ID every time would make "the screen moved to the new conversation" pass
+// without the screen having moved anywhere.
+func (e *stubEngine) Create(keyName, model string) core.Session {
+	e.created++
+	created := core.Session{
+		ID:      fmt.Sprintf("session-%d", e.created+1),
+		KeyName: keyName,
+		Model:   model,
+	}
+	// The stub has one session, so the new one becomes what Session returns. Real conversations are
+	// all kept; this only has to be able to tell them apart.
+	e.session = created
+	return created
 }
 
 // launch builds the application past the splash and at a known size, which is the state every
@@ -304,6 +329,34 @@ func TestEveryScreenSaysHowToReachCredentials(t *testing.T) {
 	}
 }
 
+// Footer hints are dropped from the right when they do not fit, and eighty columns is where that
+// starts to bite. The two that have to survive are how to get help and how to reach a credential,
+// because everything else in the program is downstream of those and somebody who cannot find them
+// is stuck on the first screen.
+func TestTheChatFooterKeepsHelpAndCredentialsAtEightyColumns(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
+	narrow, _ := app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	view := plain(narrow.(tui.App).View())
+	footer := lastLine(view)
+	for _, hint := range []string{"? help", "ctrl+k keys"} {
+		if !strings.Contains(footer, hint) {
+			t.Errorf("the footer at eighty columns dropped %q: %q", hint, footer)
+		}
+	}
+	if len([]rune(footer)) > 80 {
+		t.Errorf("the footer is %d columns wide, so the frame wraps: %q", len([]rune(footer)), footer)
+	}
+}
+
+func lastLine(view string) string {
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	return lines[len(lines)-1]
+}
+
 // The splash is the first thing anyone sees, so it has to appear, get out of the way on its own,
 // and get out of the way faster if the user is quicker than the timer.
 func TestSplashAppearsAndClears(t *testing.T) {
@@ -393,13 +446,24 @@ func TestHelpOpensFromAnyScreenAndLeavesOnAnyKey(t *testing.T) {
 
 	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
 
-	// From chat, where a question mark belongs to the message box and must not open anything.
-	typed, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	// From chat with a message already started, where a question mark belongs to the message box
+	// and must not open anything. Stealing a character out of the middle of a sentence somebody is
+	// writing is the thing this rule exists to prevent.
+	started, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("what is this")})
+	typed, _ := started.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
 	if typed.(tui.App).Screen() == "help" {
 		t.Error("a question mark typed into a message opened the help screen")
 	}
 	if !strings.Contains(typed.(tui.App).ChatInput(), "?") {
 		t.Errorf("the question mark did not reach the message box: %q", typed.(tui.App).ChatInput())
+	}
+
+	// From chat with nothing typed, where there is no message for it to be part of. Chat is the
+	// screen the program opens on, and while this did not work the one key that lists every other
+	// key could not be pressed from home.
+	fromHome, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if fromHome.(tui.App).Screen() != "help" {
+		t.Errorf("? on an empty message box landed on %q", fromHome.(tui.App).Screen())
 	}
 
 	// From the agents view, where it is not being typed into anything.

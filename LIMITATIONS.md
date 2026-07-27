@@ -231,16 +231,23 @@ be rediscovered by getting burned by it.
 
 ## Interface
 
-- There is no help or keybinding overlay yet, and only one visual theme exists. Both a second theme
-  and a screen listing every binding are still open work (A9-03).
+- Canopy asks the terminal for mouse events, so the wheel scrolls the conversation. The cost is that
+  dragging to select text no longer reaches the terminal, so copying out of Canopy means holding a
+  modifier while you drag: option on macOS terminals, shift on most others. Without this the wheel
+  arrives as arrow key presses, and the arrow keys walk back through what you have sent, so
+  scrolling up to reread an answer would replace what you were typing.
 
 - No single pass covering resize handling, huge output, rapid state changes, and orphaned processes
   on quit has been run as its own gate yet. Individual tasks exercise pieces of this already, but
   nothing has verified all of it together in one sweep (A9-01, A9-02).
 
-- The release workflow has never run. The GoReleaser config, the tag workflow and the makefile are
-  written and the config parses, but no tag has been pushed, so the first release is also the first
-  test of it.
+- Homebrew is not wired up. The cask is configured but skipped for prerelease tags, and the tap
+  repository does not exist yet, so `brew install` is not available until the first non-prerelease
+  tag. Binaries are on the releases page and `go install` works.
+
+- `go install ...@latest` builds from the default branch rather than from the latest tag, because Go
+  ignores prerelease versions for `@latest` and every tag so far is one. The binary from `go install`
+  and the binary from the releases page are therefore not the same code.
 
 - The worktree monitor screen still reads from a fake project rather than from your repository. The
   real verification state lives on the review screen. So do the `snapshot`, `watch` and `demo`

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -175,12 +176,22 @@ func firstLine(s string) string {
 // A blank screen with a prompt is technically correct and tells a first time user nothing. This is
 // the one place in the program where somebody is guaranteed to be looking and has not yet decided
 // whether the tool is worth their time.
+// It is also what a new conversation opens on, which is the other reason the mark is here. Pressing
+// the key for a fresh chat and getting a blank rectangle makes it impossible to tell a new
+// conversation from one that failed to load.
 func Welcome(width int, dir, key string) []string {
 	t := theme.Current()
 
 	var lines []string
+	for _, line := range brand.Mark(width) {
+		lines = append(lines, t.Logo.Render(line))
+	}
+	if len(lines) > 0 {
+		lines = append(lines, "")
+	}
+
 	lines = append(lines, t.Title.Render("Canopy"))
-	lines = append(lines, t.Muted.Render("a terminal coding agent for running several at once"))
+	lines = append(lines, t.Muted.Render(brand.Tagline))
 	lines = append(lines, "")
 
 	if dir != "" {
