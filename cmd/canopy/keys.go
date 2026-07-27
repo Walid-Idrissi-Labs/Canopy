@@ -31,6 +31,7 @@ usage:
 flags for add:
   -provider string   anthropic or openai-compatible (default "anthropic")
   -base-url string   endpoint, required for openai-compatible
+  -model string      the model this credential talks to, required except for anthropic
 
 flags for rate:
   -in float          dollars per million input tokens
