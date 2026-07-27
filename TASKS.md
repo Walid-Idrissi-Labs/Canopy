@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | Phase M, added 2026-07-27 and unclaimed as of this commit | `feat/mvp-usability` | none |
+| Claude | Phase M. M-02, M-04 and M-05 in review. M-01, M-03 and M-06 next | `feat/mvp-usability` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -2835,7 +2835,7 @@ The visible half is the part worth building carefully. A tool call that shows as
 nothing teaches people to distrust the program, and they are right to.
 
 ### M-02 Input history
-`status: todo | owner: none | branch: none | depends: A3-02`
+`status: review | owner: Claude | branch: feat/mvp-usability | depends: A3-02`
 `scope: internal/tui/chat/input.go`
 
 Deliverable: up and down through what you have already sent.
@@ -2846,13 +2846,20 @@ A half typed message survives the trip and is still there when you come back dow
 conversation rebuilds it from that conversation's own messages, so it works before you have sent
 anything.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: the single cheapest thing on this list and the one whose absence is felt every minute.
 Retyping a prompt to change one word is the most common thing a person does with a coding agent.
 
 Per conversation matters: shared history would offer you the message you sent to a different agent,
 which is at best noise and at worst sent by accident.
+
+Two decisions worth recording. A message the engine refused is not filed, because it is still in the
+box, and filing it would put the same message on screen and in the history at once. Editing a
+recalled message detaches it from the history rather than tracking the edit against the original,
+since the alternative is an edit that silently disappears on the next arrow key.
+
+Both are mutation tested. Dropping the saved draft leaves every other test in the file passing.
 
 ### M-03 Task list, detailed and on screen
 `status: todo | owner: none | branch: none | depends: A4-10`
@@ -2879,7 +2886,7 @@ Exactly one in progress stays enforced rather than requested. A list with four t
 a list of everything the agent has touched, which is what all of these become if nothing stops it.
 
 ### M-04 New conversation
-`status: todo | owner: none | branch: none | depends: A3-02`
+`status: review | owner: Claude | branch: feat/mvp-usability | depends: A3-02`
 `scope: internal/tui/chat/, internal/tui/app.go`
 
 Deliverable: start a fresh conversation without leaving the program.
@@ -2888,7 +2895,7 @@ Acceptance: the transcript and the input box are empty and the launch screen is 
 previous conversation is still in the session list and is not deleted. The credential and model you
 had chosen carry over. Starting one while a turn is in flight asks first.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: quitting and restarting to get a clean context is what people do when there is no key for
 this, and it costs them their credential choice every time.
@@ -2896,9 +2903,19 @@ this, and it costs them their credential choice every time.
 Not deleting is the point. A key that silently destroys an hour of conversation is a key nobody
 presses twice.
 
+On `ctrl+n`, and on the shape of the question. The confirmation is the same key pressed again rather
+than a yes or no dialogue, because a dialogue takes the whole keyboard for a decision that is not
+dangerous, and this one is not: the old conversation keeps its turn and finishes it whether or not
+anybody is watching. The notice says so in those words, since the fear on being asked is that the
+running reply is about to be thrown away.
+
+The confirmation lapses on the next keystroke. One that outlived it would eventually fire on a key
+somebody meant for something else, which is the worst possible moment to replace what is on screen.
+That is the mutation tested guarantee here.
+
 ### M-05 A logo worth keeping
-`status: todo | owner: none | branch: none | depends: none`
-`scope: internal/tui/layout.go, internal/tui/theme/`
+`status: review | owner: Claude | branch: feat/mvp-usability | depends: none`
+`scope: internal/tui/brand/, internal/tui/layout.go, internal/tui/chat/transcript.go`
 
 Deliverable: a mark that looks deliberate, on the launch screen and on an empty conversation.
 
@@ -2906,14 +2923,27 @@ Acceptance: it renders correctly at 80 columns and falls back to plain text belo
 needs. The word Canopy appears as text beside it. It survives a theme change with only its colour
 altered, and it is drawn again by M-04 rather than only at startup.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: the current one is five lines of slanted ASCII chosen for being small and out of the way,
-which was the right call for a program nobody had seen and the wrong one for a project asking people
-to try it.
+notes: the old one was five lines of slanted ASCII chosen for being small and out of the way, which
+was the right call for a program nobody had seen and the wrong one for a project asking people to
+try it. The new mark is a canopy over a trunk.
 
 The text beside it is not decoration. Block letters are unreadable to a screen reader,
 unrecognisable in a narrow terminal, and unsearchable in a pasted bug report.
+
+It lives in `internal/tui/brand` because the launch screen and the empty conversation both draw it
+and neither package can import the other. Two copies would drift, and the drift would be somebody's
+idea of the logo showing up on one screen and not the other.
+
+Drawn from `█`, `▀` and `▄` only. The quadrant and corner blocks look better in the two fonts that
+render them correctly and like a row of missing glyph boxes everywhere else, and the first thing a
+new user sees is not where to find out which font they are running. Asserted by a test, along with
+the silhouette being symmetric about its centre on every row, since an asymmetric one reads as a
+rendering fault rather than as a drawing.
+
+Below twenty five columns the art is dropped rather than clipped. Half a tree looks like the program
+is broken; the wordmark alone looks deliberate.
 
 ### M-06 The first ten minutes
 `status: todo | owner: none | branch: none | depends: M-01, M-02, M-04, A9-03`
@@ -2933,6 +2963,13 @@ no footer and no help screen.
 notes: the acceptance criterion is a person, not a checklist, and it is meant to be run on someone
 who was not in the room while it was built. Every one of the three bugs found on 2026-07-26 passed
 its tests and failed the first person who touched it.
+
+**One of these landed early, on 2026-07-27, because M-04 could not be finished around it.** `?` did
+not open the help overlay from chat: the check that stops a keystroke being stolen out of a message
+treated the chat screen as always being typed into, so the one key that lists every other key could
+not be pressed from the screen the program opens on. It now opens help when the message box is
+empty, since with nothing typed there is no message for it to be part of, and the footer says which
+of the two meanings is currently in effect. The rest of this task is untouched.
 
 Scoped by that criterion rather than by taste, or this becomes the task that is never finished. It
 is pre-alpha. The bar is that nothing blocks you, not that everything is beautiful.

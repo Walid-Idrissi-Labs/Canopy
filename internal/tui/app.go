@@ -21,6 +21,10 @@ import (
 type Engine interface {
 	chat.Engine
 	agentsui.Engine
+
+	// Create starts a fresh conversation and returns it. The old one is left alone: it keeps its
+	// history, keeps running any turn that is in flight, and is still in the session list.
+	Create(keyName, model string) core.Session
 }
 
 // screen identifies which view is in front.
@@ -58,9 +62,18 @@ type splashDoneMsg struct{}
 type App struct {
 	screen screen
 
+	// engine is held so the application can start a conversation, which is the one thing no screen
+	// can do for itself: the chat screen shows a session and the agents screen makes agents, and a
+	// plain new conversation belongs to neither.
+	engine Engine
+
 	// afterSplash is the screen to show once the launch screen clears, decided at construction so
 	// the splash never has to know anything about credentials.
 	afterSplash screen
+
+	// confirmingNew is true when a new conversation has been asked for while a reply is still
+	// arriving, and the same key pressed again will go through with it.
+	confirmingNew bool
 
 	// dir is the working directory new agents are given.
 	dir string
@@ -111,6 +124,7 @@ func NewAppWithReview(
 ) App {
 	app := App{
 		screen:      screenSplash,
+		engine:      engine,
 		afterSplash: screenChat,
 		chat:        chat.New(engine, "session-1", dir, keyName),
 		agents:      agentsui.New(engine),
@@ -190,6 +204,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key.String() == "?" && !a.typing() {
 			a.helpFrom, a.screen = a.screen, screenHelp
 			return a, nil
+		}
+
+		// A pending confirmation lasts exactly one keystroke. Anything other than the same key
+		// again is a change of mind, and a confirmation that outlived it would eventually fire on
+		// a keystroke somebody meant for something else entirely.
+		if a.confirmingNew && key.String() != "ctrl+n" {
+			a.confirmingNew = false
+			a.chat.SetNotice("")
 		}
 
 		if handled, next, cmd := a.routeKey(key); handled {
@@ -285,6 +307,21 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 				return true, a, nil
 			}
 			return true, a, tea.Quit
+		case "ctrl+n":
+			if a.chat.Awaiting() {
+				return false, a, nil
+			}
+			// Asked for while a reply is arriving, the first press explains and the second goes
+			// ahead. A confirmation rather than a refusal, because leaving is allowed: the old
+			// conversation keeps its turn and finishes it whether or not anybody is watching.
+			if a.chat.Working() && !a.confirmingNew {
+				a.confirmingNew = true
+				a.chat.SetNotice(
+					"a reply is still arriving, ctrl+n again for a new conversation and this one keeps going")
+				return true, a, nil
+			}
+			return true, a.newConversation(), nil
+
 		case "ctrl+k", "ctrl+d":
 			// Navigation is disabled while a question is open, for the same reason: leaving the
 			// screen with a tool call waiting would hide the thing that is blocking.
@@ -377,6 +414,24 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	return false, a, nil
 }
 
+// newConversation starts a fresh session and shows it.
+//
+// The credential and model carry over. Somebody starting a new conversation is changing subject,
+// not changing provider, and making them pick again every time is the kind of small tax that adds
+// up to people not using the key at all.
+//
+// Nothing is deleted. The previous conversation is still in the session list with its history and
+// its running turn, which is what makes this safe to press without thinking. A key that silently
+// destroyed an hour of work is one nobody presses twice.
+func (a App) newConversation() App {
+	created := a.engine.Create(a.usingKey, a.keys.ModelFor(a.usingKey))
+	a.chat.SetSession(created.ID, "")
+	a.chat.SetNotice("")
+	a.confirmingNew = false
+	a.screen = screenChat
+	return a
+}
+
 // typing reports whether a keystroke currently belongs to a text field.
 //
 // Asked in one place, because the answer is the same for every global key and getting it wrong
@@ -384,7 +439,15 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 func (a App) typing() bool {
 	switch a.screen {
 	case screenChat:
-		return true
+		// An empty box is the exception, and it exists because chat is the home screen. While this
+		// returned true unconditionally, the one key that lists every other key could not be pressed
+		// from the screen the program opens on, which left the help overlay reachable only by
+		// navigating away from home first and then wondering what to press there.
+		//
+		// With nothing typed there is no message for a question mark to be part of, so it means the
+		// question it looks like. The moment anything is in the box it goes back to being a
+		// character, and the footer says which of the two is in effect.
+		return !a.chat.InputEmpty()
 	case screenAgents:
 		return a.agents.Naming()
 	case screenKeys:
@@ -420,10 +483,22 @@ func (a App) View() string {
 		return Frame(a.dim, "canopy", a.review.Context(), a.review.Body(), a.review.Footer())
 
 	case screenChat:
-		// The keys mean something different while a question is up, so the footer says so rather
-		// than listing commands that are not currently in effect.
-		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "ctrl+d", "agents",
-			"ctrl+k", "keys", "ctrl+r", "compact", "ctrl+c", "quit")
+		// The keys mean something different while a question is up, and again depending on whether
+		// there is anything in the box, so the footer says which set is in effect rather than
+		// listing commands that are not.
+		//
+		// Hints are dropped from the right when they do not fit, so the order is what somebody
+		// needs first rather than what the program does most. At eighty columns only about five
+		// survive, and the ones that have to be among them are how to get help and how to reach a
+		// credential, because everything else in the program is downstream of those two.
+		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "↑", "history",
+			"ctrl+n", "new", "ctrl+k", "keys", "ctrl+d", "agents", "ctrl+r", "compact",
+			"ctrl+c", "quit")
+		if a.chat.InputEmpty() {
+			footer = Keys(a.dim.Width, "enter", "send", "?", "help", "ctrl+k", "keys",
+				"ctrl+n", "new", "ctrl+d", "agents", "↑", "history", "ctrl+r", "compact",
+				"esc", "stop", "ctrl+c", "quit")
+		}
 		if a.chat.Awaiting() {
 			footer = Keys(a.dim.Width, "y", "allow once", "a", "always", "any other key", "refuse")
 		}

@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -39,26 +40,21 @@ func (d Dimensions) BodyHeight() int {
 	return 1
 }
 
-// logo is drawn on the splash.
-//
-// Deliberately small. A full width banner looks impressive in a screenshot and is in the way every
-// time you actually start the program, which is the more common experience by a wide margin.
-const logo = `
-   ___
-  / __|__ _ _ _  ___ _ __ _  _
- | (__/ _` + "`" + ` | ' \/ _ \ '_ \ || |
-  \___\__,_|_||_\___/ .__/\_, |
-                    |_|   |__/    `
-
 // Splash renders the launch screen.
+//
+// The mark lives in the brand package because the empty conversation draws it too, and the launch
+// screen and the first thing you see after starting a new chat should not be two different pictures
+// that were each somebody's idea of the logo.
 func Splash(d Dimensions, subtitle string) string {
 	t := theme.Current()
 
 	// The name appears as text as well as art. Block letters are unreadable to a screen reader,
 	// unrecognisable in a narrow terminal, and unsearchable in a pasted bug report.
-	block := t.Logo.Render(strings.TrimLeft(logo, "\n")) + "\n\n" +
-		t.Title.Render("Canopy") + "\n" +
-		t.Muted.Render(subtitle)
+	var block string
+	if brand.Fits(d.Width) {
+		block = t.Logo.Render(strings.Join(brand.Lines(), "\n")) + "\n\n"
+	}
+	block += t.Title.Render("Canopy") + "\n" + t.Muted.Render(subtitle)
 
 	if !d.Usable() {
 		return block

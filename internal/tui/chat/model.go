@@ -101,6 +101,10 @@ type Model struct {
 	// a turn live on the turn instead, where they stay attached to what they describe.
 	err string
 
+	// notice is something the screen around this one wants said, such as a question waiting on a
+	// second keystroke. Kept apart from err because it is not a failure and should not be red.
+	notice string
+
 	spinner int
 	working bool
 
@@ -129,7 +133,17 @@ func New(engine Engine, sessionID, dir, keyName string) Model {
 		keyName:   keyName,
 	}
 	m.refresh()
+	m.input.LoadHistory(promptsOf(m.session))
 	return m
+}
+
+// promptsOf is every message the user sent in a conversation, oldest first.
+func promptsOf(s core.Session) []string {
+	out := make([]string, 0, len(s.Turns))
+	for _, turn := range s.Turns {
+		out = append(out, turn.Request.Text)
+	}
+	return out
 }
 
 // Init subscribes to engine events and starts the spinner.
@@ -359,6 +373,9 @@ func (m Model) send() (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Filed only once the engine has accepted it, so a message that was refused is still in the box
+	// rather than in the box and in the history, which is one message showing up twice.
+	m.input.Remember(prompt)
 	m.input.Clear()
 	// Sending returns to the tail. Someone who scrolled up to read something old and then asked a
 	// question is asking about now.
@@ -403,9 +420,22 @@ func (m *Model) SetSession(sessionID, label string) {
 	m.agentName = label
 	m.scroll = 0
 	m.err = ""
+	m.notice = ""
 	m.input.Clear()
 	m.refresh()
+	// History belongs to the conversation, not to the box. Carrying it across would offer you, on
+	// the first press of up, the message you sent to a different agent.
+	m.input.LoadHistory(promptsOf(m.session))
 }
+
+// SetNotice puts a line above the message box.
+//
+// For the application around this screen, which sometimes needs to say something about the
+// conversation without owning any of the conversation's rendering.
+func (m *Model) SetNotice(text string) { m.notice = text }
+
+// Notice is what is currently being said. For tests.
+func (m Model) Notice() string { return m.notice }
 
 // UseCredential switches this conversation to a different credential and model.
 //
@@ -431,6 +461,13 @@ func (m Model) Awaiting() bool { return m.awaiting }
 
 // Input exposes the message box. For tests.
 func (m Model) InputValue() string { return m.input.Value() }
+
+// InputEmpty reports whether there is nothing in the box.
+//
+// The screen around this one uses it to decide what a printable key means. With nothing typed there
+// is no message for a keystroke to be part of, which is what makes it safe to give some of them
+// another meaning.
+func (m Model) InputEmpty() bool { return m.input.Empty() }
 
 func (m Model) spinnerFrame() string { return spinnerFrames[m.spinner] }
 
@@ -503,6 +540,11 @@ func (m Model) statusRow(below int) string {
 
 	if m.err != "" {
 		return t.Danger.Render("  " + m.err)
+	}
+	// Above the working line on purpose. A notice is usually a question waiting on the next
+	// keystroke, and a spinner saying "working" is not the thing to answer.
+	if m.notice != "" {
+		return t.Warning.Render("  " + m.notice)
 	}
 	if below > 0 {
 		// Said explicitly, because a view that has silently stopped following the tail looks
