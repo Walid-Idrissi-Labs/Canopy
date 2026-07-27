@@ -48,8 +48,6 @@ var (
 	colorFail    lipgloss.TerminalColor
 	colorStale   lipgloss.TerminalColor
 	colorPending lipgloss.TerminalColor
-	colorMuted   lipgloss.TerminalColor
-	colorText    lipgloss.TerminalColor
 )
 
 func init() { theme.OnChange(refreshColours) }
@@ -60,8 +58,6 @@ func refreshColours() {
 	colorFail = t.Danger.GetForeground()
 	colorStale = t.Warning.GetForeground()
 	colorPending = t.Info.GetForeground()
-	colorMuted = t.Muted.GetForeground()
-	colorText = t.Body.GetForeground()
 }
 
 var (
