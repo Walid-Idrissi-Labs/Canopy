@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
@@ -82,7 +83,9 @@ func runChat() error {
 	// project" means. A workspace that could not be opened is a directory the agent cannot work in,
 	// and a conversation with no tools is still a useful thing, so it is a warning rather than a
 	// failure.
-	if err := attachTools(engine, dir); err != nil {
+	project := loadProject(dir)
+
+	if err := attachTools(engine, dir, project); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
 	}
 
@@ -100,7 +103,19 @@ func runChat() error {
 		return fmt.Errorf("starting the first agent: %w", err)
 	}
 
-	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
+	// Verification is what the review screen reads. Its absence is normal: outside a repository
+	// there is nothing to verify, and the screen says so rather than being hidden.
+	verification, err := startVerification(context.Background(), engine, dir, project)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: verification is not running: %v\n", err)
+	}
+	defer verification.Close()
+
+	var review tui.ReviewSource
+	if verification != nil {
+		review = verification.verifier
+	}
+	return tui.RunAppWithReview(store, keyStore, engine, filepath.Base(dir), keyName, review)
 }
 
 // attachTools gives the agent something to do besides talk.
@@ -109,7 +124,7 @@ func runChat() error {
 // and shows every shell command before running it. Per profile levels are configured at A5, and
 // until there is a way to choose one, the level that asks about the dangerous half is the only
 // defensible default.
-func attachTools(engine *session.Engine, dir string) error {
+func attachTools(engine *session.Engine, dir string, project config.Project) error {
 	registry, err := toolsFor(dir)
 	if err != nil {
 		return err
@@ -128,7 +143,15 @@ func attachTools(engine *session.Engine, dir string) error {
 		// worktree of its own where there are worktrees. Its absence is not an error, because an
 		// agent is not a branch and the ordinary run never asks for one.
 		if repo, err := gitpkg.OpenRepo(dir); err == nil {
-			if err := engine.WithIsolation(session.Isolation{Repo: repo, Tools: toolsFor}); err != nil {
+			if err := engine.WithIsolation(session.Isolation{
+				Repo:  repo,
+				Tools: toolsFor,
+				Environment: gitpkg.Environment{
+					Setup:        project.Setup,
+					SetupTimeout: project.SetupDuration(),
+					Copy:         project.Copy,
+				},
+			}); err != nil {
 				return err
 			}
 		}

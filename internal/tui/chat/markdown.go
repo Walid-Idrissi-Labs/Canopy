@@ -477,6 +477,21 @@ func renderCodeBlock(lang string, code []string, width int) []string {
 	return out
 }
 
+// Highlight colours one line of source in a named language.
+//
+// Exported for the diff review at A7-01, which needs exactly this and nothing else from the
+// markdown renderer. A diff hunk is source code with a marker character in front of it, so the
+// alternative was a second lexer that would drift from this one the first time a keyword list
+// changed. The language is a file extension there rather than a fence tag, and normalizeLang
+// already treats them the same.
+//
+// The caller is responsible for wrapping first. Styling has to follow wrapping and never precede
+// it, or the escape sequences get counted as width.
+func Highlight(lang, line string) string {
+	rules, ok := languageRules(lang)
+	return highlightCode(expandTabs(line), rules, ok, theme.Current())
+}
+
 // expandTabs replaces a tab with a fixed run of spaces. A raw tab has no fixed display width in a
 // terminal, since it jumps to the next tab stop rather than occupying one cell, so it is expanded
 // rather than measured. Gofmt output is real code this has to survive: Go source is tab indented.

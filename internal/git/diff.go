@@ -21,59 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 )
-
-// Stat is the size of a change.
-type Stat struct {
-	FilesChanged int
-	Insertions   int
-	Deletions    int
-
-	// Binary counts files whose change cannot be measured in lines. They are counted rather than
-	// ignored, because a replaced 4 MB asset is a bigger change than a one line edit and reporting
-	// it as zero would make the smallest looking diff the one nobody can review.
-	Binary int
-}
-
-// Lines is the total churn, which is what ranking uses as a tiebreak.
-func (s Stat) Lines() int { return s.Insertions + s.Deletions }
-
-// Empty reports whether anything changed at all.
-func (s Stat) Empty() bool { return s.FilesChanged == 0 && s.Binary == 0 }
-
-// Summary is the one line form, in git's own idiom so it reads familiarly.
-func (s Stat) Summary() string {
-	if s.Empty() {
-		return "no changes"
-	}
-	parts := []string{fmt.Sprintf("%d %s changed", s.FilesChanged, plural(s.FilesChanged, "file", "files"))}
-	if s.Insertions > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s", s.Insertions, plural(s.Insertions, "insertion", "insertions")))
-	}
-	if s.Deletions > 0 {
-		parts = append(parts, fmt.Sprintf("%d %s", s.Deletions, plural(s.Deletions, "deletion", "deletions")))
-	}
-	if s.Binary > 0 {
-		parts = append(parts, fmt.Sprintf("%d binary %s", s.Binary, plural(s.Binary, "file", "files")))
-	}
-	return strings.Join(parts, ", ")
-}
-
-// FileChange is one file's worth of an agent's work.
-type FileChange struct {
-	Path string
-
-	// Old is the previous path of a rename, and empty otherwise.
-	Old string
-
-	// Status is git's own letter: A added, M modified, D deleted, R renamed.
-	Status byte
-
-	Insertions int
-	Deletions  int
-	Binary     bool
-}
 
 // Base returns the commit an agent's branch diverged from.
 //
@@ -94,7 +45,7 @@ func (r *Repo) Base(ctx context.Context, dir, base string) (string, error) {
 }
 
 // Changes returns every file an agent has touched since it left the base, committed or not.
-func (r *Repo) Changes(ctx context.Context, dir, base string) ([]FileChange, error) {
+func (r *Repo) Changes(ctx context.Context, dir, base string) ([]core.FileChange, error) {
 	from, err := r.Base(ctx, dir, base)
 	if err != nil {
 		return nil, err
@@ -126,7 +77,7 @@ func (r *Repo) Changes(ctx context.Context, dir, base string) ([]FileChange, err
 				continue
 			}
 			lines, binary := countLines(dir, path)
-			changes = append(changes, FileChange{
+			changes = append(changes, core.FileChange{
 				Path: path, Status: 'A', Insertions: lines, Binary: binary,
 			})
 		}
@@ -135,13 +86,13 @@ func (r *Repo) Changes(ctx context.Context, dir, base string) ([]FileChange, err
 }
 
 // Diff returns the size of an agent's work.
-func (r *Repo) Diff(ctx context.Context, dir, base string) (Stat, error) {
+func (r *Repo) Diff(ctx context.Context, dir, base string) (core.DiffStat, error) {
 	changes, err := r.Changes(ctx, dir, base)
 	if err != nil {
-		return Stat{}, err
+		return core.DiffStat{}, err
 	}
 
-	var stat Stat
+	var stat core.DiffStat
 	for _, change := range changes {
 		stat.FilesChanged++
 		if change.Binary {
@@ -216,10 +167,10 @@ func countLines(dir, path string) (int, bool) {
 }
 
 // parseNumstat reads the NUL separated numstat format into changes keyed by path.
-func parseNumstat(out string) []FileChange {
+func parseNumstat(out string) []core.FileChange {
 	fields := strings.Split(out, "\x00")
 
-	var changes []FileChange
+	var changes []core.FileChange
 	for i := 0; i < len(fields); i++ {
 		line := fields[i]
 		if line == "" {
@@ -230,7 +181,7 @@ func parseNumstat(out string) []FileChange {
 			continue
 		}
 
-		change := FileChange{Path: parts[2], Status: 'M'}
+		change := core.FileChange{Path: parts[2], Status: 'M'}
 		if parts[0] == "-" && parts[1] == "-" {
 			change.Binary = true
 		} else {
@@ -251,7 +202,7 @@ func parseNumstat(out string) []FileChange {
 }
 
 // applyNameStatus fills in the status letters, which numstat does not carry.
-func applyNameStatus(changes []FileChange, out string) {
+func applyNameStatus(changes []core.FileChange, out string) {
 	status := make(map[string]byte)
 
 	fields := strings.Split(out, "\x00")

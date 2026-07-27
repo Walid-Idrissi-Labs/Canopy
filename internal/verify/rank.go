@@ -18,61 +18,19 @@ import (
 	"sort"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
 )
-
-// Placement is where one agent came, or why it could not be placed.
-type Placement struct {
-	Agent string
-
-	// Rank is one based, and zero for an agent that could not be ranked.
-	Rank int
-
-	// Tests is the aggregate visible state of this agent's evidence.
-	Tests core.TestState
-
-	// Passing and Required count the required tests, which are the ones that can block a green.
-	Passing  int
-	Required int
-
-	Diff     git.Stat
-	Revision core.RevisionKey
-
-	// Reason explains the placement, or the refusal to make one. Never empty.
-	Reason string
-}
-
-// Ranking is the result of comparing several agents on the same task.
-type Ranking struct {
-	// Ranked is best first. Empty is a legitimate answer and means no agent has evidence that
-	// currently describes its own code.
-	Ranked []Placement
-
-	// Unranked are the agents whose evidence cannot support a placement, each with the reason.
-	// Listed rather than dropped, because an agent that has vanished from the screen is one somebody
-	// will assume failed.
-	Unranked []Placement
-}
-
-// Best returns the winning agent, if there is one.
-func (r Ranking) Best() (Placement, bool) {
-	if len(r.Ranked) == 0 {
-		return Placement{}, false
-	}
-	return r.Ranked[0], true
-}
 
 // Rank compares every agent being verified.
 //
 // Passing first, then diff size as the tiebreak. Smaller wins, on the grounds that between two
 // changes that both make the tests pass, the one with less code in it is the one with less to review
 // and less to be wrong. That is a judgement rather than a measurement, and it only ever decides ties.
-func (v *Verifier) Rank() Ranking {
+func (v *Verifier) Rank() core.Ranking {
 	v.mu.Lock()
 	names := append([]string(nil), v.order...)
 	v.mu.Unlock()
 
-	var ranking Ranking
+	var ranking core.Ranking
 	for _, name := range names {
 		placement, rankable := v.placementFor(name)
 		if rankable {
@@ -109,17 +67,17 @@ func (v *Verifier) Rank() Ranking {
 }
 
 // placementFor builds one agent's placement and says whether it can be ranked at all.
-func (v *Verifier) placementFor(agent string) (Placement, bool) {
+func (v *Verifier) placementFor(agent string) (core.Placement, bool) {
 	v.mu.Lock()
 	snapshot, known := v.snapshotLocked(agent)
 	stat := v.diffs[agent]
 	v.mu.Unlock()
 
 	if !known {
-		return Placement{Agent: agent, Reason: "this agent is no longer being verified"}, false
+		return core.Placement{Agent: agent, Reason: "this agent is no longer being verified"}, false
 	}
 
-	placement := Placement{
+	placement := core.Placement{
 		Agent:    agent,
 		Diff:     stat,
 		Revision: snapshot.Revision,
@@ -167,7 +125,7 @@ func (v *Verifier) placementFor(agent string) (Placement, bool) {
 	return placement, true
 }
 
-func rankReason(p Placement) string {
+func rankReason(p core.Placement) string {
 	switch {
 	case p.Passing == p.Required:
 		return fmt.Sprintf("all %d required %s pass for revision %s, %s",
@@ -188,16 +146,6 @@ func plural(n int, one, many string) string {
 	return many
 }
 
-// Ready is one agent waiting to be reviewed.
-type Ready struct {
-	Agent  string
-	Branch string
-	Diff   git.Stat
-
-	// Why says what makes this worth looking at, in the same terms the ranking uses.
-	Why string
-}
-
 // ReadyToReview lists agents that are green for the code currently in their worktree and have
 // something to show for it, easiest review first.
 //
@@ -206,12 +154,12 @@ type Ready struct {
 // no cached membership to forget to invalidate. And an agent that is green with an empty diff never
 // enters, because a passing test suite over no changes is the state every repository starts in and
 // putting it at the top of a work queue would bury the actual work.
-func (v *Verifier) ReadyToReview() []Ready {
+func (v *Verifier) ReadyToReview() []core.ReadyForReview {
 	v.mu.Lock()
 	names := append([]string(nil), v.order...)
 	v.mu.Unlock()
 
-	var queue []Ready
+	var queue []core.ReadyForReview
 	for _, name := range names {
 		v.mu.Lock()
 		snapshot, known := v.snapshotLocked(name)
@@ -232,7 +180,7 @@ func (v *Verifier) ReadyToReview() []Ready {
 			// weeks must not be invisible just because it cannot block the green.
 			why += ", but " + rollup.Caveat
 		}
-		queue = append(queue, Ready{
+		queue = append(queue, core.ReadyForReview{
 			Agent:  name,
 			Branch: snapshot.Branch,
 			Diff:   stat,

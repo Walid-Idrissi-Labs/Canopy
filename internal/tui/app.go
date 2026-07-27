@@ -19,6 +19,7 @@ const (
 	screenChat
 	screenAgents
 	screenDashboard
+	screenReview
 	screenKeys
 )
 
@@ -56,6 +57,7 @@ type App struct {
 	chat      chat.Model
 	agents    agentsui.Model
 	dashboard Model
+	review    ReviewModel
 	keys      keysui.Model
 
 	dim Dimensions
@@ -70,11 +72,25 @@ type App struct {
 func NewApp(
 	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
 ) App {
+	return NewAppWithReview(store, keyStore, engine, dir, keyName, nil)
+}
+
+// NewAppWithReview is the same with a source for the review screen.
+//
+// Separate rather than a sixth parameter on NewApp, because most callers, including every existing
+// test, run without a repository and would have to pass a nil they do not care about. A nil source
+// is a legitimate state here: Canopy runs in directories that are not git repositories, and the
+// review screen says so rather than being hidden.
+func NewAppWithReview(
+	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	review ReviewSource,
+) App {
 	app := App{
 		screen:      screenSplash,
 		afterSplash: screenChat,
 		chat:        chat.New(engine, "session-1", dir, keyName),
 		dashboard:   New(store),
+		review:      NewReview(review),
 		keys:        keysui.New(keyStore),
 		cameFrom:    screenChat,
 		dim:         Dimensions{Width: 80, Height: 24},
@@ -91,6 +107,7 @@ func (a *App) resize(dim Dimensions) {
 	a.dim = dim
 	a.chat.SetSize(dim.Width, dim.BodyHeight())
 	a.agents.SetSize(dim.Width, dim.BodyHeight())
+	a.review.SetSize(dim.Width, dim.BodyHeight())
 }
 
 func (a App) Init() tea.Cmd {
@@ -145,6 +162,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenAgents:
 			var cmd tea.Cmd
 			a.agents, cmd = a.agents.Update(key)
+			return a, cmd
+		case screenReview:
+			var cmd tea.Cmd
+			a.review, cmd = a.review.Update(key)
 			return a, cmd
 		case screenKeys:
 			var cmd tea.Cmd
@@ -236,6 +257,12 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			// what the agents are doing and the other about what state the code is in.
 			a.screen = screenDashboard
 			return true, a, nil
+		case "r":
+			// Review is reached from the agent list because that is where you are when you notice one
+			// has finished. It is a third question again: not what they are doing and not what state
+			// the code is in, but which of them is worth reading.
+			a.screen = screenReview
+			return true, a, nil
 		case "K":
 			a.cameFrom = screenAgents
 			a.screen = screenKeys
@@ -259,6 +286,20 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 				a.screen = screenKeys
 				return true, a, nil
 			}
+		}
+
+	case screenReview:
+		// Escape unwinds the review screen's own panes first, so it only leaves once there is
+		// nothing left to come back from. Handled inside the model, which is why this only sees the
+		// case where it is already at the top.
+		if msg.String() == "esc" && a.review.Pane() == "queue" {
+			a.screen = screenAgents
+			return true, a, nil
+		}
+		if msg.String() == "K" {
+			a.cameFrom = screenReview
+			a.screen = screenKeys
+			return true, a, nil
 		}
 
 	case screenKeys:
@@ -289,11 +330,14 @@ func (a App) View() string {
 	switch a.screen {
 	case screenAgents:
 		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
-			"esc", "chat", "w", "worktrees")
+			"esc", "chat", "w", "worktrees", "r", "review")
 		if a.agents.Naming() {
 			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
 		}
 		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(), footer)
+
+	case screenReview:
+		return Frame(a.dim, "canopy", a.review.Context(), a.review.Body(), a.review.Footer())
 
 	case screenChat:
 		// The keys mean something different while a question is up, so the footer says so rather
@@ -321,6 +365,8 @@ func (a App) Screen() string {
 		return "chat"
 	case screenAgents:
 		return "agents"
+	case screenReview:
+		return "review"
 	case screenKeys:
 		return "keys"
 	default:
@@ -353,8 +399,16 @@ func (a App) DismissSplash() App {
 func RunApp(
 	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
 ) error {
+	return RunAppWithReview(store, keyStore, engine, dir, keyName, nil)
+}
+
+// RunAppWithReview starts the application with a source for the review screen.
+func RunAppWithReview(
+	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	review ReviewSource,
+) error {
 	program := tea.NewProgram(
-		NewApp(store, keyStore, engine, dir, keyName), tea.WithAltScreen())
+		NewAppWithReview(store, keyStore, engine, dir, keyName, review), tea.WithAltScreen())
 	_, err := program.Run()
 	return err
 }

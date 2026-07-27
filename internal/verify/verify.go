@@ -56,7 +56,7 @@ type Verifier struct {
 	revision map[string]core.RevisionKey
 	reason   map[string]string
 	latest   map[string]map[string]core.TestRun
-	diffs    map[string]git.Stat
+	diffs    map[string]core.DiffStat
 	order    []string
 }
 
@@ -78,7 +78,7 @@ func New(repo *git.Repo, base string, tests []exec.Test, publish func(core.Event
 		revision: make(map[string]core.RevisionKey),
 		reason:   make(map[string]string),
 		latest:   make(map[string]map[string]core.TestRun),
-		diffs:    make(map[string]git.Stat),
+		diffs:    make(map[string]core.DiffStat),
 	}
 	v.runner = exec.NewRunner(v.record)
 	return v
@@ -275,8 +275,36 @@ func (v *Verifier) Rollup(agent string) (core.Rollup, bool) {
 }
 
 // Diff returns the size of an agent's work as last measured.
-func (v *Verifier) Diff(agent string) git.Stat {
+func (v *Verifier) Diff(agent string) core.DiffStat {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.diffs[agent]
+}
+
+// Changes lists the files an agent has touched.
+//
+// Read from git on each call rather than cached with the size. The stat is a number on a list and
+// being a poll interval out of date costs nothing; a file list is what somebody is about to read,
+// and showing them a file that is no longer changed is worse than the cost of one more git call.
+func (v *Verifier) Changes(agent string) ([]core.FileChange, error) {
+	v.mu.Lock()
+	subject, ok := v.subjects[agent]
+	v.mu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownAgent, agent)
+	}
+	return v.repo.Changes(context.Background(), subject.Dir, v.base)
+}
+
+// Patch returns the diff of one file in an agent's worktree.
+func (v *Verifier) Patch(agent, path string) (string, error) {
+	v.mu.Lock()
+	subject, ok := v.subjects[agent]
+	v.mu.Unlock()
+
+	if !ok {
+		return "", fmt.Errorf("%w: %s", ErrUnknownAgent, agent)
+	}
+	return v.repo.Patch(context.Background(), subject.Dir, v.base, path)
 }

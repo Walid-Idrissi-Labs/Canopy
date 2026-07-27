@@ -1,0 +1,100 @@
+# GoReleaser v2 configuration for Canopy.
+#
+# Run locally with `make snapshot` (build only, no publish, no tag required). A real release
+# happens from .github/workflows/release.yml on a pushed `v*` tag, which needs GITHUB_TOKEN and
+# a full clone, since GoReleaser reads tags to compute the version and the changelog.
+version: 2
+
+project_name: canopy
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: canopy
+    main: ./cmd/canopy
+    binary: canopy
+    # Windows is intentionally not built. Canopy manages agent subprocesses through unix process
+    # groups (setpgid, killing the group rather than one pid) to stop a whole agent's work
+    # including anything it spawned, and there is no Windows equivalent wired up, only job
+    # objects would approximate it and that has not been designed. See README.md, "What it will
+    # not do".
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    env:
+      # No cgo dependency exists today, and a CGO_ENABLED=0 binary is a static one: nothing to
+      # link against at the other end, which is one less way an install can fail on a machine
+      # that never had a Go toolchain on it.
+      - CGO_ENABLED=0
+    flags:
+      # Build paths baked into the binary are only useful to whoever built it, and only until the
+      # next release makes them stale. Trimming them means two builds of the same commit produce
+      # the same binary regardless of whose machine or CI runner did the building.
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: canopy
+    ids:
+      - canopy
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: "Bug fixes"
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: "Performance"
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Other changes
+      order: 999
+
+# Homebrew tap disabled: Walid-Idrissi-Labs/homebrew-tap does not exist yet. GoReleaser's brew
+# publish step fails the whole release if it cannot push the formula to the tap repository, and a
+# release that fails because a repository was never created is a worse outcome than a release that
+# ships without a formula for a while. Uncomment once the tap repository exists.
+#
+# Note for whoever uncomments this: GoReleaser deprecated the "brews" key in v2.10 in favor of
+# "homebrew_casks". Check the version pinned in release.yml and the current docs before enabling
+# this, rather than assuming the block below is still the recommended shape.
+#
+# brews:
+#   - name: canopy
+#     ids:
+#       - canopy
+#     repository:
+#       owner: Walid-Idrissi-Labs
+#       name: homebrew-tap
+#     directory: Formula
+#     homepage: "https://github.com/Walid-Idrissi-Labs/Canopy"
+#     description: "A terminal coding agent for running several agents at once."
+#     license: "MIT"
+#     test: |
+#       system "#{bin}/canopy", "version"

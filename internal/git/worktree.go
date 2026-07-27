@@ -347,6 +347,16 @@ func (r *Repo) Revision(ctx context.Context, path string) (core.RevisionKey, str
 // Revisions exposes the shared hash cache, so a poller can drop a worktree it has stopped watching.
 func (r *Repo) Revisions() *Revisions { return r.revisions }
 
+// HasBranch reports whether a branch exists locally.
+//
+// --verify with a full ref path rather than rev-parse on the bare name, because a bare name also
+// matches a tag and a remote tracking branch, and "main" resolving to a tag called main would send
+// every diff off the wrong base.
+func (r *Repo) HasBranch(ctx context.Context, name string) bool {
+	_, err := r.run(ctx, "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
+	return err == nil
+}
+
 // validateBranchName refuses names git would reject or misread.
 //
 // Shares its reasoning with the branch check in the git tools, and is kept separate rather than
