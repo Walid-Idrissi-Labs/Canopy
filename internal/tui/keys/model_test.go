@@ -1,6 +1,7 @@
 package keys
 
 import (
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
@@ -244,8 +245,25 @@ func TestBaseURLRequestedOnlyWhenNeeded(t *testing.T) {
 
 	m = typeRunes(m, "https://example.invalid/v1")
 	m = press(m, tea.KeyEnter)
+	if m.mode != modeModel {
+		t.Fatalf("mode after a base URL = %v, want the model prompt", m.mode)
+	}
+
+	// A credential with no model on a provider that has no default cannot answer a single message,
+	// and the far end reports it as a bad request rather than as a missing setting. So it is refused
+	// here, where the person can still do something about it.
+	m = press(m, tea.KeyEnter)
+	if m.err == nil {
+		t.Error("an openai-compatible credential with no model should be refused")
+	}
+	if m.mode != modeModel {
+		t.Errorf("the refusal moved on anyway, mode = %v", m.mode)
+	}
+
+	m = typeRunes(m, "some/model-v1")
+	m = press(m, tea.KeyEnter)
 	if m.mode != modeSecret {
-		t.Fatalf("mode after a base URL = %v, want the secret prompt", m.mode)
+		t.Fatalf("mode after a model = %v, want the secret prompt", m.mode)
 	}
 
 	m = typeRunes(m, canary)
@@ -253,6 +271,53 @@ func TestBaseURLRequestedOnlyWhenNeeded(t *testing.T) {
 
 	if store.lastPut.BaseURL != "https://example.invalid/v1" {
 		t.Errorf("BaseURL = %q", store.lastPut.BaseURL)
+	}
+	if store.lastPut.Model != "some/model-v1" {
+		t.Errorf("Model = %q, so the credential was stored unable to answer anything", store.lastPut.Model)
+	}
+}
+
+// The list was somewhere to add and remove credentials and nowhere to pick one. With two stored and
+// no way to choose, nothing could run at all.
+func TestACredentialCanBeChosenAndItsModelChanged(t *testing.T) {
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}},
+		{Ref: core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible}, Model: "old/model"},
+	}}
+	m := New(store)
+
+	if _, picked := m.Chosen(); picked {
+		t.Error("a credential was chosen before anybody chose one")
+	}
+
+	m = key(m, "j")
+	m = press(m, tea.KeyEnter)
+
+	chosen, picked := m.Chosen()
+	if !picked || chosen != "nim" {
+		t.Fatalf("Chosen() = %q %v", chosen, picked)
+	}
+
+	// Changing the model must not require the secret again. Somebody fixing a typo in a model id
+	// should not have to go and find their API key.
+	m = key(m, "m")
+	if m.mode != modeModel {
+		t.Fatalf("m on the list landed on mode %v", m.mode)
+	}
+	for range len("old/model") {
+		m = press(m, tea.KeyBackspace)
+	}
+	m = typeRunes(m, "new/model")
+	m = press(m, tea.KeyEnter)
+
+	if m.mode != modeList {
+		t.Errorf("changing a model landed on mode %v, want back at the list", m.mode)
+	}
+	if m.ModelFor("nim") != "new/model" {
+		t.Errorf("the model is %q after the change", m.ModelFor("nim"))
+	}
+	if store.lastPut.Ref.Name != "" {
+		t.Error("changing a model went through Put, which would need the secret again")
 	}
 }
 
@@ -345,3 +410,13 @@ var errFake = fakeError("the store said no")
 type fakeError string
 
 func (e fakeError) Error() string { return string(e) }
+
+func (s *stubStore) SetModel(ref core.KeyRef, model string) error {
+	for i := range s.keys {
+		if s.keys[i].Ref.Name == ref.Name {
+			s.keys[i].Model = model
+			return nil
+		}
+	}
+	return errors.New("no such credential")
+}

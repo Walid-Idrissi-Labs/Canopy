@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A5-04 and A5-11 done. A5-07 to A5-09 next | `feat/isolated-agents` | none |
+| Claude | A5, A6, A7 done, plus A8-03, A9-03 to A9-05. Two shipped bugs fixed | `feat/verification-and-release` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -111,12 +111,21 @@ D-23 and the retired tasks table at the bottom.
 Done and carrying forward: P0-01 to P0-07 and P1-01 to P1-07. The core contract, the state machine,
 the roll-up, the fake store, the headless harness and the dashboard.
 
-Codex: A2, A3 and A4 are done. **A5-05 through A5-10 are the obvious things to claim**, which is the
-agent registry, dispatch and the views over several agents. A5-01 to A5-04 are the isolation half and
-are mine; the registry does not depend on them, so the two halves can proceed at once.
+**State on 2026-07-27.** Phases 0, 1, A1 through A7 are built and pass their own tests. The
+verification engine is real: revision keys hash content, the poller feeds a per agent roll-up, tests
+run per worktree, and agents are ranked on evidence or explicitly refused a placement. Review, the
+commit helper and the conflict radar are on screen behind `r` from the agent list. A8-03, A9-04 and
+A9-05 came forward because A6 needed project configuration and 0.1 needs packaging and an honest
+limitations document.
 
-A6 verification is also entirely free: it depends on A5-05 for the agent list and on nothing else
-that is in flight.
+What is left, in the order it is worth doing: **A9-01 to A9-03**, the robustness sweep and the help
+screen, which is what makes 0.1 feel finished rather than assembled; then **A8-01, A8-02 and A8-04
+to A8-09**, the extensibility layer, which is the ceiling rather than the floor. **A4-07** is still
+blocked on Q-11 and **A4-09 and A4-10** each have an engine with no screen.
+
+Everything below is subject to review by Codex and by Walid's classmate. Nothing here has been read
+by a second pair of eyes yet, and the parts most worth reading closely are A6-05, which is the whole
+strategic argument, and A5-09, which is the one that spends money.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
@@ -586,7 +595,7 @@ Two things fixed while building this rather than deferred:
 - The D-10 glyph table in DECISIONS.md was ASCII placeholders. Updated to what actually shipped.
 
 ### P1-08 Integration, the stale flip
-`status: todo | owner: none | branch: none | depends: P1-06, P1-07`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: P1-06, P1-07`
 `scope: internal/app/`
 
 Deliverable: the wiring that gets a fake revision change event to the dashboard.
@@ -594,9 +603,16 @@ Deliverable: the wiring that gets a fake revision change event to the dashboard.
 Acceptance: this is the phase 1 definition of done. With the TUI running, injecting a revision
 change visibly turns the passing row stale, with no restart.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: this is the first demo. Record it, it is also the first thing worth showing anyone.
+
+Was shipped and left marked todo. `canopy demo` prints the flip in one screen, and the running
+interface does it live: the chat command touches a workspace on a timer and the dashboard turns that
+row stale with no restart. Both paths were checked on 2026-07-27.
+
+The real version arrived later and is A6-02, where the revision change comes from a worktree
+somebody actually edited rather than from the fake.
 
 ### PG-1 Phase 1 gate
 `status: todo | depends: P1-08`
@@ -2079,17 +2095,28 @@ the stronger version is worth building, since detecting it properly means compar
 action, which is the hard problem in the middle of this whole product.
 
 ### A4-10 Todo and plan tracking
-`status: todo | owner: none | branch: none | depends: A4-05`
+`status: partial | owner: Claude | branch: feat/verification-and-release | depends: A4-05`
 `scope: internal/agent/, internal/tui/`
 
 Deliverable: a visible task list per agent that the agent maintains as it works.
 
 Acceptance: the list is visible in the agent's pane and updates live. It survives resume.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: cheap, and it is most of what makes a long agent run followable. It is also what makes
-watching four agents at once comprehensible rather than four scrolling walls of text.
+notes: cheap, and it is most of what makes a long agent run followable.
+
+The engine half is done and tested. The list is maintained by the agent through `set_tasks` rather
+than inferred from what it wrote, because inferring it means a second model guessing at the first
+one's output, which is a new way to be wrong about the only summary the user is actually reading.
+
+Exactly one item may be in progress, enforced rather than requested. A list where four things are
+in progress is a list of everything the agent has ever touched, which is what every one of these
+degenerates into if nothing stops it.
+
+**Partial:** the list is registered as a tool and its state is echoed back in the tool result, so it
+is visible in the transcript. It is not yet shown in the agent's own pane, which needs the list
+plumbed from the registry through the engine to the agents view. That is the remaining work.
 
 ### PG-A4 Phase A4 gate
 `status: todo | depends: A4-05, A4-06, A4-08, A4-09`
@@ -2407,7 +2434,7 @@ message with it. Carrying either across would mean arriving in one agent's conve
 a position from another's, and finding text in the box that was meant for somebody else.
 
 ### A5-07 Steering without interrupting
-`status: todo | owner: none | branch: none | depends: A5-06`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A5-06`
 `scope: internal/tui/, internal/agent/`
 
 Deliverable: two mechanisms, deliberately not one. **Steer** queues guidance delivered at the next
@@ -2418,14 +2445,23 @@ Acceptance: steering does not cancel the in flight request, and the guidance is 
 next turn's context. Interrupting stops within a second with no orphans. Both reach the right agent
 and only that agent. The interface never offers one where the user meant the other.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: the distinction is the whole feature. Cancelling a turn to inject a correction throws away
-the work in progress and usually the reasoning with it. Building only interrupt and calling it
-steering would demo fine and be useless in practice.
+notes: the distinction is the whole feature, and it holds.
+
+Steer queues guidance and lets the turn finish; interrupt stops it and keeps the partial output.
+Guidance is delivered as an ordinary message at the next turn boundary, so it is visible in the
+transcript and it is what the next turn's context is built from.
+
+Several corrections typed during one answer arrive as one message. Sent as three turns the agent
+would answer the first before it had read the third.
+
+Steering an idle session sends immediately, because somebody who typed a correction into a session
+that is not running meant to send a message. Cancelled guidance is returned rather than dropped, so
+the interface can put it back in the box.
 
 ### A5-08 Natural language dispatch
-`status: todo | owner: none | branch: none | depends: A5-05`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A5-05`
 `scope: internal/agent/, internal/tools/`
 
 Deliverable: dispatch from the chat. "use 2 claude sonnet agents for this" creates two agents on
@@ -2435,15 +2471,26 @@ Acceptance: count, profile and task are extracted correctly and confirmed before
 An ambiguous request asks rather than guesses. An unknown profile name says which profiles exist.
 Spawning respects concurrency and budget limits.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: **probably the most differentiating single feature here**, and the reason named keys are
-load bearing rather than cosmetic. Implemented as tools the orchestrating agent calls,
-`spawn_agents` and `list_profiles`, never regex over the user's message, which would break the
-first time somebody phrased it differently.
+load bearing rather than cosmetic. Implemented as tools, `spawn_agents` and `list_profiles`, never
+regex over the user's message.
+
+The model reads, and the extraction arrives as arguments that get checked against reality. An
+unknown profile is refused with the list of real ones. A count past the limit is refused with the
+limit rather than trimmed, because silently spawning six when twenty were asked for is the worst of
+both. A fan out is isolated by default and a single agent is not, since an agent is not a branch.
+
+Nothing spawns until somebody has seen the count, the profile, the task, the cost and the warnings.
+The confirmation routes through the same approver the tool calls use, so there is one place a person
+answers questions rather than two that behave differently.
+
+Spawned agents do not get these tools. An agent that can spawn agents that can spawn agents is
+A8-01, which has its own design, and inheriting it by accident would let a fan out multiply.
 
 ### A5-09 Cost preview and budget guardrails
-`status: todo | owner: none | branch: none | depends: A5-08, A2-05`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A5-08, A2-05`
 `scope: internal/agent/, internal/tui/`
 
 Deliverable: before spawning, show an estimated cost range based on this project's own history for
@@ -2453,12 +2500,22 @@ Acceptance: the estimate names what it is based on and how confident it is, and 
 when there is not enough history to estimate. A cap pauses before the next request rather than
 reporting the overspend afterwards. A paused agent can be resumed with a raised cap.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: **added 2026-07-26.** Nearly free once A2-05 records exact history, and it is the real answer
-to a misparsed 20 instead of 2. Enforcement before the request rather than after is the difference
-between a guardrail and a receipt. An estimate presented more confidently than the data supports
-would be its own small lie, so the range carries its basis.
+notes: **added 2026-07-26.** Enforcement before the request rather than after is the difference
+between a guardrail and a receipt.
+
+The cap is checked before the turn is registered. A paused agent is paused rather than cancelled, so
+raising the cap continues from where it stopped instead of destroying the work the budget was
+protecting the value of.
+
+A request on a profile with no known rate is counted as uncosted rather than counted as free. A cap
+that has silently not been counting half the requests is worse than no cap, because it reads as
+reassurance, and Budget.Status says so.
+
+The estimate is crude and says so: a median cost per turn from turns that actually happened here,
+times a range of four to twenty five turns per agent. Below three priced turns it shows no number at
+all rather than pretending one expensive turn is a rate.
 
 ### A5-10 Agents view
 `status: review | owner: Claude | branch: feat/agent-runtime (merged) | depends: A5-06`
@@ -2503,7 +2560,7 @@ Goal: the thing no incumbent does. Canopy knows whose code actually works.
 The contract, state machine, roll-up and fake for this already exist from P1-01 to P1-06.
 
 ### A6-01 RevisionKey
-`status: todo | owner: none | branch: none | depends: A5-02`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A5-02`
 `scope: internal/git/`
 
 Deliverable: HeadSHA plus DirtyDigest, per the truth contract.
@@ -2513,12 +2570,29 @@ does not change when a git ignored file changes. Symlinks hash their target, sub
 their HEAD SHA, and an oversized untracked file forces the revision to unknown with a readable
 reason.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: was P2-03, unchanged. D-09 and D-16 apply.
 
+Content is hashed rather than summarised. The previous placeholder used the status output plus mtime
+and size, which answers "did something happen here" and not "is this the same code": reverting an
+edit left a green result permanently stale. Staged content comes from `git diff --cached --raw`
+rather than from disk, because the index holds content that exists nowhere in the working tree.
+
+Hashes are cached by size and modification time, since A6-02 asks for this every two seconds per
+worktree. That is a bet and it is named in the code: two writes to one path, same length, within the
+same nanosecond would be missed. Editors and agents write a tool call at a time.
+
+The size limit is applied to any content read from the worktree rather than to untracked files
+alone, which extends D-09 slightly. A modified tracked binary of the same size poses the identical
+problem and deserves the identical answer.
+
+Uncovered a quiet bug on the way: with -z, `git status` emits a rename's old path as its own field,
+and the old loop read it as a second entry, so every rename counted as one staged and one unstaged
+change too many. Both readings now share one parser.
+
 ### A6-02 Revision poller
-`status: todo | owner: none | branch: none | depends: A6-01`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-01`
 `scope: internal/git/`
 
 Deliverable: poll each worktree and emit a revision change event.
@@ -2526,12 +2600,24 @@ Deliverable: poll each worktree and emit a revision change event.
 Acceptance: an edit produces the event within one poll interval, and polling many worktrees does
 not saturate a core.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: was P2-04, unchanged. D-07 applies.
 
+Polling rather than filesystem notification. A dead watcher looks exactly like a worktree nobody is
+touching, and that failure mode is a green result that never goes stale, which is the one outcome
+this product cannot have.
+
+Concurrency is capped, because every poll forks git at least twice and the unbounded version turns
+twenty agents into forty processes arriving together every two seconds.
+
+Two bugs came out of writing the tests. A cancelled poll was recording observations nobody made,
+because a select between an available slot and a cancelled context picks at random. And a cancelled
+`rev-parse` was being reported as "this branch has no commits yet", which is a small lie a cancelled
+poll produced every single time.
+
 ### A6-03 Test runner
-`status: todo | owner: none | branch: none | depends: A6-01, A5-04`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-01, A5-04`
 `scope: internal/exec/`
 
 Deliverable: run a configured test command per agent worktree, capturing exit code, duration and
@@ -2540,13 +2626,20 @@ the revision at start.
 Acceptance: exit zero is passing for the captured revision, non zero is failing, and a command that
 cannot start is error rather than either.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: was P2-05, unchanged. Depends on A5-04, because running tests in a worktree with no
 dependencies installed measures the environment rather than the code.
 
+Three outcomes stay three. A command that never started, or started and could not finish, says
+nothing about the code at all: reporting a missing binary as a failing test tells somebody their
+code is broken when what is broken is their configuration.
+
+Logs stay out of run state per D-08, so RunTest returns the run and the output separately rather
+than putting a log buffer inside a state record.
+
 ### A6-04 Verification per agent
-`status: todo | owner: none | branch: none | depends: A6-03, A5-06`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-03, A5-06`
 `scope: internal/tui/`
 
 Deliverable: every agent carries its verification state, using the existing roll-up.
@@ -2554,13 +2647,19 @@ Deliverable: every agent carries its verification state, using the existing roll
 Acceptance: an agent that edits its worktree turns stale, and re-running clears it. Wording and
 glyphs are the ones fixed in D-10.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: the old P2-09 to P2-14 demo, per agent instead of per worktree. The P1-07 dashboard already
-renders this against the fake.
+notes: the old P2-09 to P2-14 demo, per agent instead of per worktree.
+
+Nothing here stores staleness. A run carries the revision it was measured against, the worktree
+carries the revision it is at now, and the roll-up in core compares them, which is why an edit turns
+a result stale without anything going around marking it.
+
+The snapshot is assembled on each call rather than kept, so there is no second copy of the truth to
+fall out of date.
 
 ### A6-05 Rank agents by outcome
-`status: todo | owner: none | branch: none | depends: A6-04`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-04`
 `scope: internal/agent/`
 
 Deliverable: give several agents the same task, then rank the results by tests passing for the
@@ -2569,13 +2668,24 @@ current revision, with diff size as a tiebreak.
 Acceptance: the ranking refuses to rank anything whose evidence is stale or unknown rather than
 guessing. The reason for each placement is visible.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: **the strategic argument for the entire project.** Orca fans out across agents. Nobody
-appears to use test truth to rank the results. This is a gate, not a stretch goal.
+appears to use test truth to rank the results.
+
+The refusal is what makes it honest rather than a leaderboard. An agent whose worktree moved after
+its tests ran is not placed fourth, it is not placed at all, and the reason says so. A current
+failure does get a place, because an agent missing from the screen reads as one that vanished.
+
+Diff size only ever breaks ties, and that is a judgement rather than a measurement: between two
+changes that both pass, the shorter one has less to review and less to be wrong.
+
+Mutation tested. Turning the refusal into an ordinary "did not pass" makes two tests fail, and the
+mutant produced exactly the failure mode the design exists to prevent: a stale agent ranked second
+with "no required test passes", which reads as a verdict about its code.
 
 ### A6-06 Ready to review queue
-`status: todo | owner: none | branch: none | depends: A6-04`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-04`
 `scope: internal/tui/`
 
 Deliverable: surface agents that are green for their current code and have a meaningful diff,
@@ -2584,11 +2694,13 @@ ordered so the easiest review comes first.
 Acceptance: an agent whose result went stale leaves the queue immediately. An agent with a green
 result and an empty diff never enters it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: **added 2026-07-26.** Nearly free, since the truth engine already knows all of this, and it
-turns the dashboard from a status display into a work queue. With six agents running, "which of
-these should I look at next" is the actual question, and nothing else on this list answers it.
+notes: **added 2026-07-26.** Nearly free, since the truth engine already knows all of this.
+
+Derived on every call rather than maintained, which is why an agent whose result goes stale leaves
+immediately: there is no cached membership to forget to invalidate. Green with an empty diff never
+enters, because a passing suite over no changes is the state every repository starts in.
 
 ### PG-A6 Phase A6 gate
 `status: todo | depends: A6-05, A6-06`
@@ -2604,20 +2716,27 @@ Both supervisors give three agents the same task and watch Canopy pick the winne
 Goal: turn finished agent work into clean history without leaving the tool.
 
 ### A7-01 Diff review in the TUI
-`status: todo | owner: none | branch: none | depends: PG-A6`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: PG-A6`
 `scope: internal/tui/diff/`
 
 Deliverable: read an agent's changes per file, syntax highlighted, scrollable.
 
 Acceptance: a large diff stays responsive. Readable at 80 columns and without colour.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: the alternative is a second terminal per agent, which defeats the point of watching them
 here.
 
+The diff view renders a window rather than a file, because a two thousand line diff styled in full
+on every keystroke stutters when you hold a movement key. It reuses the markdown renderer's
+highlighter rather than growing a second one: a diff hunk is source code with a marker in front of
+it, and two lexers would drift the first time a keyword list changed.
+
+Readable without colour, since the plus and the minus are the first character of every line.
+
 ### A7-02 Commit helper
-`status: todo | owner: none | branch: none | depends: A7-01`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A7-01`
 `scope: internal/tui/, internal/git/`
 
 Deliverable: stage, draft a conventional commit message from the diff, commit and push, keyboard
@@ -2626,22 +2745,40 @@ only.
 Acceptance: the drafted message is editable before committing. Nothing is staged or pushed without
 explicit confirmation.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: none
+notes: the draft does not invent a subject. A diff says which files changed and says nothing about
+why, so a generated line like "update auth.go" is worse than a blank one: plausible enough to commit
+by accident and useless to whoever reads the history later. The type and the scope come from the
+files; the sentence is left for a person. An edit that adds nothing is drafted as a chore rather
+than a fix.
+
+Enter does not commit. It is the key people press to end a line. Committing is ctrl+s, and pushing
+is separate again, because committing is local and undoable and pushing is neither.
+
+Not done: staging a subset. Partial staging needs a way to select hunks, which is its own screen,
+and a half version that silently staged whole files would be worse than none.
 
 ### A7-03 Cross agent conflict radar
-`status: todo | owner: none | branch: none | depends: A7-01`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A7-01`
 `scope: internal/git/, internal/tui/`
 
 Deliverable: show which files several agents have all touched, before merging.
 
 Acceptance: overlap is visible per file, and each entry names the agents involved.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: preempts a pain that exists only because you are running agents in parallel, which makes it
-a differentiator rather than table stakes.
+notes: preempts a pain that exists only because you are running agents in parallel.
+
+Deliberately not a merge simulation. Two agents editing different functions in one file usually
+merge cleanly, and a real three way merge per pair on every render would cost more than it saves.
+What is reported is overlap, and the empty state says so rather than reading as a promise.
+
+A rename counts against both names. Without that, one agent renaming a file while another edits it
+under its old name never shows as overlapping, which is the version where the edit quietly
+disappears. A delete against an edit is called out separately, since it is the case most likely to
+actually conflict.
 
 ### PG-A7 Phase A7 gate
 `status: todo | depends: A7-02, A7-03`
@@ -2689,7 +2826,7 @@ large codebase is mostly reading, which a cheap model does adequately, while the
 strongest model available. Doing that by hand today means copying context between tools.
 
 ### A8-03 Project configuration file
-`status: todo | owner: none | branch: none | depends: PG-A7`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: PG-A7`
 `scope: internal/config/`
 
 Deliverable: a committed per project file defining profiles, test commands, permission posture and
@@ -2698,10 +2835,23 @@ project instructions.
 Acceptance: unknown executable fields are errors rather than warnings. Templates resolve before
 execution. A relative path cannot escape the worktree.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: carries forward the validation discipline from the old P3-01. Needed by A6 anyway for per
-project test commands, so this is the point where it stops being optional.
+project test commands, so this is the point where it stops being optional, exactly as predicted.
+
+`canopy.json` at the repository root. JSON rather than something friendlier because TOML and YAML
+both want a dependency, and YAML in particular wants a parser with a history of surprising people
+about what a bare `no` means. The real cost is no comments, which is in LIMITATIONS.md rather than
+pretended away.
+
+Unknown fields are errors through DisallowUnknownFields, which is the acceptance criterion and the
+whole argument: a field named "test" where "tests" was meant would otherwise load cleanly and run
+nothing, and every agent would go green on a suite nobody executed.
+
+Only three template names resolve. A general template language here would be a way to build a
+command at execution time out of values Canopy does not control, and the point of the file being
+committed is that a reviewer can read it and know what it will do.
 
 ### A8-04 Custom slash commands
 `status: todo | owner: none | branch: none | depends: A8-03`
@@ -2825,17 +2975,32 @@ from a fresh snapshot, and every error says what to do next.
 notes: carries forward P4-08 to P4-12. P1-07 already meets the 80 column and selection criteria.
 
 ### A9-03 Themes and help
-`status: todo | owner: none | branch: none | depends: A9-02`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A9-02`
 
 Acceptance: at least two themes, both passing the no colour requirement. A keybinding overlay
 covering every binding.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: none
+notes: the second theme is monochrome, and it exists to prove the first one is not cheating. Every
+state carries a word and a single width glyph, and a palette with no colour in it is the test of
+that: if the interface is unreadable there, a meaning is being carried by a hue and it was already
+invisible to a colour blind reader and to anybody running with NO_COLOR set. The test asserts it for
+both palettes rather than for the default one.
+
+The overlay is generated from one table, so a binding that is added and not listed is a table nobody
+edited rather than a screen somebody forgot. Exhaustive on purpose: one that lists most of the keys
+teaches people it cannot be trusted, and then they stop opening it.
+
+Question mark opens it, and only when nothing is being typed into, or a message containing one could
+never be written. Any key closes it, because somebody who opened it by accident should not have to
+find the one key that closes it.
+
+Not done: choosing a theme. The palette is switchable and both are tested, but there is no setting
+and no key for it, so the monochrome one is currently reachable only from code.
 
 ### A9-04 Honest limitations document
-`status: todo | owner: none | branch: none | depends: A9-01, A9-02`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A9-01, A9-02`
 `scope: LIMITATIONS.md`
 
 Deliverable: what Canopy does not guarantee. No sandboxing. No database or dependency isolation
@@ -2844,19 +3009,36 @@ redactable. macOS and Linux only. Cost figures depend on a dated pricing table.
 
 Acceptance: a reader can tell within a minute whether Canopy will lie to them, and how.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: underclaiming is on brand, not a weakness.
+notes: LIMITATIONS.md, and it is meant to be read before anything else.
+
+Grouped by how somebody would hit them rather than by phase. Every entry traces to a decision or a
+task in this repository, because a limitation nobody wrote down can only be rediscovered by getting
+burned by it.
+
+Needs re-reading before each release. Several entries were already stale by the time it was
+committed, which is the failure mode this kind of document has.
 
 ### A9-05 Packaging and install
-`status: todo | owner: none | branch: none | depends: A9-04`
+`status: review | owner: Claude | branch: feat/verification-and-release | depends: A9-04`
 
 Acceptance: a stranger installs a build, adds a key, and runs an agent without being talked
 through it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
-notes: GoReleaser, Homebrew tap, `go install`.
+notes: goreleaser for darwin and linux on both architectures, a release workflow on a `v*` tag, a
+makefile, and a version stamped through the same three ldflags whether the binary came from `make
+install` or from a release archive.
+
+Windows is not built. The process handling uses unix process groups and the Windows equivalent has
+not been designed, so shipping it half working would be worse than not shipping it.
+
+Homebrew is written and commented out, because the tap repository does not exist yet and a release
+that fails on a missing tap is worse than one that ships without a formula.
+
+Not verified end to end: no tag has been pushed, so the release workflow has never run.
 
 ### PG-A9 Phase A9 gate
 `status: todo | depends: A9-05`

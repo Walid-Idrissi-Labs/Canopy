@@ -15,12 +15,14 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 )
 
 const keysUsage = `canopy keys - manage provider credentials
 
 usage:
   canopy keys add <name>     store a credential, read from a prompt or stdin
+  canopy keys model <name> <model>   change which model this credential talks to
   canopy keys list           show stored credentials, never their values
   canopy keys remove <name>  delete a credential
   canopy keys test <name>    check that a credential can be read back
@@ -29,6 +31,7 @@ usage:
 flags for add:
   -provider string   anthropic or openai-compatible (default "anthropic")
   -base-url string   endpoint, required for openai-compatible
+  -model string      the model this credential talks to, required except for anthropic
 
 flags for rate:
   -in float          dollars per million input tokens
@@ -41,7 +44,8 @@ history and in the process list, where any other user on the machine can read th
 
 examples:
   canopy keys add claude
-  canopy keys add kimi -provider openai-compatible -base-url https://api.moonshot.cn/v1
+  canopy keys add kimi -provider openai-compatible -base-url https://api.moonshot.cn/v1 -model moonshot-v1-8k
+  canopy keys model kimi moonshot-v1-32k
   pbpaste | canopy keys add claude
   canopy keys rate kimi -in 0.6 -out 2.5
 
@@ -79,6 +83,8 @@ func runKeys(args []string, out io.Writer) error {
 		return runKeysTest(rest, out)
 	case "rate", "price":
 		return runKeysRate(rest, out)
+	case "model":
+		return runKeysModel(rest, out)
 	default:
 		return fmt.Errorf("unknown keys command %q, try `canopy keys help`", command)
 	}
@@ -110,6 +116,7 @@ func runKeysAdd(args []string, out io.Writer) error {
 	flags.SetOutput(os.Stderr)
 	providerName := flags.String("provider", string(core.ProviderAnthropic), "anthropic or openai-compatible")
 	baseURL := flags.String("base-url", "", "endpoint, required for openai-compatible")
+	model := flags.String("model", "", "the model this credential talks to")
 
 	refused := make(map[string]*string, len(secretFlagNames))
 	for _, name := range secretFlagNames {
@@ -166,6 +173,15 @@ func runKeysAdd(args []string, out io.Writer) error {
 	if provider.RequiresBaseURL() && *baseURL == "" {
 		return fmt.Errorf("provider %q needs -base-url, for example -base-url https://api.moonshot.cn/v1", provider)
 	}
+	// Refused at the point of storing rather than at the point of use. A credential with no model on
+	// a provider that has no default is one that cannot answer a single message, and finding that out
+	// later, from the far end, is a much worse place to learn it.
+	if provider != core.ProviderAnthropic && strings.TrimSpace(*model) == "" {
+		return fmt.Errorf(
+			"provider %q has no default model, so name one with -model. "+
+				"For example -model minimaxai/minimax-m2.7. "+
+				"Anthropic is the only provider Canopy can pick a model for", provider)
+	}
 
 	secret, err := readSecret(name)
 	if err != nil {
@@ -183,13 +199,18 @@ func runKeysAdd(args []string, out io.Writer) error {
 	meta, err := store.Put(core.KeyMetadata{
 		Ref:     core.KeyRef{Name: name, Provider: provider},
 		BaseURL: *baseURL,
+		Model:   strings.TrimSpace(*model),
 	}, secret)
 	if err != nil {
 		return err
 	}
 
-	_, err = fmt.Fprintf(out, "Stored %q for %s in the %s (fingerprint %s).\n",
-		meta.Ref.Name, meta.Ref.Provider, store.BackendName(), meta.Fingerprint)
+	using := meta.Model
+	if using == "" {
+		using = anthropic.DefaultModel
+	}
+	_, err = fmt.Fprintf(out, "Stored %q for %s in the %s (fingerprint %s), talking to %s.\n",
+		meta.Ref.Name, meta.Ref.Provider, store.BackendName(), meta.Fingerprint, using)
 	return err
 }
 
@@ -334,11 +355,12 @@ func runKeysList(args []string, out io.Writer) error {
 
 	tab := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	w := &errWriter{w: tab}
-	w.printf("NAME\tPROVIDER\tFINGERPRINT\tRATE\tADDED\tLAST USED\n")
+	w.printf("NAME\tPROVIDER\tMODEL\tFINGERPRINT\tRATE\tADDED\tLAST USED\n")
 	for _, meta := range all {
-		w.printf("%s\t%s\t%s\t%s\t%s\t%s\n",
+		w.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			meta.Ref.Name,
 			meta.Ref.Provider,
+			formatModel(meta),
 			meta.Fingerprint,
 			formatRate(meta),
 			meta.CreatedAt.Format("2006-01-02"),
@@ -353,6 +375,22 @@ func runKeysList(args []string, out io.Writer) error {
 
 	_, err = fmt.Fprintf(out, "\nStored in the %s. Values are never displayed.\n", store.BackendName())
 	return err
+}
+
+// formatModel says which model a credential talks to, and says loudly when it cannot.
+//
+// Loudly, because a credential with no model on a provider that has no default cannot answer a
+// single message, and the place that failure used to surface was the far end of somebody else's
+// gateway complaining about a malformed request.
+func formatModel(meta core.KeyMetadata) string {
+	switch {
+	case meta.Model != "":
+		return meta.Model
+	case meta.Ref.Provider == core.ProviderAnthropic:
+		return anthropic.DefaultModel + " (default)"
+	default:
+		return "NOT SET, run `canopy keys model " + meta.Ref.Name + " <model>`"
+	}
 }
 
 func formatLastUsed(at *time.Time) string {
@@ -419,4 +457,32 @@ func runKeysTest(args []string, out io.Writer) error {
 	w.printf("\nThis checks storage only. Whether the provider accepts the credential is not\n")
 	w.printf("checked yet, because no provider client exists until A2.\n")
 	return w.err
+}
+
+// runKeysModel changes which model a credential talks to.
+//
+// Its own command rather than a flag on add, because changing the model must not require
+// re-entering the secret. Somebody fixing a typo in a model id should not have to go and find their
+// API key again, and a flow that asked them to would get it pasted from somewhere less careful.
+func runKeysModel(args []string, out io.Writer) error {
+	if len(args) < 2 {
+		return errors.New("usage: canopy keys model <name> <model>, " +
+			"for example `canopy keys model nim minimaxai/minimax-m2.7`")
+	}
+	name, model := args[0], strings.TrimSpace(strings.Join(args[1:], " "))
+	if model == "" {
+		return errors.New("a model id is required")
+	}
+
+	store, err := openStore(out)
+	if err != nil {
+		return err
+	}
+	ref := core.KeyRef{Name: name}
+	if err := store.SetModel(ref, model); err != nil {
+		return err
+	}
+
+	_, err = fmt.Fprintf(out, "%q now talks to %s.\n", name, model)
+	return err
 }

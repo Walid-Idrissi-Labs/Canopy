@@ -1,9 +1,9 @@
-// Command canopy is the entry point for the Canopy verification cockpit.
+// Command canopy is the entry point.
 //
-// Until the dashboard lands in P1-07 this is a headless harness. It exists so the engine can be
-// driven and inspected without a terminal UI in the way, which matters for two reasons: the
-// engine has to be testable on its own, and when the dashboard eventually shows something
-// surprising, there needs to be a way to ask the engine directly what it thinks.
+// Running it with no arguments opens a conversation in the current directory. The subcommands are
+// the headless half, and they are kept because the engine has to be inspectable without a terminal
+// UI in the way: when the interface shows something surprising, there needs to be a way to ask the
+// engine directly what it thinks.
 package main
 
 import (
@@ -13,10 +13,7 @@ import (
 	"os"
 )
 
-// version is set at build time with -ldflags for release builds.
-var version = "dev"
-
-const usage = `canopy - a local verification cockpit for parallel git worktrees
+const usage = `canopy - a terminal coding agent for running several at once
 
 usage:
   canopy               open a chat in this directory
@@ -31,7 +28,8 @@ usage:
 flags:
   -source string       where state comes from (default "fake")
 
-Only the fake source exists so far. Real worktree discovery is A5-01.
+The snapshot, watch and demo commands read a fake project rather than this directory. They
+exist to exercise the engine, and the interface is what reads real worktrees.
 `
 
 func main() {
@@ -74,17 +72,17 @@ func run(args []string) error {
 
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
-	source := flags.String("source", "fake", `where state comes from, only "fake" for now`)
+	source := flags.String("source", "fake", `where the snapshot and watch commands read state from`)
 
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 
 	switch command {
-	case "version":
+	case "version", "-v", "--version":
 		// Returned rather than dropped: this line is the command's entire output, so failing to
 		// write it means the command did not do its job.
-		_, err := fmt.Fprintf(os.Stdout, "canopy %s\n", version)
+		_, err := fmt.Fprintln(os.Stdout, versionLine())
 		return err
 	case "help", "-h", "--help":
 		printUsage(os.Stdout)
@@ -92,7 +90,7 @@ func run(args []string) error {
 	}
 
 	if *source != "fake" {
-		return fmt.Errorf("unknown source %q, only \"fake\" exists so far (real discovery is A5-01)", *source)
+		return fmt.Errorf("unknown source %q: these commands only read the fake project", *source)
 	}
 
 	switch command {

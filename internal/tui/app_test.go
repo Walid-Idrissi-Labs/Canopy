@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
 
@@ -50,6 +50,8 @@ type stubEngine struct {
 	session core.Session
 	sent    []string
 	agents  []session.AgentStatus
+	added   []session.Agent
+	using   [2]string
 }
 
 func (e *stubEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -77,13 +79,28 @@ func (e *stubEngine) Answer(string, bool, bool) bool { return false }
 // rather than a screen that was never constructed.
 func (e *stubEngine) AgentStatuses() []session.AgentStatus { return e.agents }
 
+func (e *stubEngine) AddAgent(_ context.Context, agent session.Agent) (session.Agent, error) {
+	if agent.Name == "" {
+		return session.Agent{}, errors.New("an agent needs a name")
+	}
+	agent.SessionID = "session-" + agent.Name
+	e.added = append(e.added, agent)
+	e.agents = append(e.agents, session.AgentStatus{Agent: agent})
+	return agent, nil
+}
+
+func (e *stubEngine) UseCredential(_, keyName, model string) error {
+	e.using = [2]string{keyName, model}
+	return nil
+}
+
 // launch builds the application past the splash and at a known size, which is the state every
 // test below actually cares about. Tests should not wait on a timer.
 func launch(store core.SnapshotStore, keyStore keysui.Store) tea.Model {
 	return launchWith(store, keyStore, &stubEngine{})
 }
 
-func launchWith(store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine) tea.Model {
+func launchWith(store core.SnapshotStore, keyStore keysui.Store, engine tui.Engine) tea.Model {
 	app := tui.NewApp(store, keyStore, engine, "myproject", "claude").DismissSplash()
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return next
@@ -365,5 +382,119 @@ func TestTooSmallSaysSoRatherThanRenderingBadly(t *testing.T) {
 	}
 	if strings.Contains(view, "WORKSPACE") {
 		t.Error("the table should not be drawn into a space it cannot fit")
+	}
+}
+
+// Help is reachable from everywhere and leaves on any key, because somebody who opened it by
+// accident should not have to find the one key that closes it.
+func TestHelpOpensFromAnyScreenAndLeavesOnAnyKey(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
+
+	// From chat, where a question mark belongs to the message box and must not open anything.
+	typed, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if typed.(tui.App).Screen() == "help" {
+		t.Error("a question mark typed into a message opened the help screen")
+	}
+	if !strings.Contains(typed.(tui.App).ChatInput(), "?") {
+		t.Errorf("the question mark did not reach the message box: %q", typed.(tui.App).ChatInput())
+	}
+
+	// From the agents view, where it is not being typed into anything.
+	agents, _ := app.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	opened, _ := agents.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	if opened.(tui.App).Screen() != "help" {
+		t.Fatalf("? from the agents view landed on %q", opened.(tui.App).Screen())
+	}
+	if !strings.Contains(plain(opened.(tui.App).View()), "worktree monitor") {
+		t.Error("the overlay is on screen but does not list the bindings")
+	}
+
+	closed, _ := opened.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	if closed.(tui.App).Screen() != "agents" {
+		t.Errorf("leaving help landed on %q, want where it was opened from", closed.(tui.App).Screen())
+	}
+}
+
+func (f *fakeKeyStore) SetModel(ref core.KeyRef, model string) error {
+	for i := range f.keys {
+		if f.keys[i].Ref.Name == ref.Name {
+			f.keys[i].Model = model
+			return nil
+		}
+	}
+	return errors.New("no such credential")
+}
+
+// The panic this asserts against was reachable in about four keystrokes from a fresh launch: open
+// the agents view, press n, type a name, press enter. The agents view was constructed as a zero
+// value, so its engine was nil, its list silently showed nothing, and creating an agent
+// dereferenced the nil interface and killed the program.
+func TestCreatingAnAgentFromTheInterfaceWorks(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{}
+	app := launchWith(store, withOneKey(), engine)
+
+	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	if next.(tui.App).Screen() != "agents" {
+		t.Fatalf("ctrl+d landed on %q", next.(tui.App).Screen())
+	}
+
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune("n")},
+		{Type: tea.KeyRunes, Runes: []rune("worker")},
+		{Type: tea.KeyEnter},
+	} {
+		next, _ = next.(tui.App).Update(key)
+	}
+
+	if len(engine.added) != 1 {
+		t.Fatalf("%d agents created, want 1", len(engine.added))
+	}
+	created := engine.added[0]
+	if created.Name != "worker" {
+		t.Errorf("the agent is called %q", created.Name)
+	}
+	// The credential and the directory come from the application, and an agent created without
+	// them fails on its first message rather than at creation, which is a much worse place to
+	// find out.
+	if created.KeyName != "claude" {
+		t.Errorf("the new agent has credential %q, so it would fail on its first message", created.KeyName)
+	}
+	if created.Dir != "myproject" {
+		t.Errorf("the new agent has working directory %q", created.Dir)
+	}
+}
+
+// Choosing a credential has to reach the conversation. Before there was any way to choose, the
+// screen was somewhere to add and remove keys and nowhere to pick one.
+func TestChoosingACredentialReachesTheConversation(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	keyStore := &fakeKeyStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}},
+		{Ref: core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible}, Model: "some/model"},
+	}}
+	engine := &stubEngine{}
+	app := launchWith(store, keyStore, engine)
+
+	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if next.(tui.App).Screen() != "keys" {
+		t.Fatalf("ctrl+k landed on %q", next.(tui.App).Screen())
+	}
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	chosen, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_ = chosen
+
+	if engine.using[0] != "nim" {
+		t.Errorf("the conversation is on %q, want the credential that was chosen", engine.using[0])
+	}
+	if engine.using[1] != "some/model" {
+		t.Errorf("the model is %q, so the session would send an empty model field", engine.using[1])
 	}
 }

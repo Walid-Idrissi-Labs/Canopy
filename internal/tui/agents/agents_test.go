@@ -433,3 +433,35 @@ func TestNamingTakesTheKeyboard(t *testing.T) {
 		t.Error("esc should cancel naming")
 	}
 }
+
+// The agents view used to be built with no engine at all: nothing in the application supplied one,
+// its list silently showed nothing, and creating an agent dereferenced a nil interface and took the
+// whole program down with a panic.
+func TestCreatingAnAgentWithoutAnEngineSaysSoRatherThanCrashing(t *testing.T) {
+	var m agents.Model
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if !m.Naming() {
+		t.Fatal("n did not open the name field")
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("worker")})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if !strings.Contains(m.Body(), "no engine") {
+		t.Errorf("the failure is not on screen:\n%s", m.Body())
+	}
+}
+
+func TestAnAgentNeedsAName(t *testing.T) {
+	m := agents.New(&fakeEngine{})
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if !m.Naming() {
+		t.Error("an empty name was accepted and the field closed")
+	}
+	if !strings.Contains(m.Body(), "needs a name") {
+		t.Errorf("nothing says why:\n%s", m.Body())
+	}
+}

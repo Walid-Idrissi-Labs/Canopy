@@ -188,6 +188,18 @@ func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
+		// Guarded as well as constructed properly, because a screen that cannot create agents should
+		// say so rather than take the program down. This is what the nil engine did before the
+		// application was made to supply one.
+		if m.engine == nil {
+			m.err = "this view has no engine attached, so no agent can be created"
+			return m, nil
+		}
+		if strings.TrimSpace(m.draft) == "" {
+			m.err = "an agent needs a name"
+			return m, nil
+		}
+
 		agent, err := m.engine.AddAgent(context.Background(), session.Agent{
 			Name:    strings.TrimSpace(m.draft),
 			KeyName: m.keyName,

@@ -1,0 +1,260 @@
+package main
+
+// Wiring the verification engine into a running Canopy.
+//
+// Everything here is optional and every failure is a degradation rather than a refusal. Canopy runs
+// in directories that are not repositories, in repositories with no configuration, and in projects
+// whose test command is wrong. None of those is a reason to refuse to open a conversation, and all
+// of them are reasons to say plainly that there is no evidence rather than to show a green tick.
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"net/url"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/verify"
+)
+
+// verification is everything the review screen needs, kept together so it can be shut down as one.
+type verification struct {
+	verifier *verify.Verifier
+	poller   *gitpkg.Poller
+	stop     context.CancelFunc
+}
+
+func (v *verification) Close() {
+	if v == nil {
+		return
+	}
+	v.stop()
+	v.verifier.Runner().CancelAll()
+}
+
+// startVerification brings up the poller and the verifier for a repository.
+//
+// Returns nil where there is nothing to verify, which the review screen renders as an explanation.
+// A nil here is a normal outcome and not a swallowed error: the errors that matter are reported to
+// stderr by the caller and the program carries on.
+func startVerification(
+	ctx context.Context, engine *session.Engine, dir string, project config.Project,
+) (*verification, error) {
+	repo, err := gitpkg.OpenRepo(dir)
+	if err != nil {
+		return nil, nil
+	}
+
+	base := project.Base
+	if base == "" {
+		base = defaultBranch(ctx, repo)
+	}
+
+	tests := make([]execpkg.Test, 0, len(project.Tests))
+	for _, test := range project.Tests {
+		tests = append(tests, execpkg.Test{
+			Name:     test.Name,
+			Command:  test.Command,
+			Required: test.Required,
+			Timeout:  test.TestTimeout(),
+		})
+	}
+
+	verifier := verify.New(repo, base, tests, nil)
+
+	// The poller feeds the verifier and nothing else, so the two are wired directly rather than
+	// through the event bus. Going through the bus would mean the verifier learning a revision
+	// changed and then asking git what it changed to, which is two reads of the same fact.
+	poller := gitpkg.NewPoller(repo, gitpkg.DefaultPollInterval, func(change gitpkg.Change) {
+		verifier.Observe(context.Background(), change)
+	})
+
+	watchCtx, stop := context.WithCancel(ctx)
+	v := &verification{verifier: verifier, poller: poller, stop: stop}
+	v.follow(engine)
+
+	// Agents come and go while Canopy runs, so the watched set is refreshed rather than fixed at
+	// startup. On its own interval rather than on an engine callback, because the engine has no hook
+	// for "the agent list changed" and inventing one to serve a background poller would put a
+	// verification concern inside the session package.
+	go func() {
+		ticker := time.NewTicker(gitpkg.DefaultPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case <-ticker.C:
+				v.follow(engine)
+			}
+		}
+	}()
+
+	go poller.Run(watchCtx)
+	return v, nil
+}
+
+// follow points the poller and the verifier at whatever agents currently exist.
+func (v *verification) follow(engine *session.Engine) {
+	agents := engine.Agents()
+
+	subjects := make([]verify.Subject, 0, len(agents))
+	workspaces := make([]core.WorkspaceSnapshot, 0, len(agents))
+	for _, agent := range agents {
+		if agent.Dir == "" {
+			continue
+		}
+		id := agent.WorkspaceID
+		if id == "" {
+			// A non isolated agent works in the repository itself and has no workspace of its own, so
+			// one is derived from its directory. Derived rather than skipped: the ordinary run has
+			// exactly one agent and it is not isolated, and a verification screen that only worked
+			// for isolated agents would be useless in the common case.
+			id = gitpkg.WorkspaceID(agent.Dir)
+		}
+		subjects = append(subjects, verify.Subject{
+			Agent: agent.Name, WorkspaceID: id, Dir: agent.Dir, Branch: agent.Branch,
+		})
+		workspaces = append(workspaces, core.WorkspaceSnapshot{ID: id, Name: agent.Name, Path: agent.Dir})
+	}
+
+	v.verifier.Watch(subjects)
+	v.poller.Watch(workspaces)
+}
+
+// defaultBranch works out what an agent's work should be measured against.
+//
+// The remote's own idea of its default first, then the local branches Canopy is most likely to
+// find. A wrong answer here is not catastrophic and it is visible: every diff comes out the wrong
+// size, which somebody notices immediately, as opposed to a wrong test result which they might not.
+func defaultBranch(ctx context.Context, repo *gitpkg.Repo) string {
+	for _, candidate := range []string{"main", "master", "trunk", "develop"} {
+		if repo.HasBranch(ctx, candidate) {
+			return candidate
+		}
+	}
+	return "HEAD"
+}
+
+// loadProject reads the committed configuration, reporting a broken one rather than ignoring it.
+func loadProject(dir string) config.Project {
+	project, found, err := config.Load(dir)
+	if err != nil {
+		// Loud, and then carry on with nothing configured. A config file that fails to load and is
+		// silently replaced by defaults is how somebody ends up with a green project whose tests
+		// never ran.
+		fmt.Fprintf(os.Stderr, "warning: %v\nwarning: continuing with nothing configured\n", err)
+		return config.Project{}
+	}
+	if !found {
+		return config.Project{}
+	}
+	return project
+}
+
+// profiles lists the credentials an agent can be started on.
+//
+// Built here rather than in the engine because the engine has never known what a credential is: it
+// is handed a resolver and asks it for a client. Keeping that boundary means the dispatch tool can
+// be tested with a fake that has no keychain in it.
+type profiles struct {
+	store  *keys.Store
+	engine *session.Engine
+}
+
+func (p profiles) Profiles() []session.Profile {
+	stored, err := p.store.List()
+	if err != nil {
+		return nil
+	}
+
+	out := make([]session.Profile, 0, len(stored))
+	for _, meta := range stored {
+		id := pricing.ModelID{
+			Provider: meta.Ref.Provider,
+			Model:    defaultModelFor(p.store, meta.Ref.Name),
+			Host:     hostOf(meta.BaseURL),
+		}
+		_, priced := pricing.Apply(id, core.Usage{OutputTokens: 1})
+
+		out = append(out, session.Profile{
+			Name:  meta.Ref.Name,
+			Model: defaultModelFor(p.store, meta.Ref.Name),
+			// Apply returns a reason when it could not price the request, so an empty reason is the
+			// only thing that means a rate is actually known. Asking the table twice, once for the
+			// rate and once for the reason, would be two places to disagree.
+			Priced: priced == "",
+		})
+	}
+	return out
+}
+
+func (p profiles) Estimate(task string, count int) session.Estimate {
+	return p.engine.Estimate(task, count)
+}
+
+func (p profiles) Concurrency() (int, int) { return p.engine.Concurrency() }
+
+func (p profiles) Spawn(ctx context.Context, request session.Dispatch) ([]session.Agent, error) {
+	return p.engine.Spawn(ctx, request)
+}
+
+// hostOf is the host part of a base URL, which is what the pricing table keys an endpoint on.
+func hostOf(baseURL string) string {
+	if baseURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return ""
+	}
+	return parsed.Host
+}
+
+// attachDispatch lets one agent start others from the conversation.
+//
+// Registered on the orchestrating agent only, and after its session exists, because the
+// confirmation has to be asked of the person watching that session. Spawned agents deliberately do
+// not get these tools: an agent that can spawn agents that can spawn agents is A8-01, which has its
+// own design and its own limits, and inheriting it by accident here would mean a fan out could
+// multiply without anybody having agreed to it.
+func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.ToolRegistry, sessionID string) error {
+	source := profiles{store: store, engine: engine}
+
+	confirm := func(c session.Confirmation) bool {
+		// Routed through the same approver the tool calls use, so there is one place a person answers
+		// questions rather than two that behave differently. The question text carries the count, the
+		// profile, the task, the estimate and the warnings, because every one of those is a thing
+		// that could be wrong and this is the last moment to catch it.
+		question := c.Question() + "\n" + c.Estimate.Summary()
+		for _, warning := range c.Warnings {
+			question += "\n" + warning
+		}
+		return engine.Approve(context.Background(), permission.Request{
+			SessionID: sessionID,
+			AgentID:   sessionID,
+			Tool:      "spawn_agents",
+			Kind:      core.ToolExecute,
+			Command:   question,
+		}, permission.Decision{
+			Outcome: permission.Ask,
+			Reason:  "starting agents spends money and creates worktrees",
+		})
+	}
+
+	for _, tool := range session.DispatchTools(source, confirm) {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	return nil
+}

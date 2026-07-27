@@ -31,11 +31,16 @@ import (
 // Repo is a git repository Canopy can inspect.
 type Repo struct {
 	dir string
+
+	// revisions carries the content hash cache across polls. It is nil on the throwaway handles this
+	// package builds to run git inside a particular worktree, and a nil one simply means every hash
+	// is recomputed, which is correct and only slower.
+	revisions *Revisions
 }
 
 // OpenRepo returns a repository handle for a directory inside a working tree.
 func OpenRepo(dir string) (*Repo, error) {
-	repo := &Repo{dir: dir}
+	repo := &Repo{dir: dir, revisions: NewRevisions(0)}
 
 	inside, err := repo.run(context.Background(), "rev-parse", "--is-inside-work-tree")
 	if err != nil {
@@ -282,19 +287,15 @@ func (r *Repo) DirtyState(ctx context.Context, path string) (core.DirtyState, er
 	}
 
 	var state core.DirtyState
-	for _, entry := range strings.Split(out, "\x00") {
-		if len(entry) < 2 {
-			continue
-		}
-		index, tree := entry[0], entry[1]
+	for _, entry := range parseStatus(out) {
 		switch {
-		case index == '?' && tree == '?':
+		case entry.Untracked():
 			state.Untracked++
 		default:
-			if index != ' ' && index != '?' {
+			if entry.X != ' ' && entry.X != '?' {
 				state.Staged++
 			}
-			if tree != ' ' && tree != '?' {
+			if entry.Y != ' ' && entry.Y != '?' {
 				state.Unstaged++
 			}
 		}
@@ -306,14 +307,7 @@ func (r *Repo) DirtyState(ctx context.Context, path string) (core.DirtyState, er
 func (r *Repo) Describe(ctx context.Context, snapshot core.WorkspaceSnapshot) (core.WorkspaceSnapshot, error) {
 	worktree := &Repo{dir: snapshot.Path}
 
-	if head, err := worktree.run(ctx, "rev-parse", "HEAD"); err == nil {
-		snapshot.Revision.HeadSHA = head
-	} else {
-		// A worktree on a branch with no commits has no HEAD. That is a real state and not an
-		// error, and reporting it as unknown is exactly what RevisionKey is for.
-		snapshot.Revision.HeadSHA = ""
-		snapshot.RevisionError = "this branch has no commits yet"
-	}
+	snapshot.Revision, snapshot.RevisionError = r.Revision(ctx, snapshot.Path)
 
 	if branch, err := worktree.run(ctx, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 		if branch == "HEAD" {
@@ -330,10 +324,6 @@ func (r *Repo) Describe(ctx context.Context, snapshot core.WorkspaceSnapshot) (c
 	}
 	snapshot.Dirty = dirty
 
-	// The dirty digest is what turns a green result stale, and it has to change when the working
-	// tree changes rather than only when a commit happens.
-	snapshot.Revision.DirtyDigest = r.dirtyDigest(ctx, snapshot.Path)
-
 	if when, err := worktree.run(ctx, "log", "-1", "--format=%cI"); err == nil && when != "" {
 		if at, parseErr := time.Parse(time.RFC3339, when); parseErr == nil {
 			snapshot.LastActivity = at
@@ -342,38 +332,29 @@ func (r *Repo) Describe(ctx context.Context, snapshot core.WorkspaceSnapshot) (c
 	return snapshot, nil
 }
 
-// dirtyDigest fingerprints the uncommitted state of a worktree.
+// Revision computes the revision key of a worktree, and the reason it is unknown when it is.
 //
-// Built from the status output and the modification times of what it names, so an edit that reverts
-// a file to its committed content still changes the digest. That is deliberate: the question the
-// digest answers is "has anything happened here since we last looked", and a round trip edit is
-// something happening.
-func (r *Repo) dirtyDigest(ctx context.Context, path string) string {
-	worktree := &Repo{dir: path}
+// A thin forward to Revisions.Key, kept on Repo so callers that already hold a repository do not
+// have to know that a cache exists.
+func (r *Repo) Revision(ctx context.Context, path string) (core.RevisionKey, string) {
+	revisions := r.revisions
+	if revisions == nil {
+		revisions = NewRevisions(0)
+	}
+	return revisions.Key(ctx, path)
+}
 
-	status, err := worktree.run(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	if err != nil {
-		return ""
-	}
-	if strings.TrimSpace(status) == "" {
-		// Clean. An empty digest rather than a hash of nothing, so a clean tree at the same commit
-		// compares equal to itself across runs.
-		return ""
-	}
+// Revisions exposes the shared hash cache, so a poller can drop a worktree it has stopped watching.
+func (r *Repo) Revisions() *Revisions { return r.revisions }
 
-	hash := sha256.New()
-	hash.Write([]byte(status))
-	for _, entry := range strings.Split(status, "\x00") {
-		if len(entry) < 4 {
-			continue
-		}
-		name := entry[3:]
-		if info, statErr := os.Stat(filepath.Join(path, name)); statErr == nil {
-			// A hash writer cannot fail, so there is nothing to do with the error but say so.
-			_, _ = fmt.Fprintf(hash, "%s:%d:%d", name, info.ModTime().UnixNano(), info.Size())
-		}
-	}
-	return hex.EncodeToString(hash.Sum(nil)[:8])
+// HasBranch reports whether a branch exists locally.
+//
+// --verify with a full ref path rather than rev-parse on the bare name, because a bare name also
+// matches a tag and a remote tracking branch, and "main" resolving to a tag called main would send
+// every diff off the wrong base.
+func (r *Repo) HasBranch(ctx context.Context, name string) bool {
+	_, err := r.run(ctx, "rev-parse", "--verify", "--quiet", "refs/heads/"+name)
+	return err == nil
 }
 
 // validateBranchName refuses names git would reject or misread.

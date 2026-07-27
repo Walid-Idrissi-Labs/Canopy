@@ -11,6 +11,18 @@ import (
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
 
+// Engine is everything the application needs from the session engine.
+//
+// One interface combining the screens' own, rather than each screen being handed its own value.
+// The agents view was constructed without an engine for exactly as long as this did not exist:
+// nothing forced the caller to supply one, its list silently showed nothing, and creating an agent
+// dereferenced a nil interface and took the program down. A screen that needs an engine should be
+// impossible to build without one.
+type Engine interface {
+	chat.Engine
+	agentsui.Engine
+}
+
 // screen identifies which view is in front.
 type screen int
 
@@ -19,7 +31,9 @@ const (
 	screenChat
 	screenAgents
 	screenDashboard
+	screenReview
 	screenKeys
+	screenHelp
 )
 
 // splashDuration is how long the launch screen stays before the application appears.
@@ -48,6 +62,17 @@ type App struct {
 	// the splash never has to know anything about credentials.
 	afterSplash screen
 
+	// dir is the working directory new agents are given.
+	dir string
+
+	// usingKey is the credential last applied from the credential screen, so choosing the same one
+	// twice does not re-apply it on every keystroke.
+	usingKey string
+
+	// helpFrom is where the help overlay returns to. Separate from cameFrom, because help is
+	// reachable from the credential screen too and one field would send you to the wrong place.
+	helpFrom screen
+
 	// cameFrom is where escape goes back to. Recorded rather than assumed, because the credential
 	// screen is reachable from both chat and the dashboard, and always returning to one of them
 	// would throw away where somebody actually was.
@@ -56,6 +81,7 @@ type App struct {
 	chat      chat.Model
 	agents    agentsui.Model
 	dashboard Model
+	review    ReviewModel
 	keys      keysui.Model
 
 	dim Dimensions
@@ -68,17 +94,37 @@ type App struct {
 // talked to and cannot answer, and finding that out by typing a message and watching it fail is a
 // worse introduction than being asked for the one thing that makes the rest work.
 func NewApp(
-	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
+) App {
+	return NewAppWithReview(store, keyStore, engine, dir, keyName, nil)
+}
+
+// NewAppWithReview is the same with a source for the review screen.
+//
+// Separate rather than a sixth parameter on NewApp, because most callers, including every existing
+// test, run without a repository and would have to pass a nil they do not care about. A nil source
+// is a legitimate state here: Canopy runs in directories that are not git repositories, and the
+// review screen says so rather than being hidden.
+func NewAppWithReview(
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
+	review ReviewSource,
 ) App {
 	app := App{
 		screen:      screenSplash,
 		afterSplash: screenChat,
 		chat:        chat.New(engine, "session-1", dir, keyName),
+		agents:      agentsui.New(engine),
 		dashboard:   New(store),
+		review:      NewReview(review),
 		keys:        keysui.New(keyStore),
 		cameFrom:    screenChat,
+		usingKey:    keyName,
+		dir:         dir,
 		dim:         Dimensions{Width: 80, Height: 24},
 	}
+	// What a new agent inherits. Without it every agent created from that screen was built with an
+	// empty credential and an empty working directory, which fails on its first message.
+	app.agents.SetDefaults(keyName, keysui.New(keyStore).ModelFor(keyName), dir)
 	if app.keys.IsEmpty() {
 		app.afterSplash = screenKeys
 	}
@@ -91,6 +137,7 @@ func (a *App) resize(dim Dimensions) {
 	a.dim = dim
 	a.chat.SetSize(dim.Width, dim.BodyHeight())
 	a.agents.SetSize(dim.Width, dim.BodyHeight())
+	a.review.SetSize(dim.Width, dim.BodyHeight())
 }
 
 func (a App) Init() tea.Cmd {
@@ -128,6 +175,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
+		// Help is answered before anything else, and any key leaves it. Somebody who opened it by
+		// accident should not have to find the one key that closes it.
+		if a.screen == screenHelp {
+			a.screen = a.helpFrom
+			return a, nil
+		}
+		// Not while something is being typed into, or a message containing a question mark could
+		// never be written.
+		if key.String() == "?" && !a.typing() {
+			a.helpFrom, a.screen = a.screen, screenHelp
+			return a, nil
+		}
+
 		if handled, next, cmd := a.routeKey(key); handled {
 			return next, cmd
 		}
@@ -146,9 +206,24 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			a.agents, cmd = a.agents.Update(key)
 			return a, cmd
+		case screenReview:
+			var cmd tea.Cmd
+			a.review, cmd = a.review.Update(key)
+			return a, cmd
 		case screenKeys:
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
+
+			// A credential chosen on that screen is a fact about the conversation, so it is applied
+			// here where the conversation lives. The screen states a preference and owns nothing.
+			if name, picked := a.keys.Chosen(); picked && name != a.usingKey {
+				model := a.keys.ModelFor(name)
+				a.usingKey = name
+				a.chat.UseCredential(name, model)
+				// Agents created after the switch inherit it too, or the next one would quietly go
+				// on using the credential somebody had just moved away from.
+				a.agents.SetDefaults(name, model, a.dir)
+			}
 			return a, cmd
 		default:
 			updated, cmd := a.dashboard.Update(key)
@@ -236,6 +311,12 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			// what the agents are doing and the other about what state the code is in.
 			a.screen = screenDashboard
 			return true, a, nil
+		case "r":
+			// Review is reached from the agent list because that is where you are when you notice one
+			// has finished. It is a third question again: not what they are doing and not what state
+			// the code is in, but which of them is worth reading.
+			a.screen = screenReview
+			return true, a, nil
 		case "K":
 			a.cameFrom = screenAgents
 			a.screen = screenKeys
@@ -261,6 +342,20 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			}
 		}
 
+	case screenReview:
+		// Escape unwinds the review screen's own panes first, so it only leaves once there is
+		// nothing left to come back from. Handled inside the model, which is why this only sees the
+		// case where it is already at the top.
+		if msg.String() == "esc" && a.review.Pane() == "queue" {
+			a.screen = screenAgents
+			return true, a, nil
+		}
+		if msg.String() == "K" {
+			a.cameFrom = screenReview
+			a.screen = screenKeys
+			return true, a, nil
+		}
+
 	case screenKeys:
 		// While a field is being edited every keystroke belongs to that field, including "q" and
 		// "esc", or a credential containing them could never be typed.
@@ -278,6 +373,25 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	return false, a, nil
 }
 
+// typing reports whether a keystroke currently belongs to a text field.
+//
+// Asked in one place, because the answer is the same for every global key and getting it wrong
+// means a character somebody typed opened a screen instead.
+func (a App) typing() bool {
+	switch a.screen {
+	case screenChat:
+		return true
+	case screenAgents:
+		return a.agents.Naming()
+	case screenKeys:
+		return a.keys.Adding()
+	case screenReview:
+		return a.review.Pane() == "commit"
+	default:
+		return false
+	}
+}
+
 func (a App) View() string {
 	if a.screen == screenSplash {
 		return Splash(a.dim, "a terminal coding agent for running several at once")
@@ -287,13 +401,19 @@ func (a App) View() string {
 	}
 
 	switch a.screen {
+	case screenHelp:
+		return Frame(a.dim, "canopy", "keys", Help(a.dim), Keys(a.dim.Width, "any key", "back"))
+
 	case screenAgents:
 		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
-			"esc", "chat", "w", "worktrees")
+			"esc", "chat", "w", "worktrees", "r", "review", "?", "keys")
 		if a.agents.Naming() {
 			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
 		}
 		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(), footer)
+
+	case screenReview:
+		return Frame(a.dim, "canopy", a.review.Context(), a.review.Body(), a.review.Footer())
 
 	case screenChat:
 		// The keys mean something different while a question is up, so the footer says so rather
@@ -321,6 +441,10 @@ func (a App) Screen() string {
 		return "chat"
 	case screenAgents:
 		return "agents"
+	case screenReview:
+		return "review"
+	case screenHelp:
+		return "help"
 	case screenKeys:
 		return "keys"
 	default:
@@ -351,10 +475,18 @@ func (a App) DismissSplash() App {
 
 // RunApp starts the full application.
 func RunApp(
-	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
+) error {
+	return RunAppWithReview(store, keyStore, engine, dir, keyName, nil)
+}
+
+// RunAppWithReview starts the application with a source for the review screen.
+func RunAppWithReview(
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
+	review ReviewSource,
 ) error {
 	program := tea.NewProgram(
-		NewApp(store, keyStore, engine, dir, keyName), tea.WithAltScreen())
+		NewAppWithReview(store, keyStore, engine, dir, keyName, review), tea.WithAltScreen())
 	_, err := program.Run()
 	return err
 }

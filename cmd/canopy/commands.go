@@ -14,6 +14,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	agentpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
@@ -82,7 +84,9 @@ func runChat() error {
 	// project" means. A workspace that could not be opened is a directory the agent cannot work in,
 	// and a conversation with no tools is still a useful thing, so it is a warning rather than a
 	// failure.
-	if err := attachTools(engine, dir); err != nil {
+	project := loadProject(dir)
+
+	if err := attachTools(engine, dir, project); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
 	}
 
@@ -90,17 +94,38 @@ func runChat() error {
 	// view rather than being a special case the list has to know about. Called "main" because that
 	// is what somebody would call the one they are talking to.
 	keyName := resolver.DefaultKeyName()
-	if _, err := engine.AddAgent(context.Background(), session.Agent{
+	main, err := engine.AddAgent(context.Background(), session.Agent{
 		Name:    "main",
 		KeyName: keyName,
 		Model:   defaultModelFor(keyStore, keyName),
 		Dir:     dir,
 		Trust:   core.TrustStandard,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("starting the first agent: %w", err)
 	}
 
-	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
+	// Dispatch is attached after the first agent exists, because the confirmation has to be asked of
+	// the person watching that particular session, and the session id is what routes it there.
+	if registry, ok := engine.Tools(); ok {
+		if err := attachDispatch(engine, keyStore, registry, main.SessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: agents cannot be started from the chat: %v\n", err)
+		}
+	}
+
+	// Verification is what the review screen reads. Its absence is normal: outside a repository
+	// there is nothing to verify, and the screen says so rather than being hidden.
+	verification, err := startVerification(context.Background(), engine, dir, project)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: verification is not running: %v\n", err)
+	}
+	defer verification.Close()
+
+	var review tui.ReviewSource
+	if verification != nil {
+		review = verification.verifier
+	}
+	return tui.RunAppWithReview(store, keyStore, engine, filepath.Base(dir), keyName, review)
 }
 
 // attachTools gives the agent something to do besides talk.
@@ -109,7 +134,7 @@ func runChat() error {
 // and shows every shell command before running it. Per profile levels are configured at A5, and
 // until there is a way to choose one, the level that asks about the dangerous half is the only
 // defensible default.
-func attachTools(engine *session.Engine, dir string) error {
+func attachTools(engine *session.Engine, dir string, project config.Project) error {
 	registry, err := toolsFor(dir)
 	if err != nil {
 		return err
@@ -128,7 +153,15 @@ func attachTools(engine *session.Engine, dir string) error {
 		// worktree of its own where there are worktrees. Its absence is not an error, because an
 		// agent is not a branch and the ordinary run never asks for one.
 		if repo, err := gitpkg.OpenRepo(dir); err == nil {
-			if err := engine.WithIsolation(session.Isolation{Repo: repo, Tools: toolsFor}); err != nil {
+			if err := engine.WithIsolation(session.Isolation{
+				Repo:  repo,
+				Tools: toolsFor,
+				Environment: gitpkg.Environment{
+					Setup:        project.Setup,
+					SetupTimeout: project.SetupDuration(),
+					Copy:         project.Copy,
+				},
+			}); err != nil {
 				return err
 			}
 		}
@@ -163,6 +196,12 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 			return nil, err
 		}
 	}
+	// One task list per registry, which is one per agent worktree. Shared between two agents it
+	// would show each of them the other's plan, which is worse than showing neither.
+	if err := registry.Register(agentpkg.TodoTool(agentpkg.NewTodoList())); err != nil {
+		return nil, err
+	}
+
 	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
 	// the ones that can be governed per argument should be reached for before the one that cannot.
 	if err := registry.Register(tools.ShellTool(workspace)); err != nil {
@@ -244,15 +283,28 @@ func runSearch(args []string, out io.Writer) error {
 // compatible endpoint has none, and guessing a model name for somebody else's gateway produces a
 // confusing 404 rather than a clear message, so it is left empty and the first turn says what is
 // missing.
+// defaultModelFor is the model a session on this credential talks to.
+//
+// The credential's own recorded model first, then the provider default where one exists. Before the
+// model was stored on the credential this returned nothing at all for anything that was not
+// Anthropic, so a user whose only key pointed at an OpenAI compatible gateway got a session with an
+// empty model and every message failed at the far end, with a message about the request rather than
+// about the setting that was missing.
 func defaultModelFor(store *keys.Store, name string) string {
 	if name == "" {
 		return ""
 	}
 	meta, err := store.Metadata(core.KeyRef{Name: name})
-	if err != nil || meta.Ref.Provider != core.ProviderAnthropic {
+	if err != nil {
 		return ""
 	}
-	return anthropic.DefaultModel
+	if meta.Model != "" {
+		return meta.Model
+	}
+	if meta.Ref.Provider == core.ProviderAnthropic {
+		return anthropic.DefaultModel
+	}
+	return ""
 }
 
 func runSnapshot(out io.Writer) error {

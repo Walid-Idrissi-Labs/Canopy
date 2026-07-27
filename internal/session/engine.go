@@ -101,7 +101,16 @@ type Engine struct {
 	//
 	// Both nil in the ordinary case. An agent is not a branch, and an engine that never isolates
 	// anything is the normal way to run Canopy rather than a degraded one.
-	isolation  *Isolation
+	isolation *Isolation
+
+	// steering holds guidance typed while a turn was in flight, per session, waiting for the next
+	// turn boundary. See steer.go: this is the queue that makes correcting an agent cheap rather
+	// than costing whatever it was in the middle of.
+	steering map[string][]string
+
+	// budgets are the spending caps. See budget.go: the cap is checked before a request goes out,
+	// which is what makes it a guardrail rather than a receipt.
+	budgets    *budgets
 	agentTools map[string]*core.ToolRegistry
 
 	nextID int
@@ -114,6 +123,7 @@ func New(resolver Resolver) *Engine {
 		cancels:  map[string]context.CancelFunc{},
 		resolver: resolver,
 		events:   store.NewBroker(),
+		budgets:  newBudgets(),
 	}
 }
 
@@ -427,6 +437,20 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 		e.mu.Unlock()
 		return "", ErrBusy
 	}
+	e.mu.Unlock()
+
+	// Before the turn is registered, not after the reply comes back. A cap checked afterwards is a
+	// receipt: it says what was spent and it did not stop the spending. Checked here, a paused agent
+	// has not made the request at all.
+	if err := e.checkBudget(sessionID); err != nil {
+		return "", err
+	}
+	e.mu.Lock()
+	s = e.sessions[sessionID]
+	if s == nil {
+		e.mu.Unlock()
+		return "", fmt.Errorf("no session %q", sessionID)
+	}
 
 	now := e.events.Now()
 	turnID = fmt.Sprintf("%s-turn-%d", sessionID, len(s.Turns)+1)
@@ -496,6 +520,13 @@ func (e *Engine) run(
 		e.mu.Lock()
 		delete(e.cancels, sessionID)
 		e.mu.Unlock()
+
+		// Guidance queued while this turn ran is delivered here, after the cancel is released and
+		// before the wait group is marked done. Released first because delivering starts a new turn
+		// and would otherwise find this session still registered as busy. Done last so a Close that
+		// is waiting on turns waits for the steered turn as well, rather than shutting down between
+		// the two and losing it.
+		e.deliverSteering(sessionID)
 		e.turns.Done()
 	}()
 
@@ -688,6 +719,11 @@ func (e *Engine) finish(
 	saved := copySession(*session)
 	e.mu.Unlock()
 
+	// Recorded once, here, because finish is the only path to a terminal state. Counting the spend
+	// anywhere else would mean a turn that ended on an unusual path was not billed against the cap,
+	// and an unusual path is exactly where an agent burns tokens.
+	e.recordSpend(sessionID, usage)
+
 	e.persistTurn(sessionID, ordinal, finished)
 	e.persistSession(saved)
 	e.publishTurn(sessionID, turnID, true)
@@ -739,4 +775,56 @@ func summarise(prompt string) string {
 		cut = cut[:space]
 	}
 	return cut + "..."
+}
+
+// Tools returns the engine's tool registry, and whether one is attached.
+//
+// Exposed so a caller can add tools after construction. The dispatch tools need a session id to
+// route their confirmation to, and that does not exist until the first agent does.
+func (e *Engine) Tools() (*core.ToolRegistry, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.tools, e.tools != nil
+}
+
+// UseCredential points a session at a different credential and model.
+//
+// Refused while a turn is running. Changing which key gets billed part way through an answer would
+// mean the reply was paid for by one credential and attributed to another, and the transcript would
+// be wrong about which model produced it.
+//
+// The model travels with the credential rather than being set separately, because every provider
+// except Anthropic has no default anybody could guess, and a credential switched without one leaves
+// a session that looks configured and fails on the next message.
+func (e *Engine) UseCredential(sessionID, keyName, model string) error {
+	if keyName == "" {
+		return errors.New("a credential name is required")
+	}
+
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok {
+		e.mu.Unlock()
+		return fmt.Errorf("no session %q", sessionID)
+	}
+	if _, running := s.Active(); running {
+		e.mu.Unlock()
+		return errors.New("this session is mid answer, so wait for it to finish or stop it first")
+	}
+	s.KeyName, s.Model = keyName, model
+	s.UpdatedAt = e.events.Now()
+	saved := copySession(*s)
+
+	// The agent record follows, so the agents view and anything that spawns from this session agree
+	// with the session itself rather than showing what it used to run on.
+	for i := range e.agents {
+		if e.agents[i].SessionID == sessionID {
+			e.agents[i].KeyName, e.agents[i].Model = keyName, model
+		}
+	}
+	e.mu.Unlock()
+
+	e.persistSession(saved)
+	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: sessionID})
+	return nil
 }

@@ -3,9 +3,11 @@
 A terminal coding agent built for running several agents at once, isolating them on their own git
 branches when they need it, and knowing which of them actually produced working code.
 
-> **Status: pre-alpha, and early.** The shared contract, the verification state machine, the fake
-> store and the dashboard exist and are tested. There is no provider connection yet. Development
-> is tracked in [TASKS.md](TASKS.md), and the decisions behind it in [DECISIONS.md](DECISIONS.md).
+> **Status: pre-alpha.** Everything on this page is built and tested, except where
+> [LIMITATIONS.md](LIMITATIONS.md) says otherwise, and that document is worth reading before this
+> one. The extensibility layer is not built at all. No release has been tagged yet, so the way in is
+> [INSTALL.md](INSTALL.md). Development is tracked in [TASKS.md](TASKS.md), and the decisions behind
+> it in [DECISIONS.md](DECISIONS.md).
 
 ## What it is
 
@@ -77,9 +79,17 @@ at some point", but "the tests pass for this revision, right now".
   passed".
 - Missing, stale or contradictory evidence is never shown as green.
 
-Give the same task to three agents and Canopy can rank the results by whose code actually passes,
+Give the same task to three agents and Canopy ranks the results by whose code actually passes,
 rather than by which one sounded most confident. Fanning out across agents is not new. Using test
 evidence to decide who won appears to be.
+
+The part that makes it honest is the refusal. An agent whose worktree changed after its tests ran is
+not placed fourth, it is not placed at all, and the ranking says why. That is more often than you
+might expect, because the branch that looked best is usually the one still being worked on.
+
+Canopy runs the test commands you configure in `canopy.json` and has no idea what your project's are
+until you tell it. On a repository it has never seen, the honest answer is "nothing is configured",
+not a green tick.
 
 ## What it will not do
 
@@ -95,16 +105,19 @@ evidence to decide who won appears to be.
 
 - Go 1.26 or newer
 - git
+- `/bin/sh`, since shell tools and test commands run through it
 - macOS or Linux
+
+See [INSTALL.md](INSTALL.md) for the ways in.
 
 ## Development
 
 ```sh
-go build ./...
-go test ./...
-go vet ./...
-gofmt -l .
-golangci-lint run ./...
+make build
+make test    # go test -race -count=1 ./...
+make lint
+make vet
+make fmt
 ```
 
 Work is claimed and verified through [TASKS.md](TASKS.md). Read its first section before starting

@@ -60,13 +60,32 @@ func (m Model) viewList() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(styleMuted.Render(fmt.Sprintf("  %-16s %-20s %-14s %s", "NAME", "PROVIDER", "FINGERPRINT", "ADDED")))
+	b.WriteString(styleMuted.Render(fmt.Sprintf("  %-2s %-14s %-18s %-34s %s",
+		"", "NAME", "PROVIDER", "MODEL", "FINGERPRINT")))
 	b.WriteString("\n")
 
 	for i, key := range m.keys {
 		marker := "  "
-		line := fmt.Sprintf("%-16s %-20s %-14s %s",
-			key.Ref.Name, key.Ref.Provider, key.Fingerprint, key.CreatedAt.Format("2006-01-02"))
+
+		// The model column exists because a credential with none, on a provider that has no default,
+		// is one that cannot answer a single message. Blank here is the visible form of that, so it
+		// can be noticed before a conversation fails rather than after.
+		model := key.Model
+		if model == "" && key.Ref.Provider == core.ProviderAnthropic {
+			model = styleMuted.Render("provider default")
+		} else if model == "" {
+			model = styleWarn.Render("none set, press m")
+		}
+
+		// The chosen credential is marked rather than reordered, so the list somebody learned the
+		// shape of does not rearrange itself under them.
+		chosen := " "
+		if key.Ref.Name == m.chosen {
+			chosen = "*"
+		}
+
+		line := fmt.Sprintf("%-1s %-14s %-18s %-34s %s",
+			chosen, key.Ref.Name, key.Ref.Provider, model, key.Fingerprint)
 		if i == m.cursor {
 			marker = "> "
 			line = styleSelect.Render(line)
@@ -85,7 +104,11 @@ func (m Model) viewList() string {
 
 func (m Model) viewAdd() string {
 	var b strings.Builder
-	b.WriteString(styleMuted.Render("  Adding a credential"))
+	header := "  Adding a credential"
+	if m.editing {
+		header = "  Changing which model " + m.draftName + " talks to"
+	}
+	b.WriteString(styleMuted.Render(header))
 	b.WriteString("\n\n")
 
 	// A name is not a secret, so it is shown as typed. Unless it stops looking like a name: the
@@ -120,6 +143,17 @@ func (m Model) viewAdd() string {
 		b.WriteString("\n")
 	}
 
+	if m.mode == modeModel {
+		b.WriteString(m.field("model", m.draftModel, true))
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render(
+			"           the model id this key talks to, exactly as the provider spells it"))
+		b.WriteString("\n")
+	} else if m.draftModel != "" && m.mode == modeSecret {
+		b.WriteString(m.field("model", m.draftModel, false))
+		b.WriteString("\n")
+	}
+
 	if m.mode == modeSecret {
 		// Only the length is rendered. The value is never turned into display text anywhere in
 		// this package, which is why there is no code path here that could accidentally do it.
@@ -150,11 +184,13 @@ func (m Model) footer() string {
 		if len(m.keys) == 0 {
 			return "a add   esc back"
 		}
-		return "a add   d remove   j/k move   r refresh   esc back"
+		return "enter use   m model   a add   d remove   j/k move   esc back"
 	case modeConfirmRemove:
 		return "y confirm   n cancel"
 	case modeProvider:
 		return "j/k choose   enter select   esc cancel"
+	case modeModel:
+		return "enter save   esc cancel"
 	default:
 		return "enter continue   esc cancel"
 	}
