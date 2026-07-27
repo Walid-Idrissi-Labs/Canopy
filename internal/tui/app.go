@@ -526,10 +526,6 @@ func (a App) View() string {
 			footer = Keys(a.dim.Width, "y", "create direct agent", "esc", "back")
 		} else if a.agents.Naming() {
 			footer = Keys(a.dim.Width, "enter", "review", "esc", "cancel")
-
-		if a.agents.Naming() {
-			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
-
 		}
 		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(), footer)
 
