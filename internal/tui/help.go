@@ -37,12 +37,12 @@ type section struct {
 func bindings() []section {
 	return []section{
 		{"anywhere", []binding{
-			{"?", "this screen"},
-			{"ctrl+c", "stop the turn, or quit when nothing is running"},
+			{"?", "this screen, except while a message is half typed"},
 		}},
 		{"chat", []binding{
 			{"enter", "send"},
 			{"esc", "interrupt the turn, keeping what has arrived"},
+			{"ctrl+c", "stop the turn, or quit when nothing is running"},
 			{"up / down", "walk back through what you have sent here"},
 			{"ctrl+n", "a new conversation, keeping this one"},
 			{"ctrl+d", "agents"},
@@ -60,8 +60,11 @@ func bindings() []section {
 			{"enter", "open that agent's conversation"},
 			{"n", "new agent"},
 			{"v", "cycle tabbed, split and list"},
+			{"1 / 2 / 3", "go straight to list, split or focus"},
+			{"tab", "next agent, or next layout from the list"},
 			{"w", "worktree monitor"},
 			{"r", "review"},
+			{"K", "credentials"},
 			{"esc / q", "back to chat"},
 		}},
 		{"review", []binding{
@@ -69,6 +72,7 @@ func bindings() []section {
 			{"enter", "open the changes, then a file"},
 			{"tab", "cycle the queue, the ranking and the overlap"},
 			{"c", "commit, from the file list"},
+			{"K", "credentials"},
 			{"esc", "back one level"},
 		}},
 		{"a diff", []binding{
@@ -85,21 +89,71 @@ func bindings() []section {
 			{"j / k", "move"},
 			{"r", "refresh"},
 			{"K", "credentials"},
-			{"esc / tab", "agents"},
+			{"esc / tab / q", "agents"},
 		}},
 		{"credentials", []binding{
+			{"j / k", "move"},
+			{"enter", "use this one for the conversation"},
+			{"m", "set which model it talks to"},
+			{"a / n", "add one"},
+			{"d / x", "remove one"},
+			{"r", "reload the list"},
 			{"esc / tab", "back to where you were"},
 			{"q", "quit"},
 		}},
 	}
 }
 
-// Help renders the overlay.
+// Help renders the overlay, scrolled down by the given number of lines.
 //
 // Two columns when there is room and one when there is not, rather than a fixed layout that either
-// wastes half a wide terminal or overflows a narrow one. The break point is measured from the
-// widest key column rather than guessed, so it holds if a binding is renamed.
-func Help(dim Dimensions) string {
+// wastes half a wide terminal or overflows a narrow one. Even in two columns the list is taller than
+// a short terminal, which is why it scrolls: the alternative is dropping bindings to make it fit,
+// and an overlay that lists most of the keys is one people stop trusting.
+func Help(dim Dimensions) string { return HelpFrom(dim, 0) }
+
+// HelpFrom is the overlay starting at a given line.
+func HelpFrom(dim Dimensions, from int) string {
+	lines := helpLines(dim.Width)
+
+	height := dim.BodyHeight()
+	if height < 1 || height >= len(lines) {
+		return strings.Join(lines, "\n")
+	}
+
+	// One line of the footer is spent saying there is more, so it comes out of the body.
+	height--
+	if from > len(lines)-height {
+		from = len(lines) - height
+	}
+	if from < 0 {
+		from = 0
+	}
+
+	shown := strings.Join(lines[from:from+height], "\n")
+	remaining := len(lines) - (from + height)
+	if remaining > 0 {
+		return shown + "\n" + styleCaveat.Render(
+			"  "+itoa(remaining)+" more lines, j and k to scroll")
+	}
+	return shown + "\n" + styleMuted.Render("  the end of the list, k to go back up")
+}
+
+// HelpHeight is how many lines the overlay needs in full. For tests and for scroll bounds.
+func HelpHeight(width int) int { return len(helpLines(width)) }
+
+// helpColumns is how many bindings can sit side by side.
+//
+// Two needs room for the widest key column and a readable description twice over. Below that the
+// descriptions get cut to nothing, and a key with a truncated description is a key nobody presses.
+func helpColumns(width int) int {
+	if width >= 96 {
+		return 2
+	}
+	return 1
+}
+
+func helpLines(width int) []string {
 	sections := bindings()
 
 	widest := 0
@@ -110,14 +164,10 @@ func Help(dim Dimensions) string {
 			}
 		}
 	}
-
 	column := widest + 2
-	var lines []string
-	for i, s := range sections {
-		if i > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, styleHeader.Render(s.title))
+
+	render := func(s section) []string {
+		out := []string{styleHeader.Render(s.title)}
 		for _, b := range s.bindings {
 			pad := column - lipgloss.Width(b.keys)
 			if pad < 1 {
@@ -126,11 +176,96 @@ func Help(dim Dimensions) string {
 			// The key is styled and the description is not, so the eye lands on the column it is
 			// scanning. Padding is applied to the plain text before styling, because a style adds
 			// escape sequences that lipgloss.Width does not count but a terminal does not print.
-			lines = append(lines, "  "+styleTitle.Render(b.keys)+strings.Repeat(" ", pad)+
+			out = append(out, "  "+styleTitle.Render(b.keys)+strings.Repeat(" ", pad)+
 				styleMuted.Render(b.does))
 		}
+		return out
 	}
-	return strings.Join(lines, "\n")
+
+	single := func() []string {
+		var lines []string
+		for i, s := range sections {
+			if i > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, render(s)...)
+		}
+		return lines
+	}
+
+	if helpColumns(width) == 1 {
+		return single()
+	}
+
+	// Split so the two columns come out close to the same height, rather than filling the first and
+	// leaving the second short. Sections are kept whole: a section split across columns is one a
+	// reader has to reassemble.
+	blocks := make([][]string, 0, len(sections))
+	total := 0
+	for _, s := range sections {
+		block := render(s)
+		blocks = append(blocks, block)
+		total += len(block) + 1
+	}
+
+	var left, right []string
+	used := 0
+	for _, block := range blocks {
+		target := &left
+		if used*2 >= total {
+			target = &right
+		}
+		if len(*target) > 0 {
+			*target = append(*target, "")
+		}
+		*target = append(*target, block...)
+		used += len(block) + 1
+	}
+
+	// The gap is measured from the widest left hand line so the right column starts in one place
+	// rather than stepping in and out down the page.
+	gutter := 0
+	for _, line := range left {
+		if w := lipgloss.Width(line); w > gutter {
+			gutter = w
+		}
+	}
+	gutter += 3
+
+	// Measured rather than assumed. Two columns of unknown text can be wider than the terminal even
+	// when the terminal looked wide enough, and a help screen that wraps is worse than a tall one:
+	// every second line starts mid description, in the middle of a column, and the whole thing reads
+	// as broken. Falling back to one column costs scrolling, which already works.
+	widestRight := 0
+	for _, line := range right {
+		if w := lipgloss.Width(line); w > widestRight {
+			widestRight = w
+		}
+	}
+	if gutter+widestRight > width {
+		return single()
+	}
+
+	tall := len(left)
+	if len(right) > tall {
+		tall = len(right)
+	}
+	lines := make([]string, 0, tall)
+	for i := range tall {
+		var l, r string
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		if r == "" {
+			lines = append(lines, l)
+			continue
+		}
+		lines = append(lines, l+strings.Repeat(" ", maxInt(1, gutter-lipgloss.Width(l)))+r)
+	}
+	return lines
 }
 
 // HelpBindingCount is how many bindings the overlay lists. For tests, which assert that every key

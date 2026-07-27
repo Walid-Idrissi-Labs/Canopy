@@ -33,32 +33,9 @@ import (
 // conversation is the common activity, and opening on a monitor made Canopy look like something you
 // watch rather than something you talk to.
 //
-// Nothing here knows the workspace store is fake. Every screen is handed an interface and that is
-// all it ever sees, which is what lets the real engine drop in at A5 without the UI changing.
+// Every screen is handed an interface and that is all it ever sees, which is what let the real
+// engine drop in behind the worktree monitor without the interface changing.
 func runChat() error {
-	store := fake.New()
-	defer store.Close()
-
-	store.SetClock(time.Now)
-
-	// Without something changing, the dashboard would be a still image and would demonstrate
-	// nothing. Editing a worktree on a timer is the behaviour worth watching anyway, since it is
-	// what turns green results stale.
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		ticker := time.NewTicker(6 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-stop:
-				return
-			case <-ticker.C:
-				_ = store.Touch("ws-refactor-api")
-			}
-		}
-	}()
-
 	keyStore, err := openKeyStore()
 	if err != nil {
 		return err
@@ -121,11 +98,19 @@ func runChat() error {
 	}
 	defer verification.Close()
 
+	// The worktree monitor reads the verifier, the same one the review screen reads. Outside a
+	// repository there is nothing to read and the screen says so, which is the honest answer and
+	// the one this used to lie about: it was handed four invented worktrees and a timer that
+	// pretended one of them was being edited.
 	var review tui.ReviewSource
+	monitor := newWorktrees("", nil)
 	if verification != nil {
 		review = verification.verifier
+		monitor = verification.store
 	}
-	return tui.RunAppWithReview(store, keyStore, engine, filepath.Base(dir), keyName, review)
+	defer monitor.Close()
+
+	return tui.RunAppWithReview(monitor, keyStore, engine, filepath.Base(dir), keyName, review)
 }
 
 // attachTools gives the agent something to do besides talk.

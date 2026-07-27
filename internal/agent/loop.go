@@ -284,6 +284,9 @@ func (l *Loop) invoke(
 		entry.Result = result.Content
 		entry.Failed = result.IsError
 		entry.Duration = time.Since(started)
+		// The same measurement the audit trail records, so the number on screen and the number in
+		// the trail can never disagree about the same call.
+		result.Duration = entry.Duration
 		if l.Trail != nil {
 			l.Trail.Record(entry)
 		}

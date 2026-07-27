@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -144,6 +144,16 @@ var migrations = []string{
 	// Added when checkpoints landed. Without persisting this, undo would work until you quit and
 	// then silently stop, which is worse than not offering it.
 	`ALTER TABLE turns ADD COLUMN checkpoint TEXT NOT NULL DEFAULT '';`,
+
+	// Added when the task list got a screen. Stored as JSON in one column rather than as a table:
+	// the list is always read and written whole, it belongs to exactly one session, and nothing ever
+	// queries across it. A table would buy joins nobody performs at the cost of a migration nobody
+	// needed.
+	//
+	// Without persisting it, an agent's list would be complete right up until you quit and then come
+	// back empty, which is worse than not showing one. The list is most of what makes a long run
+	// followable, and a long run is exactly the kind you close the laptop on.
+	`ALTER TABLE sessions ADD COLUMN tasks TEXT NOT NULL DEFAULT '[]';`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -242,17 +252,18 @@ func (s *Storage) SaveSession(session core.Session) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO sessions (id, title, workspace_id, key_name, model, created_at, updated_at,
-		                      forked_from, forked_at, forked_when)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                      forked_from, forked_at, forked_when, tasks)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title = excluded.title,
 			workspace_id = excluded.workspace_id,
 			key_name = excluded.key_name,
 			model = excluded.model,
-			updated_at = excluded.updated_at`,
+			updated_at = excluded.updated_at,
+			tasks = excluded.tasks`,
 		session.ID, session.Title, session.WorkspaceID, session.KeyName, session.Model,
 		unix(session.CreatedAt), unix(session.UpdatedAt),
-		session.ForkedFrom, session.ForkedAt, unix(session.ForkedWhen))
+		session.ForkedFrom, session.ForkedAt, unix(session.ForkedWhen), encodeTasks(session.Tasks))
 	if err != nil {
 		return fmt.Errorf("saving session %s: %w", session.ID, err)
 	}
@@ -414,12 +425,13 @@ func (s *Storage) Load(id string) (core.Session, error) {
 	var created, updated int64
 
 	var forkedWhen int64
+	var tasks string
 	err := s.db.QueryRow(`
 		SELECT id, title, workspace_id, key_name, model, created_at, updated_at,
-		       forked_from, forked_at, forked_when
+		       forked_from, forked_at, forked_when, tasks
 		FROM sessions WHERE id = ?`, id).
 		Scan(&session.ID, &session.Title, &session.WorkspaceID, &session.KeyName, &session.Model,
-			&created, &updated, &session.ForkedFrom, &session.ForkedAt, &forkedWhen)
+			&created, &updated, &session.ForkedFrom, &session.ForkedAt, &forkedWhen, &tasks)
 	if errors.Is(err, sql.ErrNoRows) {
 		return core.Session{}, fmt.Errorf("%q: %w", id, ErrNoSession)
 	}
@@ -428,6 +440,7 @@ func (s *Storage) Load(id string) (core.Session, error) {
 	}
 	session.CreatedAt = fromUnix(created)
 	session.UpdatedAt = fromUnix(updated)
+	session.Tasks = decodeTasks(tasks)
 	session.ForkedWhen = fromUnix(forkedWhen)
 
 	turns, err := s.loadTurns(id)
@@ -671,4 +684,33 @@ func DefaultPath() (string, error) {
 		return "", fmt.Errorf("creating %s: %w", dir, err)
 	}
 	return filepath.Join(dir, "history.db"), nil
+}
+
+// Tasks are stored as JSON in one column, since the list is always read and written whole and
+// nothing ever queries across it.
+//
+// A list that cannot be decoded comes back empty rather than failing the load. A task list is a
+// display, and refusing to open a conversation because its progress summary is malformed would
+// trade the conversation for the summary of it.
+
+func encodeTasks(tasks []core.Task) string {
+	if len(tasks) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(tasks)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodeTasks(encoded string) []core.Task {
+	if encoded == "" || encoded == "[]" {
+		return nil
+	}
+	var tasks []core.Task
+	if err := json.Unmarshal([]byte(encoded), &tasks); err != nil {
+		return nil
+	}
+	return tasks
 }

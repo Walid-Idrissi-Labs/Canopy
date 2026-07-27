@@ -128,6 +128,15 @@ type ToolResult struct {
 	// IsError marks a failure. A failed tool still gets a result, so the model can adjust rather
 	// than wait.
 	IsError bool
+
+	// Duration is how long the call took, measured from the moment it was asked for rather than
+	// from the moment it started running, so time spent waiting on a person to approve it is
+	// included. That is usually the largest part and hiding it would make the number a lie.
+	//
+	// Filled in by the layer that invokes the tool, not by the tool. A tool that timed itself would
+	// leave every path that never reaches a tool, a refusal or an unknown name, with no timing at
+	// all, and those are exactly the calls somebody is trying to account for.
+	Duration time.Duration
 }
 
 // ToolDefinition describes a tool to the model.

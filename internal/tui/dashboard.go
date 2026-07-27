@@ -261,7 +261,17 @@ func (m Model) renderTitle() string {
 	return line
 }
 
+// renderEmpty says which kind of empty this is.
+//
+// Two kinds, and telling somebody to run `git worktree add` in a directory that is not a repository
+// is advice that cannot work, which reads as the program not knowing where it is.
 func (m Model) renderEmpty() string {
+	if m.snapshot.RepoRoot == "" {
+		return styleMuted.Render("Nothing to watch here.\n\n" +
+			"This directory is not a git repository, so there are no worktrees and no\n" +
+			"verification to run. Everything else in Canopy works: this screen is the one\n" +
+			"part that needs a repository.")
+	}
 	return styleMuted.Render("No worktrees found.\n\n" +
 		"Canopy watches worktrees that already exist. Create one with\n" +
 		"  git worktree add ../my-branch -b my-branch\n" +
