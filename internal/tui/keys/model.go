@@ -23,6 +23,7 @@ type Store interface {
 	List() ([]core.KeyMetadata, error)
 	Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata, error)
 	Remove(ref core.KeyRef) error
+	SetModel(ref core.KeyRef, model string) error
 	BackendName() string
 	UsingInsecureBackend() bool
 }
@@ -34,6 +35,7 @@ const (
 	modeName
 	modeProvider
 	modeBaseURL
+	modeModel
 	modeSecret
 	modeConfirmRemove
 )
@@ -50,6 +52,7 @@ type Model struct {
 	draftName     string
 	draftProvider core.Provider
 	draftBaseURL  string
+	draftModel    string
 
 	// draftSecret is the one place in this design where a credential exists as a plain string, and
 	// it is unavoidable: the user is typing it. It is cleared the moment it reaches the store, and
@@ -57,6 +60,14 @@ type Model struct {
 	draftSecret string
 
 	providerCursor int
+
+	// editing is set when the model prompt was reached from the list rather than from the add flow,
+	// so committing it changes one field instead of trying to store a credential with no secret.
+	editing bool
+
+	// chosen is the credential the user picked for this conversation. The application reads it and
+	// clears nothing: the screen states a preference, and switching sessions is the parent's job.
+	chosen string
 
 	status string
 	err    error
@@ -92,6 +103,22 @@ func (m Model) IsEmpty() bool { return len(m.keys) == 0 }
 // knows not to steal keystrokes.
 func (m Model) Adding() bool { return m.mode != modeList && m.mode != modeConfirmRemove }
 
+// Chosen returns the credential the user picked, and whether they picked one.
+//
+// Read by the application rather than acted on here, because which credential a conversation runs
+// on is a fact about the conversation, and this screen does not own one.
+func (m Model) Chosen() (string, bool) { return m.chosen, m.chosen != "" }
+
+// Model returns the model the chosen credential talks to, for the caller that has to set both.
+func (m Model) ModelFor(name string) string {
+	for _, key := range m.keys {
+		if key.Ref.Name == name {
+			return key.Model
+		}
+	}
+	return ""
+}
+
 func (m Model) Init() tea.Cmd { return nil }
 
 // Update handles a message.
@@ -121,6 +148,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		m.handleTextKey(msg, &m.draftName, (*Model).afterName)
 	case modeBaseURL:
 		m.handleTextKey(msg, &m.draftBaseURL, (*Model).afterBaseURL)
+	case modeModel:
+		m.handleTextKey(msg, &m.draftModel, (*Model).afterModel)
 	case modeSecret:
 		m.handleTextKey(msg, &m.draftSecret, (*Model).afterSecret)
 	case modeProvider:
@@ -135,7 +164,7 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 	switch msg.String() {
 	case "a", "n":
 		m.mode = modeName
-		m.draftName, m.draftBaseURL, m.draftSecret = "", "", ""
+		m.draftName, m.draftBaseURL, m.draftModel, m.draftSecret = "", "", "", ""
 		m.draftProvider = core.ProviderAnthropic
 		m.providerCursor = 0
 		m.status, m.err = "", nil
@@ -153,6 +182,24 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 		}
 	case "r":
 		m.reload()
+	case "m":
+		// Changing the model without re-entering the secret. Somebody fixing a typo in a model id
+		// should not have to go and find their API key again.
+		if len(m.keys) > 0 {
+			m.mode = modeModel
+			m.draftName = m.keys[m.cursor].Ref.Name
+			m.draftProvider = m.keys[m.cursor].Ref.Provider
+			m.draftModel = m.keys[m.cursor].Model
+			m.editing = true
+			m.status, m.err = "", nil
+		}
+	case "enter":
+		// Choosing which credential the conversation runs on. Without this the list was somewhere to
+		// add and remove keys and nowhere to pick one, so with two stored, nothing could run at all.
+		if len(m.keys) > 0 {
+			m.chosen = m.keys[m.cursor].Ref.Name
+			m.status = fmt.Sprintf("%s is now the credential for this conversation", m.chosen)
+		}
 	}
 }
 
@@ -201,6 +248,36 @@ func (m *Model) afterBaseURL() {
 	}
 	m.draftBaseURL = url
 	m.err = nil
+	m.mode = modeModel
+}
+
+// afterModel takes the model this credential will talk to.
+//
+// Asked rather than assumed for every provider except Anthropic, which is the only one Canopy can
+// pick a model for. Without it the credential is stored, looks complete in the list, and fails on
+// the first message with an error from somebody else's gateway about a request rather than about
+// the setting that was never filled in.
+func (m *Model) afterModel() {
+	model := strings.TrimSpace(m.draftModel)
+	if model == "" && m.draftProvider != core.ProviderAnthropic {
+		m.err = fmt.Errorf("%q has no default model, so name the one this key should use, "+
+			"for example minimaxai/minimax-m2.7", m.draftProvider)
+		return
+	}
+	m.draftModel = model
+	m.err = nil
+
+	if m.editing {
+		if err := m.store.SetModel(core.KeyRef{Name: m.draftName}, model); err != nil {
+			m.err = err
+			return
+		}
+		m.editing = false
+		m.mode = modeList
+		m.status = fmt.Sprintf("%s now talks to %s", m.draftName, model)
+		m.reload()
+		return
+	}
 	m.mode = modeSecret
 }
 
@@ -214,6 +291,7 @@ func (m *Model) afterSecret() {
 	meta, err := m.store.Put(core.KeyMetadata{
 		Ref:     core.KeyRef{Name: m.draftName, Provider: m.draftProvider},
 		BaseURL: m.draftBaseURL,
+		Model:   m.draftModel,
 	}, core.NewSecret(value))
 
 	// Cleared whether or not the store accepted it. Clearing only on success is the easy mistake,
@@ -250,6 +328,9 @@ func (m *Model) handleProviderKey(msg tea.KeyMsg) {
 		if m.draftProvider.RequiresBaseURL() {
 			m.mode = modeBaseURL
 		} else {
+			// Anthropic goes straight to the secret. It is the one provider Canopy can pick a model
+			// for, so asking would be asking a question with a correct default, and the list shows
+			// what it settled on. Changing it later is m on the list.
 			m.mode = modeSecret
 		}
 	}

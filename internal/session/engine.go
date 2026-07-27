@@ -786,3 +786,45 @@ func (e *Engine) Tools() (*core.ToolRegistry, bool) {
 	defer e.mu.Unlock()
 	return e.tools, e.tools != nil
 }
+
+// UseCredential points a session at a different credential and model.
+//
+// Refused while a turn is running. Changing which key gets billed part way through an answer would
+// mean the reply was paid for by one credential and attributed to another, and the transcript would
+// be wrong about which model produced it.
+//
+// The model travels with the credential rather than being set separately, because every provider
+// except Anthropic has no default anybody could guess, and a credential switched without one leaves
+// a session that looks configured and fails on the next message.
+func (e *Engine) UseCredential(sessionID, keyName, model string) error {
+	if keyName == "" {
+		return errors.New("a credential name is required")
+	}
+
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok {
+		e.mu.Unlock()
+		return fmt.Errorf("no session %q", sessionID)
+	}
+	if _, running := s.Active(); running {
+		e.mu.Unlock()
+		return errors.New("this session is mid answer, so wait for it to finish or stop it first")
+	}
+	s.KeyName, s.Model = keyName, model
+	s.UpdatedAt = e.events.Now()
+	saved := copySession(*s)
+
+	// The agent record follows, so the agents view and anything that spawns from this session agree
+	// with the session itself rather than showing what it used to run on.
+	for i := range e.agents {
+		if e.agents[i].SessionID == sessionID {
+			e.agents[i].KeyName, e.agents[i].Model = keyName, model
+		}
+	}
+	e.mu.Unlock()
+
+	e.persistSession(saved)
+	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: sessionID})
+	return nil
+}

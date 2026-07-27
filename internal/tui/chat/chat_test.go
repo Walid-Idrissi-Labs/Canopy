@@ -19,6 +19,9 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
+	usingKey   string
+	usingModel string
+
 	session    core.Session
 	sent       []string
 	cancelled  int
@@ -709,4 +712,9 @@ func TestAQuestionTakesTheKeyboard(t *testing.T) {
 		t.Errorf("a keystroke while a question was up went into the message box as %q",
 			m.InputValue())
 	}
+}
+
+func (e *fakeEngine) UseCredential(_, keyName, model string) error {
+	e.usingKey, e.usingModel = keyName, model
+	return nil
 }

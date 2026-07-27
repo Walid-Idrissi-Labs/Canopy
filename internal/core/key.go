@@ -187,6 +187,16 @@ type KeyMetadata struct {
 	// BaseURL is the endpoint, for providers that need one.
 	BaseURL string
 
+	// Model is the model this credential talks to by default.
+	//
+	// Stored on the credential rather than chosen per conversation, because for every provider that
+	// is not Anthropic there is no default anybody could guess. A credential pointed at somebody
+	// else's gateway with no model recorded produces a request with an empty model field, which
+	// fails at the far end with a message about the request rather than about the missing setting.
+	//
+	// Empty is allowed and means "use the provider's default", which only Anthropic has.
+	Model string
+
 	// Rate is what the user told us this credential charges. Zero means they have not said, which
 	// is different from free.
 	Rate KeyRate

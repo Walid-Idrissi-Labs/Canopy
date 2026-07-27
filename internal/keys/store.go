@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +38,7 @@ type record struct {
 	Name        string     `json:"name"`
 	Provider    string     `json:"provider"`
 	BaseURL     string     `json:"baseUrl,omitempty"`
+	Model       string     `json:"model,omitempty"`
 	Fingerprint string     `json:"fingerprint"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
@@ -138,6 +140,7 @@ func (r record) toMetadata() core.KeyMetadata {
 	return core.KeyMetadata{
 		Ref:         core.KeyRef{Name: r.Name, Provider: core.Provider(r.Provider)},
 		BaseURL:     r.BaseURL,
+		Model:       r.Model,
 		Fingerprint: r.Fingerprint,
 		CreatedAt:   r.CreatedAt,
 		LastUsedAt:  r.LastUsedAt,
@@ -183,6 +186,7 @@ func (s *Store) Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata
 		Name:             meta.Ref.Name,
 		Provider:         string(meta.Ref.Provider),
 		BaseURL:          meta.BaseURL,
+		Model:            meta.Model,
 		Fingerprint:      secret.Fingerprint(),
 		CreatedAt:        s.clock(),
 		InputPerMTok:     meta.Rate.InputPerMTok,
@@ -309,6 +313,27 @@ func (s *Store) Remove(ref core.KeyRef) error {
 		}
 	}
 	return s.save(remaining)
+}
+
+// SetModel records which model this credential talks to.
+//
+// Separate from Put because changing the model must not require re-entering the secret. Somebody
+// correcting a typo in a model id should not have to go and find their API key again, and a flow
+// that asked them to would get the key pasted from somewhere less careful than where it lives now.
+func (s *Store) SetModel(ref core.KeyRef, model string) error {
+	records, err := s.load()
+	if err != nil {
+		return err
+	}
+
+	for i, existing := range records {
+		if existing.Name != ref.Name {
+			continue
+		}
+		records[i].Model = strings.TrimSpace(model)
+		return s.save(records)
+	}
+	return fmt.Errorf("no credential called %q", ref.Name)
 }
 
 // SetRate records what the user says this credential charges.

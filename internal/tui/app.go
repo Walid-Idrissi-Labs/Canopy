@@ -11,6 +11,18 @@ import (
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
 
+// Engine is everything the application needs from the session engine.
+//
+// One interface combining the screens' own, rather than each screen being handed its own value.
+// The agents view was constructed without an engine for exactly as long as this did not exist:
+// nothing forced the caller to supply one, its list silently showed nothing, and creating an agent
+// dereferenced a nil interface and took the program down. A screen that needs an engine should be
+// impossible to build without one.
+type Engine interface {
+	chat.Engine
+	agentsui.Engine
+}
+
 // screen identifies which view is in front.
 type screen int
 
@@ -50,6 +62,13 @@ type App struct {
 	// the splash never has to know anything about credentials.
 	afterSplash screen
 
+	// dir is the working directory new agents are given.
+	dir string
+
+	// usingKey is the credential last applied from the credential screen, so choosing the same one
+	// twice does not re-apply it on every keystroke.
+	usingKey string
+
 	// helpFrom is where the help overlay returns to. Separate from cameFrom, because help is
 	// reachable from the credential screen too and one field would send you to the wrong place.
 	helpFrom screen
@@ -75,7 +94,7 @@ type App struct {
 // talked to and cannot answer, and finding that out by typing a message and watching it fail is a
 // worse introduction than being asked for the one thing that makes the rest work.
 func NewApp(
-	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 ) App {
 	return NewAppWithReview(store, keyStore, engine, dir, keyName, nil)
 }
@@ -87,19 +106,25 @@ func NewApp(
 // is a legitimate state here: Canopy runs in directories that are not git repositories, and the
 // review screen says so rather than being hidden.
 func NewAppWithReview(
-	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	review ReviewSource,
 ) App {
 	app := App{
 		screen:      screenSplash,
 		afterSplash: screenChat,
 		chat:        chat.New(engine, "session-1", dir, keyName),
+		agents:      agentsui.New(engine),
 		dashboard:   New(store),
 		review:      NewReview(review),
 		keys:        keysui.New(keyStore),
 		cameFrom:    screenChat,
+		usingKey:    keyName,
+		dir:         dir,
 		dim:         Dimensions{Width: 80, Height: 24},
 	}
+	// What a new agent inherits. Without it every agent created from that screen was built with an
+	// empty credential and an empty working directory, which fails on its first message.
+	app.agents.SetDefaults(keyName, keysui.New(keyStore).ModelFor(keyName), dir)
 	if app.keys.IsEmpty() {
 		app.afterSplash = screenKeys
 	}
@@ -188,6 +213,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenKeys:
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
+
+			// A credential chosen on that screen is a fact about the conversation, so it is applied
+			// here where the conversation lives. The screen states a preference and owns nothing.
+			if name, picked := a.keys.Chosen(); picked && name != a.usingKey {
+				model := a.keys.ModelFor(name)
+				a.usingKey = name
+				a.chat.UseCredential(name, model)
+				// Agents created after the switch inherit it too, or the next one would quietly go
+				// on using the credential somebody had just moved away from.
+				a.agents.SetDefaults(name, model, a.dir)
+			}
 			return a, cmd
 		default:
 			updated, cmd := a.dashboard.Update(key)
@@ -439,14 +475,14 @@ func (a App) DismissSplash() App {
 
 // RunApp starts the full application.
 func RunApp(
-	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 ) error {
 	return RunAppWithReview(store, keyStore, engine, dir, keyName, nil)
 }
 
 // RunAppWithReview starts the application with a source for the review screen.
 func RunAppWithReview(
-	store core.SnapshotStore, keyStore keysui.Store, engine chat.Engine, dir, keyName string,
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	review ReviewSource,
 ) error {
 	program := tea.NewProgram(

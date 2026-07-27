@@ -283,15 +283,28 @@ func runSearch(args []string, out io.Writer) error {
 // compatible endpoint has none, and guessing a model name for somebody else's gateway produces a
 // confusing 404 rather than a clear message, so it is left empty and the first turn says what is
 // missing.
+// defaultModelFor is the model a session on this credential talks to.
+//
+// The credential's own recorded model first, then the provider default where one exists. Before the
+// model was stored on the credential this returned nothing at all for anything that was not
+// Anthropic, so a user whose only key pointed at an OpenAI compatible gateway got a session with an
+// empty model and every message failed at the far end, with a message about the request rather than
+// about the setting that was missing.
 func defaultModelFor(store *keys.Store, name string) string {
 	if name == "" {
 		return ""
 	}
 	meta, err := store.Metadata(core.KeyRef{Name: name})
-	if err != nil || meta.Ref.Provider != core.ProviderAnthropic {
+	if err != nil {
 		return ""
 	}
-	return anthropic.DefaultModel
+	if meta.Model != "" {
+		return meta.Model
+	}
+	if meta.Ref.Provider == core.ProviderAnthropic {
+		return anthropic.DefaultModel
+	}
+	return ""
 }
 
 func runSnapshot(out io.Writer) error {

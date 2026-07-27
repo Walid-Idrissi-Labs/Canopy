@@ -108,8 +108,16 @@ be rediscovered by getting burned by it.
   agent still pays that disk and time cost again (Q-14).
 
 - There is no way yet to choose an agent's trust level from the interface. A new agent inherits the
-  credential and model of whichever agent you were looking at when you created it; choosing a
-  different trust posture per agent waits on a profile picker that does not exist yet (A5-06).
+  credential and model currently in use; choosing a different trust posture per agent waits on a
+  profile picker that does not exist yet (A5-06).
+
+- Choosing a credential applies to the conversation you are in, not to agents that already exist.
+  Agents created afterwards inherit it; ones already running keep the credential they were started
+  with, and there is no way to move a running agent to a different one.
+
+- A credential can only talk to one model. Using the same key against two models means storing it
+  twice under two names, which is what naming keys is for, but it does mean pasting the secret in
+  again.
 
 - Sub agents, one agent spawning helper agents for a subtask, and agent handoff with model
   escalation, handing a worktree and a summary from a cheap model to a stronger one, are both

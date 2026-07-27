@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A5, A6 and A7 done. A8-03, A9-04 and A9-05 too. Nothing claimed | `feat/verification-and-release` | none |
+| Claude | A5, A6, A7 done, plus A8-03, A9-03 to A9-05. Two shipped bugs fixed | `feat/verification-and-release` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and

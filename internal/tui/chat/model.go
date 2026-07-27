@@ -44,6 +44,9 @@ type Engine interface {
 	// through the engine.
 	Pending(sessionID string) (session.Prompt, bool)
 	Answer(sessionID string, approved, remember bool) bool
+
+	// UseCredential points this conversation at a different credential and model.
+	UseCredential(sessionID, keyName, model string) error
 }
 
 // EventMsg carries an engine notification into the update loop.
@@ -401,6 +404,21 @@ func (m *Model) SetSession(sessionID, label string) {
 	m.scroll = 0
 	m.err = ""
 	m.input.Clear()
+	m.refresh()
+}
+
+// UseCredential switches this conversation to a different credential and model.
+//
+// A refusal is shown rather than swallowed. Choosing a credential and having nothing visibly happen
+// is how somebody concludes the screen does not work, which is exactly what it looked like before
+// there was any way to choose at all.
+func (m *Model) UseCredential(keyName, model string) {
+	if err := m.engine.UseCredential(m.sessionID, keyName, model); err != nil {
+		m.err = err.Error()
+		return
+	}
+	m.keyName = keyName
+	m.err = ""
 	m.refresh()
 }
 
