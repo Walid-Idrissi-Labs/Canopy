@@ -71,3 +71,51 @@ func count(n int, one, many string) string {
 	}
 	return many
 }
+
+// CommitDraft is a commit message with the subject left out.
+//
+// Split rather than handed over as one string, because the subject is the part a machine cannot
+// write. A diff says which files changed and says nothing about why, so a generated subject like
+// "update auth.go" is worse than none: plausible enough to commit by accident, and useless to
+// whoever reads the history later. The type and the scope are readable from the files, so those are
+// derived; the sentence is left for a person.
+type CommitDraft struct {
+	// Prefix is the conventional commit type and scope, such as "feat(chat)".
+	Prefix string
+
+	// Body lists what changed, one line per file.
+	Body string
+}
+
+// Message assembles the final commit message. An empty subject gives an empty message, which the
+// commit path refuses rather than silently committing a body with no summary.
+func (d CommitDraft) Message(subject string) string {
+	subject = strings.TrimSpace(subject)
+	if subject == "" {
+		return ""
+	}
+	if d.Prefix != "" {
+		subject = d.Prefix + ": " + subject
+	}
+	if d.Body == "" {
+		return subject + "\n"
+	}
+	return subject + "\n\n" + d.Body + "\n"
+}
+
+// Overlap is one file that more than one agent has changed.
+type Overlap struct {
+	Path string
+
+	// Agents are the ones that touched it, in a stable order.
+	Agents []string
+
+	// Deleted names the agents that removed the file. A delete against an edit is the case most
+	// likely to actually conflict, and the one a plain file list shows as an ordinary overlap.
+	Deleted []string
+}
+
+// Contested reports whether at least one agent deleted the file and another did not.
+func (o Overlap) Contested() bool {
+	return len(o.Deleted) > 0 && len(o.Deleted) < len(o.Agents)
+}

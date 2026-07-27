@@ -13,11 +13,35 @@ import (
 // fakeReview stands in for the verifier. The engine's own behaviour is tested against a real
 // repository in internal/verify; what is under test here is what the screen does with the answers.
 type fakeReview struct {
-	ranking core.Ranking
-	queue   []core.ReadyForReview
-	changes map[string][]core.FileChange
-	patches map[string]string
-	failure error
+	ranking   core.Ranking
+	queue     []core.ReadyForReview
+	changes   map[string][]core.FileChange
+	patches   map[string]string
+	overlaps  []core.Overlap
+	committed string
+	failure   error
+}
+
+func (f *fakeReview) Overlaps() ([]core.Overlap, error) {
+	if f.failure != nil {
+		return nil, f.failure
+	}
+	return f.overlaps, nil
+}
+
+func (f *fakeReview) Draft(agent string) (core.CommitDraft, error) {
+	if f.failure != nil {
+		return core.CommitDraft{}, f.failure
+	}
+	return core.CommitDraft{Prefix: "feat(auth)", Body: "- change auth.go"}, nil
+}
+
+func (f *fakeReview) Commit(agent, message string) error {
+	if f.failure != nil {
+		return f.failure
+	}
+	f.committed = message
+	return nil
 }
 
 func (f *fakeReview) Rank() core.Ranking                   { return f.ranking }
@@ -310,4 +334,130 @@ func stripANSI(s string) string {
 		i++
 	}
 	return out.String()
+}
+
+// A7-03 on screen. Overlap, not conflict, and the wording has to say so or somebody reads a clean
+// radar as a promise that the merge will work.
+func TestTheConflictRadarNamesTheFileAndTheAgents(t *testing.T) {
+	model, source := loaded(t)
+	source.overlaps = []core.Overlap{
+		{Path: "auth.go", Agents: []string{"one", "two"}},
+		{Path: "gone.go", Agents: []string{"one", "three"}, Deleted: []string{"three"}},
+	}
+
+	model = press(model, "tab", "tab")
+	if model.Pane() != "overlap" {
+		t.Fatalf("two tabs landed on %q", model.Pane())
+	}
+
+	body := stripANSI(model.Body())
+	if !strings.Contains(body, "auth.go") || !strings.Contains(body, "one, two") {
+		t.Errorf("the radar does not name the file and both agents:\n%s", body)
+	}
+	if !strings.Contains(body, "deleted by three") {
+		t.Errorf("a delete against an edit is not called out:\n%s", body)
+	}
+}
+
+func TestACleanRadarDoesNotPromiseAMerge(t *testing.T) {
+	model, _ := loaded(t)
+	model = press(model, "tab", "tab")
+
+	body := model.Body()
+	if !strings.Contains(body, "no two agents") {
+		t.Errorf("the empty radar renders as:\n%s", body)
+	}
+	if !strings.Contains(body, "right now") {
+		t.Errorf("the empty radar does not say it is a statement about now:\n%s", body)
+	}
+}
+
+// A7-02. Nothing is committed until ctrl+s, and a subject nobody wrote is refused.
+func TestCommittingNeedsASubjectAndAnExplicitKey(t *testing.T) {
+	model, source := loaded(t)
+	model = press(model, "enter", "c")
+
+	if model.Pane() != "commit" {
+		t.Fatalf("c on the file list landed on %q", model.Pane())
+	}
+	if !strings.Contains(model.Body(), "feat(auth)") {
+		t.Errorf("the drafted prefix is not shown:\n%s", model.Body())
+	}
+	if !strings.Contains(model.Body(), "change auth.go") {
+		t.Errorf("the generated body is hidden, so it would only ever be read in the history:\n%s",
+			model.Body())
+	}
+
+	// Enter is the key people press to end a line. Wiring an irreversible action to it is how a half
+	// written subject gets committed.
+	model = press(model, "enter")
+	if source.committed != "" {
+		t.Fatalf("enter committed %q", source.committed)
+	}
+
+	saving, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	if source.committed != "" {
+		t.Error("an empty subject was committed")
+	}
+	if !strings.Contains(saving.Body(), "needs a subject") {
+		t.Errorf("the refusal is not on screen:\n%s", saving.Body())
+	}
+}
+
+func TestAWrittenSubjectIsWhatGetsCommitted(t *testing.T) {
+	model, source := loaded(t)
+	model = press(model, "enter", "c")
+
+	for _, r := range "stop refreshing an expired token" {
+		if r == ' ' {
+			model, _ = model.Update(tea.KeyMsg{Type: tea.KeySpace})
+			continue
+		}
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+
+	if !strings.HasPrefix(source.committed, "feat(auth): stop refreshing an expired token") {
+		t.Errorf("the message committed was %q", source.committed)
+	}
+	if !strings.Contains(source.committed, "- change auth.go") {
+		t.Errorf("the generated body was dropped: %q", source.committed)
+	}
+	if model.Pane() != "files" {
+		t.Errorf("after committing the screen is on %q", model.Pane())
+	}
+	if !strings.Contains(model.Body(), "committed") {
+		t.Errorf("nothing says the commit happened:\n%s", model.Body())
+	}
+}
+
+// While the message is being written every printable key belongs to it. Without that, a subject
+// containing j would move the cursor instead of being typed.
+func TestTypingASubjectDoesNotNavigate(t *testing.T) {
+	model, _ := loaded(t)
+	model = press(model, "enter", "c", "j", "k", "c", "q")
+
+	if model.Pane() != "commit" {
+		t.Fatalf("typing navigated away to %q", model.Pane())
+	}
+	if !strings.Contains(stripANSI(model.Body()), "jkcq") {
+		t.Errorf("the typed characters did not reach the subject:\n%s", stripANSI(model.Body()))
+	}
+}
+
+func TestLeavingTheCommitScreenThrowsAwayTheDraft(t *testing.T) {
+	model, source := loaded(t)
+	model = press(model, "enter", "c", "w", "i", "p")
+	model = press(model, "esc")
+
+	if model.Pane() != "files" {
+		t.Fatalf("escape from the commit screen landed on %q", model.Pane())
+	}
+	model = press(model, "c")
+	if strings.Contains(stripANSI(model.Body()), "wip") {
+		t.Errorf("an abandoned subject came back:\n%s", stripANSI(model.Body()))
+	}
+	if source.committed != "" {
+		t.Errorf("something was committed on the way out: %q", source.committed)
+	}
 }
