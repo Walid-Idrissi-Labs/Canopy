@@ -125,8 +125,19 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 	// Waiting in a goroutine so the kill path is not blocked behind it. Wait does not return until
 	// the output pipes close, which for a process that has left children behind does not happen
 	// until those children exit too, which is the case being handled here.
+	//
+	// reaped is closed the moment Wait returns, and it is closed before the result is handed over so
+	// that anything watching it sees the reap before the caller does. The kill path needs to know
+	// this and cannot get it from done: a process id stops being safe to address as a process group
+	// the moment its leader has been waited on, and killGroup is the only thing in a position to
+	// care.
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	reaped := make(chan struct{})
+	go func() {
+		err := cmd.Wait()
+		close(reaped)
+		done <- err
+	}()
 
 	var timedOut, cancelled bool
 	select {
@@ -137,7 +148,7 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 		timedOut = errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		cancelled = !timedOut
 
-		killGroup(cmd)
+		killGroup(cmd, reaped)
 
 		// Give the group a moment to die before giving up on it. The wait is bounded because a
 		// process that ignores a kill is not going to start obeying, and blocking forever here
@@ -216,6 +227,16 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 		}
 
 		// Everything after the head is a sliding window of the most recent bytes.
+		//
+		// Trimmed before it is appended as well as after. Appending first and trimming afterwards
+		// would mean a command that prints eight megabytes in one write allocates eight megabytes
+		// here before dropping most of them again, which is the failure this buffer exists to
+		// prevent rather than a briefer version of it. Nothing in a single write can survive except
+		// its last half-limit bytes, so the rest never needs to be copied at all.
+		if extra := len(p) - half; extra > 0 {
+			p = p[extra:]
+			b.dropped += extra
+		}
 		b.tail = append(b.tail, p...)
 		if extra := len(b.tail) - half; extra > 0 {
 			b.tail = b.tail[extra:]
