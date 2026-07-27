@@ -37,6 +37,10 @@ func call(t *testing.T, tool core.Tool, args any) core.ToolResult {
 	return result
 }
 
+func shellTestQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 func TestReadingAFile(t *testing.T) {
 	_, tools := toolset(t)
 
@@ -239,6 +243,9 @@ func TestEveryFileToolIsConfined(t *testing.T) {
 		if !result.IsError {
 			t.Errorf("%s allowed a path outside the workspace", tc.tool)
 		}
+		if !result.Refused {
+			t.Errorf("%s reported an outside path as a failure rather than a refusal", tc.tool)
+		}
 		if !strings.Contains(result.Content, "outside") {
 			t.Errorf("%s: the refusal should say why, got %q", tc.tool, result.Content)
 		}
@@ -393,8 +400,8 @@ func TestEveryFileToolDeclaresAUsableSchema(t *testing.T) {
 	}
 }
 
-// The shell tool is the broadest thing an agent has. Everything else here is confined by
-// construction; this one is confined by the permission model and by its working directory.
+// The shell tool is the broadest thing an agent has. Its working directory supplies context, not
+// containment; the permission model decides whether the process may start at all.
 func TestTheShellToolRunsInTheWorkspace(t *testing.T) {
 	w := testWorkspace(t)
 	tool := ShellTool(w)
@@ -409,6 +416,26 @@ func TestTheShellToolRunsInTheWorkspace(t *testing.T) {
 	if tool.Kind() != core.ToolExecute {
 		t.Errorf("kind = %q, and the permission model treats execute differently from every other",
 			tool.Kind())
+	}
+}
+
+// D-33 deliberately distinguishes a workspace-rooted structured tool from an enabled shell
+// process. This executable limitation prevents a future agent from turning "starts here" into a
+// containment claim without changing the product decision and its tests together.
+func TestTheShellWorkingDirectoryIsNotAContainmentBoundary(t *testing.T) {
+	w := testWorkspace(t)
+	tool := ShellTool(w)
+	outside := filepath.Join(filepath.Dir(w.Root()), "shell-left-workspace")
+
+	result := call(t, tool, map[string]any{
+		"command": "touch " + shellTestQuote(outside),
+	})
+	if result.IsError {
+		t.Fatalf("shell escape demonstration failed: %s", result.Content)
+	}
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatalf("shell unexpectedly behaved like a sandbox: %v", err)
 	}
 }
 

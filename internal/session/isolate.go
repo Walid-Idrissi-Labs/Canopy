@@ -11,10 +11,10 @@ package session
 // Isolation is three things, and the middle one is the one that matters:
 //
 //  1. A worktree and a branch of its own, so the files are separate.
-//  2. A tool registry rooted at that worktree, so the confinement is *enforced* rather than
-//     intended. The agent is not asked to stay inside its worktree; it is handed a set of tools
-//     that cannot express anywhere else. `tools.Workspace` already refuses a path that resolves
-//     outside its root, so building one registry per worktree is the whole mechanism.
+//  2. A tool registry rooted at that worktree, so structured file and path-scoped Git confinement
+//     is *enforced* rather than intended. `tools.Workspace` refuses paths outside its root. Shell is
+//     deliberately different: when the trust level exposes it, the process starts in the worktree
+//     but is not contained there. D-33 records that product boundary.
 //  3. A disposition when it ends, because whatever is in there is work.
 
 import (
@@ -25,6 +25,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 )
 
 // Isolation is what an engine needs before it can give an agent a worktree of its own.
@@ -52,6 +53,8 @@ type Isolation struct {
 // Optional, and its absence is not an error until somebody actually asks for an isolated agent.
 // Canopy runs in directories that are not git repositories at all, and refusing to start there for
 // want of an isolation mode nobody asked for would be the rare case taxing the common one again.
+// A direct agent uses the engine's existing registry and may therefore operate in the repository
+// where Canopy started. That is a distinct workspace mode, not a failed attempt at isolation.
 func (e *Engine) WithIsolation(isolation Isolation) error {
 	switch {
 	case isolation.Repo == nil:
@@ -106,11 +109,12 @@ func (e *Engine) isolate(ctx context.Context, agent *Agent) (*core.ToolRegistry,
 // Called with the engine lock already held, since the turn takes it once for everything it needs.
 //
 // Two lookups rather than one because they answer to different things. The registry is what an
-// isolated agent gets instead of the engine's, and it is what makes confinement structural. The
-// trust level is per agent whether or not it is isolated: A4-04 stored one on every agent and
-// nothing read it, so until now an agent configured as read only ran with whatever the engine was
-// set to. Isolation is where that gap would have bitten hardest, since the reason to confine an
-// agent to a worktree is usually to let it work more freely inside one.
+// isolated agent gets instead of the engine's, and it makes structured path confinement
+// enforceable. It does not sandbox a shell tool the registry may contain. The trust level is per
+// agent whether or not it is isolated: A4-04 stored one on every agent and nothing read it, so until
+// now an agent configured as read only ran with whatever the engine was set to. Isolation is where
+// that gap would have bitten hardest, since the reason to confine an agent to a worktree is usually
+// to let it work more freely inside one.
 func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.TrustLevel) {
 	tools, trust := e.tools, e.trust
 
@@ -122,6 +126,18 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 			trust = agent.Trust
 			break
 		}
+	}
+	if tools != nil {
+		// Do not describe structurally denied tools to the model. Enforcement still happens for
+		// every call in the loop, but a read-only agent should not spend context repeatedly asking
+		// for tools its own profile says can never run.
+		tools = tools.Filter(func(tool core.Tool) bool {
+			decision := permission.Decide(permission.Request{
+				Tool: tool.Name(),
+				Kind: tool.Kind(),
+			}, trust, nil)
+			return decision.Outcome != permission.Deny
+		})
 	}
 	return tools, trust
 }

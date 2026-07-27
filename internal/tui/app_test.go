@@ -512,6 +512,7 @@ func TestCreatingAnAgentFromTheInterfaceWorks(t *testing.T) {
 		{Type: tea.KeyRunes, Runes: []rune("n")},
 		{Type: tea.KeyRunes, Runes: []rune("worker")},
 		{Type: tea.KeyEnter},
+		{Type: tea.KeyRunes, Runes: []rune("y")},
 	} {
 		next, _ = next.(tui.App).Update(key)
 	}

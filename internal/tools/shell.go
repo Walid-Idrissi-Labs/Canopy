@@ -13,10 +13,10 @@ import (
 
 // shellTool runs a command in the agent's workspace.
 //
-// The broadest tool there is, by a distance. Everything else here is confined by construction: a
-// file tool cannot touch what `Workspace.Resolve` will not resolve. A shell command is an opaque
-// string that can do anything the user can, and no amount of inspecting it changes that. **The
-// confinement for this one is the permission model, not this file**, which is why its kind is
+// The broadest tool there is, by a distance. Structured path tools can refuse what
+// `Workspace.Resolve` will not resolve. A shell command is an opaque string that can do anything the
+// user can, and no amount of inspecting it changes that. The permission model controls whether this
+// process may start; it does not contain the process after that. This distinction is why its kind is
 // `execute` and why A4-04 treats that kind differently from every other.
 //
 // Canopy does not sandbox and must never imply that it does.
@@ -31,8 +31,9 @@ func (t *shellTool) Name() string        { return "run_command" }
 func (t *shellTool) Kind() core.ToolKind { return core.ToolExecute }
 
 func (t *shellTool) Description() string {
-	return "Run a shell command in the workspace. Use this for building, testing and anything " +
-		"there is no dedicated tool for. Output is truncated in the middle if it is very long."
+	return "Run a shell command starting in the workspace. It is not sandboxed and can reach " +
+		"anything the user's account can reach. Use this for building, testing and anything there " +
+		"is no dedicated tool for. Output is truncated in the middle if it is very long."
 }
 
 func (t *shellTool) Schema() json.RawMessage {

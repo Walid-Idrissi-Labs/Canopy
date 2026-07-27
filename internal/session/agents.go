@@ -15,10 +15,11 @@ import (
 // **A session per agent**, so one agent's conversation cannot reach another's. That is already true
 // of the engine: sessions are keyed by ID and a turn only ever touches the one it belongs to.
 //
-// **A working directory per agent**, which defaults to the repository. An agent is not a worktree.
-// Coupling the two would make "run an agent" mean "make a branch", which is not how anyone works
-// most of the time and would make the common case pay for the rare one. Isolation is a mode an agent
-// is put into, and A5-11 is where that lands.
+// **A working directory per agent**, which defaults to the repository. D-33 calls this direct mode:
+// it may be the primary checkout and is not isolation. Coupling every agent to a worktree would make
+// "run an agent" mean "make a branch", which is not how anyone works most of the time and would make
+// the common case pay for the rare one. Isolation is a separate mode an agent is put into, and
+// A5-11 is where that lands.
 
 // Agent is a named worker with its own conversation.
 type Agent struct {
@@ -36,7 +37,9 @@ type Agent struct {
 	KeyName string
 	Model   string
 
-	// Dir is where its tools operate. The repository unless it has been isolated.
+	// Dir is the assigned workspace. It is the repository in direct mode and the Canopy-owned
+	// worktree in isolated mode. Structured tools resolve paths against it; an enabled shell merely
+	// starts there and is not contained there.
 	Dir string
 
 	// Trust is how much it may do without asking.

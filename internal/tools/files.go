@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -92,6 +93,21 @@ func failure(format string, args ...any) core.ToolResult {
 	return core.ToolResult{Content: fmt.Sprintf(format, args...), IsError: true}
 }
 
+// refusal is a tool result for an operation stopped by a safety boundary.
+//
+// This reaches the model as an error, but the audit trail records it as denied and not run. Keeping
+// that distinction is what lets the refused-call view answer what an agent tried to do.
+func refusal(format string, args ...any) core.ToolResult {
+	return core.ToolResult{Content: fmt.Sprintf(format, args...), IsError: true, Refused: true}
+}
+
+func pathFailure(err error) core.ToolResult {
+	if errors.Is(err, ErrOutsideWorkspace) {
+		return refusal("%v", err)
+	}
+	return failure("%v", err)
+}
+
 // readTool reads a file.
 type readTool struct {
 	w      *Workspace
@@ -126,7 +142,7 @@ func (t *readTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 
 	path, err := t.w.Resolve(args.Path)
 	if err != nil {
-		return failure("%v", err), nil
+		return pathFailure(err), nil
 	}
 
 	info, err := os.Stat(path)
@@ -216,7 +232,7 @@ func (t *editTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 
 	path, err := t.w.Resolve(args.Path)
 	if err != nil {
-		return failure("%v", err), nil
+		return pathFailure(err), nil
 	}
 
 	content, err := os.ReadFile(path)
@@ -303,7 +319,7 @@ func (t *writeTool) Run(_ context.Context, input json.RawMessage) (core.ToolResu
 
 	path, err := t.w.Resolve(args.Path)
 	if err != nil {
-		return failure("%v", err), nil
+		return pathFailure(err), nil
 	}
 
 	// Overwriting an existing file wholesale is the destructive case, so it gets the same freshness

@@ -16,17 +16,18 @@ const (
 	// commands, or change git state. Useful for exploration and for the cheap half of a handoff.
 	TrustReadOnly TrustLevel = "read-only"
 
-	// TrustConfined may read and write inside its own worktree. Shell and anything destructive
-	// still ask.
+	// TrustConfined may read and write inside its own worktree. Shell and destructive Git are
+	// refused.
 	TrustConfined TrustLevel = "confined"
 
-	// TrustStandard may read, write and run shell commands inside its own worktree. Destructive
-	// git operations and anything outside the worktree still ask. This is the sensible default.
+	// TrustStandard may read and write inside its workspace and may run a shell command after a
+	// person approves it. The shell starts in the workspace but is not contained there.
+	// Destructive Git is refused. This is the sensible default.
 	TrustStandard TrustLevel = "standard"
 
-	// TrustBroad may also perform destructive git operations on its own branch without asking.
-	// It still cannot touch another agent's worktree or the primary checkout, because those are
-	// refused rather than merely gated.
+	// TrustBroad may also run shell commands and destructive Git without asking. It is an explicit
+	// unrestricted permission posture, not containment: shell commands run with the user's account
+	// and may reach outside the workspace.
 	TrustBroad TrustLevel = "broad"
 )
 
@@ -70,15 +71,12 @@ func (t TrustLevel) AtLeast(other TrustLevel) bool {
 // AllowsWrites reports whether agents at this level may modify files in their own worktree.
 func (t TrustLevel) AllowsWrites() bool { return t.AtLeast(TrustConfined) }
 
-// AllowsShell reports whether agents at this level may run shell commands without asking.
+// AllowsShell reports whether agents at this level may use the shell at all. Standard trust still
+// asks before each unapproved command; broad trust runs it without asking.
 func (t TrustLevel) AllowsShell() bool { return t.AtLeast(TrustStandard) }
 
 // AllowsDestructiveGit reports whether agents at this level may run destructive git operations on
 // their own branch without asking.
-//
-// No level permits touching another agent's worktree or the primary checkout. Those are refused,
-// which is a different thing from gated, and the distinction is deliberate: some actions should
-// not have an approval path at all.
 func (t TrustLevel) AllowsDestructiveGit() bool { return t.AtLeast(TrustBroad) }
 
 func (t TrustLevel) String() string { return string(t) }

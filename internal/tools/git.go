@@ -43,7 +43,8 @@ func GitTools(w *Workspace) []core.Tool {
 				},
 				"required": []
 			}`,
-			build: buildDiff,
+			build:      buildDiff,
+			pathScoped: true,
 		},
 		&gitTool{w: w, name: "git_log", kind: core.ToolRead,
 			description: "Show recent commits on the current branch.",
@@ -65,7 +66,8 @@ func GitTools(w *Workspace) []core.Tool {
 				},
 				"required": ["path"]
 			}`,
-			build: buildAdd,
+			build:      buildAdd,
+			pathScoped: true,
 		},
 		&gitTool{w: w, name: "git_commit", kind: core.ToolWrite,
 			description: "Commit what is staged. Stage first with git_add.",
@@ -78,7 +80,7 @@ func GitTools(w *Workspace) []core.Tool {
 			}`,
 			build: buildCommit,
 		},
-		&gitTool{w: w, name: "git_branch", kind: core.ToolGit,
+		&gitTool{w: w, name: "git_branch", kind: core.ToolWrite,
 			description: "List branches, or create and switch to one.",
 			schema: `{
 				"type": "object",
@@ -104,6 +106,7 @@ type gitTool struct {
 	description string
 	schema      string
 	build       func(json.RawMessage) ([]string, error)
+	pathScoped  bool
 }
 
 func (t *gitTool) Name() string            { return t.name }
@@ -115,6 +118,19 @@ func (t *gitTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResu
 	args, err := t.build(input)
 	if err != nil {
 		return failure("%v", err), nil
+	}
+	if t.pathScoped {
+		var pathArgs struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(input, &pathArgs); err != nil {
+			return failure("could not read the arguments: %v", err), nil
+		}
+		if pathArgs.Path != "" {
+			if _, err := t.w.Resolve(pathArgs.Path); err != nil {
+				return pathFailure(err), nil
+			}
+		}
 	}
 
 	result, err := exec.Run(ctx, "git", args, exec.Options{

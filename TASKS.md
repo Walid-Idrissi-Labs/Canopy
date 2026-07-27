@@ -4,6 +4,10 @@ This file is the single source of truth for what is built, what is not, and what
 verified. Both development pairs edit it. Nothing counts as done because it compiles. A task is
 done only when its acceptance behaviour has been demonstrated.
 
+Every agent changing this repository must also read `AGENTS.md`. It records the authority order,
+the D-33 workspace and permission contract, and the files and tests that must move together when a
+safety rule changes.
+
 Build order is strict. Tasks are listed in the order they must be built. Do not start a task
 whose dependencies are not done. Phases are separated by a phase gate that needs human sign off
 before the next phase begins.
@@ -91,6 +95,22 @@ Every task is a self contained block so two agents editing different tasks produ
 Keep it that way. Do not reflow or reorder blocks, do not add summary tables that duplicate task
 state, and keep your edits inside the block you own.
 
+### 1.7 Safety contract changes
+
+D-33 is authoritative for direct workspaces, isolated worktrees, primary-checkout lifecycle safety,
+and the shell boundary. These are cross-cutting rules, so a change to workspace selection, tool
+kinds, trust levels, shell execution, worktree ownership, or approval scope is not complete when
+only the code changes. The same branch must reconcile:
+
+1. DECISIONS.md, including an explicit supersession when a settled rule changes.
+2. Every affected acceptance block in this ledger.
+3. README.md and LIMITATIONS.md, so the user-facing promise matches enforcement.
+4. The direct/isolated by trust-level tests, including audit outcomes for refusals.
+
+If any two disagree, set the affected task to `blocked`, record the exact disagreement, and ask the
+supervisors. Do not infer a safety guarantee from a tool's working directory, and do not weaken one
+because the current code has not implemented it.
+
 ---
 
 ## 2. Now board
@@ -101,7 +121,9 @@ doing right now".
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
 | Claude | Phase M complete, all six in review. Next is A9-01 and A9-02 | `feat/mvp-usability` | none |
-| Codex | none | none | none |
+| Codex | A4/A5 permission and confinement review | `feat/permissions-and-confinement` | D-33 settled the contract; fixes still need the other agent's independent rerun |
+
+
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
 git, not a worktree monitor. Phases 0 and 1 are unchanged and still done. Old phases 2 to 6 are
@@ -124,11 +146,12 @@ ceiling rather than the floor. **Phase M is built** as of 2026-07-27 and is what
 usable by somebody who did not build it. **A4-07** is still blocked on Q-11, **A4-09** has an
 engine with no screen, and **A4-10** hands its remaining half to M-03.
 
-**Nothing in this file is `done`.** 63 tasks carry `claude [x]` and none carries `codex [x]`, and
-every gate from PG-1 onward is unsigned. By the definition in section 1.2 that means one pair has
-built nine phases and the other has independently checked none of them. No amount of further
-building changes that number, and it is the largest gap between what this ledger claims and what
-has actually been established. The parts most worth reading first are A6-05, which is the whole
+**Nothing in this file is `done`.** There are 69 tasks in `review`, 25 in `todo`, three in
+`partial`, three in `blocked` and none in `done`. 66 task lines carry `claude [x]` and none carries
+`codex [x]`; every gate from PG-1 onward is unsigned. By the definition in section 1.2 that means
+one pair has built nine phases and the other has independently checked none of them. No amount of
+further building changes that number, and it is the largest gap between what the ledger claims and
+what has actually been established. The parts most worth reading first are A6-05, which is the whole
 strategic argument, and A5-09, which is the one that spends money.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
@@ -675,9 +698,10 @@ Three calls for Codex:
 2. **Four trust levels**, read-only, confined, standard and broad, with standard as the default.
    Unknown values resolve to read-only rather than the default, so a typo in a config file reduces
    what an agent can do instead of quietly granting the usual amount.
-3. **No trust level permits touching another agent's worktree or the primary checkout.** Those are
-   refused rather than gated. Some actions should not have an approval path at all, and putting
-   that in the type rather than in the permission layer means A4-04 cannot accidentally grant it.
+3. **Workspace mode and trust level are separate decisions.** A direct agent uses the repository
+   where Canopy started, which may be the primary checkout. An isolated agent's structured tools
+   are rooted at its Canopy-owned worktree, and no trust level widens those tools into another
+   workspace. Shell is the explicit non-contained exception in D-33.
 
 ### A1-02 Key store on the OS keychain
 `status: review | owner: Claude | branch: feat/keys-and-profiles | depends: A1-01`
@@ -1782,14 +1806,15 @@ The command goes to `/bin/sh -c` rather than being split into arguments here. It
 redirections and globs, and splitting it ourselves would run something subtly different from what
 was asked for and approved.
 
-**The shell tool is the one that is not confined by construction.** Every other tool here is limited
-by what `Workspace.Resolve` will resolve; a shell command is an opaque string that can do anything
-the user can, and inspecting it does not change that. Its confinement is the permission model, which
-is A4-04, and its kind is `execute` precisely so that model can treat it differently. Canopy does
-not sandbox and must never imply that it does.
+**The shell tool is the one that is not confined by construction.** Structured path tools are
+limited by what `Workspace.Resolve` will resolve; a shell command is an opaque string that can do
+anything the user can, and inspecting it does not change that. The permission model in A4-04
+controls whether the process starts; it does not contain the process afterwards. Its kind is
+`execute` precisely so the model can treat that risk differently. Canopy does not sandbox and must
+never imply that it does.
 
 ### A4-04 Per agent trust levels and permissions
-`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-02, A4-03`
+`status: blocked | owner: Claude | branch: feat/agent-runtime | depends: A4-02, A4-03`
 `scope: internal/permission/`
 
 Deliverable: trust level as a property of the profile. Each level defines which tools run without
@@ -1797,9 +1822,11 @@ asking, which always ask, and which are refused outright. Path confinement, an a
 for shell, approval scopes, and a complete audit trail of every call with arguments and result.
 
 Acceptance: no tool runs without an applicable permission. A denied call returns an error to the
-model rather than killing the session. An approval for one path never covers another. A scratch
-profile and a profile working near `main` behave differently on the same request. The audit trail
-answers "what did this agent actually do" after the fact.
+model rather than killing the session. An approval for one path never covers another. Structured
+path tools cannot leave their assigned direct or isolated workspace. Read-only and confined agents
+cannot invoke shell; standard sees the exact command before it runs; broad is explicitly
+uncontained. A scratch profile and a profile working near `main` behave differently on the same
+request. The audit trail answers "what did this agent actually do" after the fact.
 
 `verify: claude [x]   codex [ ]`
 
@@ -1861,6 +1888,13 @@ somebody's question to ask a different one is worse than declining the second. C
 while a question is open refuses it: they never answered, and a cancelled turn should not leave a
 command running behind it.
 
+**Codex review 2026-07-27:** blocked after independent disposable-repository tests. Choosing `y`
+stored the approval for later identical calls, and a path stopped by workspace confinement appeared
+in the audit trail as allowed, run and failed rather than denied and not run. Proposed fixes and
+regression tests are on `feat/permissions-and-confinement`. Verification remains unticked until the
+changed behavior is independently rerun. D-33 now supplies the controlling workspace and shell
+contract.
+
 ### A4-05 Tool use loop
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
 `scope: internal/agent/, internal/session/engine.go, cmd/canopy/`
@@ -1906,16 +1940,21 @@ trust level says no and carry on, and create a file with specific content. All t
 `minimaxai/minimax-m2.7` on NVIDIA NIM.
 
 ### A4-06 Git tools
-`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
+`status: blocked | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
 `scope: internal/tools/git.go`
 
-Deliverable: status, diff, log, add, commit, branch, checkout and stash as structured tools scoped
-to the agent's worktree.
+Deliverable: status, diff, log, add, commit and branch as structured tools scoped to the agent's
+assigned workspace. Checkout of an existing branch, stash, reset, clean, push and rebase are not
+structured tools in this release.
 
-Acceptance: an agent inspects and commits its changes without shelling out. Destructive operations,
-meaning checkout over uncommitted work, reset, branch deletion and force anything, are approved
-separately from ordinary shell approval. An agent cannot operate on another agent's worktree or on
-the primary checkout.
+Acceptance: an agent inspects, stages and commits its changes without shelling out. The structured
+surface exposes no checkout of an existing branch, reset, branch deletion, force operation, stash,
+push or rebase. If an agent instead requests Git through the opaque shell, it receives the shell
+trust decision for that exact command; Canopy does not claim to parse it into a separate Git
+approval. Structured Git path arguments cannot leave the agent's assigned workspace. That
+workspace may be the primary checkout in direct mode; in isolated mode it is the agent's
+Canopy-owned worktree. Worktree lifecycle operations never target the primary checkout or an
+unowned worktree. See D-33.
 
 `verify: claude [x]   codex [ ]`
 
@@ -1925,7 +1964,9 @@ reliable for a model to act on than parsed porcelain, and confinement is enforce
 where in a shell string it is not enforceable at all.
 
 Six tools: status, diff, log, add, commit and branch. Classified for the permission model as read,
-read, read, write, write and git respectively, which is what makes the destructive half separable.
+read, read, write, write and write respectively. Branch creation mutates Git state, so presenting
+the same tool at read-only trust merely because an empty call lists branches would be a permission
+hole.
 
 Three deliberate omissions, all reachable through the shell tool where they are visible and approved
 as what they are:
@@ -1953,6 +1994,13 @@ the tools that can be governed per argument should be reached for before the one
 Worktree confinement is not enforced here yet: the tools run git in the agent's workspace, which is
 the right directory, but nothing stops a `git_add` path from naming something git tracks elsewhere
 via a submodule. Recorded rather than claimed. A5-03 is where worktrees become real.
+
+**Codex review 2026-07-27:** blocked. A read-only agent created and switched branches because the
+mixed list/create tool was classified as ordinary Git and its `create` field never became a
+permission command. D-33 resolved the conflicting primary-checkout language: direct agent tool
+execution is allowed by trust, while primary-checkout lifecycle operations remain forbidden. The
+branch-mutation fix is on `feat/permissions-and-confinement`; the task remains blocked until that
+change and the reconciled acceptance are independently rerun.
 
 ### A4-07 Web search and fetch
 `status: partial | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
@@ -2146,6 +2194,10 @@ mode, where an agent gets its own worktree and branch. That is necessary when se
 touch the same files, and required for fan-out at A6-05. It is not required to have an agent, and
 the registry at A5-05 does not depend on it.
 
+D-33 names the boundary precisely. Direct mode may use the primary checkout and must say so.
+Isolated mode confines structured file and Git paths to the owned worktree. Shell is denied at
+read-only and confined trust, but it is never a worktree containment mechanism when enabled.
+
 Build A5-05 through A5-10 first if you want agents working sooner. The isolation tasks are ordered
 first only because A6 needs them.
 
@@ -2212,16 +2264,19 @@ it one such file becomes two entries and every count is wrong from then on.
 Deliverable: create a worktree and branch for an agent, remove it afterwards.
 
 Acceptance: removal refuses on a dirty worktree without explicit confirmation. The primary checkout
-can never be removed. A failed creation leaves nothing behind.
+and every worktree Canopy does not own can never be removed or otherwise lifecycle-managed. A failed
+creation leaves nothing behind.
 
 `verify: claude [x]   codex [ ]`
 
-notes: previously forbidden outright, now required. The guards from that exclusion survive as
-behaviour: never touch the primary, never remove a dirty tree silently.
+notes: previously forbidden outright, now required. The lifecycle guards from that exclusion
+survive as behaviour: never manage the primary, never manage an unowned worktree, and never remove a
+dirty tree silently. D-33 distinguishes this from tool execution by a direct agent.
 
 Three refusals, in order, each answering a way somebody loses work:
 
-1. **Never the primary**, at any level of confirmation. It is the user's own checkout.
+1. **Never remove or lifecycle-manage the primary**, at any level of confirmation. It is the
+   user's own checkout.
 2. **Never one Canopy did not create.** Finding a worktree is not the same as owning it, and force
    does not change that.
 3. **Never a dirty one without saying so.** Uncommitted work is work, and an agent's abandoned
@@ -2335,14 +2390,18 @@ would make "run an agent" mean "make a branch", which is not how anyone works mo
 would have made the common case pay for the rare one.
 
 ### A5-11 Isolated agent mode
-`status: review | owner: Claude | branch: feat/isolated-agents | depends: A5-05, A5-03, A5-04`
+`status: blocked | owner: Claude | branch: feat/isolated-agents | depends: A5-05, A5-03, A5-04`
 `scope: internal/agent/`
 
 Deliverable: opt an agent into its own worktree and branch, and return it afterwards.
 
-Acceptance: an isolated agent's file and shell tools cannot reach outside its worktree, and cannot
-reach another agent's. A non isolated agent works in the repository as normal. Ending an isolated
-agent offers to keep or remove the worktree, and never removes a dirty one silently.
+Acceptance: an isolated agent's structured file and path-scoped Git tools cannot reach outside its
+worktree or reach another agent's. Its shell starts in the worktree but is available only at
+standard or broad trust and is explicitly not contained there. A direct agent works in the
+repository where Canopy started, which may be the primary checkout, and the interface identifies
+that before write-capable work begins. Fan-out never silently shares a direct workspace. Ending an
+isolated agent offers to keep or remove the worktree and never removes a dirty one silently. See
+D-33.
 
 `verify: claude [x]   codex [ ]`
 
@@ -2358,12 +2417,13 @@ is the one that matters:
 
 1. A worktree and a branch of its own, named after the agent, so `git branch` afterwards reads as a
    list of who did what.
-2. **A tool registry rooted at that worktree.** This is the mechanism. `tools.Workspace` already
-   refuses to resolve a path outside its root and has since A4, so building one registry per
-   isolated agent makes confinement structural: the agent is not asked to stay inside its worktree,
-   it is handed a set of tools that cannot express anywhere else. `Isolation.Tools` is a function of
-   a directory supplied by the caller rather than a registry built in the engine, because the engine
-   has never known what tools exist and should not start now.
+2. **A structured tool registry rooted at that worktree.** This is the mechanism for file and
+   path-scoped Git tools. `tools.Workspace` refuses to resolve a path outside its root, so building
+   one registry per isolated agent makes those operations structurally confined. Shell is the
+   deliberate exception in D-33: its process starts at the root but is not contained there.
+   `Isolation.Tools` is a function of a directory supplied by the caller rather than a registry
+   built in the engine, because the engine has never known what tools exist and should not start
+   now.
 3. A disposition when it ends.
 
 `Disposition` has three values rather than two. Keep, remove, and discard. Remove refuses a dirty
@@ -2390,9 +2450,23 @@ look frozen at exactly the moment somebody is watching.
 Tests drive the real tool registry rather than a fake, and the confinement cases were mutation
 tested: rooting the tools at the repository instead of the worktree makes three assertions fail.
 
+**Codex review 2026-07-27:** blocked on the shell clause in acceptance. The file-tool boundary is
+real and the cross-worktree file test passes. The shell only starts in the agent's worktree; under
+broad trust it can write through `..` or an absolute path with the user's account permissions. That
+matches the no-sandbox decision and `LIMITATIONS.md`. D-33 now makes that exception explicit and the
+acceptance above no longer claims shell confinement. The task remains blocked until the reconciled
+contract and permission changes are independently rerun.
+
 Not done here, and deliberately: there is no key in the agents view that creates an isolated agent
 yet. The engine API is the deliverable; the affordance belongs with A5-06 and A5-10, and an isolated
 creation has to go through a command rather than straight from a keypress because it runs git.
+
+**Direct-mode warning added on `feat/permissions-and-confinement`.** Enter now finishes the name
+without creating anything. A separate screen names Direct mode, shows the exact workspace, warns
+that it may be the primary checkout, and states that an enabled shell is not contained there. Only
+`y` creates the agent; escape returns to the name without losing it. Tests prove Enter alone cannot
+create the agent and every required warning is visible. A5-11 remains blocked until the whole
+reconciled branch receives the other agent's independent rerun.
 
 ### A5-06 Per agent view and switching
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-05, A3-03`

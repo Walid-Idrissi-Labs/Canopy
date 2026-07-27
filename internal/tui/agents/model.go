@@ -93,10 +93,14 @@ type Model struct {
 
 	statuses []session.AgentStatus
 
-	// naming is the new agent flow: a name being typed, and the reason the last attempt failed.
-	naming bool
-	draft  string
-	err    string
+	// The new-agent flow has two explicit steps. Naming collects an identity; confirmingDirect
+	// makes the workspace consequence visible before AddAgent can run. Keeping the confirmation as
+	// state rather than a line under the name is what makes it impossible to accept accidentally
+	// with the same enter key that finished typing.
+	naming           bool
+	confirmingDirect bool
+	draft            string
+	err              string
 
 	// defaults are what a new agent inherits, since there is nowhere to choose them yet.
 	keyName string
@@ -134,8 +138,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Naming takes the keyboard while it is happening, or the letters of the name would be read as
-	// layout commands and typing "split" would change the layout three times.
+	// The creation flow takes the keyboard while it is happening, or the letters of the name would
+	// be read as layout commands and typing "split" would change the layout three times.
+	if m.confirmingDirect {
+		return m.confirmDirect(key)
+	}
 	if m.naming {
 		return m.typeName(key)
 	}
@@ -200,23 +207,11 @@ func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 
-		agent, err := m.engine.AddAgent(context.Background(), session.Agent{
-			Name:    strings.TrimSpace(m.draft),
-			KeyName: m.keyName,
-			Model:   m.model,
-			Dir:     m.dir,
-		})
-		if err != nil {
-			// The name stays in the box. Both reasons this fails are things the person typing can
-			// fix in a keystroke, and clearing it would make them retype a name they nearly had.
-			m.err = err.Error()
-			return m, nil
-		}
+		// Enter finishes the name; it does not create the agent. D-33 requires direct mode and the
+		// exact workspace to be visible before write-capable work can begin.
 		m.naming = false
-		m.draft = ""
+		m.confirmingDirect = true
 		m.err = ""
-		m.anchored = agent.Name
-		m.refresh()
 		return m, nil
 
 	case tea.KeyBackspace:
@@ -236,8 +231,44 @@ func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// Naming reports whether a name is being typed, so the frame can change its footer.
-func (m Model) Naming() bool { return m.naming }
+// confirmDirect owns the second, deliberately separate step of agent creation.
+func (m Model) confirmDirect(key tea.KeyMsg) (Model, tea.Cmd) {
+	switch key.String() {
+	case "esc":
+		m.confirmingDirect = false
+		m.naming = true
+		m.err = ""
+		return m, nil
+	case "y":
+		agent, err := m.engine.AddAgent(context.Background(), session.Agent{
+			Name:    strings.TrimSpace(m.draft),
+			KeyName: m.keyName,
+			Model:   m.model,
+			Dir:     m.dir,
+		})
+		if err != nil {
+			// Return to the editable name with the failure visible. A duplicate name or validation
+			// error is fixed there, not on a confirmation screen with no input field.
+			m.confirmingDirect = false
+			m.naming = true
+			m.err = err.Error()
+			return m, nil
+		}
+		m.confirmingDirect = false
+		m.draft = ""
+		m.err = ""
+		m.anchored = agent.Name
+		m.refresh()
+	}
+	return m, nil
+}
+
+// Naming reports whether the creation flow owns the keyboard, so application navigation cannot
+// steal a name or a confirmation key.
+func (m Model) Naming() bool { return m.naming || m.confirmingDirect }
+
+// ConfirmingDirect lets the frame describe the safe keys for the second creation step.
+func (m Model) ConfirmingDirect() bool { return m.confirmingDirect }
 
 func (m *Model) move(by int) {
 	if len(m.statuses) == 0 {
@@ -301,6 +332,9 @@ func (m Model) Count() int { return len(m.statuses) }
 
 // Body renders the screen.
 func (m Model) Body() string {
+	if m.confirmingDirect {
+		return m.directPrompt()
+	}
 	if m.naming {
 		return m.namePrompt()
 	}
@@ -343,6 +377,34 @@ func (m Model) namePrompt() string {
 		}
 		b.WriteString(t.Muted.Render(", the same as the one you are looking at."))
 	}
+	return b.String()
+}
+
+// directPrompt names the mode and exact workspace before AddAgent can run. It also says what the
+// workspace root cannot promise: an enabled shell is still a process running as the user.
+func (m Model) directPrompt() string {
+	t := theme.Current()
+	workspace := m.dir
+	if strings.TrimSpace(workspace) == "" {
+		workspace = "(current directory)"
+	}
+
+	var b strings.Builder
+	b.WriteString(t.Title.Render("Create direct agent?"))
+	b.WriteString("\n\n")
+	b.WriteString(t.Warning.Render("  Direct mode"))
+	b.WriteString("\n")
+	b.WriteString(t.Body.Render("  Workspace: " + workspace))
+	b.WriteString("\n\n")
+	b.WriteString(t.Danger.Render(
+		"  This agent works directly in this checkout, which may be the primary checkout."))
+	b.WriteString("\n")
+	b.WriteString(t.Muted.Render(
+		"  Structured tools may modify it when trust permits. An enabled shell is not contained here."))
+	b.WriteString("\n\n")
+	b.WriteString(t.Key.Render("  y") + t.Body.Render(" create direct agent"))
+	b.WriteString("\n")
+	b.WriteString(t.Key.Render("  esc") + t.Body.Render(" go back"))
 	return b.String()
 }
 

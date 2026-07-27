@@ -87,10 +87,13 @@ be rediscovered by getting burned by it.
   when you type it. Interrupt is the mechanism for "stop now" and it discards nothing except the
   rest of the turn.
 
-- Nothing enforces worktree confinement on the git tools yet. They run git with the workspace as the
-  working directory, which is correct, but nothing stops a path argument from naming something git
-  tracks elsewhere through a submodule, and nothing stops an agent started in the primary checkout
-  from committing to the primary checkout (Q-12).
+- Git tools run with the workspace as their working directory, and the path arguments currently
+  exposed by `git_add` and scoped `git_diff` are resolved against that workspace before Git runs.
+  A direct agent intentionally works in the repository where Canopy was started and can commit
+  there when its trust level permits it, including when it is the primary checkout. An isolated
+  agent's structured tools are rooted at its Canopy-owned worktree. Neither statement makes the
+  shell a containment boundary: an allowed shell command can invoke Git anywhere the user's account
+  can reach (D-33).
 
 - There is no sandboxing anywhere in this design and there will not be one implied. Agent-run
   commands execute under your own account with your own permissions. A worktree gives an agent its
@@ -177,7 +180,8 @@ be rediscovered by getting burned by it.
 
 - The shell tool is not confined by construction the way the file tools are. It hands the permission
   model an opaque command string that can do anything your account can do; whatever stops it is the
-  trust level, not a boundary the tool itself enforces (A4-03, A4-04).
+  trust level, not a boundary the tool itself enforces. "Confined" is the trust level that denies
+  shell; it is not a claim that an enabled child process is sandboxed (A4-03, A4-04, D-33).
 
 - The git tools deliberately omit several operations. `commit` takes no `--amend` and no `-a`.
   `branch` can only create a new branch, not switch to an existing one. There is no `reset`,
@@ -191,12 +195,15 @@ be rediscovered by getting burned by it.
 
 - On the permission prompt, the key that grants broad, standing approval for the rest of the session
   ('a') sits directly next to the one-time, single-use answer ('y'), with no separate confirmation
-  step of its own. Every other key, including enter and escape, refuses (Q-09).
+  step of its own. `y` covers only the current call; `a` remembers the displayed scope for the
+  session. Every other key, including enter and escape, refuses (Q-09).
 
 - A field can be set on an agent, stored, displayed, and never actually consulted by the code
-  responsible for enforcing it. This already happened once: an agent's configured trust level was
-  read from the wrong place and the bug was found by accident rather than by a deliberate check. A
-  full sweep for the same shape elsewhere in the permission code has not been completed (Q-15).
+  responsible for enforcing it. This already happened with per-agent trust. A deliberate review
+  later found branch mutation hidden behind a coarse tool kind, one-time approval being stored for
+  the session, confinement refusals misclassified in the audit trail, and denied tools still shown
+  to restricted agents. Fixes exist on `feat/permissions-and-confinement`, but Q-15 remains open
+  until another reviewer reruns them independently.
 
 - There is no language server integration: no real go-to-definition, no find-references, no compiler
   diagnostics. Agents rely on grep and the structured file tools. This was cut deliberately rather

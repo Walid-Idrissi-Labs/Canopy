@@ -85,13 +85,28 @@ not have.
 
 ## Git as a real tool, not a shell string
 
-Agents get status, diff, log, branch, commit and stash as structured tools scoped to their own
-worktree. Not `bash("git ...")`.
+Agents get status, diff, log, add, commit and branch as structured tools rooted at their workspace.
+Canopy has two workspace modes:
+
+- A **direct agent** works in the repository where Canopy was started. That may be your primary
+  checkout. The creation flow identifies the mode and exact workspace, warns about the
+  primary-checkout risk, and requires a separate `y` confirmation before the agent exists.
+- An **isolated agent** gets a Canopy-owned worktree. Fan-out and concurrent editing use this mode,
+  and never silently fall back to a shared checkout.
 
 That matters for a reason that is easy to miss. A shell tool hands the permission model an opaque
-string, and an opaque string cannot tell `git status` from `git push --force`. With git as its own
-tool, destructive operations are approved separately from ordinary ones, and an agent cannot touch
-another agent's worktree or your primary checkout.
+string, and an opaque string cannot reliably distinguish `git status` from `git push --force`.
+Structured tools can classify reads and mutations separately, resolve path arguments inside the
+assigned workspace and omit destructive operations entirely.
+
+The shell is different. Read-only and confined agents do not get it. Standard agents ask before an
+exact command and broad agents run it without asking, but in both cases it is a process running with
+your account permissions. Its starting directory is the workspace; that is not a containment
+boundary.
+
+Canopy's worktree manager never removes or takes ownership of your primary checkout or a worktree it
+did not create. That lifecycle guarantee is separate from choosing direct mode, where an agent is
+intentionally allowed to edit the checkout you selected.
 
 ## Know which agent was actually right
 

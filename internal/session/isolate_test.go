@@ -17,9 +17,10 @@ import (
 
 // isolatingEngine builds an engine over a real repository, with real tools.
 //
-// Real tools rather than fakes, because the guarantee under test is that an isolated agent cannot
-// reach outside its worktree, and that is a property of `tools.Workspace` refusing to resolve the
-// path. A fake registry would prove only that the test agrees with itself.
+// Real tools rather than fakes, because the guarantee under test is that an isolated agent's
+// structured path tools cannot reach outside its worktree. That is a property of `tools.Workspace`
+// refusing to resolve the path. Shell is the documented exception in D-33. A fake registry would
+// prove only that the test agrees with itself.
 func isolatingEngine(t *testing.T) (*Engine, string) {
 	t.Helper()
 
@@ -62,6 +63,7 @@ func isolatingEngine(t *testing.T) (*Engine, string) {
 
 	e := New(fixedResolver{client: &scriptedClient{name: "claude", events: reply("ok")}, id: anthropicID()})
 	t.Cleanup(e.Close)
+	e.WithTools(nil, core.TrustStandard, nil)
 
 	if err := e.WithIsolation(Isolation{Repo: repo, Tools: fileToolsFor}); err != nil {
 		t.Fatalf("WithIsolation: %v", err)
@@ -347,8 +349,8 @@ func TestAnAgentRunsAtItsOwnTrustLevel(t *testing.T) {
 	}
 
 	e.mu.Lock()
-	_, cautiousTrust := e.toolsForLocked(cautious.SessionID)
-	_, ordinaryTrust := e.toolsForLocked(ordinary.SessionID)
+	cautiousTools, cautiousTrust := e.toolsForLocked(cautious.SessionID)
+	ordinaryTools, ordinaryTrust := e.toolsForLocked(ordinary.SessionID)
 	e.mu.Unlock()
 
 	if cautiousTrust != core.TrustReadOnly {
@@ -356,6 +358,17 @@ func TestAnAgentRunsAtItsOwnTrustLevel(t *testing.T) {
 	}
 	if ordinaryTrust != core.TrustStandard {
 		t.Errorf("the agent with no trust of its own runs at %q, want the engine's", ordinaryTrust)
+	}
+	if _, ok := cautiousTools.Get("read_file"); !ok {
+		t.Error("the read-only agent cannot see its read tool")
+	}
+	for _, name := range []string{"write_file", "edit_file", "run_command"} {
+		if _, ok := cautiousTools.Get(name); ok {
+			t.Errorf("the read-only agent is still told about structurally denied tool %q", name)
+		}
+	}
+	if _, ok := ordinaryTools.Get("run_command"); !ok {
+		t.Error("the standard agent cannot see the shell tool it may ask to run")
 	}
 }
 
