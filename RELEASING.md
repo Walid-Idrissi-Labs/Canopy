@@ -9,10 +9,17 @@ Pushing a tag matching `v*` runs `.github/workflows/release.yml`, which runs GoR
 builds four binaries, packs them into tar.gz archives with a checksums file, and attaches them to a
 GitHub release with a changelog grouped by conventional commit prefix.
 
-GoReleaser treats a tag containing a hyphen as a prerelease. That is doing real work rather than
-being cosmetic: the GitHub release is marked as a prerelease, and the Homebrew cask is skipped
-entirely. So `v0.1.0-alpha.1` publishes binaries and touches nothing else, and the first tag without
-a hyphen is what starts publishing to Homebrew.
+A tag containing a hyphen is a prerelease, and two separate mechanisms act on that, which is worth
+knowing because the first release got one of them wrong.
+
+`homebrew_casks.skip_upload: auto` reads the parsed version, so the cask is skipped for any tag with
+a prerelease suffix. That worked on the first release, which is why it published with no tap and no
+token.
+
+`release.prerelease: auto` is what marks the GitHub release itself. It is not the default, and
+without it v0.1.0-alpha.1 published as a normal release and showed on GitHub as the latest stable
+version. It is set now. A release already published with the wrong label can be corrected in the
+GitHub release editor by ticking "Set as a pre-release"; the tag and the assets are untouched.
 
 ## Before the first tag
 

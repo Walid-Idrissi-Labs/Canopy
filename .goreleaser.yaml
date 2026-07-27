@@ -53,6 +53,16 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+release:
+  # Without this a tag like v0.1.0-alpha.1 publishes as a normal release and GitHub shows it as the
+  # latest stable version, which for a project whose own README says pre-alpha is a claim it does
+  # not want to make. `auto` reads the semver prerelease suffix and marks the release accordingly.
+  #
+  # Worth knowing that this is a separate mechanism from the one that skips the Homebrew cask.
+  # That one looks at the parsed version directly and was already doing the right thing, so the
+  # first release skipped the tap correctly while still being labelled stable.
+  prerelease: auto
+
 changelog:
   sort: asc
   filters:

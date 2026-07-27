@@ -12,14 +12,14 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # GoReleaser reads the tag history to compute the version and to build the changelog
           # from the commits since the previous tag. A shallow checkout only has the commit the
           # tag points at, which leaves GoReleaser with no prior tag to diff against.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
