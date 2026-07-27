@@ -135,8 +135,27 @@ func Current() Theme { return current }
 
 var current = New(Default)
 
+// listeners are told when the theme changes.
+//
+// Needed because lipgloss.TerminalColor cannot be implemented outside lipgloss: it has an
+// unexported method, so there is no way to write a colour value that resolves lazily. Anything
+// holding a colour rather than a style therefore has to be told to go and fetch a new one, and a
+// call site that reads a stale colour is exactly the bug this package exists to prevent.
+var listeners []func()
+
+// OnChange registers a callback, and calls it once immediately so the caller starts consistent.
+func OnChange(f func()) {
+	listeners = append(listeners, f)
+	f()
+}
+
 // Set replaces the active theme.
-func Set(p Palette) { current = New(p) }
+func Set(p Palette) {
+	current = New(p)
+	for _, notify := range listeners {
+		notify()
+	}
+}
 
 // Monochrome is the second theme, and the one that proves the first is not cheating.
 //

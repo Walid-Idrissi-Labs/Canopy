@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -321,10 +322,10 @@ func (m Model) renderRow(workspace core.WorkspaceSnapshot, selected bool) string
 	rollup := core.RollUp(workspace)
 
 	marker := "  "
-	nameStyle := lipgloss.NewStyle().Foreground(colorText)
+	nameStyle := theme.Current().Body
 	if selected {
 		marker = "> "
-		nameStyle = styleSelected
+		nameStyle = theme.Current().Selected
 	}
 
 	branch := workspace.Branch
