@@ -498,3 +498,26 @@ func TestChoosingACredentialReachesTheConversation(t *testing.T) {
 		t.Errorf("the model is %q, so the session would send an empty model field", engine.using[1])
 	}
 }
+
+// Several credentials stored and none chosen is not the same as none stored, and it used to land on
+// the chat, where the only way to find out was to type a message and watch it fail.
+func TestWithNoCredentialChosenTheKeyScreenComesFirst(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	keyStore := &fakeKeyStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}},
+		{Ref: core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible}, Model: "some/model"},
+	}}
+
+	app := tui.NewApp(store, keyStore, &stubEngine{}, "myproject", "").DismissSplash()
+	if got := app.Screen(); got != "keys" {
+		t.Errorf("with nothing chosen the app opened on %q, want the credential screen", got)
+	}
+
+	// And with one chosen it opens on the conversation, which is the home screen.
+	chosen := tui.NewApp(store, keyStore, &stubEngine{}, "myproject", "nim").DismissSplash()
+	if got := chosen.Screen(); got != "chat" {
+		t.Errorf("with a credential chosen the app opened on %q", got)
+	}
+}

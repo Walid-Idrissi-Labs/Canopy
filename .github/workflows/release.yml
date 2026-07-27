@@ -31,3 +31,6 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Only needed once a tag without a hyphen is pushed, since the cask is skipped on
+          # prereleases. Empty until the tap repository and the token exist, which is fine.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

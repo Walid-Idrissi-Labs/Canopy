@@ -125,7 +125,11 @@ func NewAppWithReview(
 	// What a new agent inherits. Without it every agent created from that screen was built with an
 	// empty credential and an empty working directory, which fails on its first message.
 	app.agents.SetDefaults(keyName, keysui.New(keyStore).ModelFor(keyName), dir)
-	if app.keys.IsEmpty() {
+	// The credential screen comes first when there is no credential to run on, which is not the same
+	// as having none stored. With several stored and none chosen there is no obvious default, and
+	// landing on the chat means typing a message and watching it fail, which is a worse introduction
+	// than being asked the one question that makes everything else work.
+	if app.keys.IsEmpty() || keyName == "" {
 		app.afterSplash = screenKeys
 	}
 
