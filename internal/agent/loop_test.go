@@ -569,6 +569,55 @@ func TestAOneTimeApprovalIsAskedForAgain(t *testing.T) {
 	}
 }
 
+// A read-only agent must not be able to change Git state, and must not be offered the chance.
+//
+// This is the behaviour behind the A4-06 finding, where the mixed list-and-create branch tool was
+// classified as ordinary Git and a read-only agent used it to create and switch a branch. The
+// classification is asserted in internal/tools, but a constant matching what a table says it should
+// be does not prove the permission model acts on it, and the bug was that it did not.
+//
+// The approver here says yes to everything on purpose. A denial that only holds while the user is
+// careful is not a trust level, it is a suggestion.
+func TestAReadOnlyAgentIsRefusedGitStateChangesWithoutBeingAsked(t *testing.T) {
+	tool := &countingTool{name: "git_branch", kind: core.ToolWrite, answer: "switched"}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		asksFor("git_branch", `{"create":"sneaky"}`),
+		says("I cannot do that here."),
+	}}
+
+	var asked int
+	l := loop(client, registryWith(tool), core.TrustReadOnly)
+	l.Approver = ApproverFunc(func(context.Context, permission.Request, permission.Decision) bool {
+		asked++
+		return true
+	})
+
+	if _, err := l.Run(context.Background(), ask("make a branch"), nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if asked != 0 {
+		t.Errorf("a read-only agent was asked %d times; the denial has to be structural", asked)
+	}
+	if tool.count() != 0 {
+		t.Errorf("the branch tool ran %d times for a read-only agent", tool.count())
+	}
+
+	entries := l.Trail.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(entries))
+	}
+	if entries[0].Outcome != permission.Deny || entries[0].Ran {
+		t.Errorf("entry = outcome %s, ran %v; want denied and not run",
+			entries[0].Outcome, entries[0].Ran)
+	}
+	// The reason has to name the level, or the model retries the same call and the user reads an
+	// audit trail that says no without saying why.
+	if !strings.Contains(entries[0].Reason, "read-only") {
+		t.Errorf("the refusal does not name the trust level: %q", entries[0].Reason)
+	}
+}
+
 // The permission layer works out which paths a call touches by convention, so every tool that takes
 // a path has to use a name the convention knows. One that did not would silently lose its path
 // scoping and be approved too broadly.
