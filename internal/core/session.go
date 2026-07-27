@@ -192,6 +192,14 @@ type Turn struct {
 	// Error explains a failed turn in words a user can act on.
 	Error string
 
+	// Checkpoint is the worktree state captured before this turn ran, empty when nothing was
+	// captured. Undoing a turn restores it.
+	//
+	// Per turn rather than per session, because the question people actually ask is "undo what it
+	// just did", and a session level checkpoint would throw away the four turns they were happy
+	// with along with the one they were not.
+	Checkpoint string
+
 	StartedAt time.Time
 	// EndedAt is zero until the turn is terminal.
 	EndedAt time.Time
@@ -224,6 +232,37 @@ func (t Turn) Validate() error {
 	return nil
 }
 
+// Compaction records that part of a conversation has been replaced by a summary in what gets sent.
+//
+// It is a record, not a deletion. The turns it covers are still in Session.Turns, still on screen
+// and still searchable; this only changes what History builds for the next request. That split is
+// what makes the promise keepable: nothing is destroyed, only left out of the prompt.
+type Compaction struct {
+	// Summary stands in for the turns before Through.
+	Summary string
+	// Through is how many turns from the start of the conversation it replaces.
+	Through int
+	At      time.Time
+
+	// TokensBefore and TokensAfter are estimates of the conversation either side of the compaction,
+	// so the transcript can say what compacting actually bought rather than only that it happened.
+	//
+	// Both estimated, and measured the same way. Using the provider's reported count for one of them
+	// would be comparing the size of a whole request, system prompt and tool schemas included,
+	// against the size of a list of messages, which made a compaction look like it had made things
+	// larger.
+	TokensBefore int
+	TokensAfter  int
+}
+
+// ForkRef points at a conversation branched off this one.
+type ForkRef struct {
+	SessionID string
+	// AtTurnID is the last turn the two sessions have in common.
+	AtTurnID string
+	At       time.Time
+}
+
 // Session is one conversation.
 type Session struct {
 	ID string
@@ -241,8 +280,37 @@ type Session struct {
 
 	Turns []Turn
 
+	// ForkedFrom, ForkedAt and ForkedWhen record where this conversation came from, empty on a
+	// session that was started rather than forked.
+	//
+	// Recorded on both ends rather than only on the child, because the question gets asked from
+	// both directions: "where did this come from" when reading a fork, and "what did I try from
+	// here" when reading the original. A one sided record answers half of it.
+	ForkedFrom string
+	ForkedAt   string
+	ForkedWhen time.Time
+
+	// Forks are the conversations branched off this one.
+	Forks []ForkRef
+
+	// Compactions are every summarisation this session has been through, oldest first.
+	//
+	// A list rather than one value, because a long session compacts more than once and each one is
+	// a thing that happened to the conversation. Keeping only the latest would hide that an agent
+	// had been through three rounds of forgetting, which is exactly what somebody debugging a
+	// confused agent needs to see.
+	Compactions []Compaction
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// Compacted returns the compaction currently in effect, if any.
+func (s Session) Compacted() (Compaction, bool) {
+	if len(s.Compactions) == 0 {
+		return Compaction{}, false
+	}
+	return s.Compactions[len(s.Compactions)-1], true
 }
 
 // Usage totals everything the session has consumed.
@@ -250,9 +318,17 @@ type Session struct {
 // Uses Sum rather than folding from a zero value, because Usage has no identity element: an empty
 // running total and a turn nobody could price are the same value, so folding from zero would report
 // a fully priced session as unpriced.
+//
+// **Only settled turns count.** A turn still in flight has not been priced yet, and its empty usage
+// reads as "we could not price this" to Sum, which poisons the total. The visible effect was the
+// cost figure in the header vanishing every time somebody sent a message and reappearing when the
+// reply landed, which looks like the number is unreliable rather than like it is not in yet.
 func (s Session) Usage() Usage {
 	usages := make([]Usage, 0, len(s.Turns))
 	for _, turn := range s.Turns {
+		if !turn.State.Terminal() {
+			continue
+		}
 		usages = append(usages, turn.Usage)
 	}
 	return Sum(usages...)
@@ -295,8 +371,21 @@ func (s Session) AgentState() AgentState {
 // This is why Turn holds a `Message` rather than a bare string. Reconstructing the conversation is
 // a copy, and a copy cannot lose a tool result's error flag on the way.
 func (s Session) History() []Message {
-	messages := make([]Message, 0, len(s.Turns)*2)
-	for _, turn := range s.Turns {
+	turns := s.Turns
+	messages := make([]Message, 0, len(turns)*2)
+
+	// A compaction replaces the turns it covers with its summary. Sent as a user message rather
+	// than an assistant one, because it is Canopy speaking about the conversation and not the model
+	// recalling it, and a model that reads its own summary as something it said will defend it.
+	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(turns) {
+		messages = append(messages, Message{
+			Role: RoleUser,
+			Text: "Summary of the earlier part of this conversation:\n\n" + compaction.Summary,
+		})
+		turns = turns[compaction.Through:]
+	}
+
+	for _, turn := range turns {
 		messages = append(messages, turn.Request)
 
 		// A turn that produced nothing is left out entirely. An empty assistant message is rejected

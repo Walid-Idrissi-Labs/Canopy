@@ -6,6 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
@@ -16,6 +17,7 @@ type screen int
 const (
 	screenSplash screen = iota
 	screenChat
+	screenAgents
 	screenDashboard
 	screenKeys
 )
@@ -52,6 +54,7 @@ type App struct {
 	cameFrom screen
 
 	chat      chat.Model
+	agents    agentsui.Model
 	dashboard Model
 	keys      keysui.Model
 
@@ -87,6 +90,7 @@ func NewApp(
 func (a *App) resize(dim Dimensions) {
 	a.dim = dim
 	a.chat.SetSize(dim.Width, dim.BodyHeight())
+	a.agents.SetSize(dim.Width, dim.BodyHeight())
 }
 
 func (a App) Init() tea.Cmd {
@@ -99,6 +103,13 @@ func (a App) Init() tea.Cmd {
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
+	case agentsui.SwitchMsg:
+		// The agents view asks and the application decides, which is what keeps "which screen is
+		// showing" in one place.
+		a.chat.SetSession(m.SessionID, m.AgentName)
+		a.screen = screenChat
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.resize(Dimensions{Width: m.Width, Height: m.Height})
 	case splashDoneMsg:
@@ -131,6 +142,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			a.chat, cmd = a.chat.Update(key)
 			return a, cmd
+		case screenAgents:
+			var cmd tea.Cmd
+			a.agents, cmd = a.agents.Update(key)
+			return a, cmd
 		case screenKeys:
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
@@ -160,6 +175,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.chat, chatCmd = a.chat.Update(msg)
 	cmds = append(cmds, chatCmd)
 
+	// The agents view keeps up too, so switching to it shows the current state rather than the
+	// state it had when you last looked.
+	a.agents, _ = a.agents.Update(msg)
+
 	a.keys, _ = a.keys.Update(msg)
 	return a, tea.Batch(cmds...)
 }
@@ -174,6 +193,11 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 	case screenChat:
 		switch msg.String() {
 		case "ctrl+c":
+			// While a question is open, every key belongs to the question, including this one.
+			// Answering it is refusing, which is the safe reading.
+			if a.chat.Awaiting() {
+				return false, a, nil
+			}
 			// Quits only when nothing is running. With a turn in flight the first press stops the
 			// turn, because that is what somebody hitting it during a long reply almost always
 			// means, and quitting instead would throw the conversation away.
@@ -182,12 +206,39 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 				return true, a, nil
 			}
 			return true, a, tea.Quit
-		case "ctrl+k":
-			a.cameFrom = screenChat
-			a.screen = screenKeys
+		case "ctrl+k", "ctrl+d":
+			// Navigation is disabled while a question is open, for the same reason: leaving the
+			// screen with a tool call waiting would hide the thing that is blocking.
+			if a.chat.Awaiting() {
+				return false, a, nil
+			}
+			if msg.String() == "ctrl+k" {
+				a.cameFrom = screenChat
+				a.screen = screenKeys
+			} else {
+				a.screen = screenAgents
+			}
 			return true, a, nil
-		case "ctrl+d":
+		}
+
+	case screenAgents:
+		// While a name is being typed every key belongs to the field, including the ones that would
+		// otherwise navigate, or an agent called "wesc" could never be typed.
+		if a.agents.Naming() {
+			return false, a, nil
+		}
+		switch msg.String() {
+		case "esc", "q":
+			a.screen = screenChat
+			return true, a, nil
+		case "w":
+			// The worktree monitor, which is a different question from the agent list: one is about
+			// what the agents are doing and the other about what state the code is in.
 			a.screen = screenDashboard
+			return true, a, nil
+		case "K":
+			a.cameFrom = screenAgents
+			a.screen = screenKeys
 			return true, a, nil
 		}
 
@@ -198,7 +249,7 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			a.screen = screenKeys
 			return true, a, nil
 		case "esc", "tab":
-			a.screen = screenChat
+			a.screen = screenAgents
 			return true, a, nil
 		case "k":
 			// Only when it is unambiguous. "k" is also move-up, so it opens the credential screen
@@ -236,15 +287,28 @@ func (a App) View() string {
 	}
 
 	switch a.screen {
+	case screenAgents:
+		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
+			"esc", "chat", "w", "worktrees")
+		if a.agents.Naming() {
+			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
+		}
+		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(), footer)
+
 	case screenChat:
-		return Frame(a.dim, "canopy", a.chat.Context(), a.chat.Body(),
-			Keys("enter", "send", "esc", "stop", "ctrl+d", "agents", "ctrl+k", "keys",
-				"ctrl+c", "quit"))
+		// The keys mean something different while a question is up, so the footer says so rather
+		// than listing commands that are not currently in effect.
+		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "ctrl+d", "agents",
+			"ctrl+k", "keys", "ctrl+r", "compact", "ctrl+c", "quit")
+		if a.chat.Awaiting() {
+			footer = Keys(a.dim.Width, "y", "allow once", "a", "always", "any other key", "refuse")
+		}
+		return Frame(a.dim, "canopy", a.chat.Context(), a.chat.Body(), footer)
 	case screenKeys:
 		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
 	default:
 		return Frame(a.dim, "canopy", a.dashboard.Context(), a.dashboard.Body(),
-			Keys("j/k", "move", "K", "credentials", "r", "refresh", "esc", "back to chat"))
+			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc", "agents"))
 	}
 }
 
@@ -255,6 +319,8 @@ func (a App) Screen() string {
 		return "splash"
 	case screenChat:
 		return "chat"
+	case screenAgents:
+		return "agents"
 	case screenKeys:
 		return "keys"
 	default:

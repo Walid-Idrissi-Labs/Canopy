@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A3, chat and persistence | `feat/providers` | none |
+| Claude | A5, many agents. A3 and A4 done overnight | `feat/agent-runtime` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -111,9 +111,12 @@ D-23 and the retired tasks table at the bottom.
 Done and carrying forward: P0-01 to P0-07 and P1-01 to P1-07. The core contract, the state machine,
 the roll-up, the fake store, the headless harness and the dashboard.
 
-Codex: A2 is largely written, so **A2-05 usage and cost accounting is the obvious thing to claim**,
-and A2-07 and A2-08 after it. A2-05 is independent of everything in flight: it needs a dated price
-table and the token counts the two clients already report. A3 depends on A2.
+Codex: A2, A3 and A4 are done. **A5-05 through A5-10 are the obvious things to claim**, which is the
+agent registry, dispatch and the views over several agents. A5-01 to A5-04 are the isolation half and
+are mine; the registry does not depend on them, so the two halves can proceed at once.
+
+A6 verification is also entirely free: it depends on A5-05 for the agent list and on nothing else
+that is in flight.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
 push.
@@ -820,7 +823,7 @@ Goal: a real message reaches a real provider and a real reply streams back, on m
 vendor.
 
 ### A2-01 Provider interface
-`status: review | owner: Claude | branch: feat/providers | depends: A1-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A1-01`
 `scope: internal/core/`
 
 Deliverable: the interface an agent session talks to. Streaming, cancellable, provider agnostic,
@@ -859,7 +862,7 @@ any total it is summed into. A partial sum shown as a figure is a wrong number o
 worse than an absent one.
 
 ### A2-02 Anthropic client
-`status: review | owner: Claude | branch: feat/providers | depends: A2-01, A1-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-01, A1-02`
 `scope: internal/provider/anthropic/`
 
 Deliverable: the Messages API with streaming, using a named key.
@@ -901,7 +904,7 @@ built from, so an error constructed without one panics. That would turn a provid
 lost session and everything in it. `safeMessage` guards it and falls back to naming the status.
 
 ### A2-03 Error taxonomy
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: internal/core/, internal/provider/`
 
 Deliverable: provider failures mapped to distinct states: authentication, rate limited, overloaded,
@@ -935,7 +938,7 @@ local and complete. `TestFreeTextFieldsAreNotScrubbed` in `cmd/canopy` will fail
 and should then be narrowed to the fields this package does not own.
 
 ### A2-04 One shot ask
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: cmd/canopy/`
 
 Deliverable: `canopy ask "..."` streams a reply to stdout.
@@ -969,7 +972,7 @@ With several usable credentials it refuses and lists them rather than picking on
 choosing which key gets billed is not a decision to make on someone's behalf.
 
 ### A2-05 Usage and cost accounting
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: internal/pricing/, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: tokens in, out and cached, plus cost, per request, attributed to key and agent.
@@ -1010,7 +1013,7 @@ one, the standard rate is used: overstating cost is the safer error, because und
 spend that is really happening.
 
 ### A2-09 User supplied prices
-`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-05`
 `scope: internal/keys/, internal/pricing/, internal/core/key.go, cmd/canopy/keys.go`
 
 Deliverable: a rate can be attached to a stored credential, so an endpoint Canopy has no table entry
@@ -1056,7 +1059,7 @@ left on the key, since a figure Canopy invented on somebody's behalf is exactly 
 prevent.
 
 ### A2-06 OpenAI compatible provider and local models
-`status: review | owner: Claude | branch: feat/providers | depends: A2-02`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-02`
 `scope: internal/provider/openai/, cmd/canopy/ask.go`
 
 Deliverable: the chat completions API with tool calls and streaming, and a configurable base URL.
@@ -1090,6 +1093,27 @@ Four things this had to get right that the Anthropic client did not:
    family agrees on and several reject unknown fields outright, which would break exactly the
    providers this client exists to reach. Recorded here so the gap is a decision, not an oversight.
 
+**A stall watchdog, added after a live run.** A provider that accepts a request and then goes silent
+left the turn waiting on the HTTP client's own timeout, which is half an hour, and an agent hung for
+half an hour looks like an agent thinking. Two minutes of complete silence now ends it.
+
+The watchdog cancels a context derived from the caller's rather than setting a read deadline. A
+deadline can only be set on a connection and an `http.Response.Body` is not one: the type assertion
+that looks like it would work quietly does not, and the first version of this was a no-op that read
+like a fix. Deriving the context also keeps a stall distinguishable from somebody pressing escape,
+which matters because the two need entirely different words.
+
+**Its test shipped broken and CI caught it, not the local suite.** The watchdog landed in the second
+to last commit of the night and the last full race run came before it, so the branch went out red.
+The test kept a plain bool, wrote it from the timer goroutine and read it from the test goroutine,
+which the race detector rejects on its own. It was also a real flake: the guard marks itself fired
+and drops its lock before calling cancel, so polling `Fired` and then reading the bool can land in
+the window between the two and report a watchdog that fired without cancelling anything. It waits on
+the callback now, which closes the window because fired is already set by the time it runs.
+
+The lesson is narrower than "run the tests". Run the full race suite against the commit being
+pushed, not against the one before it.
+
 Base URL is required rather than defaulted: this provider *is* its endpoint. Which provider gets
 spoken is decided by the credential, not by a flag, which is the point of naming keys. There is no
 default model for the same reason a base URL has none, so `-model` is required and says so.
@@ -1098,7 +1122,7 @@ The acceptance line's "Ollama and one hosted third party both work" needs a pers
 so it belongs to PG-A2 alongside A2-04's live check, not to this box.
 
 ### A2-07 Prompt caching
-`status: review | owner: Claude | branch: feat/providers | depends: A2-05`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-05`
 `scope: internal/provider/anthropic/, internal/pricing/, cmd/canopy/ask.go`
 
 Deliverable: cache long stable prefixes such as system prompts and file context where the provider
@@ -1138,7 +1162,7 @@ Worth noticing later: caching is the thing that degrades silently. If a breakpoi
 nothing breaks, the bill just goes up. That is why the saving is on screen rather than in a log.
 
 ### A2-08 Provider fallback chains
-`status: review | owner: Claude | branch: feat/providers | depends: A2-03`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-03`
 `scope: internal/provider/chain.go, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: a profile may list ordered fallbacks. On overload or rate limit, try the next key or
@@ -1269,7 +1293,7 @@ least common activity first and makes Canopy look like something you watch rathe
 you talk to.
 
 ### A3-01 Session and conversation types
-`status: review | owner: Claude | branch: feat/providers | depends: A2-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-01`
 `scope: internal/core/session.go, internal/core/event.go, internal/core/project.go`
 
 Deliverable: `Session`, `Message`, `Role`, `Turn` and `AgentState`, held in the existing snapshot
@@ -1315,8 +1339,8 @@ view. Two stores would mean two reads, and two reads mean a moment where the ans
 before and half from after.
 
 ### A3-02 Session storage
-`status: todo | owner: none | branch: none | depends: A3-01`
-`scope: internal/session/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-01`
+`scope: internal/session/storage.go, internal/session/engine.go, cmd/canopy/`
 
 Deliverable: SQLite persistence. Every session, turn, tool call and usage record written as it
 happens. Resume by id. Full text search across history.
@@ -1324,14 +1348,54 @@ happens. Resume by id. Full text search across history.
 Acceptance: killing the process mid turn loses at most the in flight turn. Resuming restores the
 conversation exactly. Search finds a message across sessions.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: sessions, audit trail, cost history and run reports are all queries over the same data, so
 one storage decision buys four features. Schema migrations from day one, since the schema will
 change and a tool that loses your history on upgrade is not one anyone keeps.
 
+**Written twice per turn, not per token.** Once when the turn starts, so the question is on disk
+before the answer is asked for, and once when it reaches a terminal state. Per token writing would
+turn one streamed reply into thousands of transactions to buy a guarantee nobody asked for, which is
+that the last few words of a reply still arriving when the process died should also be kept. What
+was asked for is "at most the turn in flight", and this is exactly that.
+
+Six decisions worth keeping:
+
+1. **`modernc.org/sqlite`, the pure Go driver.** The cgo one is a smaller download and would make
+   `go install` fail on any machine without a C toolchain, which is most of them. Costs about 9 MB
+   of binary and 148 MB in the module cache. Flagged to Walid, who is storage aware. See Q-06.
+2. **Migrations from the first version**, tracked in `PRAGMA user_version`, each in its own
+   transaction. The alternative is discovering you need them while holding somebody's history in a
+   shape you cannot read.
+3. **A newer schema is refused rather than downgraded.** Running an older build over a newer file
+   silently drops whatever the newer one added, and the user finds out when their history has holes.
+4. **One connection.** SQLite answers concurrent writers with "database is locked", which is what
+   two agents finishing turns at once would produce. Serialising costs nothing at this scale and
+   removes a class of intermittent failure that is miserable to reproduce.
+5. **An external content FTS5 index**, so text is stored once rather than twice, with the trigger
+   set that keeps it honest. Without the delete trigger a search keeps returning a conversation the
+   user deleted, which people notice and do not forgive.
+6. **A turn that was in flight when the process died comes back as interrupted.** Nothing is going
+   to finish it, and left as streaming it would spin forever on screen and make the session fail its
+   own validation.
+
+`Engine.Close` waits for outstanding writes and closes the storage it was given. A turn becomes
+visibly terminal a moment before it is on disk, because the state is set under the lock and the
+write happens after it is released so that a disk write never blocks the interface from reading.
+**A test caught exactly this**: it watched a turn finish, closed storage, and hit "database is
+closed" from a write still in flight.
+
+`canopy ask` deliberately does not persist. It is a diagnostic for checking a key or a model, and
+filling somebody's searchable history with throwaway key checks would be noise.
+
+Proved live end to end, not only against scripted streams: `TestLiveHistorySurvivesARestart` asks a
+real provider for a sentence, quits, reopens the file and finds the reply by full text search. The
+text a real model returns is what actually goes through the index, and a reply full of punctuation
+or code fences is the case a hand written fixture never covers.
+
 ### A3-03 Chat view
-`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A3-01`
 `scope: internal/tui/chat/, internal/tui/app.go, cmd/canopy/`
 
 Deliverable: message list, live streaming, input box, scrollback. **This becomes the home screen**:
@@ -1381,30 +1445,82 @@ out 81 wide and wrapped the entire frame. Both now come from `boxChrome`. The la
 measures every line at three terminal sizes is what caught it.
 
 ### A3-04 Markdown and code rendering
-`status: todo | owner: none | branch: none | depends: A3-03`
-`scope: internal/tui/chat/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-03`
+`scope: internal/tui/chat/markdown.go, internal/tui/theme/`
 
 Deliverable: readable code blocks with syntax highlighting, plus inline markdown.
 
 Acceptance: a long code block wraps or scrolls without breaking the layout, and stays readable with
 colour disabled.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: none
+notes: **written by a Sonnet agent working in parallel, reviewed and integrated by Claude.** Recorded
+because who wrote a piece of code is worth knowing when reading it back, and because the parallel
+working turned up a coordination problem worth learning from. See the note at the end.
+
+No new dependencies. Glamour and chroma were both available and neither was taken: the highlighter
+is a keyword, string, comment and number lexer written here, which is what a terminal transcript
+needs and roughly a thousandth of the surface. It handles Go, Python, JavaScript and TypeScript,
+JSON and shell, and falls back to unhighlighted for anything else.
+
+Two design points from the implementation:
+
+- **Structural markers are kept literally rather than replaced by colour.** A heading still reads
+  `# Heading`, a list item still starts `- `. That satisfies "readable with colour disabled"
+  directly rather than by having a second code path for it, and the two cannot then disagree.
+- **Text is wrapped before it is styled, never after.** The hard break path cuts by rune position,
+  and a pre styled string's rune positions do not line up with escape code boundaries, so styling
+  first would cut a line in the middle of a colour sequence.
+
+Known limits, recorded rather than hidden: no cross line lexer state, so a block comment or an
+unterminated string that spans a wrap boundary falls back to plain text after the break; no nested
+emphasis; TypeScript reuses the JavaScript keyword table.
+
+The reply is rendered as markdown and **the question is not**. What somebody typed is what they
+typed, and rendering their asterisks as emphasis would change their own words back at them.
+
+**Coordination note.** Two agents were editing `internal/tui/chat/` at the same time. Nothing was
+lost, but the markdown files were swept into commit `2a83944`, whose message is about the tool
+contract and says nothing about markdown. The history is therefore misleading at that commit and is
+left that way deliberately: the branch is shared and rewriting pushed history unsupervised is worse
+than a wrong commit message. Recorded here so the record is right even where the log is not. The
+lesson for next time is to give a parallel agent a package nobody else is in.
 
 ### A3-05 Cancel a turn in flight
-`status: todo | owner: none | branch: none | depends: A3-03`
-`scope: internal/tui/chat/, internal/core/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-03`
+`scope: internal/session/, internal/provider/, internal/tui/chat/`
 
 Deliverable: interrupt a streaming reply and keep the partial output.
 
 Acceptance: the connection closes, nothing leaks, and the partial reply is visibly marked as
 interrupted rather than silently truncated.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: a partial answer presented as complete is the chat equivalent of a stale green.
+
+Escape stops the turn, and in chat it means stop rather than "leave this screen", because a screen
+that navigated away instead would abandon a running turn out of sight. `ctrl+c` stops before it
+quits, since somebody hitting it during a long reply almost always means stop and quitting would
+throw the conversation away.
+
+Three things this needed that were not obvious:
+
+1. **The context has to be checked after the blocking read, not only before it.** Cancelling
+   unblocks a waiting read with a transport error, so both clients were classifying every stopped
+   turn as a turn that broke. Found by the live tests, not by any scripted one.
+2. **A cancel can land before the first byte.** A provider can take seconds to respond, and a cancel
+   in that window never reaches the stream. The engine asks the context rather than the error, so
+   there is one answer instead of one per vendor's phrasing of "cancelled".
+3. **`Close` has to wait for turns to close out.** Cancelling is not the same as finished: the
+   context comes down, the stream unwinds, and only then does the turn record that it was
+   interrupted and keep what had arrived. Quitting without waiting lost the partial that cancelling
+   went to the trouble of keeping. A test caught it.
+
+"Nothing leaks" has its own test, because it is the half that is invisible when broken: a goroutine
+still reading an abandoned response body holds a connection open, and eight agents doing that is a
+program that slowly stops working for reasons nobody can see.
 
 ### A3-06 Context meter and compaction
 `status: todo | owner: none | branch: none | depends: A3-02`
@@ -1424,8 +1540,8 @@ false green. Compaction is always visible, and it never destroys history, it onl
 gets sent.
 
 ### A3-07 Session forking
-`status: todo | owner: none | branch: none | depends: A3-02`
-`scope: internal/session/, internal/tui/chat/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-02`
+`scope: internal/session/fork.go, internal/core/session.go, internal/session/storage.go`
 
 Deliverable: fork a session at any turn into a new one that shares history up to that point and
 diverges after.
@@ -1433,15 +1549,36 @@ diverges after.
 Acceptance: forking does not modify the original. Both sessions are independently resumable. The
 fork point is recorded and visible in both.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **added 2026-07-26.** The natural companion to branch per agent, and it maps onto how people
 already think in git. "Go back three turns and try it the other way" is currently either a fresh
 session with lost context, or an argument with an agent that has already committed to an approach.
 At A5 a fork becomes a second agent on a second branch, which is where it earns its place.
 
+Turns are copied rather than shared. A shared backing array would mean the next turn appended to
+either session could land in the other, which is the exact failure forking exists to avoid, and it
+would be intermittent rather than obvious.
+
+The fork point is recorded on **both** ends, because the question gets asked from both directions:
+"where did this come from" when reading a fork, and "what did I try from here" when reading the
+original. A one sided record answers half of it. The `forks` table is stored explicitly rather than
+derived from a `forked_from` query, so a fork whose child has been deleted still shows that
+something was tried from here and is gone, rather than reading as though it never happened.
+
+Two refusals:
+
+- **Forking from a turn still in flight.** It would copy an answer that is still arriving, and the
+  copy would stop growing while the original kept going: two conversations meant to be identical up
+  to a point, differing at that point.
+- **Carrying a compaction the fork does not cover.** It would tell the model that turns which are
+  not there have been summarised, and the summary would describe a conversation the fork never had.
+
+No interface yet. The mechanism and its persistence are done and tested; the screen for choosing a
+turn to fork from belongs with the session switcher, which is A5 work.
+
 ### A3-08 Session engine
-`status: review | owner: Claude | branch: feat/providers | depends: A3-01`
+`status: review | owner: Claude | branch: feat/providers (merged) | depends: A3-01`
 `scope: internal/session/, internal/store/`
 
 Deliverable: the thing the interface talks to. Owns every session, runs a turn in the background,
@@ -1495,20 +1632,44 @@ Goal: the agent can change code, and cannot do so without you knowing what it di
 **Read A4-04 before claiming anything else here.** It is the dangerous part.
 
 ### A4-01 Tool interface and registry
-`status: todo | owner: none | branch: none | depends: A2-01`
-`scope: internal/core/, internal/tools/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A2-01`
+`scope: internal/core/tool.go`
 
 Deliverable: the tool contract, a registry, and schema generation for both provider APIs.
 
 Acceptance: a tool declares its schema once, used for the provider call and for local argument
 validation, so the two cannot drift.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: none
+notes: one schema, from one declaration, for both the provider request and the local check. Two
+declarations drift the first time somebody adds a field to one, and the failure is a model
+confidently passing an argument that is silently ignored.
+
+`ToolKind` is coarse on purpose: read, write, execute, network, git. The permission model asks "may
+this agent write files" rather than "may this agent call `edit`", because a per tool allow list has
+to be updated every time a tool is added, and the update that gets forgotten is the one that grants
+more than intended. Git is separate from write because a bad edit is recoverable from git and a bad
+`git checkout` is what you would have recovered from. Network is separate from read because the risk
+runs both ways: what comes back is untrusted, and what goes out has left.
+
+**`Run` returns a result, not an error, for anything the model could act on.** A tool that failed
+because the file was not there has told the model something useful, and turning that into a Go error
+would end the turn instead of letting it try a different path. The error return is only for failures
+the model cannot do anything about.
+
+Validation is deliberately shallow and is not a JSON Schema implementation. It catches the mistakes
+models actually make, a missing required field and a value of entirely the wrong type, and says
+which one: a model told "path is required" fixes it next turn, one told "invalid input" guesses. A
+number is accepted where an integer is declared, since JSON has one number type and refusing that
+would reject well formed calls for a reason nobody could fix.
+
+Tools come back in registration order rather than sorted, because models weight earlier definitions
+more heavily and that order is a choice. A duplicate name is refused rather than replacing, since
+otherwise whichever registration ran last wins and that is decided by import order.
 
 ### A4-02 File tools
-`status: todo | owner: none | branch: none | depends: A4-01`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
 `scope: internal/tools/`
 
 Deliverable: read, write, edit, glob, grep.
@@ -1516,28 +1677,99 @@ Deliverable: read, write, edit, glob, grep.
 Acceptance: every path resolves inside the agent's worktree. Symlinks that escape are refused. An
 edit against a file that changed since it was read is rejected rather than applied blind.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: the read-then-edit check is the freshness idea from the truth engine applied to a file
 instead of a test run. Applying an edit computed against content that has moved is how an agent
 silently destroys work, including another agent's.
 
+**Confinement is in exactly one function.** `Workspace.Resolve` is the only place in the package
+that turns a model's string into a path on disk. One place to get right, one to test, one to read
+when somebody asks how confinement works. A tool that resolved its own paths would be one tool away
+from a bug that lets an agent write outside its worktree, and that bug is not recoverable: by the
+time anyone notices, the file is gone.
+
+The check is on the **resolved** path. `../../etc/passwd` is the obvious attack and the easy one;
+a symlink inside the workspace pointing outside it looks entirely innocent until it is followed.
+Paths that do not exist yet are confined through their nearest existing ancestor, which is every
+file an agent creates. And `/work/project-secrets` is not inside `/work/project`, despite the string
+prefix.
+
+Two things found while writing it:
+
+- **The workspace root has to be symlink resolved too.** On macOS the temporary directory is itself
+  a symlink, so a workspace opened there has a root that matches no path resolved through it, and
+  every single call is refused.
+- **A refusal must not disclose where the path resolved to.** That is a description of the
+  filesystem outside the workspace, which is the thing the caller was not allowed to learn. It still
+  names what was asked for, or the model has nothing to correct.
+
+The read ledger is per workspace, not global, because two agents editing the same file in different
+worktrees have genuinely independent views of it and a shared ledger would let one agent's read
+satisfy the other's edit. An edit updates the ledger rather than clearing it, so several edits to
+one file do not each need a re read, which would triple the cost of a multi line change.
+
+An edit matching more than once is refused rather than guessed at: replacing the first is a guess
+about which was meant, and replacing all is a different edit from the one asked for. Overwriting an
+existing file gets the same freshness rule as an edit, since that is the destructive case.
+
+`glob` implements `**` itself, because `filepath.Match` has none and its `*` does not cross
+separators, so `**/*.go`, the pattern every model reaches for first, matches nothing. A tool whose
+most obvious input silently returns nothing is one a model concludes the codebase is empty from. For
+the same reason a malformed pattern says so rather than matching nothing: a model told "no matches"
+for a typo stops looking, which is far more expensive than a syntax error.
+
 ### A4-03 Shell tool
-`status: todo | owner: none | branch: none | depends: A4-01`
-`scope: internal/exec/, internal/tools/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
+`scope: internal/exec/, internal/tools/shell.go`
 
 Deliverable: run a command in the agent's worktree, own process group, timeout, bounded output.
 
 Acceptance: cancellation leaves no orphans, verified by process listing. Output above the limit
 keeps head and tail and says how much was dropped.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: carries forward the old P2-05 to P2-07 designs unchanged. Shares machinery with the test
 runner at A6-03, which the old plan had as two separate efforts.
 
+**Every command gets its own process group and the whole group is killed together.** A test runner
+spawns workers, a dev server spawns a bundler. Killing only the process we started leaves those
+holding ports and file handles, and the next run fails with "address already in use" for reasons
+nobody can see. Tested by starting a background child that keeps touching a file, cancelling, and
+checking the file stops changing.
+
+SIGTERM first, SIGKILL shortly after. A process asked to stop politely cleans up its temporary
+directories; one killed outright leaves them. A process that ignores SIGTERM is exactly what the
+second signal is for.
+
+Windows has no process group in this sense and the equivalent is a job object, which is more work
+than this needs today. `process_windows.go` says so out loud rather than being an empty file that
+reads as though the problem were handled. **On Windows a cancelled command may leave children
+running.** Recorded as a gap, not a decision.
+
+Output keeps the **head and the tail**, not just the tail. The two ends carry different information
+and both are usually wanted: the first compiler error is at the top and how many there were is at
+the bottom. The gap is marked in the output itself, because a model that cannot see the gap answers
+as though the two halves were adjacent.
+
+There is no "no timeout" option. A hung command is a session that looks like it is thinking, and the
+failure mode of forgetting to set one should be a command that stops rather than one that never
+does. A timeout and a cancellation are separate fields, because "it took too long" and "you pressed
+escape" lead somewhere different.
+
+The command goes to `/bin/sh -c` rather than being split into arguments here. It will contain pipes,
+redirections and globs, and splitting it ourselves would run something subtly different from what
+was asked for and approved.
+
+**The shell tool is the one that is not confined by construction.** Every other tool here is limited
+by what `Workspace.Resolve` will resolve; a shell command is an opaque string that can do anything
+the user can, and inspecting it does not change that. Its confinement is the permission model, which
+is A4-04, and its kind is `execute` precisely so that model can treat it differently. Canopy does
+not sandbox and must never imply that it does.
+
 ### A4-04 Per agent trust levels and permissions
-`status: todo | owner: none | branch: none | depends: A4-02, A4-03`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-02, A4-03`
 `scope: internal/permission/`
 
 Deliverable: trust level as a property of the profile. Each level defines which tools run without
@@ -1549,7 +1781,7 @@ model rather than killing the session. An approval for one path never covers ano
 profile and a profile working near `main` behave differently on the same request. The audit trail
 answers "what did this agent actually do" after the fact.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **the existing repository trust contract does not cover this and must not be reused as
 though it does.** That governs commands the user wrote in a config file. This governs commands a
@@ -1559,9 +1791,59 @@ Canopy does not sandbox and must never imply that it does. Per agent levels were
 global posture because the alternative forces the strictest agent's friction onto every agent, and
 people respond to that by loosening everything.
 
+**Deny is a separate outcome from Ask**, and that separation is the load bearing part. A denial is
+structural: this level does not include this, and clicking yes is not on offer. Dressing it up as a
+question that can only be answered no is how people learn to click through prompts, which is the
+failure this whole design exists to avoid. An approval cannot override a denial either, because the
+denial is what the user chose when they picked the level, and a prompt that could override it would
+make the level advisory.
+
+An unknown trust level denies everything. "I do not know how much this agent is trusted" reads as
+"not at all", and a configuration somebody got wrong should fail closed.
+
+**Approvals default to the narrowest scope that covers the call**, and a wider one is something a
+user chooses explicitly. Offering the broad one as the default is how "yes" comes to mean "yes to
+everything" without anybody deciding that. They are per session and never persisted: an approval
+that outlives the conversation it was given in is one nobody remembers granting.
+
+A directory approval covers a call only when **every** path it touches is inside. Approving a
+directory and then letting a multi file call through on the strength of the paths that did match is
+the obvious hole and it is not obvious from the outside.
+
+**Command case is preserved when judging git.** `git branch -d` deletes a merged branch and
+`git branch -D` deletes any branch, and lowercasing to simplify matching conflates them and quietly
+allows the destructive one at a level that should ask. A test caught this. An unfamiliar git command
+carrying `--force` or a bare `-f` is treated as destructive anyway, because a list of subcommands
+will always be behind the tool.
+
+The audit trail records refusals as well as successes, because an agent that tried to write outside
+its workspace nine times and was stopped nine times is a very different thing from one that never
+tried, and only the trail can tell them apart.
+
+**The prompt lives at the bottom of the transcript**, under the reasoning that led to the call,
+rather than in a dialogue over it. A modal that covers the conversation asks somebody to decide with
+the context hidden.
+
+`y` allows once, `a` allows everything of that shape for the session, and **anything else refuses,
+including enter and escape**. The reflex key on a prompt somebody has not read is enter, and enter
+meaning no is the difference between a misread prompt costing a retry and costing a repository. A
+question takes the keyboard entirely while it is up, because typing an answer into a text field and
+wondering why nothing happens is a bad minute to give somebody.
+
+The engine is its own approver, which is what lets a blocking question from a background goroutine
+reach an event loop that must never block: the loop parks the question in the snapshot and waits on
+a channel, the interface notices it the same way it notices everything else, and the answer travels
+back through the channel. Having the loop call into the interface instead would run the interface's
+update loop inside a provider goroutine, which is the shape of every deadlock a TUI ever has.
+
+A second question while one is open is refused rather than replacing it, because silently dropping
+somebody's question to ask a different one is worse than declining the second. Cancelling a turn
+while a question is open refuses it: they never answered, and a cancelled turn should not leave a
+command running behind it.
+
 ### A4-05 Tool use loop
-`status: todo | owner: none | branch: none | depends: A4-04`
-`scope: internal/agent/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
+`scope: internal/agent/, internal/session/engine.go, cmd/canopy/`
 
 Deliverable: the full turn. Model requests a tool, permission is checked, the tool runs, the result
 returns, repeat until the model stops.
@@ -1570,13 +1852,42 @@ Acceptance: a multi step task completes end to end. Cancellation mid loop leaves
 execution. A failing tool is reported to the model rather than crashing the turn. Loop count and
 token budget are both bounded.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: without a loop limit and a budget, a confused model spends real money in a circle.
+notes: without a loop limit and a budget, a confused model spends real money in a circle. Both
+bounds are enforced and both say which one stopped the turn, because "the model finished" and "we
+stopped it because it was going in circles" are different things to tell a user.
+
+**Every path through a tool call produces exactly one audit entry and exactly one result.** A call
+with no entry is one nobody can find afterwards; a call with no result leaves the model waiting for
+an answer that is never coming, which it responds to by asking again, which is how a loop that
+should have taken three steps takes fifty.
+
+A denied call, a failed tool, an unknown tool name and invalid arguments all come back to the model
+as results rather than ending the turn. A refusal is information: the model can try something within
+its remit, which is usually what it should do, and ending the turn would throw away everything it
+had worked out. The unknown tool case names the tool, because "unknown tool" alone leaves the model
+guessing which of the three it just asked for was wrong.
+
+Cancellation is checked between tool calls, not only around the model call. A turn that was stopped
+should not run the remaining three tools it had queued up.
+
+One bug worth recording, because it cost ten minutes of test time to find: **the loop must return at
+the done event rather than reading past it.** The done event is by contract the last thing a stream
+has to say, so continuing to read means depending on the stream also reporting that it is finished,
+promptly. A stream that simply stops producing events hangs the turn instead of ending it, which is
+far worse than leaving an event unread. There is now a test with a stream that does exactly that.
+
+**Proved live against a real provider**, which is the only thing that can check the part scripted
+tests cannot: whether a real model, given these tool descriptions and these schemas, reaches for the
+right tool and fills it in correctly. That is a property of the descriptions as much as of the code.
+`internal/agent/live_test.go` has an agent read a file and answer from it, get refused when its
+trust level says no and carry on, and create a file with specific content. All three pass against
+`minimaxai/minimax-m2.7` on NVIDIA NIM.
 
 ### A4-06 Git tools
-`status: todo | owner: none | branch: none | depends: A4-04`
-`scope: internal/tools/git/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
+`scope: internal/tools/git.go`
 
 Deliverable: status, diff, log, add, commit, branch, checkout and stash as structured tools scoped
 to the agent's worktree.
@@ -1586,16 +1897,46 @@ meaning checkout over uncommitted work, reset, branch deletion and force anythin
 separately from ordinary shell approval. An agent cannot operate on another agent's worktree or on
 the primary checkout.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **not a convenience wrapper over `bash`.** A shell tool hands the permission model an opaque
 string, which cannot be told apart from `git push --force`. Structured output is also far more
 reliable for a model to act on than parsed porcelain, and confinement is enforceable per argument
 where in a shell string it is not enforceable at all.
 
+Six tools: status, diff, log, add, commit and branch. Classified for the permission model as read,
+read, read, write, write and git respectively, which is what makes the destructive half separable.
+
+Three deliberate omissions, all reachable through the shell tool where they are visible and approved
+as what they are:
+
+- **`commit` takes no `--amend` and no `-a`.** Amending rewrites a commit that may already have been
+  pushed, and `-a` stages files the model never looked at.
+- **`branch` can only create**, via `checkout -b`. Switching to an existing branch can discard
+  uncommitted work, which belongs behind the destructive gate rather than inside a tool called
+  "branch".
+- No `reset`, `clean`, `stash`, `push` or `rebase` at all yet.
+
+Every path argument goes after a `--` separator and is refused if it starts with a dash, because git
+reads a leading dash as an option wherever it appears and a path called `-f` becomes a flag. Branch
+names are validated here rather than left to git: git's own error for a bad ref name is written for
+somebody who has read the ref format documentation, and a model reading it tries something adjacent
+rather than something correct.
+
+A successful git command that printed nothing says so explicitly. Git is famously silent on success
+and a model handed an empty string cannot tell that apart from a failure it did not notice, which it
+answers by running the command again.
+
+**Registered before the shell tool**, since models weight earlier tool definitions more heavily and
+the tools that can be governed per argument should be reached for before the one that cannot.
+
+Worktree confinement is not enforced here yet: the tools run git in the agent's workspace, which is
+the right directory, but nothing stops a `git_add` path from naming something git tracks elsewhere
+via a submodule. Recorded rather than claimed. A5-03 is where worktrees become real.
+
 ### A4-07 Web search and fetch
-`status: todo | owner: none | branch: none | depends: A4-01`
-`scope: internal/tools/web/`
+`status: partial | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
+`scope: internal/tools/web.go`
 
 Deliverable: search the web and fetch a URL as text.
 
@@ -1606,9 +1947,42 @@ model rather than crashing the turn. Requests are visible in the audit trail.
 
 notes: a model working from training data alone gets library versions wrong, confidently.
 
+**Fetch is done. Search is not, and needs a decision rather than an implementation.** Every usable
+search API wants a key and an account: Brave, Tavily, Exa, Serper. Which one, and whose account, is
+a question for the four of us rather than something to pick unilaterally at three in the morning.
+Scraping a search engine's HTML was considered and rejected: it breaks constantly, and it is rude in
+a way that reflects on whoever ships it. See Q-11. The verify box stays unticked until search lands
+or is cut.
+
+`fetch_url` is `ToolNetwork`, which the permission model asks about at **every** trust level
+including broad. What comes back is text somebody else wrote, it lands in the model's context, and
+the model has no reliable way to tell it apart from the user's instructions.
+
+Nothing here can make fetched text safe. What it does instead is make the boundary visible: the
+result names its source, wraps the page in explicit begin and end markers, and says in words that
+the text was written by somebody else and is not an instruction. That is the only thing standing
+between "this page says" and "this page told me to", and a test uses a page containing "ignore your
+previous instructions" to check the markers survive.
+
+Other decisions:
+
+- **Only http and https.** `file://` would read the filesystem through a tool whose permission kind
+  says network, which is exactly the confusion a permission model cannot survive.
+- **Redirects are followed but each hop is rechecked**, because a redirect is a URL the user never
+  approved, and without the check approving `example.com` approves wherever it decides to send you.
+- **A small HTML stripper rather than a parser.** The failure mode of doing this badly is some stray
+  angle brackets costing a few tokens; the failure mode of pulling in a full parser is a dependency
+  the size of the rest of the program. Script, style and svg content is dropped whole, which is most
+  of a modern page by weight.
+- **A page with nothing readable says why.** A model handed an empty result concludes the page is
+  empty rather than that it is built by JavaScript and cannot be read this way.
+- The user agent identifies Canopy honestly. A tool that pretends to be a browser is one whose
+  traffic nobody can attribute when it goes wrong, and being blocked by a site that does not want
+  automated traffic is a correct outcome rather than a problem to route around.
+
 ### A4-08 Checkpoint and undo
-`status: todo | owner: none | branch: none | depends: A4-06`
-`scope: internal/git/, internal/agent/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-06`
+`scope: internal/git/, internal/session/`
 
 Deliverable: snapshot an agent's worktree before it acts, and revert everything it did with one
 key.
@@ -1616,15 +1990,53 @@ key.
 Acceptance: undo restores tracked and untracked files exactly, including deletions. Checkpoints are
 cheap enough to take every turn. Reverting one agent never touches another's worktree.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: with several agents editing in parallel this is the difference between experimenting freely
 and being afraid to let them run. Probably implemented as a stash or a hidden ref rather than a
 file copy.
 
+**A hidden commit under `refs/canopy/checkpoints/`, not a stash and not a copy.** A stash is a stack,
+and a stack is shared mutable state: two agents stashing in the same repository interleave, and
+`stash pop` gives one of them the other's work. A copy is expensive on a large repository and gets
+the ignored files wrong in one direction or the other. A commit object is content addressed, so two
+agents cannot collide; cheap, because git already holds most of those blobs; and it captures exactly
+what git captures, which is the definition the rest of the tool already uses.
+
+Under `refs/canopy/` rather than `refs/heads/`, so checkpoints never appear in `git branch`, never
+get pushed by a plain `git push`, and never turn up in tab completion.
+
+Three things this needed that are not obvious:
+
+1. **A temporary index.** Staging into the real one would silently stage every untracked file in the
+   user's working tree, and their next commit would include things they never chose. There is a test
+   that takes a checkpoint and asserts `git status --porcelain` is byte for byte unchanged.
+2. **`read-tree -u --reset` followed by `clean -fd`.** Restoring the tree alone brings file contents
+   back and leaves files the agent created still sitting there, because nothing removes what is not
+   in the tree. An undo that left the new files behind is not an undo.
+3. **A minimal environment.** A user's `GIT_DIR`, `GIT_INDEX_FILE` or `GIT_WORK_TREE` would redirect
+   Canopy's own bookkeeping somewhere unexpected, and the failure would be a checkpoint silently
+   taken of the wrong repository.
+
+Per turn rather than per session, because the question people ask is "undo what it just did", and a
+session level checkpoint throws away the four turns they were happy with along with the one they
+were not.
+
+**Undo restores the files and leaves the conversation alone.** Reverting both would destroy the
+record of what was tried, which is exactly what somebody undoing wants to look at afterwards to work
+out what to ask for instead.
+
+A failure to checkpoint does not stop the turn, it is reported. Refusing to answer because a snapshot
+could not be taken would be a tool that stops working in a directory it cannot fully manage.
+Somebody who thinks they can undo and cannot is worse off than somebody who knows they cannot, so
+the report matters more than the failure.
+
+No interface yet: `Engine.Undo` exists and is tested, and the key to reach it belongs with the turn
+list, which is A5 work.
+
 ### A4-09 Plan first mode
-`status: todo | owner: none | branch: none | depends: A4-05`
-`scope: internal/agent/, internal/tui/`
+`status: partial | owner: Claude | branch: feat/agent-runtime | depends: A4-05`
+`scope: internal/agent/plan.go`
 
 Deliverable: a profile setting where the agent produces a plan, waits for approval, then executes
 without asking per tool.
@@ -1637,6 +2049,34 @@ described. An agent that departs from the plan stops and asks again.
 notes: **added 2026-07-26.** Approval at the task level rather than the keystroke level, and better
 than either extreme. Per tool prompting on a fifty step task trains you to approve without reading,
 which is worse than not asking. Reviewing one plan is something a person actually does properly.
+
+**The mechanism is done. The profile setting and the interface are not**, because there are no
+profiles until A5 and the screen for reviewing a plan belongs with them. `Loop.Plan` and
+`Loop.Execute` exist and are tested; nothing calls them yet. The verify box stays unticked.
+
+**Planning is enforced, not requested.** The planning phase runs with a read-only trust level, an
+approver that refuses everything, and a fresh grant set, so a model that ignores the instruction and
+calls a tool anyway is stopped by the permission layer rather than by its own good behaviour. The
+fresh grant set matters on its own: reusing the session's would mean an earlier "always allow edits"
+quietly turning plan mode into ordinary mode. Both are tested with an agent at **broad** trust,
+because relying on the agent's own level being low is exactly the mistake.
+
+The tools are still described to the planning model. A plan written by something that does not know
+what it can do is a plan that proposes the impossible.
+
+The plan is asked for in prose rather than a structured format, because the reader is a person
+deciding whether to allow this and a person reads prose. Nothing parses it back out: what a plan
+authorises is a phase, not a checklist to verify against.
+
+On execution the plan goes back into the conversation **as the agent's own words** and the approval
+as the user's reply. A model that reads its own plan as something it said follows it; one handed the
+same text as an instruction from somebody else argues with it.
+
+"An agent that departs from the plan stops and asks again" is currently done by telling it to, in the
+approval message, rather than by detecting the departure. That is honest about what it is: cheaper
+than any mechanism that tries to catch a departure afterwards, and weaker. Worth discussing whether
+the stronger version is worth building, since detecting it properly means comparing intent against
+action, which is the hard problem in the middle of this whole product.
 
 ### A4-10 Todo and plan tracking
 `status: todo | owner: none | branch: none | depends: A4-05`
@@ -1675,7 +2115,7 @@ Build A5-05 through A5-10 first if you want agents working sooner. The isolation
 first only because A6 needs them.
 
 ### A5-01 Worktree discovery
-`status: todo | owner: none | branch: none | depends: PG-A4`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: PG-A4`
 `scope: internal/git/`
 
 Deliverable: discover the primary checkout and existing worktrees via
@@ -1684,24 +2124,54 @@ Deliverable: discover the primary checkout and existing worktrees via
 Acceptance: a temp repository with three worktrees is discovered in full, and the primary is
 identified and protected.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: was P2-01, unchanged.
 
+**Canopy discovers worktrees; it does not assume it created them.** Somebody may already have three
+for reasons of their own, and the primary checkout is theirs twice over. So discovery reads and never
+writes, and ownership is recorded rather than inferred.
+
+The record is a **marker file, not a naming convention**, because a naming convention is something a
+user can accidentally satisfy: somebody whose own worktree happens to be called `canopy-feature`
+should not find Canopy willing to delete it. A test creates exactly that worktree by hand and checks
+Canopy refuses to remove it, with and without force.
+
+The marker lives in the worktree's **git directory**, not in the worktree. In a linked worktree
+`.git` is a file containing a pointer rather than a directory, so there is nothing to write into
+there. A test caught that immediately. Resolving the real git directory also keeps the marker out of
+`git status`, so there is nothing for a user to wonder about in their own repository.
+
+Workspace IDs are derived from the path and hashed. Derived so a worktree keeps its ID across
+restarts; hashed because the ID appears in events, transcripts and audit entries, and an absolute
+path carries somebody's home directory name into every one of them.
+
 ### A5-02 Branch, HEAD, dirty state
-`status: todo | owner: none | branch: none | depends: A5-01`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-01`
 `scope: internal/git/`
 
 Deliverable: per worktree branch or detached HEAD, HEAD SHA, dirty counts, last activity.
 
 Acceptance: correct for clean, dirty, untracked only, and detached HEAD.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: was P2-02, unchanged.
 
+The dirty digest is built from the status output **and the modification times of what it names**, so
+an edit that reverts a file to its committed content still changes it. That is deliberate: the
+question the digest answers is "has anything happened here since we last looked", and a round trip
+edit is something happening.
+
+A clean tree gets an empty digest rather than a hash of nothing, so a clean tree at the same commit
+compares equal to itself across runs, which is what `RevisionKey.Equal` needs to not report a
+permanent false stale.
+
+Status is read with `-z`, because filenames containing newlines are legal and do exist, and without
+it one such file becomes two entries and every count is wrong from then on.
+
 ### A5-03 Create and remove a worktree
-`status: todo | owner: none | branch: none | depends: A5-02`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-02`
 `scope: internal/git/`
 
 Deliverable: create a worktree and branch for an agent, remove it afterwards.
@@ -1709,10 +2179,30 @@ Deliverable: create a worktree and branch for an agent, remove it afterwards.
 Acceptance: removal refuses on a dirty worktree without explicit confirmation. The primary checkout
 can never be removed. A failed creation leaves nothing behind.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: previously forbidden outright, now required. The guards from that exclusion survive as
 behaviour: never touch the primary, never remove a dirty tree silently.
+
+Three refusals, in order, each answering a way somebody loses work:
+
+1. **Never the primary**, at any level of confirmation. It is the user's own checkout.
+2. **Never one Canopy did not create.** Finding a worktree is not the same as owning it, and force
+   does not change that.
+3. **Never a dirty one without saying so.** Uncommitted work is work, and an agent's abandoned
+   experiment is sometimes the only copy of an idea. The refusal names what is there, because "it is
+   dirty" is not a decision anybody can make.
+
+Being unable to tell whether a worktree is dirty is treated as a refusal too. The safe reading of "I
+do not know whether there is work here" is that there might be.
+
+Worktrees are created **beside** the repository, never inside it. One nested in the primary checkout
+appears in every glob, every grep and every build, and the first thing anybody notices is their test
+suite running twice.
+
+A failed creation leaves nothing behind: the marker is written last, and if writing it fails the
+worktree is removed. A half created worktree is worse than none, because it is a directory that looks
+usable, is not registered as Canopy's, and will never be cleaned up.
 
 ### A5-04 Worktree environment setup
 `status: todo | owner: none | branch: none | depends: A5-03`
@@ -1740,8 +2230,8 @@ isolate a database, Redis, a queue or an OAuth callback, and Canopy supplies tem
 without promising isolation it cannot deliver.
 
 ### A5-05 Agent registry
-`status: todo | owner: none | branch: none | depends: A3-01`
-`scope: internal/agent/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-01`
+`scope: internal/session/agents.go`
 
 Deliverable: named agents, each bound to a profile, a key, a session and a working directory. The
 working directory defaults to the repository, and is a worktree only for agents put into isolated
@@ -1751,9 +2241,30 @@ Acceptance: several agents run concurrently in the same repository without their
 interfering. Usage and cost are attributed per agent. An agent can be created without any worktree
 existing for it.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: where the named key model from A1 pays off.
+notes: where the named key model from A1 pays off. Each agent carries its own credential and model,
+so one agent on Claude and one on a local model is a configuration rather than a fork.
+
+**Agents are listed with whatever needs a person first**, not alphabetically and not by creation
+order. With eight running, the useful question is not "where is the one called docs" but "which of
+these has stopped and cannot start again without me". The name is how you find a specific agent;
+the ordering is how you find the one that matters. Each waiting agent also says what it is waiting
+for, or the list sends you somewhere without saying why.
+
+Names are chosen rather than generated, because a list of eight agents called agent-1 through
+agent-8 is a list nobody can navigate. A duplicate name is refused rather than replacing, since two
+agents with one name makes every later reference ambiguous, including the ones in the audit trail,
+where ambiguity costs most.
+
+**Removing an agent keeps its conversation.** An agent is a worker and its transcript is a record of
+what was done; dismissing the worker is not a reason to burn the record, and it would leave the
+audit trail pointing at a session nobody can open.
+
+`Agents()` returns them in creation order, which is the order somebody built them in and therefore
+the order they already have in their head. `AgentStatuses()` is the one that sorts by need. Two
+methods rather than one with a flag, because they answer different questions and a caller that had
+to remember which order it was getting would eventually get it wrong.
 
 **Deliberately does not depend on the isolation tasks.** Coupling the registry to worktree creation
 would make "run an agent" mean "make a branch", which is not how anyone works most of the time and
@@ -1779,8 +2290,8 @@ Fan-out at A6-05 requires this. Ranking three agents on one task is meaningless 
 editing the same files.
 
 ### A5-06 Per agent view and switching
-`status: todo | owner: none | branch: none | depends: A5-05, A3-03`
-`scope: internal/tui/`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-05, A3-03`
+`scope: internal/tui/agents/, internal/tui/chat/, internal/tui/app.go`
 
 Deliverable: a list of agents, switch into any one's conversation, come back out.
 
@@ -1790,6 +2301,40 @@ needing input is visibly distinct from one working.
 `verify: claude [ ]   codex [ ]`
 
 notes: selection stays keyed by ID rather than row index, for the reason established in P1-07.
+
+**Three layouts, as Walid asked for**, because they answer different questions and no single one
+answers all three. List is "what is everyone doing", one line each. Split is "watch two of them",
+for when two agents are working on related things and the interesting part is how their answers
+differ. Focus is "read one properly", full width. `1`, `2`, `3` go straight to one, and `v` cycles
+for people who would rather not remember three keys.
+
+**Split shows two, not four.** A terminal split four ways gives each pane twenty columns, and twenty
+columns of a code discussion is not readable. When even two will not fit it falls back to focus
+rather than drawing something torn, which is the same reasoning as refusing to draw below the
+minimum terminal size.
+
+**The cursor follows the agent, not the position.** The ordering moves as agents change state: one
+that starts waiting jumps to the top. A cursor holding index 3 would follow the row rather than the
+agent somebody was looking at, and when its agent disappears entirely it falls back to the top
+rather than to the same index, because the same index is now a different agent.
+
+Every state is a word as well as a colour. A row of coloured dots is meaningless in a pasted bug
+report and invisible to anyone who has turned colour off.
+
+`enter` opens an agent's conversation and `n` starts a new one. Opening is a **message to the
+application** rather than something the view does, because which screen is showing belongs in one
+place and a view that could change it is one that can put the program somewhere the application
+never agreed to.
+
+A new agent inherits the credential and model of the one you are looking at, and the prompt says so.
+The first thing somebody wants from a second agent is another of what they already have; choosing
+differently per agent is a real thing to want and belongs with a profile picker. A failed creation
+keeps the typed name, since both reasons it fails are fixable in a keystroke and clearing the box
+would make somebody retype a name they nearly had.
+
+Changing which conversation the chat screen shows clears the scroll position and the half typed
+message with it. Carrying either across would mean arriving in one agent's conversation scrolled to
+a position from another's, and finding text in the box that was meant for somebody else.
 
 ### A5-07 Steering without interrupting
 `status: todo | owner: none | branch: none | depends: A5-06`

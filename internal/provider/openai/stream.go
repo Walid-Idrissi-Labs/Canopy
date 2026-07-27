@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -28,6 +30,7 @@ type stream struct {
 	partials map[int]*partialCall
 	usage    core.Usage
 	reason   string
+	stalls   *stallGuard
 	err      error
 	finished bool
 	closed   bool
@@ -41,7 +44,19 @@ type partialCall struct {
 
 var _ core.Stream = (*stream)(nil)
 
-func newStream(ctx context.Context, client *Client, resp *http.Response) *stream {
+// StallTimeout is how long a stream may produce nothing before it is treated as dead.
+//
+// A provider that accepts a request and then goes silent is not a hypothetical: NVIDIA NIM does it
+// under load, and without this the turn waits on the HTTP client's timeout, which is half an hour.
+// An agent hung for half an hour looks like an agent thinking, which is the worst way to fail.
+//
+// Generous, because a long reasoning turn genuinely produces nothing for a while before its first
+// token. Two minutes of complete silence is a connection that is not coming back.
+const StallTimeout = 2 * time.Minute
+
+func newStream(
+	ctx context.Context, client *Client, resp *http.Response, stalls *stallGuard,
+) *stream {
 	scanner := bufio.NewScanner(resp.Body)
 	// A single SSE line can carry a large tool argument fragment, and the default 64k limit would
 	// truncate it into invalid JSON. Failing loudly later is worse than allocating here.
@@ -53,7 +68,73 @@ func newStream(ctx context.Context, client *Client, resp *http.Response) *stream
 		resp:     resp,
 		scanner:  scanner,
 		partials: map[int]*partialCall{},
+		stalls:   stalls,
 	}
+}
+
+// stallGuard cancels a request that has stopped producing anything.
+//
+// It cancels the request's own context rather than setting a read deadline, because a deadline can
+// only be set on a connection and an `http.Response.Body` is not one: the standard library has
+// already wrapped it, so the type assertion that looks like it would work quietly does not, and the
+// guard becomes a no-op that reads like a fix. Cancelling the context genuinely unblocks the read.
+//
+// The context it cancels is derived from the caller's, so a stall and a user pressing escape are
+// distinguishable: the caller's context is untouched by a stall, and `fired` says which happened.
+type stallGuard struct {
+	mu      sync.Mutex
+	timer   *time.Timer
+	fired   bool
+	stopped bool
+}
+
+func newStallGuard(cancel context.CancelFunc, timeout time.Duration) *stallGuard {
+	guard := &stallGuard{}
+	guard.timer = time.AfterFunc(timeout, func() {
+		guard.mu.Lock()
+		if guard.stopped {
+			guard.mu.Unlock()
+			return
+		}
+		guard.fired = true
+		guard.mu.Unlock()
+		cancel()
+	})
+	return guard
+}
+
+// touch restarts the clock, called every time something arrives.
+func (g *stallGuard) touch() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.stopped || g.fired {
+		return
+	}
+	g.timer.Reset(StallTimeout)
+}
+
+// Fired reports whether the request was cancelled for going silent rather than by its caller.
+func (g *stallGuard) Fired() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.fired
+}
+
+// stop ends the watchdog, so a finished stream does not leave a timer running.
+func (g *stallGuard) stop() {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.stopped = true
+	g.timer.Stop()
 }
 
 func (s *stream) Next() bool {
@@ -92,6 +173,8 @@ func (s *stream) Next() bool {
 			continue
 		}
 
+		// Something arrived, so the connection is alive and the clock resets.
+		s.stalls.touch()
 		s.handleLine(strings.TrimSpace(s.scanner.Text()))
 	}
 }
@@ -233,6 +316,7 @@ func (s *stream) Close() error {
 		return nil
 	}
 	s.closed = true
+	s.stalls.stop()
 	if s.resp == nil || s.resp.Body == nil {
 		return nil
 	}

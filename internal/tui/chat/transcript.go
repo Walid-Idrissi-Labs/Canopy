@@ -25,14 +25,57 @@ func Transcript(session core.Session, width int, spinner string) []string {
 		width = 20
 	}
 
+	compaction, compacted := session.Compacted()
+
 	var lines []string
 	for i, turn := range session.Turns {
+		// The marker sits where the compaction happened, between the turns it summarised and the
+		// ones it kept, so somebody scrolling back can see exactly where the agent's memory of the
+		// conversation stops being the conversation.
+		if compacted && i == compaction.Through {
+			lines = append(lines, "")
+			lines = append(lines, compactionMarker(compaction, width)...)
+		}
 		if i > 0 {
 			lines = append(lines, "")
 		}
 		lines = append(lines, renderTurn(turn, width, spinner)...)
 	}
 	return lines
+}
+
+// compactionMarker is the line in the transcript saying the agent no longer has the turns above it.
+//
+// Always drawn, never optional. An agent that quietly forgets half of what it was told and carries
+// on answering is the same class of problem as a test result that says passing about code it never
+// ran: confident, wrong, and undetectable from outside. This is the thing that makes it detectable.
+func compactionMarker(compaction core.Compaction, width int) []string {
+	t := theme.Current()
+
+	saved := ""
+	if compaction.TokensBefore > compaction.TokensAfter {
+		saved = fmt.Sprintf(", about %s down to %s",
+			shortCount(compaction.TokensBefore), shortCount(compaction.TokensAfter))
+	}
+	headline := fmt.Sprintf("--- summarised the %d turns above%s ---",
+		compaction.Through, saved)
+
+	lines := []string{t.Warning.Render(headline)}
+	for _, line := range wrap(compaction.Summary, width-2) {
+		lines = append(lines, t.Muted.Render("  "+line))
+	}
+	// Said explicitly, because the obvious fear on reading the line above is that the conversation
+	// has been thrown away, and it has not.
+	lines = append(lines, t.Muted.Render(
+		"  The turns above are still here and still searchable, they are just no longer sent."))
+	return lines
+}
+
+func shortCount(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%dk", n/1000)
+	}
+	return fmt.Sprintf("%d", n)
 }
 
 func renderTurn(turn core.Turn, width int, spinner string) []string {
@@ -58,9 +101,10 @@ func renderTurn(turn core.Turn, width int, spinner string) []string {
 
 	if turn.Text != "" {
 		lines = append(lines, "")
-		for _, line := range wrap(turn.Text, width) {
-			lines = append(lines, t.Body.Render(line))
-		}
+		// The reply goes through the markdown renderer; the question above does not. What somebody
+		// typed is what they typed, and rendering their asterisks as emphasis would change their
+		// own words back at them.
+		lines = append(lines, RenderMarkdown(turn.Text, width)...)
 	}
 
 	for _, call := range turn.ToolCalls {
@@ -148,7 +192,7 @@ func Welcome(width int, dir, key string) []string {
 		// The one thing that makes the rest of the program work, said plainly rather than left to
 		// be discovered when the first message fails.
 		lines = append(lines, t.Warning.Render("no credential yet")+
-			t.Muted.Render(", press ")+t.Key.Render("K")+t.Muted.Render(" to add one"))
+			t.Muted.Render(", press ")+t.Key.Render("ctrl+k")+t.Muted.Render(" to add one"))
 	}
 
 	lines = append(lines, "")

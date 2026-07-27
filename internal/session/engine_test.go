@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -477,5 +478,119 @@ func (c *blockingClient) Stream(ctx context.Context, _ core.Request) (core.Strea
 	<-ctx.Done()
 	return nil, &core.ProviderError{
 		Kind: core.ErrNetwork, Provider: "blocking", Message: "context canceled", Err: ctx.Err(),
+	}
+}
+
+// "Nothing leaks" is the half of cancellation that is invisible when it is broken. A goroutine
+// still reading an abandoned response body holds a connection open, and eight agents doing it is a
+// program that slowly stops working for reasons nobody can see.
+func TestCancellingLeavesNothingRunning(t *testing.T) {
+	before := runtime.NumGoroutine()
+
+	for i := 0; i < 20; i++ {
+		gate := make(chan struct{})
+		client := &scriptedClient{name: "claude", gate: gate, events: []core.StreamEvent{
+			{Kind: core.EventText, Text: "started"},
+			{Kind: core.EventDone, StopReason: core.StopEndTurn},
+		}}
+		e := New(fixedResolver{client: client, id: anthropicID()})
+
+		s := e.Create("claude", "m")
+		turnID, err := e.Send(s.ID, "hi")
+		if err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		gate <- struct{}{}
+		e.Cancel(s.ID)
+		waitForTurn(t, e, s.ID, turnID)
+		e.Close()
+	}
+
+	// Goroutines wind down asynchronously, so this allows for that rather than demanding the count
+	// be exact the instant the last Close returns.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		after := runtime.NumGoroutine()
+		if after <= before+2 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Errorf("%d goroutines still running after 20 cancelled turns, started with %d",
+				after, before)
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Closing the engine has to close out every turn still in flight, or quitting during a reply loses
+// the partial that cancelling went to the trouble of keeping.
+func TestClosingTheEngineFinishesRunningTurns(t *testing.T) {
+	gate := make(chan struct{})
+	client := &scriptedClient{name: "claude", gate: gate, events: []core.StreamEvent{
+		{Kind: core.EventText, Text: "half written"},
+		{Kind: core.EventDone, StopReason: core.StopEndTurn},
+	}}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+
+	s := e.Create("claude", "m")
+	turnID, err := e.Send(s.ID, "hi")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	gate <- struct{}{}
+
+	// Wait for the text to land, so there is genuinely a partial to keep.
+	deadline := time.After(3 * time.Second)
+	for {
+		got, _ := e.Session(s.ID)
+		if got.Turns[0].Text == "half written" {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the partial never arrived")
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+
+	e.Close()
+
+	got, _ := e.Session(s.ID)
+	turn := got.Turns[0]
+	if turn.ID != turnID {
+		t.Fatalf("turn = %q", turn.ID)
+	}
+	if !turn.State.Terminal() {
+		t.Errorf("state = %s, want a turn that is closed out", turn.State)
+	}
+	if turn.Text != "half written" {
+		t.Errorf("text = %q, want the partial kept", turn.Text)
+	}
+}
+
+// Somebody who thinks they can undo and cannot is worse off than somebody who knows they cannot.
+func TestUndoWithoutACheckpointSaysSoRatherThanFailingQuietly(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+
+	s := e.Create("claude", "m")
+	turnID, err := e.Send(s.ID, "change something")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForTurn(t, e, s.ID, turnID)
+
+	err = e.Undo(context.Background(), s.ID, turnID)
+	if err == nil {
+		t.Fatal("undoing with no checkpoint should be refused rather than silently doing nothing")
+	}
+	if !strings.Contains(err.Error(), "git repository") {
+		t.Errorf("the reason should be actionable, got %q", err)
+	}
+
+	if err := e.Undo(context.Background(), "nope", turnID); err == nil {
+		t.Error("undoing a session that does not exist should be an error")
 	}
 }

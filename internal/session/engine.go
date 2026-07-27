@@ -14,11 +14,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/store"
 )
@@ -44,10 +48,57 @@ type Engine struct {
 	resolver Resolver
 	events   *store.Broker
 
+	// tools is what agents in this engine may do, and trust is how much of it they may do without
+	// asking. Both nil or zero means a conversation with no tools, which is what a chat with no
+	// workspace is and is a legitimate thing to want.
+	tools    *core.ToolRegistry
+	trust    core.TrustLevel
+	approver agent.Approver
+	trail    *permission.Trail
+
+	// storage is optional. An engine without one still works completely and forgets everything on
+	// exit, which is what the tests want and what a first run before the config directory exists
+	// gets. Persistence being optional rather than assumed is also what stops a storage failure
+	// from taking the conversation down with it.
+	storage *Storage
+
+	// onStorageError is how a persistence failure reaches somebody. Losing the ability to save is
+	// worth saying and is not worth ending a turn over: the answer on screen is still the answer.
+	onStorageError func(error)
+
+	// turns counts the turns in flight, so shutdown can wait for them to close out.
+	//
+	// Cancelling a turn is not the same as it being finished: the context comes down, the stream
+	// unwinds, and only then does the turn record that it was interrupted and keep whatever text
+	// had arrived. Quitting without waiting for that loses the partial that cancelling went to the
+	// trouble of keeping, which is the whole point of cancelling rather than killing.
+	turns sync.WaitGroup
+
+	// writes counts the saves in flight, so shutdown can wait for them.
+	//
+	// Needed because a turn becomes visibly terminal a moment before it is on disk: the state is set
+	// under the lock and the write happens after it is released, so that a disk write never blocks
+	// the interface from reading. Anything that watches for a turn to finish and then shuts down
+	// would otherwise close the database out from under that write.
+	writes sync.WaitGroup
+
+	// grants are the approvals in force per session.
+	grants map[string]*permission.Grants
+
+	// pending is the question each session is waiting on, at most one at a time.
+	pending map[string]*Prompt
+
+	// checkpoints captures the worktree before each turn, when there is a worktree to capture.
+	checkpoints *git.Taker
+
+	// agents are the named workers, and agentOrder is the order they were created in.
+	agents     map[string]*Agent
+	agentOrder []string
+
 	nextID int
 }
 
-// New builds an engine.
+// New builds an engine that forgets everything when it exits.
 func New(resolver Resolver) *Engine {
 	return &Engine{
 		sessions: map[string]*core.Session{},
@@ -57,15 +108,165 @@ func New(resolver Resolver) *Engine {
 	}
 }
 
+// WithStorage attaches persistence and loads whatever is already there.
+//
+// Loading at attach time rather than lazily, because the alternative is a session list that fills in
+// after the interface has already drawn an empty one, which reads as history having been lost.
+func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
+	e.mu.Lock()
+	e.storage = storage
+	e.onStorageError = onError
+	e.mu.Unlock()
+
+	saved, err := storage.List()
+	if err != nil {
+		return err
+	}
+
+	// Oldest first, so the in memory order matches the order sessions were created and the numeric
+	// part of a generated ID keeps meaning what it looks like it means.
+	for i := len(saved) - 1; i >= 0; i-- {
+		full, err := storage.Load(saved[i].ID)
+		if err != nil {
+			return err
+		}
+		e.mu.Lock()
+		e.sessions[full.ID] = &full
+		e.order = append(e.order, full.ID)
+		e.nextID = max(e.nextID, idNumber(full.ID))
+		e.mu.Unlock()
+	}
+	return nil
+}
+
+// idNumber reads the counter out of a generated session ID.
+//
+// Needed because the counter has to carry across restarts. Without it the first session of a new
+// run would be called session-1 again and collide with the one already on disk, silently appending
+// tonight's turns to a conversation from last week.
+func idNumber(id string) int {
+	rest, ok := strings.CutPrefix(id, "session-")
+	if !ok {
+		return 0
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // SetClock replaces the clock. Only useful in tests.
 func (e *Engine) SetClock(now func() time.Time) { e.events.SetClock(now) }
+
+// WithTools gives agents in this engine something to do besides talk.
+//
+// The approver is separate from the tools because who answers a permission prompt is a property of
+// how Canopy is being run, not of what the agent can do. A terminal asks; a scheduled run has a
+// policy; neither should be assumed by the thing holding the tool list.
+func (e *Engine) WithTools(
+	tools *core.ToolRegistry, trust core.TrustLevel, approver agent.Approver,
+) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.tools = tools
+	e.trust = trust
+	e.approver = approver
+	if e.trail == nil {
+		e.trail = permission.NewTrail()
+	}
+}
+
+// WithCheckpoints captures the worktree before every turn, so any turn can be undone.
+//
+// Optional, because a conversation in a directory that is not a git repository is a legitimate thing
+// and should not be refused for want of somewhere to store a snapshot.
+func (e *Engine) WithCheckpoints(taker *git.Taker) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.checkpoints = taker
+}
+
+// checkpointBefore captures the worktree, returning an empty string when there is nowhere to.
+//
+// A failure to checkpoint does not stop the turn. Refusing to answer because a snapshot could not be
+// taken would be a tool that stops working in a directory it cannot fully manage, and the turn is
+// still what the user asked for. It is reported instead, since somebody who thinks they can undo and
+// cannot is worse off than somebody who knows they cannot.
+func (e *Engine) checkpointBefore(ctx context.Context, sessionID, turnID string) string {
+	e.mu.Lock()
+	taker, report := e.checkpoints, e.onStorageError
+	e.mu.Unlock()
+
+	if taker == nil {
+		return ""
+	}
+	checkpoint, err := taker.Take(ctx, turnID, "before "+sessionID)
+	if err != nil {
+		if report != nil {
+			report(fmt.Errorf("could not checkpoint before this turn, so it cannot be undone: %w", err))
+		}
+		return ""
+	}
+	return checkpoint.Commit
+}
+
+// Undo restores the worktree to how it was before a turn ran.
+//
+// The conversation is left alone. Reverting the files and deleting the messages would destroy the
+// record of what was tried, which is the thing somebody undoing wants to look at afterwards to work
+// out what to ask for instead.
+func (e *Engine) Undo(ctx context.Context, sessionID, turnID string) error {
+	e.mu.Lock()
+	taker := e.checkpoints
+	session, ok := e.sessions[sessionID]
+	var commit string
+	if ok {
+		for _, turn := range session.Turns {
+			if turn.ID == turnID {
+				commit = turn.Checkpoint
+				break
+			}
+		}
+	}
+	e.mu.Unlock()
+
+	switch {
+	case !ok:
+		return fmt.Errorf("no session %q", sessionID)
+	case taker == nil:
+		return errors.New("this directory is not a git repository, so nothing was checkpointed")
+	case commit == "":
+		return fmt.Errorf("turn %s has no checkpoint, so there is nothing to restore", turnID)
+	}
+
+	if err := taker.Restore(ctx, git.Checkpoint{Commit: commit}); err != nil {
+		return err
+	}
+	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: sessionID})
+	return nil
+}
+
+// Trail is the audit record of every tool call these agents have made.
+func (e *Engine) Trail() *permission.Trail {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.trail == nil {
+		e.trail = permission.NewTrail()
+	}
+	return e.trail
+}
 
 // Events returns a channel of notifications. See core.SnapshotStore for the contract.
 func (e *Engine) Events(afterSequence uint64) <-chan core.Event {
 	return e.events.Subscribe(afterSequence)
 }
 
-// Close stops every running turn and shuts the event stream down.
+// Close stops every running turn, finishes writing, and shuts the event stream down.
+//
+// It closes the storage it was given, because WithStorage hands ownership over. Two owners of one
+// database handle is how a file gets closed while something else is still writing to it, which is
+// exactly the bug the write counter here exists to prevent.
 func (e *Engine) Close() {
 	e.mu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(e.cancels))
@@ -73,10 +274,22 @@ func (e *Engine) Close() {
 		cancels = append(cancels, cancel)
 	}
 	e.cancels = map[string]context.CancelFunc{}
+	storage := e.storage
+	e.storage = nil
 	e.mu.Unlock()
 
 	for _, cancel := range cancels {
 		cancel()
+	}
+
+	// In this order: the turns settle first, then the writes those turns produce.
+	e.turns.Wait()
+	e.writes.Wait()
+
+	if storage != nil {
+		if err := storage.Close(); err != nil && e.onStorageError != nil {
+			e.onStorageError(err)
+		}
 	}
 	e.events.Close()
 }
@@ -113,6 +326,8 @@ func (e *Engine) Session(id string) (core.Session, bool) {
 
 func copySession(s core.Session) core.Session {
 	s.Turns = append([]core.Turn(nil), s.Turns...)
+	s.Compactions = append([]core.Compaction(nil), s.Compactions...)
+	s.Forks = append([]core.ForkRef(nil), s.Forks...)
 	return s
 }
 
@@ -133,8 +348,46 @@ func (e *Engine) Create(keyName, model string) core.Session {
 	out := copySession(*s)
 	e.mu.Unlock()
 
+	e.persistSession(out)
 	e.events.Publish(core.Event{Kind: core.EventSessionsChanged, SessionID: s.ID})
 	return out
+}
+
+// Sessions and turns are written at two moments and no others: when a turn starts, so the question
+// survives a crash, and when it reaches a terminal state, so the answer does. Nothing is written per
+// token. That would turn one streamed reply into thousands of transactions to buy a guarantee
+// nobody asked for, which is that the last few words of a reply still arriving when the process
+// died should also be kept.
+
+// persist runs one write against whatever storage is attached, counting it so shutdown can wait.
+//
+// The counter is taken under the same lock that reads the storage handle. Taking it afterwards
+// would leave a window where Close sees no writes outstanding and closes the database a moment
+// before this one starts.
+func (e *Engine) persist(write func(*Storage) error) {
+	e.mu.Lock()
+	storage, report := e.storage, e.onStorageError
+	if storage != nil {
+		e.writes.Add(1)
+	}
+	e.mu.Unlock()
+
+	if storage == nil {
+		return
+	}
+	defer e.writes.Done()
+
+	if err := write(storage); err != nil && report != nil {
+		report(err)
+	}
+}
+
+func (e *Engine) persistSession(session core.Session) {
+	e.persist(func(s *Storage) error { return s.SaveSession(session) })
+}
+
+func (e *Engine) persistTurn(sessionID string, ordinal int, turn core.Turn) {
+	e.persist(func(s *Storage) error { return s.SaveTurn(sessionID, ordinal, turn) })
 }
 
 // ErrBusy is returned when a session already has a turn in flight.
@@ -188,10 +441,24 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancels[sessionID] = cancel
+	started := s.Turns[len(s.Turns)-1]
+	ordinal := len(s.Turns) - 1
+	saved := copySession(*s)
 	e.mu.Unlock()
 
+	// Taken before the turn runs and before it is persisted, so the snapshot describes the worktree
+	// as it was when the question was asked rather than part way through the answer.
+	if commit := e.checkpointBefore(context.Background(), sessionID, turnID); commit != "" {
+		e.update(sessionID, turnID, func(t *core.Turn) { t.Checkpoint = commit })
+		started.Checkpoint = commit
+		saved = e.snapshot(sessionID)
+	}
+
+	e.persistSession(saved)
+	e.persistTurn(sessionID, ordinal, started)
 	e.publishTurn(sessionID, turnID, false)
 
+	e.turns.Add(1)
 	go e.run(ctx, sessionID, turnID, keyName, model, history)
 	return turnID, nil
 }
@@ -220,6 +487,7 @@ func (e *Engine) run(
 		e.mu.Lock()
 		delete(e.cancels, sessionID)
 		e.mu.Unlock()
+		e.turns.Done()
 	}()
 
 	client, id, err := e.resolver.Resolve(keyName, model)
@@ -228,10 +496,28 @@ func (e *Engine) run(
 		return
 	}
 
-	stream, err := client.Stream(ctx, core.Request{
-		Model:    model,
-		Messages: history,
+	e.update(sessionID, turnID, func(t *core.Turn) {
+		t.State = core.TurnStreaming
+		t.Provider = client.Name()
 	})
+
+	e.mu.Lock()
+	tools, trust, approver, trail := e.tools, e.trust, e.approver, e.trail
+	e.mu.Unlock()
+
+	loop := &agent.Loop{
+		Client:    client,
+		Tools:     tools,
+		Trust:     trust,
+		Grants:    e.grantsFor(sessionID),
+		Trail:     trail,
+		Approver:  approver,
+		AgentID:   sessionID,
+		SessionID: sessionID,
+	}
+
+	outcome, err := loop.Run(ctx, core.Request{Model: model, Messages: history},
+		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
 	if err != nil {
 		// failureState rather than a flat TurnFailed: a provider can take several seconds to send
 		// its first byte, and somebody who presses escape in that window has stopped the turn
@@ -240,51 +526,90 @@ func (e *Engine) run(
 		e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, client.Name())
 		return
 	}
-	defer func() { _ = stream.Close() }()
 
-	e.update(sessionID, turnID, func(t *core.Turn) {
-		t.State = core.TurnStreaming
-		t.Provider = client.Name()
+	usage, _ := pricing.Apply(id, outcome.Usage)
+	state := core.TurnStateFromStopReason(outcome.Stop)
+
+	// A turn stopped by a step or token bound is a failure with a specific explanation, not a
+	// generic one. "It went in circles" is something a user can act on; "the turn failed" is not.
+	var reason error
+	if outcome.LimitHit != "" {
+		state = core.TurnFailed
+		reason = errors.New(outcome.LimitHit)
+	}
+
+	e.finish(sessionID, turnID, state, reason, usage, client.Name())
+}
+
+// snapshot returns a copy of a session, or the zero value if it has gone.
+func (e *Engine) snapshot(sessionID string) core.Session {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if s, ok := e.sessions[sessionID]; ok {
+		return copySession(*s)
+	}
+	return core.Session{}
+}
+
+// grantsFor returns the approvals in force for a session, creating them on first use.
+//
+// Per session and never persisted, because an approval that outlives the conversation it was given
+// in is one nobody remembers granting.
+func (e *Engine) grantsFor(sessionID string) *permission.Grants {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.grants == nil {
+		e.grants = map[string]*permission.Grants{}
+	}
+	if existing, ok := e.grants[sessionID]; ok {
+		return existing
+	}
+	fresh := permission.NewGrants()
+	e.grants[sessionID] = fresh
+	return fresh
+}
+
+// turnObserver folds the loop's running commentary into the session snapshot.
+//
+// This is the only thing that connects a turn in progress to what is on screen, and every method
+// has to be cheap: they run on the loop's goroutine, between tokens.
+type turnObserver struct {
+	engine    *Engine
+	sessionID string
+	turnID    string
+}
+
+func (o *turnObserver) Text(chunk string) {
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Text += chunk })
+}
+
+func (o *turnObserver) Thinking(chunk string) {
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Thinking += chunk })
+}
+
+func (o *turnObserver) ToolRequested(call core.ToolCall) {
+	// Shown before permission is decided, because the gap between a tool being asked for and being
+	// approved is exactly when somebody wants to see what is being proposed.
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		t.ToolCalls = append(t.ToolCalls, call)
+		t.State = core.TurnAwaitingTools
 	})
+}
 
-	for stream.Next() {
-		event := stream.Event()
+func (o *turnObserver) ToolFinished(_ core.ToolCall, result core.ToolResult) {
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		t.ToolResults = append(t.ToolResults, result)
+		t.State = core.TurnStreaming
+	})
+}
 
-		switch event.Kind {
-		case core.EventText:
-			e.update(sessionID, turnID, func(t *core.Turn) { t.Text += event.Text })
-
-		case core.EventThinking:
-			e.update(sessionID, turnID, func(t *core.Turn) { t.Thinking += event.Text })
-
-		case core.EventNotice:
-			// A fallback to another provider. Recorded on the turn rather than merged into the
-			// reply, because it came from Canopy and reads as the model speaking otherwise.
-			e.update(sessionID, turnID, func(t *core.Turn) {
-				t.Text += fmt.Sprintf("\n[%s]\n", event.Text)
-			})
-
-		case core.EventToolCall:
-			e.update(sessionID, turnID, func(t *core.Turn) {
-				t.ToolCalls = append(t.ToolCalls, *event.ToolCall)
-			})
-
-		case core.EventDone:
-			usage, _ := pricing.Apply(id, event.Usage)
-			e.finish(sessionID, turnID,
-				core.TurnStateFromStopReason(event.StopReason), event.Err, usage, client.Name())
-			return
-		}
-	}
-
-	// A stream that ended without a done event is a bug in a provider adapter, not a completed
-	// turn. Left as failed rather than complete, because the alternative is presenting an answer
-	// nobody can vouch for as finished.
-	err = stream.Err()
-	if err == nil {
-		err = errors.New("the provider stopped without saying how the turn ended")
-	}
-	e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, client.Name())
+func (o *turnObserver) StepFinished(usage core.Usage) {
+	// A running total, so a turn that takes twenty steps shows what it has spent before it ends
+	// rather than only afterwards.
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		t.Usage = t.Usage.Add(usage)
+	})
 }
 
 // failureState decides whether something that went wrong was a fault or a person pressing escape.
@@ -347,10 +672,24 @@ func (e *Engine) finish(
 	if state == core.TurnFailed && turn.Error == "" {
 		turn.Error = "the turn failed without an explanation"
 	}
-	e.sessions[sessionID].UpdatedAt = now
+	session := e.sessions[sessionID]
+	session.UpdatedAt = now
+	finished, ordinal := *turn, indexOfLocked(session, turnID)
+	saved := copySession(*session)
 	e.mu.Unlock()
 
+	e.persistTurn(sessionID, ordinal, finished)
+	e.persistSession(saved)
 	e.publishTurn(sessionID, turnID, true)
+}
+
+func indexOfLocked(session *core.Session, turnID string) int {
+	for i := range session.Turns {
+		if session.Turns[i].ID == turnID {
+			return i
+		}
+	}
+	return len(session.Turns) - 1
 }
 
 func (e *Engine) findLocked(sessionID, turnID string) *core.Turn {

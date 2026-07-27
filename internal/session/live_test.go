@@ -2,6 +2,7 @@ package session_test
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +161,66 @@ func TestLiveCancelStopsTheTurn(t *testing.T) {
 	}
 	if turn.State.Whole() {
 		t.Error("a cancelled turn must never read as a whole answer")
+	}
+}
+
+// The whole persistence path with a real provider: ask, quit, come back, and find it again.
+//
+// Worth doing live rather than only with a scripted stream, because the text a real model returns
+// is what actually goes through the search index, and a model that replies with punctuation or
+// code fences is the case a hand written fixture never covers.
+func TestLiveHistorySurvivesARestart(t *testing.T) {
+	keyName, model := liveConfig(t)
+
+	path := filepath.Join(t.TempDir(), "history.db")
+
+	store, err := keys.Open()
+	if err != nil {
+		t.Fatalf("opening the key store: %v", err)
+	}
+
+	storage, err := session.OpenStorage(path)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+	engine := session.New(session.NewKeyResolver(store))
+	if err := engine.WithStorage(storage, func(err error) { t.Errorf("storage: %v", err) }); err != nil {
+		t.Fatalf("WithStorage: %v", err)
+	}
+
+	s := engine.Create(keyName, model)
+	turnID, err := engine.Send(s.ID,
+		"Reply with one sentence that contains the word chrysanthemum.")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	turn := waitForLiveTurn(t, engine, s.ID, turnID)
+	if turn.State != core.TurnComplete {
+		t.Fatalf("turn ended as %s: %s", turn.State, turn.Error)
+	}
+	engine.Close()
+
+	// A second run, as though the program had been quit and started again.
+	reopened, err := session.OpenStorage(path)
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+
+	loaded, err := reopened.Load(s.ID)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded.Turns) != 1 || loaded.Turns[0].Text != turn.Text {
+		t.Errorf("the conversation did not come back intact:\n got %+v\nwant %q",
+			loaded.Turns, turn.Text)
+	}
+
+	hits, err := reopened.Search("chrysanthemum", 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Errorf("a real reply was saved but is not findable. Reply was:\n%s", turn.Text)
 	}
 }

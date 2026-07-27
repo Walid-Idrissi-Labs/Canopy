@@ -1,5 +1,58 @@
 # Open questions
 
+## What happened overnight, 26 to 27 July
+
+Walid asked for unsupervised work through the night on `feat/agent-runtime`, with everything
+committed as it went and the decisions written down rather than explained in the morning. This is
+the orientation; the reasoning for each piece is in that task's notes in TASKS.md.
+
+**28 commits.** Phase A3 is complete and phase A4 is complete except for the interface work that
+depends on A5. Phase A5's git foundations are done.
+
+What now exists that did not last night:
+
+- **Sessions persist.** SQLite, migrations from the first version, full text search across every
+  conversation. `canopy search <words>`.
+- **An agent does work.** It reads and writes files, runs commands, uses git, and fetches pages.
+  Eleven tools. Proved against a real provider, not only against scripted streams.
+- **Permissions decide, and ask.** Per agent trust levels, a prompt in the transcript, an audit
+  trail of every call including the refused ones.
+- **Nothing is silently lost.** Compaction announces itself and keeps the history. Every turn is
+  checkpointed so it can be undone. A cancelled turn keeps its partial and says it is partial.
+- **Markdown and syntax highlighting** in replies, written by a Sonnet agent working in parallel.
+- **Several agents at once.** Named, each with its own conversation, credential and model. Three
+  layouts over them: a list ordered by what needs you, a two way split, and one full width. `ctrl+d`
+  from chat, `enter` to open one, `n` to start another.
+- **Worktrees.** Discovered, created and removed, with the primary checkout and anything Canopy did
+  not make protected at every level of confirmation.
+
+Four things worth a second pair of eyes, in order:
+
+1. **Q-08**, a commit with a misleading message that I chose not to rewrite unsupervised.
+2. **Q-09**, whether `a` (approve everything of this shape) is too easy to reach on the prompt.
+3. **Q-06**, the 148 MB SQLite dependency, given Walid is storage aware.
+4. **Q-01**, whether a rate of zero should be allowed for a genuinely free endpoint.
+
+**Ten real bugs were found by tests rather than by review**, and each is recorded where it happened.
+The four most instructive:
+
+- A cancelled turn reported itself as **failed** on both providers. Only a live test could catch it,
+  because the ordering only goes wrong when a read is genuinely blocked when the cancel arrives.
+- The tool loop **hung for ten minutes** because it read past the done event, which only showed up
+  because a scripted stream blocks where a real one returns false.
+- A compaction could report having made the conversation **larger**, because the before and after
+  figures were measured two different ways.
+- The marker file that says "Canopy made this worktree" could not be written at all, because in a
+  linked worktree `.git` is a file rather than a directory.
+
+And one found by rendering a screen and looking at it: the cost figure in the chat header vanished
+every time somebody sent a message, because an unpriced in flight turn poisoned the total.
+
+**The last live run of the night** had NVIDIA accept a request and then send nothing. That was worth
+having: it exposed a real gap, and there is now a stall watchdog. The live suite passes.
+
+---
+
 Things that need a person, kept here rather than guessed at. Each one says what was decided in the
 meantime so nothing is blocked waiting for an answer, and what would change if the answer is
 different.
@@ -79,3 +132,139 @@ two real bugs on its first run that no scripted test could have found, both abou
 **Decided in the meantime:** skipped by default, never run in CI, and no secret is in the repository.
 
 **What would change it:** whether to run them on a schedule against a cheap model, and who pays.
+
+---
+
+## Q-06 SQLite costs 148 MB in the module cache
+
+`modernc.org/sqlite` is the pure Go driver, chosen so `go install` works on a machine with no C
+toolchain, which is most of them. It ships transpiled C for every platform, so the module is large
+even though only about 9 MB reaches the binary.
+
+**Decided in the meantime:** taken, because D-24 chose SQLite and full text search over history is
+in PG-A3's acceptance line. Walid was told the same day, since he is storage aware.
+
+**What would change it:** dropping to an append only file format. That would cost full text search,
+which would have to become a linear scan or be cut. The alternative cgo driver is much smaller but
+breaks `go install` for anyone without a compiler, which is the wrong trade for a tool people are
+meant to try out.
+
+---
+
+## Q-07 History is kept forever and nothing prunes it
+
+Every session and turn stays in `history.db` until somebody deletes it. There is no retention
+policy, no size cap, and no `canopy history prune`.
+
+**Decided in the meantime:** unbounded, because throwing away somebody's conversations without
+asking is worse than a large file, and the file is text so it compresses well and grows slowly.
+
+**What would change it:** a cap, an age based prune, or simply a `canopy history size` so people can
+see it before it surprises them. Given Walid is storage aware this probably wants deciding rather
+than deferring.
+
+---
+
+## Q-08 Commit 2a83944 has a misleading message
+
+It says "add the tool contract and the file tools" and also contains `internal/tui/chat/markdown.go`
+and its tests, written by a parallel agent. Two agents were working in the same package and the
+staging swept them in.
+
+**Decided in the meantime:** left alone. The branch is shared and pushed, and rewriting pushed
+history without a human present is a worse outcome than one commit whose message is incomplete. It
+is recorded in A3-04's notes so the record is accurate even where the log is not.
+
+**What would change it:** if the four of us decide the history matters more, `feat/agent-runtime` can
+be rebased before merge, since nothing has been built on it outside this branch.
+
+---
+
+## ~~Q-09 Permission decisions have no interface yet~~ resolved 2026-07-27
+
+**Built.** The prompt appears at the bottom of the transcript, under the reasoning that led to the
+call, rather than in a dialogue over it: a modal that covers the conversation asks somebody to decide
+with the context hidden. `y` allows once, `a` allows everything of that shape for the rest of the
+session, and **anything else refuses, including enter and escape**. That last part is deliberate.
+The reflex key on a prompt somebody has not read is enter, and enter meaning no is the difference
+between a misread prompt costing a retry and costing a repository.
+
+Worth a look in review: whether `a` is too easy to reach. It is one keystroke away from the safe
+answer, and it is the one that stops the asking.
+
+---
+
+## Q-10 The trust level is hardcoded to standard
+
+`attachTools` in `cmd/canopy/commands.go` gives every agent `TrustStandard`. There is no way to
+choose, because per profile levels are configured at A5 and there are no profiles yet.
+
+**Decided in the meantime:** standard, which reads and writes inside the workspace without asking
+and shows every shell command before running it. The level that asks about the dangerous half is the
+only defensible default when the user has not chosen.
+
+**What would change it:** A5 brings profiles. Until then, somebody who wants a read-only agent
+cannot have one, which is a real limitation for the "point it at a repository you do not own" case.
+
+---
+
+## Q-11 Web search needs a provider and an account
+
+`fetch_url` is built. Search is not, because every usable search API wants a key and an account:
+Brave Search, Tavily, Exa, Serper. Which one, and whose account pays for it, is not something to
+decide unilaterally.
+
+**Decided in the meantime:** not built. Scraping a search engine's HTML was considered and rejected:
+it breaks constantly, and it is rude in a way that reflects on whoever ships an open source tool
+that does it.
+
+**What is needed:** a choice of provider, and a decision about whether search is a Canopy account
+thing or a bring your own key thing. The second is more in keeping with how keys already work here.
+
+A model can still find current documentation by fetching a URL it already knows, which covers the
+common case of checking a library version. It cannot discover a page it has never heard of.
+
+---
+
+## Q-12 Nothing enforces worktree confinement on the git tools
+
+The git tools run git with the workspace as the working directory, which is the right directory.
+Nothing stops a path argument from naming something git tracks elsewhere through a submodule, and
+nothing stops an agent operating on the primary checkout if that is where it was started.
+
+**Decided in the meantime:** left as is and recorded rather than claimed, because A5-03 is where
+worktrees become real and the confinement has something to be confined to. Claiming it now would be
+worse than the gap.
+
+**What it means today:** an agent started in the primary checkout can commit to the primary
+checkout. That is what somebody running `canopy` in their own repository is asking for, so it is not
+wrong yet, but it stops being right the moment several agents exist.
+
+---
+
+## Q-13 The live tests are slow and occasionally flaky against NVIDIA NIM
+
+The three live agent tests take between one and four minutes each against
+`minimaxai/minimax-m2.7`, and one of them timed out at four minutes on a run where the other two
+passed comfortably. Raising the budget to ten minutes fixed it.
+
+**Decided in the meantime:** a generous budget, because tightening it makes the suite fail for
+reasons that have nothing to do with this code, which is the fastest way to teach people to ignore a
+red test.
+
+**Worth knowing:** the slowdown got noticeably worse after the tool set grew from five tools to
+eleven, which is a larger prompt on every step. That is expected and is the cost of giving an agent
+more to choose from. It also means a faster provider will make the whole thing feel very different,
+and judging Canopy's speed on this endpoint would be judging NVIDIA's free tier.
+
+**Not decided:** whether these ever run anywhere other than by hand. They cost money and take ten
+minutes, so a per commit CI run is out. A nightly one against a cheap model is plausible.
+
+**Update, later the same night.** A final run had NIM returning 504s and, worse, accepting a request
+and then never sending anything. That second failure exposed a real gap rather than a flaky test:
+without a stall timeout the turn waited on the HTTP client's own limit, which is half an hour. There
+is now a two minute watchdog, and a stalled provider is reported as a provider that stopped answering
+rather than as a cancellation, because the two need entirely different words on screen. See the note
+in A2-06.
+
+So the flakiness was worth having. It is still worth deciding whether to keep paying for it.

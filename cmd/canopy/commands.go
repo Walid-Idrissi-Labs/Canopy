@@ -3,20 +3,25 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
+	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 )
 
@@ -61,18 +66,154 @@ func runChat() error {
 	engine := session.New(resolver)
 	defer engine.Close()
 
-	// One session to start in. Several sessions and the agents view arrive at A5; the engine
-	// already holds a list rather than a single conversation, so that is a screen rather than a
-	// rewrite.
-	keyName := resolver.DefaultKeyName()
-	engine.Create(keyName, defaultModelFor(keyStore, keyName))
+	// History is attached if it can be, and the program runs without it if it cannot. A disk
+	// problem should cost you the ability to look back at old conversations, not the ability to
+	// have a new one.
+	if err := attachHistory(engine); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: history is not being saved: %v\n", err)
+	}
 
 	dir, err := os.Getwd()
 	if err != nil {
-		dir = ""
+		return fmt.Errorf("finding the working directory: %w", err)
+	}
+
+	// Tools are scoped to the directory Canopy was started in, which is what "run canopy in a
+	// project" means. A workspace that could not be opened is a directory the agent cannot work in,
+	// and a conversation with no tools is still a useful thing, so it is a warning rather than a
+	// failure.
+	if err := attachTools(engine, dir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
+	}
+
+	// The session you land in is an agent like any other, registered so it appears in the agents
+	// view rather than being a special case the list has to know about. Called "main" because that
+	// is what somebody would call the one they are talking to.
+	keyName := resolver.DefaultKeyName()
+	if _, err := engine.AddAgent(session.Agent{
+		Name:    "main",
+		KeyName: keyName,
+		Model:   defaultModelFor(keyStore, keyName),
+		Dir:     dir,
+		Trust:   core.TrustStandard,
+	}); err != nil {
+		return fmt.Errorf("starting the first agent: %w", err)
 	}
 
 	return tui.RunApp(store, keyStore, engine, filepath.Base(dir), keyName)
+}
+
+// attachTools gives the agent something to do besides talk.
+//
+// The trust level is standard for now, which reads and writes inside the workspace without asking
+// and shows every shell command before running it. Per profile levels are configured at A5, and
+// until there is a way to choose one, the level that asks about the dangerous half is the only
+// defensible default.
+func attachTools(engine *session.Engine, dir string) error {
+	workspace, err := tools.OpenWorkspace(dir)
+	if err != nil {
+		return err
+	}
+
+	registry := core.NewToolRegistry()
+	for _, tool := range tools.FileTools(workspace) {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	for _, tool := range tools.GitTools(workspace) {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	for _, tool := range tools.WebTools() {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
+	// the ones that can be governed per argument should be reached for before the one that cannot.
+	if err := registry.Register(tools.ShellTool(workspace)); err != nil {
+		return err
+	}
+
+	// The engine asks the person watching. It implements the approver itself, which is what lets a
+	// blocking question from a background goroutine reach an event loop that must never block.
+	engine.WithTools(registry, core.TrustStandard, engine)
+
+	// Checkpoints only work in a git repository, and a conversation in a directory that is not one
+	// is a legitimate thing that should not be refused for want of somewhere to store a snapshot.
+	if isGitRepository(dir) {
+		engine.WithCheckpoints(gitpkg.NewTaker(dir))
+	}
+	return nil
+}
+
+// isGitRepository reports whether a directory is inside a git working tree.
+func isGitRepository(dir string) bool {
+	result, err := execpkg.Run(context.Background(), "git",
+		[]string{"rev-parse", "--is-inside-work-tree"},
+		execpkg.Options{Dir: dir, Timeout: 10 * time.Second})
+	return err == nil && result.Succeeded()
+}
+
+// attachHistory gives the engine somewhere to persist to.
+func attachHistory(engine *session.Engine) error {
+	path, err := session.DefaultPath()
+	if err != nil {
+		return err
+	}
+	storage, err := session.OpenStorage(path)
+	if err != nil {
+		return err
+	}
+	// A write that fails mid session is reported once and does not end anything. The answer on
+	// screen is still the answer, and taking the conversation down because a disk was full would be
+	// the tail wagging the dog.
+	return engine.WithStorage(storage, func(err error) {
+		fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
+	})
+}
+
+// runSearch finds a message across every stored conversation.
+func runSearch(args []string, out io.Writer) error {
+	query := strings.TrimSpace(strings.Join(args, " "))
+	if query == "" {
+		return errors.New("what are you looking for? For example `canopy search bcrypt`")
+	}
+
+	path, err := session.DefaultPath()
+	if err != nil {
+		return err
+	}
+	storage, err := session.OpenStorage(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = storage.Close() }()
+
+	hits, err := storage.Search(query, 30)
+	if err != nil {
+		return err
+	}
+	if len(hits) == 0 {
+		_, err := fmt.Fprintf(out, "Nothing in your history matches %q.\n", query)
+		return err
+	}
+
+	w := &errWriter{w: out}
+	for _, hit := range hits {
+		title := hit.SessionTitle
+		if title == "" {
+			title = hit.SessionID
+		}
+		w.printf("%s  %s\n", hit.At.Local().Format("2006-01-02 15:04"), title)
+		// The excerpt keeps SQLite's markers around the matched words rather than being styled
+		// here, since a command writing to a pipe should not be emitting colour.
+		w.printf("  %s\n\n", strings.ReplaceAll(
+			strings.ReplaceAll(hit.Excerpt, "<<", ""), ">>", ""))
+	}
+	return w.err
 }
 
 // defaultModelFor picks the model a new session starts on.
