@@ -3186,6 +3186,80 @@ and scrolls with `j` and `k` while any other key still closes it.
 Scoped by that criterion rather than by taste, or this becomes the task that is never finished. It
 is pre-alpha. The bar is that nothing blocks you, not that everything is beautiful.
 
+### M-07 The interface for the release
+`status: review | owner: Claude | branch: feat/interface-polish | depends: A9-03`
+`scope: internal/tui/theme/, internal/tui/styles.go, internal/tui/brand/, internal/tui/layout.go, internal/tui/chat/transcript.go`
+
+Deliverable: the palette, the mark and the drawn name, so the program looks like something somebody
+chose rather than something that accumulated.
+
+Acceptance: selecting a theme changes every screen and not some of them. Every state stays
+distinguishable with the colour stripped. The mark and the drawn name each declare a width that
+matches what they actually draw.
+
+`verify: claude [x] 2026-07-27   codex [ ]`
+
+notes: **added 2026-07-27**, at Walid's request, ahead of the release.
+
+It started by finding that the theme system was not connected. `internal/tui/theme` opens by saying
+no other package constructs a colour and `styles.go` declared six of its own, duplicating the
+default palette by value, so selecting the monochrome theme changed the chat and the agents view and
+left the worktree monitor, the review screen and the help overlay in full colour. The test meant to
+cover it looped over both themes and then asserted every state has a word and a single width glyph,
+which is true whatever the palette is. Third instance this week of a test whose body cannot fail for
+the reason its name implies, after the `git_branch` kind and the context window table.
+
+Styles resolve at render time now, so no call site changed and none of them can capture whichever
+palette happened to be current at package initialisation. The few places needing a bare colour
+rather than a style are refreshed through a change hook, because `lipgloss.TerminalColor` has an
+unexported method and cannot be implemented outside lipgloss.
+
+Worth knowing before writing any test near this: under `go test` lipgloss finds no terminal. It
+renders with the styling stripped and resolves every adaptive colour to black, so both obvious
+assertions, comparing rendered text and comparing resolved RGBA, compare two identical things and
+pass whatever the styles are. The tests compare the colour value the style is holding.
+
+The brand colours are the supervisors': `#0c87b7`, `#b4cc03`, `#b7b7b7`. Danger stays red and
+warning stays amber deliberately and are not brand colours, because those two meanings are carried
+by convention across every program a user has ever seen and overriding them to fit a palette is how
+a failure comes to look like a success. No theme sets a background, so the terminal's own shows
+through, including through the doorway of the mark.
+
+The mark is a tent with a campfire beside it. It was a tree canopy first, which read as a mushroom
+cloud, and the per-row symmetry rule was dropped to allow the fire: symmetry is right for a lone
+silhouette and wrong for a scene, and what it was really protecting is checked directly now.
+
+### M-08 The new conversation screen, and the mark in motion
+`status: blocked | owner: none | branch: none | depends: M-07`
+`scope: internal/tui/chat/model.go, internal/tui/app.go, cmd/canopy/`
+
+Deliverable: opening Canopy puts you in a new conversation, composed the way the supervisors asked
+for it: the drawn name centred above the message box, the box itself near the middle of the screen,
+the commands along the bottom, and the mark animated in the bottom right corner. Ending a session
+prints a code, and `canopy pickup <code>` returns to that conversation.
+
+Acceptance: a fresh start never lands in somebody's previous conversation. The animation stops
+costing anything the moment the conversation is no longer empty. A printed code resumes the exact
+session it names and says so plainly when it does not match one.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **added 2026-07-27.** Blocked on process rather than on design, and the block is temporary.
+
+Every part of this needs a file another branch is open in, which is the one thing section 2.1 exists
+to prevent. An animation in Bubble Tea is a command that reschedules itself from `Update`, and the
+only two `Update` functions that could own it are `internal/tui/chat/model.go` and
+`internal/tui/app.go`. Starting in a new conversation is decided in `app.go`. The resume code needs
+session storage, which is `internal/session/storage.go`. All four are touched by PR #19.
+
+What was buildable without them is done and is M-07. The frames and the placement can be written in
+`brand` and `chat/transcript.go`, which are free, so what actually waits here is small: a ticker, a
+startup decision and a command. Recorded rather than started, because taking the conflict to save
+twenty minutes is how the merge on 2026-07-27 stopped compiling.
+
+A chat picker is explicitly out of scope here and comes later. The code printed on exit is the
+resume path for 0.1.
+
 ### PG-M Phase M gate
 `status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`
 
