@@ -1103,6 +1103,17 @@ that looks like it would work quietly does not, and the first version of this wa
 like a fix. Deriving the context also keeps a stall distinguishable from somebody pressing escape,
 which matters because the two need entirely different words.
 
+**Its test shipped broken and CI caught it, not the local suite.** The watchdog landed in the second
+to last commit of the night and the last full race run came before it, so the branch went out red.
+The test kept a plain bool, wrote it from the timer goroutine and read it from the test goroutine,
+which the race detector rejects on its own. It was also a real flake: the guard marks itself fired
+and drops its lock before calling cancel, so polling `Fired` and then reading the bool can land in
+the window between the two and report a watchdog that fired without cancelling anything. It waits on
+the callback now, which closes the window because fired is already set by the time it runs.
+
+The lesson is narrower than "run the tests". Run the full race suite against the commit being
+pushed, not against the one before it.
+
 Base URL is required rather than defaulted: this provider *is* its endpoint. Which provider gets
 spoken is decided by the credential, not by a flag, which is the point of naming keys. There is no
 default model for the same reason a base URL has none, so `-model` is required and says so.
