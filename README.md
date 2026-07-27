@@ -89,8 +89,8 @@ Agents get status, diff, log, add, commit and branch as structured tools rooted 
 Canopy has two workspace modes:
 
 - A **direct agent** works in the repository where Canopy was started. That may be your primary
-  checkout. The product contract requires the creation flow to identify the mode and workspace
-  before write-capable work begins; the current pre-alpha flow has not finished that warning yet.
+  checkout. The creation flow identifies the mode and exact workspace, warns about the
+  primary-checkout risk, and requires a separate `y` confirmation before the agent exists.
 - An **isolated agent** gets a Canopy-owned worktree. Fan-out and concurrent editing use this mode,
   and never silently fall back to a shared checkout.
 

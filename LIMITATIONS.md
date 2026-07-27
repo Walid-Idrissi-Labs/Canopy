@@ -95,11 +95,6 @@ be rediscovered by getting burned by it.
   shell a containment boundary: an allowed shell command can invoke Git anywhere the user's account
   can reach (D-33).
 
-- The current agent-creation screen creates direct agents but does not yet show an explicit
-  pre-write warning that names direct mode and its workspace. The agent list marks isolated agents,
-  but absence of that label is too implicit for a primary-checkout safety decision. D-33 requires
-  the creation flow to make the choice visible before A5-11 can pass.
-
 - There is no sandboxing anywhere in this design and there will not be one implied. Agent-run
   commands execute under your own account with your own permissions. A worktree gives an agent its
   own files; it is not a security boundary, and claiming otherwise would be the same kind of error

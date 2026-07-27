@@ -364,6 +364,17 @@ func TestCreatingAnAgent(t *testing.T) {
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 
+	if len(e.added) != 0 {
+		t.Fatal("enter on the name created a direct agent before showing its workspace warning")
+	}
+	confirmation := plain(m.Body())
+	for _, visible := range []string{"Direct mode", "/work/project", "primary checkout", "not contained"} {
+		if !strings.Contains(confirmation, visible) {
+			t.Errorf("direct confirmation does not show %q:\n%s", visible, confirmation)
+		}
+	}
+
+	m = key(m, "y")
 	if len(e.added) != 1 {
 		t.Fatalf("%d agents created, want 1", len(e.added))
 	}
@@ -395,6 +406,7 @@ func TestAFailedCreationKeepsTheName(t *testing.T) {
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = key(m, "y")
 
 	if !m.Naming() {
 		t.Error("a failed creation closed the prompt")
@@ -405,6 +417,26 @@ func TestAFailedCreationKeepsTheName(t *testing.T) {
 	}
 	if !strings.Contains(view, "main") {
 		t.Errorf("the typed name was lost:\n%s", view)
+	}
+}
+
+func TestEscFromDirectConfirmationReturnsToTheName(t *testing.T) {
+	e := engine(status("main", core.AgentIdle, ""))
+	m := model(e)
+	m.SetDefaults("claude", "claude-opus-5", "/work/project")
+
+	m = key(m, "n")
+	for _, r := range "parser" {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	m = key(m, "enter")
+	m = key(m, "esc")
+
+	if len(e.added) != 0 {
+		t.Fatal("going back from direct confirmation created an agent")
+	}
+	if !strings.Contains(plain(m.Body()), "parser") {
+		t.Errorf("going back lost the name:\n%s", plain(m.Body()))
 	}
 }
 

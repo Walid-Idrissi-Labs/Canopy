@@ -489,8 +489,10 @@ func (a App) View() string {
 	case screenAgents:
 		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
 			"esc", "chat", "w", "worktrees", "r", "review", "?", "keys")
-		if a.agents.Naming() {
-			footer = Keys(a.dim.Width, "enter", "create", "esc", "cancel")
+		if a.agents.ConfirmingDirect() {
+			footer = Keys(a.dim.Width, "y", "create direct agent", "esc", "back")
+		} else if a.agents.Naming() {
+			footer = Keys(a.dim.Width, "enter", "review", "esc", "cancel")
 		}
 		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(), footer)
 

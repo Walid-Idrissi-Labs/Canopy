@@ -2459,9 +2459,12 @@ Not done here, and deliberately: there is no key in the agents view that creates
 yet. The engine API is the deliverable; the affordance belongs with A5-06 and A5-10, and an isolated
 creation has to go through a command rather than straight from a keypress because it runs git.
 
-Also not done: the direct-agent creation flow does not yet show the mode and workspace as an
-explicit pre-write warning. D-33 makes that visibility part of the contract. Until the affordance
-exists and is tested, A5-11 cannot pass only because the engine API distinguishes the modes.
+**Direct-mode warning added on `feat/permissions-and-confinement`.** Enter now finishes the name
+without creating anything. A separate screen names Direct mode, shows the exact workspace, warns
+that it may be the primary checkout, and states that an enabled shell is not contained there. Only
+`y` creates the agent; escape returns to the name without losing it. Tests prove Enter alone cannot
+create the agent and every required warning is visible. A5-11 remains blocked until the whole
+reconciled branch receives the other agent's independent rerun.
 
 ### A5-06 Per agent view and switching
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-05, A3-03`

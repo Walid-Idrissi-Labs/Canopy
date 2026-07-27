@@ -236,8 +236,9 @@ could operate on the primary checkout when that was where Canopy started.
 worktrees real.
 
 **What it means today:** a direct agent started in the primary checkout can commit there when trust
-permits it. Concurrent editing and fan-out require isolated worktrees. The current creation screen
-still needs the explicit direct-mode warning required by D-33.
+permits it. Concurrent editing and fan-out require isolated worktrees. The direct creation screen
+shows the exact workspace, primary-checkout risk and shell boundary, then requires a separate `y`
+before creating the agent.
 
 **Resolved 2026-07-27 by D-33:** structured path arguments exposed by `git_add` and `git_diff` pass
 through `Workspace.Resolve` on `feat/permissions-and-confinement`. A direct agent deliberately uses
