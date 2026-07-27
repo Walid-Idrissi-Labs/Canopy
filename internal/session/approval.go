@@ -83,11 +83,15 @@ func (e *Engine) Approve(
 	select {
 	case reply := <-prompt.answer:
 		if reply.approved && reply.remember {
-			// Widening happens here rather than in the loop, because the loop grants the decision's
-			// scope on every approval and this is the difference between "yes" and "yes, and stop
-			// asking". grantsFor creates the set on first use, so there is nothing to guard against:
-			// an earlier version checked whether the map existed and silently skipped the grant on
-			// the first approval of a session, which is every approval that matters.
+			// This is the only place an approval is ever recorded, and that is the whole of what
+			// makes "yes" and "yes, and stop asking" different answers. The loop used to grant the
+			// decision's scope on every approval as well, which quietly turned the first into the
+			// second: a one-time yes covered every later call of the same shape and the user was
+			// never asked again. It does not any more.
+			//
+			// grantsFor creates the set on first use, so there is nothing to guard against: an
+			// earlier version checked whether the map existed and silently skipped the grant on the
+			// first approval of a session, which is every approval that matters.
 			e.grantsFor(req.SessionID).Grant(decision.Scope)
 		}
 		return reply.approved

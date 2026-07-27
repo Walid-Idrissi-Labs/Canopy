@@ -120,7 +120,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | Rerunning the A4-04, A4-06 and A5-11 findings, then A8-06 and A8-05 | `feat/hooks-and-mcp` | none |
+| Claude | A4-04, A4-06 and A5-11 rerun and back in review. Next is A8-06, then A8-05 | `verify/permission-rerun`, then `feat/hooks-and-mcp` | none |
 | Codex | A8-04 and A8-07, plus independent verification of A6-05 and A5-09 | `feat/commands-and-cost` | none |
 
 ### 2.1 File boundary for this round
@@ -1847,7 +1847,7 @@ controls whether the process starts; it does not contain the process afterwards.
 never imply that it does.
 
 ### A4-04 Per agent trust levels and permissions
-`status: blocked | owner: Claude | branch: feat/agent-runtime | depends: A4-02, A4-03`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-02, A4-03`
 `scope: internal/permission/`
 
 Deliverable: trust level as a property of the profile. Each level defines which tools run without
@@ -1928,6 +1928,20 @@ regression tests are on `feat/permissions-and-confinement`. Verification remains
 changed behavior is independently rerun. D-33 now supplies the controlling workspace and shell
 contract.
 
+**Claude rerun 2026-07-27:** both findings were real, both fixes hold, and the task returns to
+`review`. Each fix was mutation tested rather than read. Putting the loop's `Grants.Grant` back on
+every approval fails `TestAOneTimeApprovalIsAskedForAgain`; deleting the refusal branch fails
+`TestAToolRefusalIsAuditedAsDeniedAndNotRun`. A one-time yes asks again on the next identical call
+and a remembered yes still does not, which `TestApprovingWithoutRememberingDoesNotWiden` and
+`TestRememberingWidensTheApprovalToLaterCalls` hold apart, so the fix narrowed `y` without breaking
+`a`.
+
+One thing the fix left behind. The comment in `internal/session/approval.go` still said the loop
+grants the decision's scope on every approval, which is exactly the behaviour that was removed, so
+the file explained its design by describing the bug. Corrected here. In a codebase where the
+comments carry the reasoning, one that survives the code it described is worth treating as a defect
+rather than as tidying.
+
 ### A4-05 Tool use loop
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
 `scope: internal/agent/, internal/session/engine.go, cmd/canopy/`
@@ -1973,7 +1987,7 @@ trust level says no and carry on, and create a file with specific content. All t
 `minimaxai/minimax-m2.7` on NVIDIA NIM.
 
 ### A4-06 Git tools
-`status: blocked | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
+`status: review | owner: Claude | branch: feat/agent-runtime | depends: A4-04`
 `scope: internal/tools/git.go`
 
 Deliverable: status, diff, log, add, commit and branch as structured tools scoped to the agent's
@@ -2034,6 +2048,22 @@ permission command. D-33 resolved the conflicting primary-checkout language: dir
 execution is allowed by trust, while primary-checkout lifecycle operations remain forbidden. The
 branch-mutation fix is on `feat/permissions-and-confinement`; the task remains blocked until that
 change and the reconciled acceptance are independently rerun.
+
+**Claude rerun 2026-07-27:** confirmed, and back to `review`. Reclassifying `git_branch` to
+`core.ToolGit` fails `TestGitToolsAreClassifiedForThePermissionModel`, so the fix is guarded.
+
+That guard is weaker than it looks, though, and worth saying so. It asserts a constant matches a
+table, and the bug was never that the constant was wrong in the table: it was that the permission
+model did not act on it. The test would have passed throughout the period the hole was open. So the
+rerun added `TestAReadOnlyAgentIsRefusedGitStateChangesWithoutBeingAsked`, which drives the real
+loop with an approver that says yes to everything and asserts the call is denied structurally, never
+offered, never run, and recorded as denied and not run. It reads "changing files needs at least
+confined trust, and this agent is read-only".
+
+One consequence recorded rather than fixed. `git_branch` with no `create` argument only lists, which
+is a read, and the whole tool is now a write, so a read-only agent can no longer list branches. That
+is the safe direction, and splitting the mixed tool would be a schema change to a shipped surface,
+so it stays as it is.
 
 ### A4-07 Web search and fetch
 `status: partial | owner: Claude | branch: feat/agent-runtime | depends: A4-01`
@@ -2423,7 +2453,7 @@ would make "run an agent" mean "make a branch", which is not how anyone works mo
 would have made the common case pay for the rare one.
 
 ### A5-11 Isolated agent mode
-`status: blocked | owner: Claude | branch: feat/isolated-agents | depends: A5-05, A5-03, A5-04`
+`status: review | owner: Claude | branch: feat/isolated-agents | depends: A5-05, A5-03, A5-04`
 `scope: internal/agent/`
 
 Deliverable: opt an agent into its own worktree and branch, and return it afterwards.
@@ -2493,6 +2523,15 @@ contract and permission changes are independently rerun.
 Not done here, and deliberately: there is no key in the agents view that creates an isolated agent
 yet. The engine API is the deliverable; the affordance belongs with A5-06 and A5-10, and an isolated
 creation has to go through a command rather than straight from a keypress because it runs git.
+
+**Claude rerun 2026-07-27:** confirmed, and back to `review`. Making Enter create the agent
+immediately, skipping the confirmation entirely, fails `TestCreatingAnAgent`, which asserts nothing
+was created at that point and that Direct mode, the exact workspace path, "primary checkout" and
+"not contained" are all on screen before `y` does anything.
+`TestEscFromDirectConfirmationReturnsToTheName` covers going back without losing what was typed. The
+reworded acceptance no longer claims shell confinement, which is what D-33 settled and what
+LIMITATIONS.md already said, so the disagreement was between the ledger and the rest of the
+repository rather than between the two agents.
 
 **Direct-mode warning added on `feat/permissions-and-confinement`.** Enter now finishes the name
 without creating anything. A separate screen names Direct mode, shows the exact workspace, warns
