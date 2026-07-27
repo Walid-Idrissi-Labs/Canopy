@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A5, A6, A7 done, plus A8-03, A9-03 to A9-05. Two shipped bugs fixed | `feat/verification-and-release` | none |
+| Claude | Phase M, added 2026-07-27 and unclaimed as of this commit | `feat/mvp-usability` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -118,13 +118,17 @@ commit helper and the conflict radar are on screen behind `r` from the agent lis
 A9-05 came forward because A6 needed project configuration and 0.1 needs packaging and an honest
 limitations document.
 
-What is left, in the order it is worth doing: **A9-01 to A9-03**, the robustness sweep and the help
-screen, which is what makes 0.1 feel finished rather than assembled; then **A8-01, A8-02 and A8-04
-to A8-09**, the extensibility layer, which is the ceiling rather than the floor. **A4-07** is still
-blocked on Q-11 and **A4-09 and A4-10** each have an engine with no screen.
+What is left, in the order it is worth doing. **Phase M**, added 2026-07-27, which is what makes the
+program usable by somebody who did not build it. Then **A9-01 and A9-02**, the robustness sweep,
+which is what makes it feel finished rather than assembled. Then **A8**, the extensibility layer,
+which is the ceiling rather than the floor. **A4-07** is still blocked on Q-11, **A4-09** has an
+engine with no screen, and **A4-10** hands its remaining half to M-03.
 
-Everything below is subject to review by Codex and by Walid's classmate. Nothing here has been read
-by a second pair of eyes yet, and the parts most worth reading closely are A6-05, which is the whole
+**Nothing in this file is `done`.** 63 tasks carry `claude [x]` and none carries `codex [x]`, and
+every gate from PG-1 onward is unsigned. By the definition in section 1.2 that means one pair has
+built nine phases and the other has independently checked none of them. No amount of further
+building changes that number, and it is the largest gap between what this ledger claims and what
+has actually been established. The parts most worth reading first are A6-05, which is the whole
 strategic argument, and A5-09, which is the one that spends money.
 
 Integration cadence: no fixed calendar, see D-12. Short lived branches, merge main in before you
@@ -2116,7 +2120,11 @@ degenerates into if nothing stops it.
 
 **Partial:** the list is registered as a tool and its state is echoed back in the tool result, so it
 is visible in the transcript. It is not yet shown in the agent's own pane, which needs the list
-plumbed from the registry through the engine to the agents view. That is the remaining work.
+plumbed from the registry through the engine to the agents view.
+
+That remaining half is now **M-03**, which also asks for more detail than this task ever did. This
+one stays partial and points there rather than being reopened, so there is one task for the screen
+rather than two.
 
 ### PG-A4 Phase A4 gate
 `status: todo | depends: A4-05, A4-06, A4-08, A4-09`
@@ -2790,6 +2798,158 @@ merging either.
 
 ---
 
+# Phase M: the pre-alpha anyone can actually use
+
+Goal: someone who has never seen Canopy opens it, adds a key, talks to a model, and watches it
+change a file, without being told how.
+
+**This phase takes priority over A8 and runs before it.** Added 2026-07-27 after Walid used the
+built program rather than its tests, which is a different activity and found different things. The
+engine is nine phases deep and the surface in front of it is one phase shallow, and everything in
+A8 makes that ratio worse rather than better.
+
+The bar is deliberately not polish. It is that nothing in the first ten minutes requires reading the
+source to get past.
+
+### M-01 System tools, proven from the chat
+`status: todo | owner: none | branch: none | depends: A4-02, A4-03, A4-06`
+`scope: internal/tools/, internal/tui/chat/`
+
+Deliverable: reading, writing and running things works from a real conversation, and is followable
+while it happens.
+
+Acceptance: in a live session against a real provider the model reads a file, edits it, and runs a
+command, and each call is visible in the transcript with its arguments, its outcome and how long it
+took. A refused call leaves the turn recoverable rather than ending it. A tool that fails returns
+text the model can act on. Output too large to show is truncated with the amount hidden stated.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the tools themselves are built. `read_file`, `edit_file`, `write_file`, `glob`, `grep`, the
+git tools, the web tools and the shell are all registered in `toolsFor`, behind the permission
+model, with the shell deliberately last. What has never happened is a real model calling them in a
+real conversation with somebody watching. That is the task. Whatever is missing is discovered by
+doing it rather than guessed at now.
+
+The visible half is the part worth building carefully. A tool call that shows as a spinner and then
+nothing teaches people to distrust the program, and they are right to.
+
+### M-02 Input history
+`status: todo | owner: none | branch: none | depends: A3-02`
+`scope: internal/tui/chat/input.go`
+
+Deliverable: up and down through what you have already sent.
+
+Acceptance: up recalls the previous message and down walks back toward the box you were typing in.
+A half typed message survives the trip and is still there when you come back down. The list holds
+60 and drops the oldest. It is per conversation, not shared between agents. Opening an old
+conversation rebuilds it from that conversation's own messages, so it works before you have sent
+anything.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the single cheapest thing on this list and the one whose absence is felt every minute.
+Retyping a prompt to change one word is the most common thing a person does with a coding agent.
+
+Per conversation matters: shared history would offer you the message you sent to a different agent,
+which is at best noise and at worst sent by accident.
+
+### M-03 Task list, detailed and on screen
+`status: todo | owner: none | branch: none | depends: A4-10`
+`scope: internal/agent/todo.go, internal/tui/`
+
+Deliverable: a task list the agent maintains as it works, detailed enough to follow a long run
+without reading the transcript.
+
+Acceptance: the pane shows every item with its state, exactly one in progress, and updates within
+the turn it changed. It survives quitting and reopening. A list longer than the pane scrolls rather
+than pushing the conversation off screen. A completed item can carry what actually happened, not
+only that it is done.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: takes over the remaining half of A4-10, which built the engine and stopped at the screen.
+A4-10 stays partial and points here rather than being reopened.
+
+The one genuinely better idea than the obvious version: an item records its outcome when it closes,
+so a finished list reads as an account of what happened rather than a list of intentions that all
+say done. That is the difference between a progress bar and a report, and it costs one field.
+
+Exactly one in progress stays enforced rather than requested. A list with four things in progress is
+a list of everything the agent has touched, which is what all of these become if nothing stops it.
+
+### M-04 New conversation
+`status: todo | owner: none | branch: none | depends: A3-02`
+`scope: internal/tui/chat/, internal/tui/app.go`
+
+Deliverable: start a fresh conversation without leaving the program.
+
+Acceptance: the transcript and the input box are empty and the launch screen is shown again. The
+previous conversation is still in the session list and is not deleted. The credential and model you
+had chosen carry over. Starting one while a turn is in flight asks first.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: quitting and restarting to get a clean context is what people do when there is no key for
+this, and it costs them their credential choice every time.
+
+Not deleting is the point. A key that silently destroys an hour of conversation is a key nobody
+presses twice.
+
+### M-05 A logo worth keeping
+`status: todo | owner: none | branch: none | depends: none`
+`scope: internal/tui/layout.go, internal/tui/theme/`
+
+Deliverable: a mark that looks deliberate, on the launch screen and on an empty conversation.
+
+Acceptance: it renders correctly at 80 columns and falls back to plain text below the width it
+needs. The word Canopy appears as text beside it. It survives a theme change with only its colour
+altered, and it is drawn again by M-04 rather than only at startup.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the current one is five lines of slanted ASCII chosen for being small and out of the way,
+which was the right call for a program nobody had seen and the wrong one for a project asking people
+to try it.
+
+The text beside it is not decoration. Block letters are unreadable to a screen reader,
+unrecognisable in a narrow terminal, and unsearchable in a pasted bug report.
+
+### M-06 The first ten minutes
+`status: todo | owner: none | branch: none | depends: M-01, M-02, M-04, A9-03`
+`scope: internal/tui/`
+
+Deliverable: the interface explains itself well enough that a new user gets to a working agent
+unaided.
+
+Acceptance: a person who has not seen Canopy adds a credential, sends a message, gets a reply, and
+watches the model edit a file, without being told how and without reading the source. Every screen
+says what to press to leave it. Starting with no credential says what to do instead of showing an
+empty list. Every error names what to do next. Nothing is reachable only by a key that appears in
+no footer and no help screen.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the acceptance criterion is a person, not a checklist, and it is meant to be run on someone
+who was not in the room while it was built. Every one of the three bugs found on 2026-07-26 passed
+its tests and failed the first person who touched it.
+
+Scoped by that criterion rather than by taste, or this becomes the task that is never finished. It
+is pre-alpha. The bar is that nothing blocks you, not that everything is beautiful.
+
+### PG-M Phase M gate
+`status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`
+
+Both supervisors watch someone who has never used Canopy get from a fresh install to a model
+editing a file, without helping them.
+
+`signed: walid [ ]   classmate [ ]`
+
+notes: the person doing the walkthrough should not be either of you, and should not be told which
+key does what. Watching where they stop is the entire value of the gate.
+
+---
+
 # Phase A8: advanced orchestration and extensibility
 
 Goal: the ceiling. Everything that makes Canopy worth extending rather than just using.
@@ -3084,3 +3244,4 @@ status or verification updates.
 | 2026-07-26 | Claude | Created ledger. Phases 0 to 6 derived from Canopy-Pre-Build-Corrections.md sections 11 and 12. |
 | 2026-07-26 | Claude | Re-planned. Canopy is an agent runtime, so phases 2 to 6 became A1 to A7. Phases 0 and 1 untouched. Surviving tasks keep their old IDs in their notes, and a retired tasks table records where each one went. |
 | 2026-07-26 | Claude | Expanded to A1 to A9 after a full spec and features review. Added persistence, compaction, fallback chains, session forking, plan mode, checkpoints, web tools, sub agents, handoff, MCP, hooks, slash commands, skills, diff review, commit helper, conflict radar, cost preview, ready-to-review queue. Restored the environment setup contract as A5-04, which the previous re-plan dropped in error. |
+| 2026-07-27 | Claude | Added phase M between A7 and A8, from Walid using the built program rather than its tests. Six tasks: system tools proven from the chat, input history, a detailed task list on screen, a new conversation key, a better logo, and the first ten minutes. Runs before A8. A4-10 hands its remaining half to M-03 and stays partial. Nothing renumbered. |
