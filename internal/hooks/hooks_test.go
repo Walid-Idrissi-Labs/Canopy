@@ -340,3 +340,44 @@ func TestTheShellExecutorRunsACommandAndReportsItsExit(t *testing.T) {
 		t.Errorf("error = %v, want it to name the exit code", err)
 	}
 }
+
+// The case my own mutation testing found, and the reason "fire on entering the state" is the wrong
+// rule for a claim about code.
+//
+// An agent works, its tests pass, it works again, and its tests pass again. If the poller never
+// happens to catch an intermediate state, an edge rule keyed on the event alone sees green followed
+// by green and suppresses the second one. That silently skips the auto-commit for the second piece
+// of work, which is the failure nobody would notice until they went looking for a commit that was
+// never made.
+func TestANewRevisionPassingFiresAgainEvenWithNoStateSeenInBetween(t *testing.T) {
+	exec := &recorder{}
+	var reports []Report
+	r := runnerWith(t, exec.exec, &reports, Hook{On: Verified, Run: "git commit -am wip"})
+	ctx := context.Background()
+
+	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("abc"), Green: true})
+	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Green: true})
+	r.Wait()
+
+	if got := exec.commands(); len(got) != 2 {
+		t.Errorf("ran %d times for two revisions that each went green, want 2: %v", len(got), got)
+	}
+}
+
+// The other side of that distinction. An agent event is about the agent, so a revision changing
+// because somebody edited a file must not make an idle agent idle a second time.
+func TestAnAgentEventDoesNotRefireBecauseTheCodeChanged(t *testing.T) {
+	exec := &recorder{}
+	var reports []Report
+	r := runnerWith(t, exec.exec, &reports, Hook{On: Idle, Run: "notify"})
+	ctx := context.Background()
+
+	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("abc"), Agent: core.AgentIdle})
+	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Agent: core.AgentIdle})
+	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("ghi"), Agent: core.AgentIdle})
+	r.Wait()
+
+	if got := exec.commands(); len(got) != 1 {
+		t.Errorf("the idle hook ran %d times while the agent sat still: %v", len(got), got)
+	}
+}

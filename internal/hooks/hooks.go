@@ -136,13 +136,13 @@ type Runner struct {
 	report func(Report)
 
 	mu sync.Mutex
-	// fired remembers what has already happened, keyed by subject, event and revision together.
-	// The revision is what stops a hook that changes the worktree from re-triggering itself, and
-	// the subject is what keeps two agents from sharing one memory.
-	fired map[string]bool
-	// state remembers where each subject was, so a hook fires on entering a state rather than on
-	// being in one.
-	state map[string]map[Event]bool
+	// firedAt remembers the revision each code event last fired for, per subject. Storing the last
+	// one rather than a set of every one keeps this bounded by subjects times events instead of
+	// growing with every revision a long session produces.
+	firedAt map[string]string
+	// entered remembers which agent-state events are currently true, so those fire on entering a
+	// state rather than on being in one.
+	entered map[string]map[Event]bool
 
 	running sync.WaitGroup
 }
@@ -158,12 +158,28 @@ func New(hooks []Hook, dir string, exec Executor, report func(Report)) *Runner {
 		byEvent[hook.On] = append(byEvent[hook.On], hook)
 	}
 	return &Runner{
-		hooks:  byEvent,
-		dir:    dir,
-		exec:   exec,
-		report: report,
-		fired:  map[string]bool{},
-		state:  map[string]map[Event]bool{},
+		hooks:   byEvent,
+		dir:     dir,
+		exec:    exec,
+		report:  report,
+		firedAt: map[string]string{},
+		entered: map[string]map[Event]bool{},
+	}
+}
+
+// aboutCode says whether an event is a claim about the worktree or about the agent.
+//
+// The distinction decides how "again" is defined, and getting it wrong is invisible until it costs
+// somebody a hook. A claim about code is new whenever the code is new, so tests passing at one
+// revision and passing again at the next is two events and an auto-commit should run for both. A
+// claim about the agent has nothing to do with the code, so an agent that is idle while somebody
+// edits a file has not become idle a second time.
+func aboutCode(event Event) bool {
+	switch event {
+	case TestsPassed, TestsFailed, Verified:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -176,36 +192,43 @@ func (r *Runner) Observe(ctx context.Context, obs Observation) []Event {
 	now := eventsIn(obs)
 
 	r.mu.Lock()
-	previous := r.state[obs.Subject]
+	previous := r.entered[obs.Subject]
 	if previous == nil {
 		previous = map[Event]bool{}
 	}
 
 	var firing []Event
 	for _, event := range Events() {
-		switch {
-		case !now[event]:
-			// Not true any more, or never was. Nothing to fire, and leaving the record to be
-			// replaced below is what lets it fire again when it becomes true later.
-		case previous[event]:
-			// Already in this state. This is the rule that stops a poll every two seconds from
-			// being a commit every two seconds.
-		case len(r.hooks[event]) == 0:
-			// Nothing is listening, so there is no reason to spend a revision key on it.
-		default:
-			key := obs.Subject + "\x00" + string(event) + "\x00" + obs.Revision.String()
-			if r.fired[key] {
-				// Already fired for this exact revision. A hook that commits moves HEAD, which
-				// moves the revision, which makes the tests stale, which makes them run again and
-				// pass again. Without this that is a loop, and it is the first configuration
-				// anybody writes.
+		if !now[event] || len(r.hooks[event]) == 0 {
+			// Not true, or nothing is listening, in which case there is no reason to spend the one
+			// chance this revision had to fire it.
+			continue
+		}
+
+		key := obs.Subject + "\x00" + string(event)
+		if aboutCode(event) {
+			// Once per revision. That is both halves at once: the poller reporting the same green
+			// every two seconds sees the same revision and fires nothing, and a hook that commits
+			// moves HEAD, which moves the revision, which makes the tests stale, which makes them
+			// run and pass again, and the same guard ends that after one pass.
+			//
+			// Keyed on the revision rather than on entering the state, because entering is the
+			// wrong question for a claim about code: tests passing at one revision and passing
+			// again at the next is genuinely two events, and suppressing the second would silently
+			// skip the commit for the second piece of work.
+			if r.firedAt[key] == obs.Revision.String() {
 				continue
 			}
-			r.fired[key] = true
-			firing = append(firing, event)
+			r.firedAt[key] = obs.Revision.String()
+		} else if previous[event] {
+			// An agent event is about the agent, so it fires on entering the state and not again
+			// while it stays there. Keying these on the revision instead would fire "idle" a second
+			// time because somebody edited a file, which the agent had nothing to do with.
+			continue
 		}
+		firing = append(firing, event)
 	}
-	r.state[obs.Subject] = now
+	r.entered[obs.Subject] = now
 	hooks := r.hooksFor(firing)
 	r.mu.Unlock()
 
