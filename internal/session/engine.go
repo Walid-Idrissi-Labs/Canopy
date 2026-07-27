@@ -95,6 +95,15 @@ type Engine struct {
 	agents     map[string]*Agent
 	agentOrder []string
 
+	// isolation is how a worktree is made for an agent that wants one, and agentTools holds the
+	// registries of the agents that have. Keyed by session ID rather than agent name, because a
+	// turn knows which session it belongs to and nothing else.
+	//
+	// Both nil in the ordinary case. An agent is not a branch, and an engine that never isolates
+	// anything is the normal way to run Canopy rather than a degraded one.
+	isolation  *Isolation
+	agentTools map[string]*core.ToolRegistry
+
 	nextID int
 }
 
@@ -502,7 +511,8 @@ func (e *Engine) run(
 	})
 
 	e.mu.Lock()
-	tools, trust, approver, trail := e.tools, e.trust, e.approver, e.trail
+	tools, trust := e.toolsForLocked(sessionID)
+	approver, trail := e.approver, e.trail
 	e.mu.Unlock()
 
 	loop := &agent.Loop{

@@ -100,7 +100,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A5, many agents. A3 and A4 done overnight | `feat/agent-runtime` | none |
+| Claude | A5-04 and A5-11 done. A5-07 to A5-09 next | `feat/isolated-agents` | none |
 | Codex | none | none | none |
 
 **Re-steered on 2026-07-26.** Canopy is a coding agent harness focused on agentic parallelism and
@@ -186,7 +186,7 @@ not only from this file. Module path is github.com/Walid-Idrissi-Labs/Canopy and
 until D-15 settles the name.
 
 ### P0-02 CI pipeline
-`status: todo | owner: none | branch: none | depends: P0-01`
+`status: review | owner: Claude | branch: main | depends: P0-01`
 `scope: .github/workflows/ci.yml`
 
 Deliverable: GitHub Actions running `go build ./...`, `go test ./...`, `go vet ./...`,
@@ -249,7 +249,7 @@ protocol without needing it explained. Treat the first Codex claim as the actual
 file, and change the protocol if it gets in the way.
 
 ### P0-05 Branch protection on main
-`status: todo | owner: none | branch: none | depends: P0-02`
+`status: review | owner: Walid | branch: main | depends: P0-02`
 `scope: GitHub repository settings, no files`
 
 Deliverable: main protected, no direct pushes, pull request required, one approving review
@@ -1523,7 +1523,7 @@ still reading an abandoned response body holds a connection open, and eight agen
 program that slowly stops working for reasons nobody can see.
 
 ### A3-06 Context meter and compaction
-`status: todo | owner: none | branch: none | depends: A3-02`
+`status: review | owner: Claude | branch: feat/agent-runtime (merged) | depends: A3-02`
 `scope: internal/agent/, internal/tui/chat/`
 
 Deliverable: a visible context meter, automatic compaction near the limit, and manual compaction on
@@ -2205,7 +2205,7 @@ worktree is removed. A half created worktree is worse than none, because it is a
 usable, is not registered as Canopy's, and will never be cleaned up.
 
 ### A5-04 Worktree environment setup
-`status: todo | owner: none | branch: none | depends: A5-03`
+`status: review | owner: Claude | branch: feat/isolated-agents | depends: A5-03`
 `scope: internal/git/, internal/config/`
 
 Deliverable: bring a fresh worktree to a runnable state. An optional setup command with a timeout
@@ -2217,7 +2217,7 @@ for allow listed paths and only after confirmation. A file that is not git ignor
 without separate confirmation. Setup failure is a visible state, not a silent one, and secret
 contents are never printed.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **this is a hole in the re-plan, caught 2026-07-26, not a nice to have.** A fresh worktree
 has no `.env`, no `node_modules`, no virtualenv and no build cache. Without this an agent spawns
@@ -2228,6 +2228,35 @@ Carries forward the environment contract from corrections section 6, which the r
 exactly the point it became more necessary rather than less. Its limits stand: a port does not
 isolate a database, Redis, a queue or an OAuth callback, and Canopy supplies templated values
 without promising isolation it cannot deliver.
+
+**Built 2026-07-27 in `internal/git/setup.go`.** Two mechanisms, deliberately unequal. A setup
+command rebuilds what can be rebuilt and copies nothing, which is where the work should happen. A
+short allow list covers what cannot be rebuilt because it is secret, which in practice means `.env`.
+
+Four decisions worth arguing with in review:
+
+- **`Confirm` has two callbacks rather than one with a flag.** A path git ignores and a path git
+  tracks are different questions: the tracked one replaces committed content, so the agent then
+  works from a baseline that exists in no commit anywhere and every diff it produces is measured
+  from the wrong place. Two fields makes that structural. A caller who wired up only the ordinary
+  case cannot answer the other one by accident, and a nil callback means no.
+- **Symlinks are refused rather than followed**, at the top level and inside a copied directory.
+  Materialising one inside an isolated worktree is a route back out of it that nobody chose.
+- **Sizes are measured before the question is asked.** Answering yes to a directory without being
+  told it is four hundred megabytes is not an answer. `CopyRequest.Large` exists so the wording can
+  change rather than the outcome.
+- **A failing setup command is a state, not an error.** The worktree still exists and still has the
+  code in it. `Prepared.Summary` is what makes it visible, and that visibility is the whole point:
+  a broken worktree looks completely healthy from the outside.
+
+An allow list of literal paths rather than globs. `.env` is a decision somebody makes once and can
+read back at a glance; `config/**` is a decision whose real scope they discover later, which is the
+wrong way round for the one feature here that moves secrets.
+
+Known limit, worth a decision in review: a large directory is copied rather than cloned. On APFS and
+on Btrfs a reflink copy would be nearly free, and `cp -c` / `cp --reflink=auto` would get it, at the
+cost of platform branching and a dependency on `cp` behaviour. Reporting the size up front is what
+protects somebody today. Recorded as Q-14.
 
 ### A5-05 Agent registry
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-01`
@@ -2271,7 +2300,7 @@ would make "run an agent" mean "make a branch", which is not how anyone works mo
 would have made the common case pay for the rare one.
 
 ### A5-11 Isolated agent mode
-`status: todo | owner: none | branch: none | depends: A5-05, A5-03, A5-04`
+`status: review | owner: Claude | branch: feat/isolated-agents | depends: A5-05, A5-03, A5-04`
 `scope: internal/agent/`
 
 Deliverable: opt an agent into its own worktree and branch, and return it afterwards.
@@ -2280,7 +2309,7 @@ Acceptance: an isolated agent's file and shell tools cannot reach outside its wo
 reach another agent's. A non isolated agent works in the repository as normal. Ending an isolated
 agent offers to keep or remove the worktree, and never removes a dirty one silently.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
 notes: **added 2026-07-26.** This is the seam that was previously assumed rather than built,
 because the plan treated every agent as isolated. Making it explicit is what lets the ordinary
@@ -2288,6 +2317,47 @@ case stay ordinary.
 
 Fan-out at A6-05 requires this. Ranking three agents on one task is meaningless if they are all
 editing the same files.
+
+**Built 2026-07-27 in `internal/session/isolate.go`.** Isolation is three things, and the middle one
+is the one that matters:
+
+1. A worktree and a branch of its own, named after the agent, so `git branch` afterwards reads as a
+   list of who did what.
+2. **A tool registry rooted at that worktree.** This is the mechanism. `tools.Workspace` already
+   refuses to resolve a path outside its root and has since A4, so building one registry per
+   isolated agent makes confinement structural: the agent is not asked to stay inside its worktree,
+   it is handed a set of tools that cannot express anywhere else. `Isolation.Tools` is a function of
+   a directory supplied by the caller rather than a registry built in the engine, because the engine
+   has never known what tools exist and should not start now.
+3. A disposition when it ends.
+
+`Disposition` has three values rather than two. Keep, remove, and discard. Remove refuses a dirty
+worktree and says what is in there; discard is the second explicit answer given after that refusal.
+They must not be reachable by the same keystroke, because an agent's abandoned experiment is
+sometimes the only copy of an idea.
+
+A refused removal leaves the agent registered, which looks like a detail and is not. Forgetting the
+agent and then failing to remove its worktree would leave a directory on disk with uncommitted work
+in it and nothing in Canopy that still refers to it, which is exactly how work gets lost quietly.
+
+**A gap this uncovered, fixed here: per agent trust was stored and never read.** A4-04 put a
+`TrustLevel` on every agent and the turn kept reading the engine's, so an agent configured read only
+ran at whatever the engine was set to. `toolsForLocked` now resolves both the registry and the trust
+level per session. Isolation is where that would have bitten hardest, since the usual reason to
+confine an agent to a worktree is to let it work more freely inside one. Worth a second pair of eyes
+on whether anything else from A4-04 is stored but unread.
+
+`AddAgent` takes a context now, because making a worktree runs git. Preparation is a separate call
+rather than part of creation: making a worktree takes a moment, installing dependencies into one
+takes minutes, and an interface that blocked on the second while appearing to do the first would
+look frozen at exactly the moment somebody is watching.
+
+Tests drive the real tool registry rather than a fake, and the confinement cases were mutation
+tested: rooting the tools at the repository instead of the worktree makes three assertions fail.
+
+Not done here, and deliberately: there is no key in the agents view that creates an isolated agent
+yet. The engine API is the deliverable; the affordance belongs with A5-06 and A5-10, and an isolated
+creation has to go through a command rather than straight from a keypress because it runs git.
 
 ### A5-06 Per agent view and switching
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A5-05, A3-03`
@@ -2391,7 +2461,7 @@ between a guardrail and a receipt. An estimate presented more confidently than t
 would be its own small lie, so the range carries its basis.
 
 ### A5-10 Agents view
-`status: todo | owner: none | branch: none | depends: A5-06`
+`status: review | owner: Claude | branch: feat/agent-runtime (merged) | depends: A5-06`
 `scope: internal/tui/agents/`
 
 Deliverable: one screen showing every running agent, in **three modes the user switches between**:

@@ -90,7 +90,7 @@ func runChat() error {
 	// view rather than being a special case the list has to know about. Called "main" because that
 	// is what somebody would call the one they are talking to.
 	keyName := resolver.DefaultKeyName()
-	if _, err := engine.AddAgent(session.Agent{
+	if _, err := engine.AddAgent(context.Background(), session.Agent{
 		Name:    "main",
 		KeyName: keyName,
 		Model:   defaultModelFor(keyStore, keyName),
@@ -110,30 +110,8 @@ func runChat() error {
 // until there is a way to choose one, the level that asks about the dangerous half is the only
 // defensible default.
 func attachTools(engine *session.Engine, dir string) error {
-	workspace, err := tools.OpenWorkspace(dir)
+	registry, err := toolsFor(dir)
 	if err != nil {
-		return err
-	}
-
-	registry := core.NewToolRegistry()
-	for _, tool := range tools.FileTools(workspace) {
-		if err := registry.Register(tool); err != nil {
-			return err
-		}
-	}
-	for _, tool := range tools.GitTools(workspace) {
-		if err := registry.Register(tool); err != nil {
-			return err
-		}
-	}
-	for _, tool := range tools.WebTools() {
-		if err := registry.Register(tool); err != nil {
-			return err
-		}
-	}
-	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
-	// the ones that can be governed per argument should be reached for before the one that cannot.
-	if err := registry.Register(tools.ShellTool(workspace)); err != nil {
 		return err
 	}
 
@@ -145,8 +123,52 @@ func attachTools(engine *session.Engine, dir string) error {
 	// is a legitimate thing that should not be refused for want of somewhere to store a snapshot.
 	if isGitRepository(dir) {
 		engine.WithCheckpoints(gitpkg.NewTaker(dir))
+
+		// Isolation for the same reason and with the same condition: an agent can only be given a
+		// worktree of its own where there are worktrees. Its absence is not an error, because an
+		// agent is not a branch and the ordinary run never asks for one.
+		if repo, err := gitpkg.OpenRepo(dir); err == nil {
+			if err := engine.WithIsolation(session.Isolation{Repo: repo, Tools: toolsFor}); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// toolsFor builds the tool set for one directory.
+//
+// A function of a directory rather than a fixed registry, because an isolated agent needs one
+// rooted at its own worktree and that is what makes its confinement enforced rather than requested.
+// The ordinary agent gets exactly the same set, rooted at the repository.
+func toolsFor(dir string) (*core.ToolRegistry, error) {
+	workspace, err := tools.OpenWorkspace(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	registry := core.NewToolRegistry()
+	for _, tool := range tools.FileTools(workspace) {
+		if err := registry.Register(tool); err != nil {
+			return nil, err
+		}
+	}
+	for _, tool := range tools.GitTools(workspace) {
+		if err := registry.Register(tool); err != nil {
+			return nil, err
+		}
+	}
+	for _, tool := range tools.WebTools() {
+		if err := registry.Register(tool); err != nil {
+			return nil, err
+		}
+	}
+	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
+	// the ones that can be governed per argument should be reached for before the one that cannot.
+	if err := registry.Register(tools.ShellTool(workspace)); err != nil {
+		return nil, err
+	}
+	return registry, nil
 }
 
 // isGitRepository reports whether a directory is inside a git working tree.

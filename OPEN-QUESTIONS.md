@@ -268,3 +268,45 @@ rather than as a cancellation, because the two need entirely different words on 
 in A2-06.
 
 So the flakiness was worth having. It is still worth deciding whether to keep paying for it.
+
+---
+
+## Q-14 Should a copied directory be cloned rather than copied?
+
+**Added 2026-07-27, with A5-04.**
+
+Worktree preparation can copy an allow listed path from the primary checkout into a fresh worktree.
+For a `.env` that is trivial. For anything directory shaped it is not: a plain recursive copy of a
+few hundred megabytes is real disk, and with several isolated agents it is that again per agent.
+
+On APFS and on Btrfs a reflink copy is nearly free, and `cp -c` on macOS or `cp --reflink=auto` on
+Linux would get it. The costs are platform branching, a dependency on `cp` behaving the same way
+everywhere, and a silent fall back to a full copy on filesystems that cannot do it, which is the
+kind of performance cliff nobody notices until a disk fills.
+
+**Done for now:** a plain copy in Go, with the size measured and put into the confirmation before
+anybody answers it. That is what actually protects somebody today, since the failure mode is
+answering yes without knowing the number.
+
+**Worth deciding:** whether to add reflink support at all, or whether the honest answer is that a
+directory should be rebuilt by the setup command rather than copied, and the allow list should stay
+what it is good at, which is small secret files. I lean towards the second, but it is a product
+decision rather than a technical one.
+
+---
+
+## Q-15 What else from A4-04 is stored but never read?
+
+**Added 2026-07-27, found while building A5-11.**
+
+A4-04 put a `TrustLevel` on every agent. Nothing ever read it. Turns took the engine's trust level,
+so an agent explicitly configured as read only ran at whatever the engine happened to be set to.
+That is fixed now, and turns resolve trust per agent.
+
+The specific bug is closed. The worrying part is the shape of it: a field that is set, stored,
+displayed and never consulted, in the layer whose whole job is refusing things. It was found by
+accident, because isolation needed the same lookup.
+
+**Worth doing in review:** a deliberate sweep for the same shape elsewhere, particularly anything on
+`Agent` or in `internal/permission`. A wrong answer there is a permission that was believed to be in
+force and was not, which is the worst category of quiet failure in this codebase.
