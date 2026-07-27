@@ -3286,8 +3286,8 @@ Acceptance: a project command is available in that project only. Arguments are s
 notes: cheap once chat exists, and the first thing power users ask for.
 
 ### A8-05 Hooks and automations
-`status: claimed | owner: Claude | branch: feat/hooks-and-mcp | depends: A8-03, PG-A6`
-`scope: internal/agent/hooks.go, internal/config/hooks.go, internal/session/`
+`status: todo | owner: none | branch: none | depends: A8-03, PG-A6`
+`scope: internal/agent/`
 
 Deliverable: run something on an event. Tests green, auto commit. Tests red, notify. Agent idle,
 nudge.
