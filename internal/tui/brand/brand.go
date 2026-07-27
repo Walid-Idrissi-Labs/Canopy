@@ -28,25 +28,30 @@ import "strings"
 // missing glyph boxes everywhere else. This is the first thing a new user sees and it is not the
 // place to find out which font they are running.
 //
-// The guy ropes and their pegs are what stop it reading as a pyramid. A tent is recognisable by the
-// things holding it down as much as by the shape itself, and two pegs leaning away on each side
-// place it on the ground rather than floating it in the middle of the screen.
+// The guy ropes and their pegs are what stop it reading as a pyramid. A tent is recognised by the
+// things holding it down as much as by its outline, and two pegs leaning away place it on the
+// ground rather than floating it in the middle of the screen.
 //
-// Every row is symmetric about the centre column and carries no trailing spaces, so the indent
-// alone positions it. An asymmetric one reads as a rendering fault rather than as a drawing.
+// **It is deliberately not symmetric, and that is a reversal.** The rule used to be that every row
+// mirrored about its centre, on the grounds that an asymmetric silhouette reads as a rendering
+// fault. That is true of a lone shape and false of a scene: the fire and its smoke are obviously
+// placed rather than broken, and the moment there are two objects the symmetry that was reassuring
+// becomes the thing that makes it look machine generated. A campsite is not symmetric. What the
+// old rule was really protecting, that nothing looks accidentally clipped, is now covered by the
+// no-trailing-space and width checks, which are the parts that were load bearing.
 const mark = `
-            █
-           ███
-          █████
-         ███████
-        █████████
-       ████▀▀▀████
-  ▄   ████     ████   ▄
-  █  ████       ████  █
- ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄`
+            █                ▄▀
+           ███              ▀▄
+          █████              ▄▀
+         ███████            ▀
+        █████████          ▄
+       ████▀▀▀████         ▄
+  ▄   ████     ████   ▄   ▄█▄
+  █  ████       ████  █  █▀█▀█
+ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄`
 
 // MarkWidth is how many columns the mark occupies.
-const MarkWidth = 25
+const MarkWidth = 33
 
 // minimumWidth is the narrowest terminal the mark is drawn in.
 //
@@ -60,14 +65,15 @@ const minimumWidth = MarkWidth + 4
 // Every terminal program worth recognising, and every one this is measured against, puts its name on
 // the screen at launch in letters you can read across a room.
 //
-// Built from the full block alone. The half blocks are fine for a silhouette, where a rough edge
-// reads as shading, and wrong for letterforms, where the same roughness reads as a broken font.
+// Three rows rather than five, because it sits in the corner of every screen and five would spend a
+// tenth of a short terminal on a logo. The letters are drawn on a six row grid and packed two rows
+// to a line, so the half blocks buy twice the vertical resolution a three line font would otherwise
+// have. That is what makes it legible at this height instead of looking like a blocky approximation
+// of letters.
 const wordmark = `
-█████ █████ █   █ █████ █████ █   █
-█     █   █ ██  █ █   █ █   █ █   █
-█     █████ █ █ █ █   █ █████ █████
-█     █   █ █  ██ █   █ █       █  
-█████ █   █ █   █ █████ █       █  `
+▄▀▀▀▀ ▄▀▀▀▄ █▄  █ ▄▀▀▀▄ █▀▀▀▄ █   █
+█     █▄▄▄█ █ ▀▄█ █   █ █▄▄▄▀  ▀▄▀
+▀▄▄▄▄ █   █ █   █ ▀▄▄▄▀ █       █`
 
 // WordmarkWidth is how many columns the drawn name occupies.
 const WordmarkWidth = 35

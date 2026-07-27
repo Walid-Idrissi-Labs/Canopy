@@ -7,26 +7,63 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 )
 
-// M-05. An asymmetric silhouette reads as a rendering fault rather than as a drawing, and the first
-// thing a new user sees is not the place to look broken.
-func TestTheMarkIsSymmetricOnEveryRow(t *testing.T) {
-	for i, line := range brand.Lines() {
-		runes := []rune(line)
-		trimmed := strings.TrimRight(line, " ")
-		if trimmed != line {
-			t.Errorf("row %d carries trailing spaces, which move its centre: %q", i, line)
-		}
+// M-05. The mark is a scene now, not a lone silhouette, so the rule that every row mirrors about
+// its centre is gone. It was protecting against something real, a shape that looks accidentally
+// clipped, and that is what is checked here instead. Symmetry was only ever a proxy for it, and it
+// is the wrong proxy once there is a fire beside the tent: a campsite that mirrored perfectly would
+// look machine generated rather than drawn.
+func TestNoRowLooksAccidentallyClipped(t *testing.T) {
+	lines := brand.Lines()
+	if len(lines) == 0 {
+		t.Fatal("the mark is empty")
+	}
 
-		left := len(runes) - len([]rune(strings.TrimLeft(line, " ")))
-		right := brand.MarkWidth - len(runes)
-		if right < 0 {
-			t.Fatalf("row %d is %d columns, wider than the declared %d: %q",
-				i, len(runes), brand.MarkWidth, line)
+	for i, line := range lines {
+		if trimmed := strings.TrimRight(line, " "); trimmed != line {
+			// Trailing spaces are invisible until something centres the block, at which point every
+			// row is pushed left by a different amount.
+			t.Errorf("row %d carries trailing spaces: %q", i, line)
 		}
-		if left != right {
-			t.Errorf("row %d sits %d in from the left and %d from the right: %q",
-				i, left, right, line)
+		if width := len([]rune(line)); width > brand.MarkWidth {
+			t.Errorf("row %d is %d columns, wider than the declared %d: %q",
+				i, width, brand.MarkWidth, line)
 		}
+	}
+
+	// At least one row has to reach the declared width, or MarkWidth is a number nobody maintains
+	// and every caller reserves space for a mark that is narrower than it claims.
+	widest := 0
+	for _, line := range lines {
+		if w := len([]rune(line)); w > widest {
+			widest = w
+		}
+	}
+	if widest != brand.MarkWidth {
+		t.Errorf("the widest row is %d columns and MarkWidth says %d", widest, brand.MarkWidth)
+	}
+}
+
+// The drawn name is the other half of the mark and gets the same treatment.
+func TestTheWordmarkIsWhatItSaysItIs(t *testing.T) {
+	lines := brand.Wordmark(brand.WordmarkWidth)
+	if len(lines) == 0 {
+		t.Fatal("the wordmark did not render at exactly its own width")
+	}
+	if brand.Wordmark(brand.WordmarkWidth-1) != nil {
+		t.Error("the wordmark rendered into less room than it needs, so it will be clipped")
+	}
+
+	widest := 0
+	for i, line := range lines {
+		if trimmed := strings.TrimRight(line, " "); trimmed != line {
+			t.Errorf("wordmark row %d carries trailing spaces: %q", i, line)
+		}
+		if w := len([]rune(line)); w > widest {
+			widest = w
+		}
+	}
+	if widest != brand.WordmarkWidth {
+		t.Errorf("the widest wordmark row is %d and WordmarkWidth says %d", widest, brand.WordmarkWidth)
 	}
 }
 
