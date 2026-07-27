@@ -1,6 +1,7 @@
 package agents_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func (e *fakeEngine) Session(id string) (core.Session, bool) {
 	return s, ok
 }
 
-func (e *fakeEngine) AddAgent(agent session.Agent) (session.Agent, error) {
+func (e *fakeEngine) AddAgent(_ context.Context, agent session.Agent) (session.Agent, error) {
 	if e.addErr != nil {
 		return session.Agent{}, e.addErr
 	}

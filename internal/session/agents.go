@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -47,10 +48,20 @@ type Agent struct {
 	Isolated bool
 	// WorkspaceID is the worktree, for an isolated agent.
 	WorkspaceID string
+	// Branch is the branch that worktree is on. Empty on creation means the agent's own name, which
+	// is what makes `git branch` afterwards read as a list of who did what.
+	Branch string
 }
 
 // AddAgent registers a named agent with a conversation of its own.
-func (e *Engine) AddAgent(agent Agent) (Agent, error) {
+//
+// Takes a context because an isolated agent needs a worktree before it exists at all, and making
+// one runs git. An agent that is not isolated does no work here and the context goes unused, which
+// is the common case and stays fast.
+//
+// The worktree is made before the session rather than after. A failure then leaves nothing: no
+// half registered agent, no conversation pointing at a directory that was never created.
+func (e *Engine) AddAgent(ctx context.Context, agent Agent) (Agent, error) {
 	if err := validateAgentName(agent.Name); err != nil {
 		return Agent{}, err
 	}
@@ -67,6 +78,15 @@ func (e *Engine) AddAgent(agent Agent) (Agent, error) {
 	}
 	e.mu.Unlock()
 
+	var registry *core.ToolRegistry
+	if agent.Isolated {
+		built, err := e.isolate(ctx, &agent)
+		if err != nil {
+			return Agent{}, err
+		}
+		registry = built
+	}
+
 	session := e.Create(agent.KeyName, agent.Model)
 	agent.SessionID = session.ID
 
@@ -80,6 +100,12 @@ func (e *Engine) AddAgent(agent Agent) (Agent, error) {
 	stored := agent
 	e.agents[agent.Name] = &stored
 	e.agentOrder = append(e.agentOrder, agent.Name)
+	if registry != nil {
+		if e.agentTools == nil {
+			e.agentTools = map[string]*core.ToolRegistry{}
+		}
+		e.agentTools[session.ID] = registry
+	}
 	e.mu.Unlock()
 
 	e.events.Publish(core.Event{Kind: core.EventSessionsChanged, SessionID: session.ID})
@@ -138,9 +164,13 @@ func (e *Engine) RemoveAgent(name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if _, ok := e.agents[name]; !ok {
+	agent, ok := e.agents[name]
+	if !ok {
 		return fmt.Errorf("no agent called %q", name)
 	}
+	// The registry goes with the agent. Leaving it would keep a tool set rooted at a worktree that
+	// may be about to be removed, which is a live handle to a directory nobody owns any more.
+	delete(e.agentTools, agent.SessionID)
 	delete(e.agents, name)
 
 	remaining := make([]string, 0, len(e.agentOrder))

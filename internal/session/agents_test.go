@@ -17,7 +17,7 @@ func engineWithAgents(t *testing.T, names ...string) (*Engine, *scriptedClient) 
 	t.Cleanup(e.Close)
 
 	for _, name := range names {
-		if _, err := e.AddAgent(Agent{Name: name, KeyName: "claude", Model: "claude-opus-5"}); err != nil {
+		if _, err := e.AddAgent(context.Background(), Agent{Name: name, KeyName: "claude", Model: "claude-opus-5"}); err != nil {
 			t.Fatalf("AddAgent(%s): %v", name, err)
 		}
 	}
@@ -55,10 +55,10 @@ func TestEachAgentCarriesItsOwnCredentialAndModel(t *testing.T) {
 	e := New(fixedResolver{client: client, id: anthropicID()})
 	defer e.Close()
 
-	if _, err := e.AddAgent(Agent{Name: "big", KeyName: "claude", Model: "claude-opus-5"}); err != nil {
+	if _, err := e.AddAgent(context.Background(), Agent{Name: "big", KeyName: "claude", Model: "claude-opus-5"}); err != nil {
 		t.Fatalf("AddAgent: %v", err)
 	}
-	if _, err := e.AddAgent(Agent{Name: "local", KeyName: "ollama", Model: "qwen3:30b"}); err != nil {
+	if _, err := e.AddAgent(context.Background(), Agent{Name: "local", KeyName: "ollama", Model: "qwen3:30b"}); err != nil {
 		t.Fatalf("AddAgent: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestEachAgentCarriesItsOwnCredentialAndModel(t *testing.T) {
 func TestADuplicateAgentNameIsRefused(t *testing.T) {
 	e, _ := engineWithAgents(t, "parser")
 
-	if _, err := e.AddAgent(Agent{Name: "parser", KeyName: "claude"}); err == nil {
+	if _, err := e.AddAgent(context.Background(), Agent{Name: "parser", KeyName: "claude"}); err == nil {
 		t.Error("a second agent took an existing name")
 	}
 	if len(e.Agents()) != 1 {
@@ -94,7 +94,7 @@ func TestAgentNamesAreConstrained(t *testing.T) {
 
 	for _, name := range []string{"", "   ", " leading", "trailing ", strings.Repeat("x", 40),
 		"has\nnewline"} {
-		if _, err := e.AddAgent(Agent{Name: name, KeyName: "claude"}); err == nil {
+		if _, err := e.AddAgent(context.Background(), Agent{Name: name, KeyName: "claude"}); err == nil {
 			t.Errorf("%q was accepted as an agent name", name)
 		}
 	}

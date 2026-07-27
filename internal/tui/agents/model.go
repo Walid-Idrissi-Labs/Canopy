@@ -15,6 +15,7 @@
 package agents
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -56,7 +57,12 @@ type Engine interface {
 	// AddAgent starts a new agent. Its error is shown rather than swallowed, because the two
 	// reasons it fails, a name already taken and a name that is not allowed, are both things the
 	// person typing can fix immediately.
-	AddAgent(agent session.Agent) (session.Agent, error)
+	//
+	// The context is the engine's, for the isolated case where creating an agent has to make a
+	// worktree first. This view only creates agents that work in the repository, so the call does no
+	// git and does not block the event loop. An isolated agent started from here would have to go
+	// through a command rather than straight from a keypress.
+	AddAgent(ctx context.Context, agent session.Agent) (session.Agent, error)
 }
 
 // SwitchMsg asks the application to open an agent's conversation.
@@ -182,7 +188,7 @@ func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
-		agent, err := m.engine.AddAgent(session.Agent{
+		agent, err := m.engine.AddAgent(context.Background(), session.Agent{
 			Name:    strings.TrimSpace(m.draft),
 			KeyName: m.keyName,
 			Model:   m.model,
