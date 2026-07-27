@@ -5,9 +5,35 @@ branches when they need it, and knowing which of them actually produced working 
 
 > **Status: pre-alpha.** Everything on this page is built and tested, except where
 > [LIMITATIONS.md](LIMITATIONS.md) says otherwise, and that document is worth reading before this
-> one. The extensibility layer is not built at all. No release has been tagged yet, so the way in is
-> [INSTALL.md](INSTALL.md). Development is tracked in [TASKS.md](TASKS.md), and the decisions behind
-> it in [DECISIONS.md](DECISIONS.md).
+> one. The extensibility layer is not built at all. Development is tracked in
+> [TASKS.md](TASKS.md), and the decisions behind it in [DECISIONS.md](DECISIONS.md).
+
+## Install
+
+```sh
+go install github.com/Walid-Idrissi-Labs/Canopy/cmd/canopy@latest
+```
+
+Or take a binary from the [releases page](https://github.com/Walid-Idrissi-Labs/Canopy/releases).
+macOS and Linux, on both Intel and ARM. Windows is not supported, see below.
+
+Then give it a key. A credential is stored by name and carries its own endpoint and model, which is
+what lets you talk about agents by name later:
+
+```sh
+canopy keys add claude                       # anthropic, model picked for you
+canopy keys add nim -provider openai-compatible \
+  -base-url https://integrate.api.nvidia.com/v1 -model minimaxai/minimax-m2.7
+canopy keys list                             # the MODEL column says NOT SET where one is missing
+```
+
+Anything that is not Anthropic needs a model named explicitly. There is no default anybody could
+guess for somebody else's gateway, and a credential without one cannot answer a single message.
+
+Now run `canopy` in a git repository. Press `?` for every key binding.
+
+Homebrew is not available yet and will not be until the first release without a prerelease suffix.
+[INSTALL.md](INSTALL.md) has the rest, [RELEASING.md](RELEASING.md) has what publishing involves.
 
 ## What it is
 
@@ -103,12 +129,10 @@ not a green tick.
 
 ## Requirements
 
-- Go 1.26 or newer
 - git
 - `/bin/sh`, since shell tools and test commands run through it
 - macOS or Linux
-
-See [INSTALL.md](INSTALL.md) for the ways in.
+- Go 1.26 or newer, only if you are building from source rather than taking a binary
 
 ## Development
 
