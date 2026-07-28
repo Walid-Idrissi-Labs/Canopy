@@ -207,6 +207,9 @@ type Model struct {
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
 	markGeneration int
+	// True only while a mark tick is outstanding. A completed conversation draws static coals,
+	// so keeping a second animation timer alive there would redraw identical pixels forever.
+	markRunning bool
 
 	// menu is the command list that drops out of the message box.
 	menu menu
@@ -245,6 +248,7 @@ func New(engine Engine, sessionID, dir, keyName string) Model {
 		keyName:   keyName,
 	}
 	m.refresh()
+	m.markRunning = m.markVisible()
 	m.input.LoadHistory(promptsOf(m.session))
 	return m
 }
@@ -260,7 +264,11 @@ func promptsOf(s core.Session) []string {
 
 // Init subscribes to engine events and starts the spinner and the mark.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.subscribe(), tick(), markTick(m.markGeneration))
+	commands := []tea.Cmd{m.subscribe(), tick()}
+	if m.markRunning {
+		commands = append(commands, markTick(m.markGeneration))
+	}
+	return tea.Batch(commands...)
 }
 
 // SubscribeCmd returns the event subscription on its own.
@@ -312,7 +320,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// one notification or, under load, as none at all for a moment, and this is the beat that
 		// guarantees the screen catches up regardless.
 		m.refresh()
-		return m, tick()
+		return m, tea.Batch(tick(), m.ensureMark())
 
 	case markTickMsg:
 		if msg.generation != m.markGeneration {
@@ -320,10 +328,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// rescheduled, which is what ends it.
 			return m, nil
 		}
-		// It used to stop the moment a conversation started, because the opening screen was the
-		// only thing drawing it. The box corner now carries the same fire once the opening screen
-		// has gone, so it keeps going: there is something to animate in both states and exactly one
-		// ticker driving it either way.
+		if !m.markVisible() {
+			m.markRunning = false
+			return m, nil
+		}
 		m.markStep++
 		return m, markTick(m.markGeneration)
 
@@ -807,6 +815,24 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 
 	m.markStep = 0
 	m.markGeneration++
+	m.markRunning = m.markVisible()
+	if !m.markRunning {
+		return nil
+	}
+	return markTick(m.markGeneration)
+}
+
+func (m Model) markVisible() bool {
+	return m.blank() || m.working || m.compacting
+}
+
+// ensureMark starts the mark ticker on the transition from static to animated. Both the engine event
+// and spinner refresh paths call it; markRunning makes those observations converge on one timer.
+func (m *Model) ensureMark() tea.Cmd {
+	if m.markRunning || !m.markVisible() {
+		return nil
+	}
+	m.markRunning = true
 	return markTick(m.markGeneration)
 }
 

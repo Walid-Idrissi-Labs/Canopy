@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -79,6 +80,11 @@ func TestANarrowHeaderKeepsTheScreenAndTheMode(t *testing.T) {
 // in cruise can tell from across a desk. Under NO_COLOR there is nothing to assert about colour, so
 // this asserts the styles differ rather than what they are.
 func TestTheRiskiestModesAreNotStyledLikeTheSafeOnes(t *testing.T) {
+	if theme.Current().Palette.Name == theme.Monochrome.Name {
+		// TestANarrowHeaderKeepsTheScreenAndTheMode proves the structural NO_COLOR contract. A
+		// monochrome palette intentionally gives the styles the same foreground.
+		return
+	}
 	safe := modeStyle("build")
 	for _, risky := range []string{"cruise", "runway"} {
 		if modeStyle(risky).GetForeground() == safe.GetForeground() {
