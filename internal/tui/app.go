@@ -68,6 +68,12 @@ type App struct {
 	// arriving, and the same key pressed again will go through with it.
 	confirmingNew bool
 
+	// confirmingQuit is true when ctrl+c has been pressed once in a conversation, and the same key
+	// again will actually leave. One press quitting outright was the sharpest edge in the program:
+	// ctrl+c is also the interrupt key, so the muscle memory that stops a long reply fired a quit
+	// the instant the reply happened to finish first.
+	confirmingQuit bool
+
 	// dir is the working directory new agents are given.
 	dir string
 
@@ -268,6 +274,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.confirmingNew = false
 			a.chat.SetNotice("")
 		}
+		if a.confirmingQuit && key.String() != "ctrl+c" {
+			a.confirmingQuit = false
+			a.chat.SetNotice("")
+		}
 
 		if handled, next, cmd := a.routeKey(key); handled {
 			return next, cmd
@@ -361,6 +371,15 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 				a.chat, _ = a.chat.Update(tea.KeyMsg{Type: tea.KeyEsc})
 				return true, a, nil
 			}
+			// And even then it asks to be pressed again. The same finger that just stopped a turn
+			// is often still coming down when the turn ends on its own, and a quit that fires on
+			// that press throws somebody out of the program mid thought. Every comparable tool
+			// asks twice, and the confirmation costs nothing: it clears on any other key.
+			if !a.confirmingQuit {
+				a.confirmingQuit = true
+				a.chat.SetNotice("ctrl+c again to quit, the conversation is kept either way")
+				return true, a, nil
+			}
 			return true, a, tea.Quit
 		case "ctrl+n":
 			if a.chat.Awaiting() {
@@ -418,6 +437,11 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			a.cameFrom = screenAgents
 			a.screen = screenKeys
 			return true, a, nil
+		case "ctrl+c":
+			// Quit works from every screen, not only the ones somebody happens to leave from. Before
+			// this it did nothing here, which on the one screen with no text field to blame looked
+			// like the program refusing to close.
+			return true, a, tea.Quit
 		}
 
 	case screenDashboard:
@@ -459,6 +483,11 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 			a.cameFrom = screenReview
 			a.screen = screenKeys
 			return true, a, nil
+		}
+		if msg.String() == "ctrl+c" {
+			// Quit works here too, whatever pane the review is in: ctrl+c is not typable into the
+			// commit subject, so there is no field for it to belong to instead.
+			return true, a, tea.Quit
 		}
 
 	case screenKeys:
@@ -573,9 +602,15 @@ func (a App) View() string {
 		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
 			"esc", "chat", "w", "worktrees", "r", "review", "K", "credentials", "?", "help")
 		if a.agents.ConfirmingDirect() {
-			footer = Keys(a.dim.Width, "y", "create direct agent", "esc", "back")
+			// The confirmation panel in the body already names its keys, with more room to say what
+			// they mean. A footer repeating them is two lists to keep agreeing, so the footer goes
+			// quiet for the one keystroke the panel is up.
+			footer = ""
 		} else if a.agents.Naming() {
-			footer = Keys(a.dim.Width, "enter", "review", "esc", "cancel")
+			// "continue", not "review": enter advances the form, and this screen has an actual
+			// review on r. Two different things called by one name is how somebody presses the
+			// wrong one.
+			footer = Keys(a.dim.Width, "enter", "continue", "esc", "cancel")
 		}
 		return Frame(a.dim, Status{Screen: "agents", Parts: []string{a.agents.Context()}},
 			a.agents.Body(), footer)
@@ -593,18 +628,27 @@ func (a App) View() string {
 		// needs first rather than what the program does most. At eighty columns only about five
 		// survive, and the ones that have to be among them are how to get help and how to reach a
 		// credential, because everything else in the program is downstream of those two.
-		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "shift+tab", a.chat.Mode(),
-			"↑", "history", "ctrl+n", "new", "ctrl+k", "keys", "ctrl+d", "agents",
-			"ctrl+r", "compact", "ctrl+c", "quit")
+		// The mode is not in the footer at all: it is already written into the box's top edge and
+		// the header, and the eighteen columns "shift+tab plan" cost at eighty columns were exactly
+		// the columns esc and ctrl+c needed to stay on screen. shift+tab keeps a hint under the
+		// name "mode", which is what it changes.
+		escMeans := "clear"
+		if a.chat.Working() {
+			escMeans = "stop"
+		}
+		footer := Keys(a.dim.Width, "enter", "send", "esc", escMeans, "ctrl+c", "quit",
+			"↑", "history", "shift+tab", "mode", "ctrl+n", "new", "ctrl+k", "keys",
+			"ctrl+d", "agents", "ctrl+r", "compact")
 		if a.chat.InputEmpty() {
-			// The mode is named after the key rather than described, so the footer says which one
-			// you are in as well as how to change it, in the space one hint costs.
-			footer = Keys(a.dim.Width, "enter", "send", "shift+tab", a.chat.Mode(), "?", "help",
+			footer = Keys(a.dim.Width, "enter", "send", "?", "help", "shift+tab", "mode",
 				"ctrl+k", "keys", "ctrl+n", "new", "ctrl+d", "agents", "↑", "history",
-				"ctrl+r", "compact", "esc", "stop", "ctrl+c", "quit")
+				"ctrl+r", "compact", "ctrl+c", "quit")
 		}
 		if a.chat.Awaiting() {
-			footer = Keys(a.dim.Width, "y", "allow once", "a", "always", "any other key", "refuse")
+			// The question's own panel names the keys, with the scope of "always" spelled out,
+			// which is more than a footer can say. Repeating a shorter version here was two lists
+			// disagreeing about the same three keys.
+			footer = ""
 		}
 		return Frame(a.dim, Status{
 			Screen: "chat",

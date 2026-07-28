@@ -24,7 +24,7 @@ import (
 // neither shares with anything else drawn anywhere in the program.
 func drawings(view string) int {
 	found := 0
-	for _, top := range []string{"▄█▀▀▀█▄", "▄▀▀▀▀ ▄▀▀▀▄"} {
+	for _, top := range []string{"▄███████▄", "▄▀▀▀▀ ▄▀▀▀▄"} {
 		if strings.Contains(view, top) {
 			found++
 		}
@@ -41,7 +41,7 @@ func TestANewConversationDrawsTheNameOnlyInTheMiddle(t *testing.T) {
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
 	view := plain(next.(tui.App).View())
 
-	if !strings.Contains(view, "▄█▀▀▀█▄") {
+	if !strings.Contains(view, "▄███████▄") {
 		t.Fatalf("the large name is not on the opening screen:\n%s", view)
 	}
 	if strings.Contains(view, "▄▀▀▀▀ ▄▀▀▀▄") {
@@ -87,7 +87,7 @@ func TestAStartedConversationDrawsTheNameOnlyInTheCorner(t *testing.T) {
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
 	view := plain(next.(tui.App).View())
 
-	if strings.Contains(view, "▄█▀▀▀█▄") {
+	if strings.Contains(view, "▄███████▄") {
 		t.Errorf("the large name is still drawn over a conversation:\n%s", view)
 	}
 	if !strings.Contains(view, "▄▀▀▀▀ ▄▀▀▀▄") {

@@ -656,7 +656,9 @@ func (m ReviewModel) Footer() string {
 	case paneFiles:
 		return Keys(m.width, "j/k", "move", "enter", "diff", "c", "commit", "esc", "back")
 	case paneCommit:
-		return Keys(m.width, "type", "the subject", "ctrl+s", "commit", "esc", "cancel")
+		// The pane's own body already says that ctrl+s commits and that nothing is staged until
+		// then, with room to say it properly. The footer keeps only the key the body does not name.
+		return Keys(m.width, "esc", "cancel")
 	case paneOverlap:
 		return Keys(m.width, "j/k", "move", "tab", "queue", "esc", "agents")
 	case paneCosts:

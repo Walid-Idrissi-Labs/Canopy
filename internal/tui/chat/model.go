@@ -593,6 +593,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.engine.Cancel(m.sessionID)
 			return m, nil
 		}
+		// With nothing running, escape clears a half written message, which is what it means in
+		// every comparable tool. Before this the only way to abandon a draft was ctrl+u, a key
+		// the footer never mentions.
+		if !m.input.Empty() {
+			m.input.Clear()
+			m.refreshMenu()
+			return m, nil
+		}
 		return m, nil
 
 	case "ctrl+r":
@@ -908,7 +916,10 @@ func (m Model) contextLines() []string {
 // off the bottom of the terminal. That is the failure this arithmetic exists to prevent, and it is
 // invisible until somebody with a seven item list cannot see what they are typing.
 func (m Model) transcriptHeight() int {
-	h := m.height - m.input.Height() - 1 // one line for the status row
+	// The status row is measured rather than assumed to be one line. Several of the slash commands
+	// answer with a listing many lines tall, and budgeting one line for it pushed the box and the
+	// footer off the bottom of the frame the first time somebody ran /commands on a small terminal.
+	h := m.height - m.input.Height() - m.statusHeight()
 	if pane := m.taskPane(); pane != "" {
 		h -= strings.Count(pane, "\n") + 1
 	}
@@ -944,7 +955,7 @@ func (m Model) Body() string {
 			// Below the box here, because the box is in the middle of the screen and below is where
 			// the room is. On a conversation in progress the box is on the floor and the list goes
 			// above it instead.
-			menu: m.menu.lines(m.width),
+			menu: m.menu.lines(m.width, m.menuFilter()),
 		}.render()
 	}
 
@@ -966,50 +977,46 @@ func (m Model) Body() string {
 		start = 0
 	}
 
-	var b strings.Builder
-	shown := lines[start:end]
-	b.WriteString(strings.Join(shown, "\n"))
+	rows := append([]string(nil), lines[start:end]...)
 
 	// Pad so the input box stays at the bottom rather than floating under however much has been
 	// said so far.
-	if pad := visible - len(shown); pad > 0 {
-		b.WriteString(strings.Repeat("\n", pad))
+	for pad := visible - len(rows); pad > 0; pad-- {
+		rows = append(rows, "")
 	}
 
 	if tasks := m.taskPane(); tasks != "" {
-		b.WriteString("\n")
-		b.WriteString(tasks)
+		rows = append(rows, strings.Split(tasks, "\n")...)
 	}
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
-	for _, line := range m.menu.lines(m.width) {
-		b.WriteString("\n")
-		b.WriteString(line)
-	}
+	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
 	// is about to type into. See jumpPill.
-	for _, line := range m.jumpPill(len(lines) - end) {
-		b.WriteString("\n")
-		b.WriteString(line)
-	}
+	rows = append(rows, m.jumpPill(len(lines)-end)...)
+
+	// The smoke drifts up from the fire into whatever air these rows have spare.
+	m.driftSmoke(rows)
+
+	var b strings.Builder
+	b.WriteString(strings.Join(rows, "\n"))
 	b.WriteString("\n")
-	b.WriteString(m.smokeOver(m.statusRow(len(lines) - end)))
+	b.WriteString(m.flameOver(m.statusRow(len(lines) - end)))
 	b.WriteString("\n")
 	b.WriteString(m.inputBox())
 	return b.String()
 }
 
-// smokeOver puts a wisp above the fire on the message box, at the right hand end of the status row.
+// flameOver puts the tip of the fire above its base, at the right hand end of the status row.
 //
-// The row above the box is the only place it can go, and one row is as far as it should: smoke
-// climbing further would be drifting up through somebody's conversation. It is drawn only while the
-// fire is lit, so a finished turn leaves coals and nothing above them.
+// The base rides the box's top edge and holds still; this is the part that dances. It is drawn only
+// while the fire is lit, so a finished turn leaves coals on the rule and nothing above them.
 //
-// Right aligned to the same columns the fire occupies, computed from the box rather than guessed, so
-// the wisp sits over the flame instead of near it. The status row's own text is measured with its
+// Right aligned to the same columns the base occupies, computed from the box rather than guessed, so
+// the flame sits on the fire instead of near it. The status row's own text is measured with its
 // styling stripped, because a row measured with escape sequences in it comes out far too wide and the
 // padding disappears.
-func (m Model) smokeOver(status string) string {
+func (m Model) flameOver(status string) string {
 	if m.blank() || (!m.working && !m.compacting) {
 		return status
 	}
@@ -1021,7 +1028,40 @@ func (m Model) smokeOver(status string) string {
 		return status
 	}
 	return status + strings.Repeat(" ", column-used) +
-		theme.Current().Smoke.Render(brand.EmberSmoke(m.markStep))
+		theme.Current().Flame.Render(brand.EmberTip(m.markStep))
+}
+
+// driftSmoke lets a wisp or two rise from the fire into the rows above the status row, in place.
+//
+// A little way into the conversation and no further: the near wisp one row above the flame's tip and
+// a fainter, sparser one a row above that, so the smoke visibly thins and fades rather than climbing
+// through somebody's transcript. Each wisp is drawn only where its row has nothing else in those
+// columns — smoke goes behind words, not over them — and not at all while the view is scrolled away
+// from the tail, where the rows above the box are the middle of something being read.
+func (m Model) driftSmoke(rows []string) {
+	if m.blank() || (!m.working && !m.compacting) || m.scroll > 0 {
+		return
+	}
+	t := theme.Current()
+	fades := []lipgloss.Style{t.Smoke, t.SmokeFaint}
+
+	column := m.width - 2 - brand.EmberWidth
+	for rise := 1; rise <= len(fades); rise++ {
+		i := len(rows) - rise
+		if i < 0 {
+			return
+		}
+		if used := lipgloss.Width(ansi.Strip(rows[i])); used <= column {
+			wisp := strings.TrimRight(brand.EmberWisp(m.markStep, rise), " ")
+			rows[i] += strings.Repeat(" ", column-used+leading(wisp)) +
+				fades[rise-1].Render(strings.TrimLeft(wisp, " "))
+		}
+	}
+}
+
+// leading is how many columns of air position a wisp inside its block.
+func leading(wisp string) int {
+	return len([]rune(wisp)) - len([]rune(strings.TrimLeft(wisp, " ")))
 }
 
 // maxTaskLines is how tall the task pane may grow before it summarises instead.
@@ -1116,6 +1156,9 @@ func (m Model) jumpPill(below int) []string {
 	}
 }
 
+// statusHeight is how many rows the status will occupy.
+func (m Model) statusHeight() int { return 1 + strings.Count(m.statusRow(0), "\n") }
+
 // statusRow is the line between the conversation and the box.
 func (m Model) statusRow(below int) string {
 	t := theme.Current()
@@ -1171,7 +1214,7 @@ func (m Model) inputBox() string {
 
 	var b strings.Builder
 	b.WriteString(" " + m.boxTop(topLeft, topRight, horizontal, inner+2) + "\n")
-	for _, line := range m.input.Lines() {
+	for _, line := range m.commandLit(m.input.Lines()) {
 		// Padded to the full inner width so the right hand border stays in one column whatever is
 		// typed. A border that moves with the text reads as a rendering fault.
 		pad := inner - lipgloss.Width(line)
@@ -1183,6 +1226,63 @@ func (m Model) inputBox() string {
 	}
 	b.WriteString(" " + t.Border.Render(bottomLeft+rule+bottomRight))
 	return b.String()
+}
+
+// menuFilter is the command fragment being typed, for the list to light its matches by.
+func (m Model) menuFilter() string {
+	prefix, ok := commandPrefix(m.input.Value())
+	if !ok {
+		return ""
+	}
+	return prefix
+}
+
+// commandLit colours a command at the head of the box in the secondary colour, once it names one
+// that actually exists.
+//
+// The colour is confirmation, not decoration: the moment /new turns green you know it will run as a
+// command rather than be sent as a message, which is otherwise only discoverable by sending it. A
+// name that matches nothing stays plain, which is the same signal in the other direction.
+func (m Model) commandLit(lines []string) []string {
+	name, ok := m.typedCommand()
+	if !ok || len(lines) == 0 {
+		return lines
+	}
+	// Matched on the rendered line rather than assumed, because the drawn cursor is escape
+	// sequences in the middle of the text: with the cursor inside the name the prefix will not
+	// match, and skipping the highlight there is right anyway — the menu is open and doing it.
+	token := "/" + name
+	if !strings.HasPrefix(lines[0], token) {
+		return lines
+	}
+	lines[0] = theme.Current().Success.Render(token) + lines[0][len(token):]
+	return lines
+}
+
+// typedCommand is the command the box currently begins with, when it names one that exists.
+func (m Model) typedCommand() (string, bool) {
+	value := m.input.Value()
+	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {
+		return "", false
+	}
+	name := strings.TrimPrefix(value, "/")
+	if at := strings.IndexAny(name, " \t\r\n"); at >= 0 {
+		name = name[:at]
+	}
+	if name == "" {
+		return "", false
+	}
+	for _, item := range builtinItems() {
+		if item.name == name {
+			return name, true
+		}
+	}
+	for _, command := range m.commands.All() {
+		if command.Name == name {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // boxTop draws the top edge of the message box with the mode and the model written into it.
@@ -1239,15 +1339,45 @@ func (m Model) boxTop(left, right, horizontal string, width int) string {
 	fire := ""
 	if !m.blank() && rest >= brand.EmberWidth+2 {
 		if m.working || m.compacting {
-			fire = " " + t.Flame.Render(brand.Ember(m.markStep)) + " "
+			fire = " " + emberBase() + " "
 		} else {
-			fire = " " + t.Smoke.Render(brand.EmberOut) + " "
+			fire = " " + emberCoals() + " "
 		}
 		rest -= brand.EmberWidth + 2
 	}
 
 	return t.Border.Render(left+horizontal) + " " + written + " " +
 		t.Border.Render(strings.Repeat(horizontal, rest)) + fire + t.Border.Render(right)
+}
+
+// emberBase draws the bed of the fire, its heart a step brighter than its ends.
+//
+// Two shades of the same green rather than one, because a fire is brightest in the middle, and that
+// small difference is what makes seven cells on a border rule read as burning rather than as a row
+// of green marks. The split columns come from the brand package so the two cannot drift apart.
+func emberBase() string {
+	t := theme.Current()
+	return heartOf(brand.EmberBase, t.Flame, t.FlameCore)
+}
+
+// emberCoals draws the fire gone out: cold grey at the edges, the last of the warmth in the middle.
+//
+// The same split as the lit base and the opposite direction of contrast — the ends fade towards the
+// background while the centre keeps the plainer grey — which is what a real fire does as it dies:
+// it goes out from the outside in.
+func emberCoals() string {
+	t := theme.Current()
+	return heartOf(brand.EmberOut, t.SmokeFaint, t.Smoke)
+}
+
+// heartOf styles a seven cell drawing with one style at its ends and another over its middle, the
+// split coming from the brand package so the two cannot drift apart.
+func heartOf(drawing string, ends, middle lipgloss.Style) string {
+	runes := []rune(drawing)
+	core, end := brand.EmberCoreColumn, brand.EmberCoreColumn+brand.EmberCoreWidth
+	return ends.Render(string(runes[:core])) +
+		middle.Render(string(runes[core:end])) +
+		ends.Render(string(runes[end:]))
 }
 
 // Context is what the frame shows beside the title.
@@ -1266,11 +1396,16 @@ func (m Model) ContextParts() []string {
 		// every other thing this line says.
 		parts = append(parts, m.agentName)
 	}
-	if m.dir != "" {
-		parts = append(parts, m.dir)
-	}
-	if m.keyName != "" {
-		parts = append(parts, m.keyName)
+	// The opening screen already says where the agent is working and what it is talking to, along
+	// its bottom left, so while that screen is up the header does not say the same two things three
+	// rows above it. They move up here the moment the conversation starts and takes the floor back.
+	if !m.blank() {
+		if m.dir != "" {
+			parts = append(parts, m.dir)
+		}
+		if m.keyName != "" {
+			parts = append(parts, m.keyName)
+		}
 	}
 
 	usage := m.session.Usage()
@@ -1294,20 +1429,55 @@ func (m Model) ContextParts() []string {
 }
 
 // contextMeter is the "how full is this conversation" figure in the header.
+//
+// A drawn bar as well as the number, because a bar is read at a glance from across a desk and a
+// percentage has to be found and parsed. The number stays beside it for the person who wants the
+// exact figure, and the bar is built from the same two characters as every rule in the interface,
+// so it degrades to nothing stranger than a line on a font that has trouble.
+//
+// The fill goes through the traffic light as it grows: the signature green while there is plenty of
+// room, amber past the halfway-and-some mark, red when compaction is due. The number takes the same
+// colour, so the two halves of the meter cannot tell different stories, and the empty track stays in
+// the border grey, which is what makes the filled part read as filled.
 func (m Model) contextMeter() string {
 	t := theme.Current()
 	use := m.session.ContextUse()
+	fraction := use.Fraction()
 
-	text := "context " + use.String()
+	tone := t.Success
 	switch {
-	case use.NeedsCompaction():
-		return t.Warning.Render(text + ", ctrl+r to compact")
-	case use.Fraction() > 0.5:
-		return t.Info.Render(text)
-	default:
-		return t.Muted.Render(text)
+	case use.NeedsCompaction() || fraction >= 0.85:
+		tone = t.Danger
+	case fraction >= 0.6:
+		tone = t.Warning
 	}
+
+	filled := int(fraction*float64(meterWidth) + 0.5)
+	if filled > meterWidth {
+		filled = meterWidth
+	}
+	// Anything at all shows one cell. A conversation that has started using context showing an
+	// empty bar reads as a meter that is broken rather than one that is barely used.
+	if filled <= 0 {
+		filled = 0
+		if fraction > 0 {
+			filled = 1
+		}
+	}
+
+	out := t.Muted.Render("context ") +
+		tone.Render(strings.Repeat("█", filled)) +
+		t.Border.Render(strings.Repeat("─", meterWidth-filled)) +
+		" " + tone.Render(use.String())
+	if use.NeedsCompaction() {
+		out += t.Warning.Render(", ctrl+r to compact")
+	}
+	return out
 }
+
+// meterWidth is how many cells the header bar spends. Ten: enough steps that the colour change
+// lands mid bar rather than at its ends, few enough that the bar is a detail rather than a banner.
+const meterWidth = 10
 
 // toolKind answers what kind of thing a tool is, for the transcript's labels.
 //

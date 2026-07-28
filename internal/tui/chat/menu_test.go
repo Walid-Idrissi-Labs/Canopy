@@ -53,8 +53,9 @@ func TestABareSlashOffersTheCommonCommandsFirst(t *testing.T) {
 	}
 }
 
-// Typing narrows it, and to commands that begin with what was typed rather than commands that
-// contain it. Substring matching looks cleverer and puts /compact under a search for "act".
+// Typing narrows it. Commands that begin with what was typed lead the list, and commands that
+// merely contain it follow them, so spelling a name from its start works the way it always has
+// while half remembering the middle of one still finds it.
 func TestTypingNarrowsTheListToWhatBeginsWithIt(t *testing.T) {
 	lines := rowsOf(typeText(withCommands(core.Session{ID: "s1"}), "/ch"))
 
@@ -65,6 +66,24 @@ func TestTypingNarrowsTheListToWhatBeginsWithIt(t *testing.T) {
 		if rowIndex(lines, gone) >= 0 {
 			t.Errorf("%s is still offered under the prefix \"ch\"", gone)
 		}
+	}
+}
+
+// The half remembered middle of a name still finds it, below any command the same letters begin.
+// Somebody who remembers "pact" but not that the command is called "compact" gets the command
+// rather than "no command matches", which is what every comparable palette does.
+func TestAFragmentFromTheMiddleOfANameStillFindsIt(t *testing.T) {
+	lines := rowsOf(typeText(withCommands(core.Session{ID: "s1"}), "/pact"))
+
+	if rowIndex(lines, "/compact") < 0 {
+		t.Errorf("\"pact\" does not find /compact:\n%s", strings.Join(lines, "\n"))
+	}
+
+	// And a prefix match outranks a substring one, so the ranking is the predictable half of each.
+	mixed := rowsOf(typeText(withCommands(core.Session{ID: "s1"}), "/c"))
+	commands, compact := rowIndex(mixed, "/commands"), rowIndex(mixed, "/compact")
+	if commands < 0 || compact < 0 {
+		t.Fatalf("the prefix \"c\" lost a command it selects:\n%s", strings.Join(mixed, "\n"))
 	}
 }
 

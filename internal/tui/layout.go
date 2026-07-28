@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -128,7 +130,10 @@ func Keys(width int, pairs ...string) string {
 	var parts []string
 	var used int
 	for i := 0; i+1 < len(pairs); i += 2 {
-		cost := len(pairs[i]) + 1 + len(pairs[i+1])
+		// Measured in display cells rather than bytes. An arrow key hint is three bytes and one
+		// cell, and a footer that measures in bytes charges itself triple for it and drops a hint
+		// it had the room to draw.
+		cost := lipgloss.Width(pairs[i]) + 1 + lipgloss.Width(pairs[i+1])
 		if len(parts) > 0 {
 			cost += len(gap)
 		}

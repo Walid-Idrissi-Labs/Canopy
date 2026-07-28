@@ -122,14 +122,22 @@ func matching(prefix string, commands config.CommandSet) []menuItem {
 		return append(builtinItems(), user...)
 	}
 
-	var out []menuItem
+	// Prefix matches first and substring matches after them, each alphabetical. The prefix block is
+	// what somebody spelling a name from its start expects; the substring block is what saves the
+	// person who remembers "pact" but not that the command is called "compact". Ranking rather than
+	// mixing, because a substring hit sorting above a prefix hit reads as the list guessing.
+	var starts, contains []menuItem
 	for _, item := range append(builtinItems(), user...) {
-		if strings.HasPrefix(item.name, prefix) {
-			out = append(out, item)
+		switch {
+		case strings.HasPrefix(item.name, prefix):
+			starts = append(starts, item)
+		case strings.Contains(item.name, prefix):
+			contains = append(contains, item)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].name < out[j].name })
-	return out
+	sort.SliceStable(starts, func(i, j int) bool { return starts[i].name < starts[j].name })
+	sort.SliceStable(contains, func(i, j int) bool { return contains[i].name < contains[j].name })
+	return append(starts, contains...)
 }
 
 // move walks the selection, and scrolls the window to keep it on screen.
@@ -196,8 +204,10 @@ func (m menu) height() int {
 	return rows
 }
 
-// lines renders the list.
-func (m menu) lines(width int) []string {
+// lines renders the list. The filter is whatever command is in the box, passed in rather than
+// stored so the two cannot disagree, and it is what lets each row light up the part of its name
+// that earned it a place in the list.
+func (m menu) lines(width int, filter string) []string {
 	if !m.open {
 		return nil
 	}
@@ -214,7 +224,7 @@ func (m menu) lines(width int) []string {
 
 	out := make([]string, 0, menuVisible+1)
 	for i := m.offset; i < end; i++ {
-		out = append(out, m.row(m.matches[i], i == m.selected, width))
+		out = append(out, m.row(m.matches[i], i == m.selected, width, filter))
 	}
 
 	// The count of what is off screen, so four rows do not read as the whole list.
@@ -225,16 +235,29 @@ func (m menu) lines(width int) []string {
 	return out
 }
 
-// row draws one command: the marker, the name, and what it does.
-func (m menu) row(item menuItem, selected bool, width int) string {
+// row draws one command: the marker, the name with the matched letters lit, and what it does.
+func (m menu) row(item menuItem, selected bool, width int, filter string) string {
 	t := theme.Current()
 
-	marker, name := "  ", t.Body.Render("/"+item.name)
+	marker := "  "
+	base := t.Body
 	if selected {
 		// A marker as well as a colour. The selected row has to be identifiable with the colour
 		// stripped, which is the rule the whole interface is built on and the reason the monochrome
 		// theme exists.
-		marker, name = t.Key.Render("> "), t.Selected.Render("/"+item.name)
+		marker, base = t.Key.Render("> "), t.Selected
+	}
+
+	// The letters the filter matched are drawn in the secondary colour, so the list shows why each
+	// row is in it: type "pa" and the pa in compact lights up. The slash stays in the row's own
+	// style, because it is punctuation rather than part of what matched.
+	name := base.Render("/")
+	if at := strings.Index(item.name, filter); filter != "" && at >= 0 {
+		name += base.Render(item.name[:at]) +
+			t.Success.Render(item.name[at:at+len(filter)]) +
+			base.Render(item.name[at+len(filter):])
+	} else {
+		name += base.Render(item.name)
 	}
 
 	line := marker + name + t.Muted.Render("  "+item.description)
@@ -243,7 +266,7 @@ func (m menu) row(item menuItem, selected bool, width int) string {
 	}
 	// The description is what gets cut, never the name. A truncated command name is a command
 	// somebody cannot type.
-	room := width - lipgloss.Width(marker+name) - 4
+	room := width - 2 - lipgloss.Width("/"+item.name) - 4
 	if room < 4 {
 		return marker + name
 	}

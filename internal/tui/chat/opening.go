@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
@@ -62,9 +63,11 @@ type opening struct {
 
 func (o opening) render() string {
 	head := o.head()
-	// The gap between the name and the box: a blank row, and the row the status keeps whether or not
-	// it has anything to say.
-	gap := []string{"", o.status}
+	// The gap between the name and the box: a blank row, and the rows the status needs whether or
+	// not it has anything to say. Split rather than dropped in as one string, because a slash
+	// command's listing arrives here several lines tall and a single slot would count it as one row
+	// and push the box off the bottom of the composition.
+	gap := append([]string{""}, strings.Split(o.status, "\n")...)
 	block := append(append(append([]string(nil), head...), gap...), o.box...)
 	// The command list hangs off the bottom of the box and does not move it. The centring below is
 	// computed from the name and the gap alone, so opening the list leaves the name and the box
@@ -111,19 +114,18 @@ func (o opening) render() string {
 func (o opening) head() []string {
 	t := theme.Current()
 
-	// The large name with its shadow, which is the version worth looking at, and the packed one
-	// behind it for a terminal that cannot afford six rows on a logo.
+	// The large name with its edge picked out, which is the version worth looking at, and the packed
+	// one behind it for a terminal that cannot afford six rows on a logo.
 	if brand.FitsLarge(o.width) && o.height >= largeHeadHeight {
-		indent := o.indentFor(brand.LargeShadowWidth)
+		indent := o.indentFor(brand.LargeWidth)
 
 		// No written name under it, which is a departure from the rule below and was asked for
 		// directly. The rule is not abandoned: the header above this draws "canopy" in text on every
 		// screen, so the written name is still on screen for anything that cannot read block letters,
 		// it is simply not repeated twice in the same eyeful.
-		letters, shadow := brand.Large(), brand.LargeShadow()
-		head := make([]string, 0, len(letters))
-		for i, line := range letters {
-			head = append(head, indent+shaded(line, shadow[i]))
+		head := make([]string, 0, brand.LargeRows)
+		for _, row := range brand.Large() {
+			head = append(head, strings.TrimRight(indent+outlined(row), " "))
 		}
 		return head
 	}
@@ -183,42 +185,83 @@ func (o opening) floor(rows int) []string {
 
 // paint styles one row of the mark, giving the campfire a colour of its own.
 //
-// Two colours rather than one, which is what stops the mark reading as a stencil: the tent takes the
-// primary and the flame takes the secondary, so the logo carries two thirds of the palette instead
-// of being a shape in a single hue. The brand package hands over where the fire is rather than what
-// colour it should be, because it constructs no colours at all.
+// Three colours rather than one, which is what stops the mark reading as a stencil: the tent takes
+// the primary, the flame takes the secondary with its heart a step brighter, and the smoke takes
+// the accent, so the logo carries the whole palette instead of being a shape in a single hue. The
+// brand package hands over where the fire is rather than what colour it should be, because it
+// constructs no colours at all.
 func paint(row int, line string) string {
 	t := theme.Current()
 
 	fireTop, fireColumn, fireHeight, fireWidth := brand.FireRegion()
+	coreTop, coreColumn, coreHeight, coreWidth := brand.FireCoreRegion()
+	if inside(row, coreTop, coreHeight) {
+		// The heart of the fire sits inside the flame's own rows, so this row is three spans of
+		// flame, core and flame again, with the tent's colour either side.
+		return tint(line,
+			span{fireColumn, coreColumn - fireColumn, t.Flame},
+			span{coreColumn, coreWidth, t.FlameCore},
+			span{coreColumn + coreWidth, fireColumn + fireWidth - coreColumn - coreWidth, t.Flame})
+	}
 	if inside(row, fireTop, fireHeight) {
-		return tint(line, fireColumn, fireWidth, t.Flame)
+		return tint(line, span{fireColumn, fireWidth, t.Flame})
 	}
 
 	smokeTop, smokeColumn, smokeHeight, smokeWidth := brand.SmokeRegion()
 	if inside(row, smokeTop, smokeHeight) {
-		return tint(line, smokeColumn, smokeWidth, t.Smoke)
+		return tint(line, span{smokeColumn, smokeWidth, t.Smoke})
 	}
 	return t.Logo.Render(line)
 }
 
 func inside(row, top, height int) bool { return row >= top && row < top+height }
 
-// tint styles one span of a row differently from the rest of it.
-func tint(line string, column, width int, style lipgloss.Style) string {
-	logo := theme.Current().Logo
+// span is a stretch of a row that takes a style of its own.
+type span struct {
+	column int
+	width  int
+	style  lipgloss.Style
+}
 
+// tint styles stretches of a row differently from the rest of it, which is drawn as the logo.
+//
+// Spans are taken in order and clipped to the row, so a span past the end of a short line colours
+// nothing rather than panicking, which is what lets every row of the mark go through one function
+// whether or not the fire reaches it.
+func tint(line string, spans ...span) string {
+	logo := theme.Current().Logo
 	runes := []rune(line)
-	if len(runes) <= column {
-		return logo.Render(line)
+
+	var b strings.Builder
+	at := 0
+	for _, s := range spans {
+		if s.width <= 0 || at >= len(runes) {
+			continue
+		}
+		start := s.column
+		if start < at {
+			start = at
+		}
+		if start > len(runes) {
+			break
+		}
+		if start > at {
+			b.WriteString(logo.Render(string(runes[at:start])))
+			at = start
+		}
+		end := s.column + s.width
+		if end > len(runes) {
+			end = len(runes)
+		}
+		if end > at {
+			b.WriteString(s.style.Render(string(runes[at:end])))
+			at = end
+		}
 	}
-	end := column + width
-	if end > len(runes) {
-		end = len(runes)
+	if at < len(runes) {
+		b.WriteString(logo.Render(string(runes[at:])))
 	}
-	return logo.Render(string(runes[:column])) +
-		style.Render(string(runes[column:end])) +
-		logo.Render(string(runes[end:]))
+	return b.String()
 }
 
 // mark is the logo at the current step, or nothing when there is no room for it.
@@ -296,64 +339,102 @@ func (o opening) fits(long, short string) string {
 // screen is a screen somebody is about to type into rather than a poster.
 const largeHeadHeight = 26
 
-// shaded composites one row of the name over one row of its shadow.
+// outlined draws one row of the large name: the letters in the brand blue with their thin edge in
+// the brand grey, which the theme already adapts for a light terminal. A literal grey would
+// disappear on half the terminals it ran on.
 //
-// The letter wins wherever both want a cell, because a shadow drawn over its own letter is not a
-// shadow. Everywhere else the shadow shows through in the text colour, which is near white on a dark
-// terminal and near black on a light one. A literal white would disappear on half the terminals it
-// ran on.
-//
-// Runs of one colour are rendered together rather than a cell at a time, so a row of the logo carries
-// a handful of escape sequences instead of one per column.
-func shaded(letters, shadow string) string {
+// The brand package hands over half cells rather than runes because two of the states cannot be a
+// rune at all: a cell that is letter on top and edge below is a half block with one colour as its
+// foreground and the other as its background, and which colours those are is decided here, where
+// the theme lives. Runs of one style are rendered together rather than a cell at a time, so a row
+// of the logo carries a handful of escape sequences instead of one per column.
+func outlined(cells []brand.HalfCell) string {
 	t := theme.Current()
 
-	ink := []rune(letters)
-	cast := []rune(shadow)
-	width := max(len(ink), len(cast))
+	// A terminal with no colour at all gets the letters and their edge as one silhouette. The split
+	// cells below depend on a background colour to carry their second half, and with the styling
+	// stripped that half simply vanishes, leaving the word looking moth eaten. Drawing the union is
+	// the honest degradation: the same letterforms, a shade bolder, in whatever the terminal prints.
+	if lipgloss.ColorProfile() == termenv.Ascii {
+		return silhouette(cells)
+	}
+
+	// The letters in the brand blue and the edge in the brand grey. Grey rather than the text
+	// colour, which was tried first: a near white edge carries almost as much weight as the letters
+	// and reads as a second stroke, while the grey sits behind the blue and reads as the thin line
+	// it is meant to be.
+	colour := func(h brand.Half) lipgloss.TerminalColor {
+		if h == brand.Ink {
+			return t.Palette.Accent
+		}
+		return t.Palette.Muted
+	}
+
+	// The shapes a half cell can take, and the style each needs. Split cells of one class use a
+	// plain foreground; a cell carrying letter and edge at once draws the letter half as the glyph
+	// and paints the edge half with the background, which is the one way a terminal draws two
+	// colours in one cell. The letter being the glyph is what keeps this honest under NO_COLOR:
+	// with the styling stripped the letter half still prints and the edge half quietly goes,
+	// so a colourless terminal sees the clean letterforms rather than a texture of leftovers.
+	draw := func(c brand.HalfCell) (rune, lipgloss.Style) {
+		switch {
+		case c.Top == brand.Air && c.Bottom == brand.Air:
+			return ' ', lipgloss.NewStyle()
+		case c.Top == c.Bottom:
+			return '█', lipgloss.NewStyle().Foreground(colour(c.Top))
+		case c.Top == brand.Air:
+			return '▄', lipgloss.NewStyle().Foreground(colour(c.Bottom))
+		case c.Bottom == brand.Air:
+			return '▀', lipgloss.NewStyle().Foreground(colour(c.Top))
+		case c.Top == brand.Ink:
+			return '▀', lipgloss.NewStyle().Foreground(colour(c.Top)).Background(colour(c.Bottom))
+		default:
+			return '▄', lipgloss.NewStyle().Foreground(colour(c.Bottom)).Background(colour(c.Top))
+		}
+	}
 
 	var b strings.Builder
 	var run []rune
-	class := 0 // 0 air, 1 letter, 2 shadow
+	last := brand.HalfCell{}
+	started := false
 
 	flush := func() {
-		if len(run) == 0 {
+		if !started || len(run) == 0 {
 			return
 		}
-		switch class {
-		case 1:
-			b.WriteString(t.Logo.Render(string(run)))
-		case 2:
-			b.WriteString(t.Body.Render(string(run)))
-		default:
-			b.WriteString(string(run))
-		}
+		_, style := draw(last)
+		b.WriteString(style.Render(string(run)))
 		run = run[:0]
 	}
 
-	for i := 0; i < width; i++ {
-		letter, shade := ' ', ' '
-		if i < len(ink) {
-			letter = ink[i]
-		}
-		if i < len(cast) {
-			shade = cast[i]
-		}
-
-		want, glyph := 0, ' '
-		switch {
-		case letter != ' ':
-			want, glyph = 1, letter
-		case shade != ' ':
-			want, glyph = 2, shade
-		}
-
-		if want != class {
+	for _, cell := range cells {
+		if started && cell != last {
 			flush()
-			class = want
 		}
+		glyph, _ := draw(cell)
 		run = append(run, glyph)
+		last, started = cell, true
 	}
 	flush()
+	return b.String()
+}
+
+// silhouette draws one row of the large name with letter and edge as one shape, for a terminal
+// that cannot tell the two apart anyway.
+func silhouette(cells []brand.HalfCell) string {
+	var b strings.Builder
+	for _, cell := range cells {
+		high, low := cell.Top != brand.Air, cell.Bottom != brand.Air
+		switch {
+		case high && low:
+			b.WriteRune('█')
+		case high:
+			b.WriteRune('▀')
+		case low:
+			b.WriteRune('▄')
+		default:
+			b.WriteRune(' ')
+		}
+	}
 	return b.String()
 }

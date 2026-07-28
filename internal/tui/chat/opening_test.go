@@ -45,7 +45,7 @@ func TestTheSpaceBetweenTheNameAndTheBoxIsAtTheMiddleOfTheScreen(t *testing.T) {
 	// underneath, then the bottom of a frame around it, and both of those are gone: the header draws
 	// "canopy" in text on every screen, so the line under it was saying the same thing twice, and the
 	// frame was competing with the letters it was meant to set off.
-	name := rowContaining(lines, "▀█▄▄▄█▀")
+	name := rowContaining(lines, "▀███████▀")
 	box := rowContaining(lines, "╭")
 	if name < 0 || box < 0 {
 		t.Fatalf("the name is on row %d and the box on row %d:\n%s", name, box, strings.Join(lines, "\n"))
