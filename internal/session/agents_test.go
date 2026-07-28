@@ -256,3 +256,49 @@ func TestFindingTheAgentASessionBelongsTo(t *testing.T) {
 		t.Error("a session with no agent reported one")
 	}
 }
+
+// M-08. Resuming registers the same agent onto a conversation that already exists, rather than
+// starting a second one beside it.
+//
+// The alternative is what `canopy pickup` would do without this: open the conversation asked for,
+// with a fresh empty agent sitting next to it in the agents list, having quietly created a
+// conversation nobody wanted.
+func TestAnAgentCanBeGivenAConversationItAlreadyHad(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+
+	existing := e.Create("claude", "claude-opus-5")
+	before := len(e.Sessions())
+
+	agent, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", SessionID: existing.ID, KeyName: "claude", Model: "claude-opus-5",
+	})
+	if err != nil {
+		t.Fatalf("resuming %s: %v", existing.ID, err)
+	}
+	if agent.SessionID != existing.ID {
+		t.Errorf("the agent was put on %s rather than on %s", agent.SessionID, existing.ID)
+	}
+	if after := len(e.Sessions()); after != before {
+		t.Errorf("resuming started a conversation as well: %d became %d", before, after)
+	}
+}
+
+// And a code that names nothing is refused rather than quietly turned into a new conversation,
+// which looks exactly like history having been lost.
+func TestResumingAConversationThatIsNotThereIsRefused(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+
+	_, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", SessionID: "session-404", KeyName: "claude",
+	})
+	if err == nil {
+		t.Fatal("resuming a conversation that does not exist was allowed")
+	}
+	if len(e.Sessions()) != 0 {
+		t.Errorf("a conversation was created while refusing to resume one: %d", len(e.Sessions()))
+	}
+}

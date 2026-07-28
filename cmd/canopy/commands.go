@@ -35,7 +35,9 @@ import (
 //
 // Every screen is handed an interface and that is all it ever sees, which is what let the real
 // engine drop in behind the worktree monitor without the interface changing.
-func runChat() error {
+// A conversation named in resume is picked up rather than started, which is what `canopy pickup`
+// does. Empty, which is the ordinary case, opens a new one.
+func runChat(resume string) error {
 	keyStore, err := openKeyStore()
 	if err != nil {
 		return err
@@ -75,15 +77,27 @@ func runChat() error {
 	// The session you land in is an agent like any other, registered so it appears in the agents
 	// view rather than being a special case the list has to know about. Called "main" because that
 	// is what somebody would call the one they are talking to.
+	//
+	// Resuming registers the same agent onto the conversation being picked up, rather than starting
+	// a second one beside it. Otherwise `canopy pickup` would open the old conversation with a fresh
+	// empty agent sitting next to it in the agents list, which is not what anybody asked for.
 	keyName := resolver.DefaultKeyName()
 	main, err := engine.AddAgent(context.Background(), session.Agent{
-		Name:    "main",
-		KeyName: keyName,
-		Model:   defaultModelFor(keyStore, keyName),
-		Dir:     dir,
-		Trust:   core.TrustStandard,
+		Name:      "main",
+		SessionID: resume,
+		KeyName:   keyName,
+		Model:     defaultModelFor(keyStore, keyName),
+		Dir:       dir,
+		Trust:     core.TrustStandard,
 	})
 	if err != nil {
+		if resume != "" {
+			// Said in terms of what was typed rather than of the session id it was turned into,
+			// because the code is what the person has in front of them.
+			return fmt.Errorf(
+				"there is no conversation %s in your history, try `canopy search` to find one",
+				session.Code(resume))
+		}
 		return fmt.Errorf("starting the first agent: %w", err)
 	}
 
@@ -123,9 +137,25 @@ func runChat() error {
 	// The conversation the interface opens is the one the main agent was given, which is made fresh
 	// on every run. Leaving this out is what made `canopy` reopen the oldest chat in the history
 	// database while the agent it had just started talked to nobody.
-	return tui.RunAppConfigured(monitor, keyStore, engine, filepath.Base(dir), keyName, tui.AppOptions{
-		Review: review, Commands: commands, Costs: costs, Session: main.SessionID,
-	})
+	last, err := tui.RunAppConfigured(
+		monitor, keyStore, engine, filepath.Base(dir), keyName, tui.AppOptions{
+			Review: review, Commands: commands, Costs: costs, Session: main.SessionID,
+		})
+	if err != nil {
+		return err
+	}
+
+	// Printed on the way out, which is the only moment somebody is looking at a terminal and about
+	// to lose track of where they were. It is the conversation they ended in rather than the one
+	// they opened, because ctrl+n moves you and it is the last one that is worth coming back to.
+	//
+	// Dropped rather than reported if it cannot be written: the program has finished doing its job
+	// and there is nowhere useful left to complain to.
+	if last != "" {
+		_, _ = fmt.Fprintf(os.Stdout,
+			"\npick this conversation up again with:\n  canopy pickup %s\n", session.Code(last))
+	}
+	return nil
 }
 
 // attachTools gives the agent something to do besides talk.
@@ -234,6 +264,19 @@ func attachHistory(engine *session.Engine) error {
 	return engine.WithStorage(storage, func(err error) {
 		fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
 	})
+}
+
+// runPickup reopens a conversation by the code printed when it was left.
+//
+// A command of its own rather than a flag on the default, because it is the whole resume path until
+// there is a chat picker, and something somebody types from memory should be a verb.
+func runPickup(args []string) error {
+	code := strings.TrimSpace(strings.Join(args, " "))
+	if code == "" {
+		return errors.New(
+			"which conversation? For example `canopy pickup 7`, using the code printed when you left one")
+	}
+	return runChat(session.SessionID(code))
 }
 
 // runSearch finds a message across every stored conversation.

@@ -610,26 +610,19 @@ func (a App) ChatInput() string { return a.chat.InputValue() }
 // ChatSubscribeCmd is the same, for the chat screen's own event stream.
 func (a App) ChatSubscribeCmd() tea.Cmd { return a.chat.SubscribeCmd() }
 
-// RunApp starts the full application.
-func RunApp(
-	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
-) error {
-	return RunAppWithReview(store, keyStore, engine, dir, keyName, nil)
-}
+// ChatSession is the conversation the chat screen is on. For the caller, which prints the code to
+// come back to it, and for tests.
+func (a App) ChatSession() string { return a.chat.SessionID() }
 
-// RunAppWithReview starts the application with a source for the review screen.
-func RunAppWithReview(
-	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
-	review ReviewSource,
-) error {
-	return RunAppConfigured(store, keyStore, engine, dir, keyName, AppOptions{Review: review})
-}
-
-// RunAppConfigured starts the application with project-specific capabilities.
+// RunAppConfigured starts the application and returns the conversation it was left in.
+//
+// The conversation comes back because whoever started Canopy is the one that prints how to return
+// to it, and by the time the program exits the answer is not the one that was passed in: somebody
+// who pressed ctrl+n four times is in a different conversation from the one they opened.
 func RunAppConfigured(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	options AppOptions,
-) error {
+) (string, error) {
 	// Mouse reporting is asked for so the wheel arrives as a wheel.
 	//
 	// Without it, a terminal in the alternate screen translates the wheel into arrow key sequences,
@@ -646,6 +639,10 @@ func RunAppConfigured(
 	program := tea.NewProgram(
 		NewAppConfigured(store, keyStore, engine, dir, keyName, options),
 		tea.WithAltScreen(), tea.WithMouseCellMotion())
-	_, err := program.Run()
-	return err
+
+	final, err := program.Run()
+	if app, ok := final.(App); ok {
+		return app.ChatSession(), err
+	}
+	return "", err
 }

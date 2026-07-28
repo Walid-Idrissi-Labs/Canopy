@@ -17,6 +17,7 @@ const usage = `canopy - a terminal coding agent for running several at once
 
 usage:
   canopy               open a chat in this directory
+  canopy pickup CODE   reopen the conversation named by a code Canopy printed
   canopy keys          manage provider credentials
   canopy ask           send one message to a provider and stream the reply
   canopy search        find a message across every saved conversation
@@ -50,10 +51,16 @@ func run(args []string) error {
 			printUsage(os.Stdout)
 			return nil
 		}
-		return runChat()
+		return runChat("")
 	}
 
 	command := args[0]
+
+	// pickup takes a code as free text, so it is dispatched before the shared flag set gets a
+	// chance to try to parse one that begins with a dash.
+	if command == "pickup" || command == "resume" {
+		return runPickup(args[1:])
+	}
 
 	// keys owns its own subcommands and flags, so it is dispatched before the shared flag set
 	// gets a chance to reject them.
@@ -95,7 +102,7 @@ func run(args []string) error {
 
 	switch command {
 	case "dashboard", "ui", "chat":
-		return runChat()
+		return runChat("")
 	case "snapshot":
 		return runSnapshot(os.Stdout)
 	case "watch":

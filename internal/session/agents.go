@@ -29,6 +29,10 @@ type Agent struct {
 	Name string
 
 	// SessionID is the conversation this agent is having.
+	//
+	// Set before AddAgent it names a conversation to resume, and AddAgent refuses if there is no
+	// such conversation. Left empty, which is the ordinary case, AddAgent starts a fresh one and
+	// fills this in.
 	SessionID string
 
 	// KeyName is the credential it uses, and Model the model. Both per agent, which is where the
@@ -90,8 +94,18 @@ func (e *Engine) AddAgent(ctx context.Context, agent Agent) (Agent, error) {
 		registry = built
 	}
 
-	session := e.Create(agent.KeyName, agent.Model)
-	agent.SessionID = session.ID
+	// A conversation named on the way in is one this agent already had, which is what resuming is:
+	// the same agent, in the same directory, picking up where it left off. Anything else starts a
+	// fresh one. Refused rather than silently started when the named conversation is not there,
+	// because an agent that quietly began a new conversation instead of resuming the one asked for
+	// looks exactly like a conversation whose history was lost.
+	session := core.Session{ID: agent.SessionID}
+	if agent.SessionID == "" {
+		session = e.Create(agent.KeyName, agent.Model)
+		agent.SessionID = session.ID
+	} else if _, ok := e.Session(agent.SessionID); !ok {
+		return Agent{}, fmt.Errorf("there is no conversation %q to resume", agent.SessionID)
+	}
 
 	if agent.Trust == "" {
 		e.mu.Lock()
