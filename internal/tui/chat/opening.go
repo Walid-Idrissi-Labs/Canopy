@@ -111,18 +111,19 @@ func (o opening) render() string {
 func (o opening) head() []string {
 	t := theme.Current()
 
-	// The large name inside a frame, which is the version worth looking at, and the packed one
-	// behind it for a terminal that cannot afford eight rows on a logo.
+	// The large name with its shadow, which is the version worth looking at, and the packed one
+	// behind it for a terminal that cannot afford six rows on a logo.
 	if brand.FitsLarge(o.width) && o.height >= largeHeadHeight {
-		indent := o.indentFor(brand.LargeWidth)
+		indent := o.indentFor(brand.LargeShadowWidth)
 
 		// No written name under it, which is a departure from the rule below and was asked for
 		// directly. The rule is not abandoned: the header above this draws "canopy" in text on every
 		// screen, so the written name is still on screen for anything that cannot read block letters,
 		// it is simply not repeated twice in the same eyeful.
-		head := make([]string, 0, len(brand.Large()))
-		for _, line := range brand.Large() {
-			head = append(head, indent+edged(line))
+		letters, shadow := brand.Large(), brand.LargeShadow()
+		head := make([]string, 0, len(letters))
+		for i, line := range letters {
+			head = append(head, indent+shaded(line, shadow[i]))
 		}
 		return head
 	}
@@ -295,57 +296,63 @@ func (o opening) fits(long, short string) string {
 // screen is a screen somebody is about to type into rather than a poster.
 const largeHeadHeight = 26
 
-// edged renders one row of the drawn name with its edges picked out.
+// shaded composites one row of the name over one row of its shadow.
 //
-// The letterform is drawn in half blocks, and that carries a fact worth using: a cell holding a half
-// block is a sloped or curved part of the outline, and a cell holding a full block is solid interior.
-// Colouring the two classes differently traces every curve in a line one cell wide, at no cost in
-// space and with no second drawing to maintain.
+// The letter wins wherever both want a cell, because a shadow drawn over its own letter is not a
+// shadow. Everywhere else the shadow shows through in the text colour, which is near white on a dark
+// terminal and near black on a light one. A literal white would disappear on half the terminals it
+// ran on.
 //
-// The edge takes the text colour rather than a literal white, so it is near white on a dark terminal
-// and near black on a light one. A hardcoded white would vanish on half the terminals it ran on.
-//
-// Two computed outlines were tried first and thrown away. Both filled the gaps between the letters,
-// because at this size the air between two letters is thinner than two outlines meeting in it.
-func edged(line string) string {
+// Runs of one colour are rendered together rather than a cell at a time, so a row of the logo carries
+// a handful of escape sequences instead of one per column.
+func shaded(letters, shadow string) string {
 	t := theme.Current()
+
+	ink := []rune(letters)
+	cast := []rune(shadow)
+	width := max(len(ink), len(cast))
 
 	var b strings.Builder
 	var run []rune
-	solid := false
+	class := 0 // 0 air, 1 letter, 2 shadow
 
 	flush := func() {
 		if len(run) == 0 {
 			return
 		}
-		if solid {
+		switch class {
+		case 1:
 			b.WriteString(t.Logo.Render(string(run)))
-		} else {
+		case 2:
 			b.WriteString(t.Body.Render(string(run)))
+		default:
+			b.WriteString(string(run))
 		}
 		run = run[:0]
 	}
 
-	for _, r := range line {
-		switch r {
-		case '█':
-			if !solid {
-				flush()
-				solid = true
-			}
-		case '▀', '▄':
-			if solid {
-				flush()
-				solid = false
-			}
-		default:
-			// Air. Written as is, so a run of spaces does not carry an escape sequence.
-			flush()
-			solid = false
-			b.WriteRune(r)
-			continue
+	for i := 0; i < width; i++ {
+		letter, shade := ' ', ' '
+		if i < len(ink) {
+			letter = ink[i]
 		}
-		run = append(run, r)
+		if i < len(cast) {
+			shade = cast[i]
+		}
+
+		want, glyph := 0, ' '
+		switch {
+		case letter != ' ':
+			want, glyph = 1, letter
+		case shade != ' ':
+			want, glyph = 2, shade
+		}
+
+		if want != class {
+			flush()
+			class = want
+		}
+		run = append(run, glyph)
 	}
 	flush()
 	return b.String()

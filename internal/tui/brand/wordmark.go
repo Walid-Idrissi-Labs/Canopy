@@ -12,16 +12,14 @@ package brand
 // Five rows out against the small wordmark's three, so it is most of twice the size while being the
 // same drawing at heart.
 //
-// The edge of the drawing is not computed and does not need to be. In a half block drawing the cells
-// holding a half block are exactly the sloped and curved parts of the letterform, and the cells
-// holding a full block are its solid interior. Colouring those two classes differently traces every
-// curve in a line one cell wide, which the interface does because it is the side that knows about
-// colour.
+// The name casts a shadow rather than carrying an outline, and getting there took three attempts. A
+// halo one cell out fills the mouth of the C and the bowl of the P. Flooding in from the edge first
+// fixes the counters and still closes the gaps between letters, because at this size the air between
+// two letters is thinner than two outlines meeting in it. Colouring the half block cells differently
+// from the full block ones traces every curve exactly, and reads as an edge drawn on the letters
+// rather than as anything the letters are sitting in.
 //
-// Two computed outlines were written before that was noticed and both were thrown away. A halo one
-// cell out fills the mouth of the C and the bowl of the P. Flooding from outside first fixes the
-// counters and still closes the gaps between letters, because at this size the air between two
-// letters is thinner than two outlines. Neither survived being looked at.
+// A shadow one column to the side touches no counter and no gap. See LargeShadow. Neither survived being looked at.
 
 import "strings"
 
@@ -124,7 +122,7 @@ const LargeWidth = 6*glyphWidth + 5*letterGap
 //
 // Two columns of air on each side, for the reason the mark has them: a wordmark flush against the
 // edge of a terminal reads as one that got cut off.
-const largeMinimum = LargeWidth + 4
+const largeMinimum = LargeShadowWidth + 4
 
 // FitsLarge reports whether the large name can be drawn in the width given.
 func FitsLarge(width int) bool { return width >= largeMinimum }
@@ -177,10 +175,25 @@ func pack(top, bottom string) string {
 
 // emberFrames are the campfire reduced to a single row, for a corner with no room for the mark.
 //
-// The base holds still and the flame moves above it, which is the rule the full animation follows and
-// the reason a fire across a clearing is restful rather than distracting. Three frames, because two
-// reads as a blink.
-var emberFrames = [Frames]string{" ▄▄█▄▄ ", "▄▄███▄▄", " ▄███▄ "}
+// The middle frame is the mark's own fire, which is drawn as `█▀█▀█`: flames with gaps between them
+// rather than a solid mound, which is what makes a handful of cells read as burning instead of as a
+// block. The frames either side change that texture and leave the outline alone, so the fire
+// flickers where a fire flickers and its base holds still.
+var emberFrames = [Frames]string{"▄▄█▀█▄▄", "▄█▀█▀█▄", "▄▄█▄█▄▄"}
+
+// emberSmoke is the wisp above the flame, one row up.
+//
+// It drifts and never returns to where it was two frames ago, which is the rule the mark's own smoke
+// follows: a wisp that repeats its position reads as a loop rather than as smoke.
+//
+// One row and no more. It sits in the status row above the message box, and smoke climbing further
+// than that would be drifting through somebody's conversation.
+var emberSmoke = [Frames]string{"   ▄▀  ", "  ▀▄   ", "  ▄    "}
+
+// EmberSmoke is the wisp above the fire, at the same width so it lines up over it.
+func EmberSmoke(step int) string {
+	return emberSmoke[((step%Frames)+Frames)%Frames]
+}
 
 // EmberOut is the fire once it has gone out: a few coals, and no flame above them.
 //
@@ -201,4 +214,93 @@ const EmberWidth = 7
 // up, and making every call site remember a modulus is how one of them forgets.
 func Ember(step int) string {
 	return emberFrames[((step%Frames)+Frames)%Frames]
+}
+
+// shadowOffset is how far the shadow is cast, in bitmap columns.
+//
+// One column right and nothing down. Down was tried at half a cell and at a full cell: half leaves
+// stray marks on the flat tops of the N and the P, and a full cell puts the shadow inside the mouth
+// of the C and the bowl of the P, which is the same failure the two computed outlines had before it.
+// Straight to the side is the one offset that touches no counter, and it reads as a light source off
+// to the left rather than as an outline, which is what it is for.
+const shadowOffset = 1
+
+// LargeShadowWidth is the width of the name with its shadow, which is what a caller centres on.
+const LargeShadowWidth = LargeWidth + shadowOffset
+
+// LargeShadow is the shadow the name casts, packed to the same five rows as Large.
+//
+// Computed from the letterform rather than drawn beside it, so the two cannot drift apart. A cell is
+// shadow when the letter does not occupy it and does occupy the cell one column to its left, which is
+// the whole rule.
+//
+// Composited by the caller: where a cell holds both, the letter wins. A shadow drawn over its own
+// letter is not a shadow.
+func LargeShadow() []string {
+	bitmap := wordBitmap()
+	width := len(bitmap[0]) + shadowOffset
+
+	cast := make([]string, glyphRows)
+	for row := range bitmap {
+		var b strings.Builder
+		for column := 0; column < width; column++ {
+			if !ink(bitmap, row, column) && ink(bitmap, row, column-shadowOffset) {
+				b.WriteRune('#')
+				continue
+			}
+			b.WriteRune('.')
+		}
+		cast[row] = b.String()
+	}
+
+	out := make([]string, glyphRows/2)
+	for row := range out {
+		var b strings.Builder
+		for column := 0; column < width; column++ {
+			high := cast[2*row][column] == '#'
+			low := cast[2*row+1][column] == '#'
+			switch {
+			case high && low:
+				b.WriteRune('█')
+			case high:
+				b.WriteRune('▀')
+			case low:
+				b.WriteRune('▄')
+			default:
+				b.WriteRune(' ')
+			}
+		}
+		out[row] = strings.TrimRight(b.String(), " ")
+	}
+	return out
+}
+
+// wordBitmap is the whole word as one bitmap, ten rows tall.
+//
+// Assembled once rather than per letter, because a shadow computed letter by letter would not know
+// about the gaps and the last stroke of one letter would cast into the first of the next.
+func wordBitmap() []string {
+	rows := make([]string, glyphRows)
+	for row := range rows {
+		var b strings.Builder
+		for i, glyph := range glyphs {
+			if i > 0 {
+				b.WriteString(strings.Repeat(".", letterGap))
+			}
+			b.WriteString(glyph[row])
+		}
+		rows[row] = b.String()
+	}
+	return rows
+}
+
+// ink reports whether a bitmap cell is part of a letter.
+func ink(bitmap []string, row, column int) bool {
+	if row < 0 || row >= len(bitmap) {
+		return false
+	}
+	if column < 0 || column >= len(bitmap[row]) {
+		return false
+	}
+	return bitmap[row][column] == '#'
 }

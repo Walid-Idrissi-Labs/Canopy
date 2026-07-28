@@ -993,10 +993,35 @@ func (m Model) Body() string {
 		b.WriteString(line)
 	}
 	b.WriteString("\n")
-	b.WriteString(m.statusRow(len(lines) - end))
+	b.WriteString(m.smokeOver(m.statusRow(len(lines) - end)))
 	b.WriteString("\n")
 	b.WriteString(m.inputBox())
 	return b.String()
+}
+
+// smokeOver puts a wisp above the fire on the message box, at the right hand end of the status row.
+//
+// The row above the box is the only place it can go, and one row is as far as it should: smoke
+// climbing further would be drifting up through somebody's conversation. It is drawn only while the
+// fire is lit, so a finished turn leaves coals and nothing above them.
+//
+// Right aligned to the same columns the fire occupies, computed from the box rather than guessed, so
+// the wisp sits over the flame instead of near it. The status row's own text is measured with its
+// styling stripped, because a row measured with escape sequences in it comes out far too wide and the
+// padding disappears.
+func (m Model) smokeOver(status string) string {
+	if m.blank() || (!m.working && !m.compacting) {
+		return status
+	}
+
+	// One space of padding inside the box wall, then the fire, then the wall itself.
+	column := m.width - 2 - brand.EmberWidth
+	used := lipgloss.Width(ansi.Strip(status))
+	if column <= used {
+		return status
+	}
+	return status + strings.Repeat(" ", column-used) +
+		theme.Current().Smoke.Render(brand.EmberSmoke(m.markStep))
 }
 
 // maxTaskLines is how tall the task pane may grow before it summarises instead.
