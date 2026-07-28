@@ -17,8 +17,10 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -77,10 +79,11 @@ func modeStyle(mode string) lipgloss.Style {
 	}
 }
 
-// Header draws the top bar, always exactly three lines.
+// Header draws the top bar at exactly the height Dimensions.HeaderHeight declares.
+//
+// The two have to agree or every screen's footer moves, so the height is asked for rather than
+// decided here.
 func Header(d Dimensions, s Status) string {
-	t := theme.Current()
-
 	width := minInt(maxInt(d.Width, minWidth), 200)
 
 	// Two for the walls and one of padding inside each of them.
@@ -88,6 +91,16 @@ func Header(d Dimensions, s Status) string {
 	if inner < 1 {
 		inner = 1
 	}
+
+	if d.HeaderHeight() >= 5 {
+		return tallHeader(inner, s)
+	}
+	return shortHeader(inner, s)
+}
+
+// shortHeader puts everything on one row, for a terminal with no room for the drawn name.
+func shortHeader(inner int, s Status) string {
+	t := theme.Current()
 
 	// Measured in display cells rather than bytes throughout. The separator, the badge and the
 	// context meter are all multi byte, so len would over count every one of them and the header
@@ -138,4 +151,122 @@ func Header(d Dimensions, s Status) string {
 	return t.Border.Render("╭"+rule+"╮") + "\n" +
 		t.Border.Render("│") + " " + line + " " + t.Border.Render("│") + "\n" +
 		t.Border.Render("╰"+rule+"╯")
+}
+
+// tallHeader is the three row version, with the drawn name in the corner.
+//
+// The name goes top right and the facts go left, which is the arrangement asked for and is also the
+// one that survives a resize: the name is a fixed width block, so giving it the right hand edge means
+// the side that has to shrink is the side made of text that can be dropped.
+//
+// Three rows of facts rather than one is the reason this is worth two extra lines of chrome. The one
+// row version drops most of what it is given on an eighty column terminal; here the same details fit
+// with room over, so the branch, the model, the spend and the context meter are all visible at once
+// rather than in rotation as the window changes size.
+func tallHeader(inner int, s Status) string {
+	t := theme.Current()
+
+	drawn := brand.Wordmark(brand.WordmarkWidth)
+	markWidth := brand.WordmarkWidth
+	if inner < markWidth+headerGap+minimumFactsWidth {
+		// No room for both, and the facts win. A header that is mostly logo is an advertisement.
+		drawn, markWidth = nil, 0
+	}
+
+	left := inner
+	if markWidth > 0 {
+		left = inner - markWidth - headerGap
+	}
+
+	rows := headerFacts(s, left)
+
+	var b strings.Builder
+	rule := strings.Repeat("─", inner+2)
+	b.WriteString(t.Border.Render("╭" + rule + "╮"))
+
+	for i := 0; i < 3; i++ {
+		b.WriteString("\n")
+		b.WriteString(t.Border.Render("│") + " ")
+
+		row := rows[i]
+		b.WriteString(row)
+		if pad := left - lipgloss.Width(ansi.Strip(row)); pad > 0 {
+			b.WriteString(strings.Repeat(" ", pad))
+		}
+
+		if markWidth > 0 {
+			b.WriteString(strings.Repeat(" ", headerGap))
+			mark := ""
+			if i < len(drawn) {
+				mark = drawn[i]
+			}
+			b.WriteString(t.Logo.Render(mark))
+			if pad := markWidth - lipgloss.Width(mark); pad > 0 {
+				b.WriteString(strings.Repeat(" ", pad))
+			}
+		}
+		b.WriteString(" " + t.Border.Render("│"))
+	}
+
+	b.WriteString("\n")
+	b.WriteString(t.Border.Render("╰" + rule + "╯"))
+	return b.String()
+}
+
+// headerGap is the air between the facts and the drawn name.
+const headerGap = 3
+
+// minimumFactsWidth is the narrowest the left hand side may be squeezed before the name is dropped.
+//
+// Enough for the program's own name, the screen and the mode, which are the three things the short
+// header refuses to drop either.
+const minimumFactsWidth = 26
+
+// headerFacts lays the status out over three rows, most important first.
+//
+// Rows rather than one line, so a detail that does not fit moves down instead of disappearing. Only
+// what does not fit on any of the three is dropped, which on an ordinary terminal is nothing.
+func headerFacts(s Status, width int) [3]string {
+	t := theme.Current()
+
+	var rows [3]string
+	rows[0] = t.Logo.Render(badge) + " " + t.Title.Render("canopy")
+	used := lipgloss.Width(badge) + 1 + len("canopy")
+
+	if s.Screen != "" && used+2+lipgloss.Width(s.Screen) <= width {
+		rows[0] += "  " + t.Heading.Render(s.Screen)
+		used += 2 + lipgloss.Width(s.Screen)
+	}
+	// Checked rather than assumed. A long screen name next to a long mode overflows the narrowest
+	// left hand side this draws, and an overflowing row pushes the drawn name out of alignment on
+	// the row below it, which looks like the frame is broken rather than like a name that did not
+	// fit.
+	if s.Mode != "" && used+2+lipgloss.Width(s.Mode) <= width {
+		rows[0] += "  " + modeStyle(s.Mode).Render(s.Mode)
+	}
+
+	// Filled from row two onwards, wrapping to row three when row two is full.
+	row, spent := 1, 0
+	for _, part := range s.Parts {
+		if part == "" {
+			continue
+		}
+		cost := lipgloss.Width(part)
+		if spent > 0 {
+			cost += lipgloss.Width(separator)
+		}
+		if spent+cost > width {
+			if row == 2 {
+				break
+			}
+			row, spent = 2, 0
+			cost = lipgloss.Width(part)
+		}
+		if spent > 0 {
+			rows[row] += t.Muted.Render(separator)
+		}
+		rows[row] += t.Muted.Render(part)
+		spent += cost
+	}
+	return rows
 }

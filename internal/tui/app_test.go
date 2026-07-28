@@ -650,3 +650,5 @@ func (e *stubEngine) Steer(_, guidance string) error {
 }
 
 func (e *stubEngine) Aside(_ context.Context, _, _ string) (string, error) { return "", nil }
+
+func (s *stubEngine) Tools() (*core.ToolRegistry, bool) { return nil, false }

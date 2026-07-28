@@ -21,6 +21,8 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
+	tools *core.ToolRegistry
+
 	usingKey   string
 	usingModel string
 
@@ -894,3 +896,5 @@ func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error
 	}
 	return "the parser lives in internal/config", nil
 }
+
+func (e *fakeEngine) Tools() (*core.ToolRegistry, bool) { return e.tools, e.tools != nil }

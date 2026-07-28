@@ -7,24 +7,28 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// The invariant the rest of the layout depends on. BodyHeight subtracts a fixed amount of chrome, so
-// a header that is four lines on somebody's terminal pushes their footer off the bottom of the
-// screen and the last line of every conversation with it.
-func TestTheHeaderIsAlwaysThreeLines(t *testing.T) {
+// The invariant the rest of the layout depends on. BodyHeight is computed from HeaderHeight, so a
+// header that draws a different number of lines than it declares pushes the footer off the bottom of
+// the screen and the last line of every conversation with it.
+func TestTheHeaderDrawsExactlyTheHeightItDeclares(t *testing.T) {
 	long := []string{
 		"a-very-long-agent-name-indeed", "~/some/deeply/nested/project/path",
 		"a-credential-name", "128.4k tokens, $12.3456", "▰▰▰▰▰▰▰▱",
 	}
 
 	for _, width := range []int{60, 72, 80, 100, 120, 200, 400} {
-		for _, status := range []Status{
-			{},
-			{Screen: "chat", Mode: "cruise", Parts: long},
-			{Screen: "worktrees", Parts: []string{strings.Repeat("x", 300)}},
-		} {
-			got := Header(Dimensions{Width: width, Height: 30}, status)
-			if lines := strings.Count(got, "\n") + 1; lines != 3 {
-				t.Errorf("width %d: header is %d lines, want 3", width, lines)
+		for _, height := range []int{14, 24, 29, 30, 50} {
+			for _, status := range []Status{
+				{},
+				{Screen: "chat", Mode: "cruise", Parts: long},
+				{Screen: "worktrees", Parts: []string{strings.Repeat("x", 300)}},
+			} {
+				d := Dimensions{Width: width, Height: height}
+				got := Header(d, status)
+				if lines := strings.Count(got, "\n") + 1; lines != d.HeaderHeight() {
+					t.Errorf("%dx%d: header drew %d lines, declared %d",
+						width, height, lines, d.HeaderHeight())
+				}
 			}
 		}
 	}
@@ -34,7 +38,7 @@ func TestTheHeaderIsAlwaysThreeLines(t *testing.T) {
 // by a different route.
 func TestTheHeaderNeverExceedsTheTerminalWidth(t *testing.T) {
 	for _, width := range []int{60, 72, 80, 100, 120} {
-		got := Header(Dimensions{Width: width, Height: 30}, Status{
+		got := Header(Dimensions{Width: width, Height: 24}, Status{
 			Screen: "chat",
 			Mode:   "runway",
 			Parts: []string{
@@ -53,7 +57,7 @@ func TestTheHeaderNeverExceedsTheTerminalWidth(t *testing.T) {
 // Details are dropped from the right, and the two facts that say where you are and what an agent may
 // do without asking are never among the casualties.
 func TestANarrowHeaderKeepsTheScreenAndTheMode(t *testing.T) {
-	got := Header(Dimensions{Width: 60, Height: 30}, Status{
+	got := Header(Dimensions{Width: 60, Height: 24}, Status{
 		Screen: "chat",
 		Mode:   "cruise",
 		Parts:  []string{"main", "~/a/very/long/path/that/will/not/fit", "some-credential"},

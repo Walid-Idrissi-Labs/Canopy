@@ -111,6 +111,19 @@ func (o opening) render() string {
 func (o opening) head() []string {
 	t := theme.Current()
 
+	// The large name inside a frame, which is the version worth looking at, and the packed one
+	// behind it for a terminal that cannot afford eight rows on a logo.
+	if brand.FitsLarge(o.width) && o.height >= largeHeadHeight {
+		framed := framedWordmark(brand.Large(), brand.LargeWidth)
+		indent := o.indentFor(brand.LargeWidth + 4)
+
+		head := make([]string, 0, len(framed)+1)
+		for _, line := range framed {
+			head = append(head, indent+line)
+		}
+		return append(head, o.centre(o.fits("Canopy, "+brand.Tagline, "Canopy"), t.Muted))
+	}
+
 	if drawn := brand.Wordmark(o.width); drawn != nil {
 		// One indent for the whole block rather than one per row. The rows are different lengths
 		// once their trailing spaces are trimmed, so centring each on its own draws the letters as a
@@ -271,4 +284,42 @@ func (o opening) fits(long, short string) string {
 		return long
 	}
 	return short
+}
+
+// largeHeadHeight is the terminal height below which the large name is not worth its rows.
+//
+// Eight rows of logo plus a tagline on a twenty row window leaves no conversation, and the opening
+// screen is a screen somebody is about to type into rather than a poster.
+const largeHeadHeight = 26
+
+// framedWordmark draws the name inside a rounded frame.
+//
+// The frame is the contour. A halo one cell out from each letter was tried and thrown away: with two
+// cell strokes it fills the mouth of the C and the bowl of the P, and the word reads as a smudge. A
+// frame does the job the outline was for, which is to stop the letters floating on the background,
+// and it does it without touching the letterform.
+//
+// The letters take the logo colour and the frame takes the border colour, so the frame recedes and
+// the name is what the eye lands on. One colour for both would make the box compete with the word
+// inside it.
+func framedWordmark(lines []string, width int) []string {
+	t := theme.Current()
+
+	// Double ruled, where every other box in the program is single ruled. Two reasons and both are
+	// real. It gives the name more weight than the message box without making it larger, which is
+	// what a frame around a logo is for. And it means nothing else on screen is drawn with these
+	// characters, so a test looking for the message box by its corner cannot find this instead,
+	// which is exactly what happened the first time this was drawn with the ordinary corners.
+	rule := strings.Repeat("═", width+2)
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, t.Border.Render("╔"+rule+"╗"))
+
+	for _, line := range lines {
+		// Padded to the declared width rather than to the length of the row. Rows are trimmed of
+		// trailing spaces, so padding to their own length would draw a ragged right wall.
+		padded := line + strings.Repeat(" ", width-lipgloss.Width(line))
+		out = append(out, t.Border.Render("║")+" "+t.Logo.Render(padded)+" "+t.Border.Render("║"))
+	}
+
+	return append(out, t.Border.Render("╚"+rule+"╝"))
 }

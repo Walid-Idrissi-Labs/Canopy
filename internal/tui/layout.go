@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -28,10 +29,37 @@ func (d Dimensions) Usable() bool {
 	return d.Width >= minWidth && d.Height >= minHeight
 }
 
+// HeaderHeight is how many lines the top bar takes.
+//
+// Three ordinarily, and five where there is room to put the drawn name in the corner. It is a
+// function of the terminal rather than a constant because the name is worth two rows on a window
+// that has them and is worth nothing at all on one that does not: a logo that costs somebody two
+// lines of their conversation is a logo working against the program it belongs to.
+func (d Dimensions) HeaderHeight() int {
+	if d.Width >= wordmarkMinWidth && d.Height >= wordmarkMinHeight {
+		return 5
+	}
+	return 3
+}
+
+// wordmarkMinWidth and wordmarkMinHeight are where the drawn name in the header starts paying for
+// itself.
+//
+// The width is the name plus enough room for the details beside it to still be worth reading; below
+// it the name would be pushing out the facts, which is the wrong way round. The height is where two
+// extra rows of chrome stop being a meaningful share of the screen.
+const (
+	wordmarkMinWidth  = brand.WordmarkWidth + 40
+	wordmarkMinHeight = 30
+)
+
 // BodyHeight is the number of lines a screen may use, once the chrome is accounted for.
+//
+// The header plus one. That one line is the gap between the body and the footer, and the arithmetic
+// is written as a relationship rather than as a number so that changing the header's height cannot
+// silently push every screen's footer off the bottom.
 func (d Dimensions) BodyHeight() int {
-	const chrome = 4 // header, blank, blank, footer
-	if h := d.Height - chrome; h > 0 {
+	if h := d.Height - d.HeaderHeight() - 1; h > 0 {
 		return h
 	}
 	return 1

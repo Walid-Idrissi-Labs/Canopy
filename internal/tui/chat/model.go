@@ -76,6 +76,15 @@ type Engine interface {
 	// attached has nothing to record.
 	Trail() *permission.Trail
 
+	// Tools is the registry this conversation was given, used to label a call by what kind of thing
+	// it is rather than by guessing from its name.
+	//
+	// Asked for rather than inferred because the transcript renders calls from tools it has never
+	// heard of. A table of known names would label the built in ones and leave everything from an
+	// MCP server unlabelled, which is exactly backwards: a tool from somebody else's server is the
+	// one where knowing it can run commands matters most. False when no tools are attached.
+	Tools() (*core.ToolRegistry, bool)
+
 	// Steer queues a correction for the next turn boundary and never cancels anything. Distinct from
 	// Cancel on purpose: correcting an agent by interrupting it throws away the work in progress,
 	// which usually means throwing away the reasoning that led to it.
