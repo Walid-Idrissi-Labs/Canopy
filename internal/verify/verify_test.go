@@ -714,3 +714,35 @@ func TestSharingIsDetectedThroughAnUncleanPath(t *testing.T) {
 		}
 	}
 }
+
+// Refusing to rank an agent and then offering it for review are two answers to one question.
+//
+// A queue entry is a claim that this agent's work is finished and verified, which is exactly the
+// claim a shared workspace makes unattributable. Unreachable today, because evidence is cleared when
+// a workspace becomes shared and none is recorded while it stays that way, so the roll-up is never
+// green. Asserted anyway: it holds for a reason that lives in two other functions.
+func TestTheReviewQueueExcludesSharedWorkspaces(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "main", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+
+	workspaceID := git.WorkspaceID(dir)
+	verifier.Watch([]Subject{
+		{Agent: "one", WorkspaceID: workspaceID, Dir: dir, Branch: "main"},
+		{Agent: "two", WorkspaceID: workspaceID, Dir: dir, Branch: "main"},
+	})
+
+	key, reason := repo.Revision(context.Background(), dir)
+	verifier.Observe(context.Background(), git.Change{
+		WorkspaceID: workspaceID, Path: dir, To: key, Reason: reason,
+	})
+
+	if queue := verifier.ReadyToReview(); len(queue) != 0 {
+		t.Errorf("a shared workspace was offered for review: %+v", queue)
+	}
+}
