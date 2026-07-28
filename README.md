@@ -63,9 +63,10 @@ about them.
 > use 2 claude sonnet agents for the auth refactor, and a kimi agent to write the tests
 ```
 
-Canopy resolves the names and hands each agent the task. Agents work in your repository by
-default. When they would collide, or when you want to compare their results, they are isolated
-into their own worktree and branch.
+Canopy resolves the names and hands each agent the task. Name no model at all, "use 3 agents for
+this", and the new agents run on the profile your conversation is already using. Agents work in
+your repository by default. When they would collide, or when you want to compare their results,
+they are isolated into their own worktree and branch.
 
 It confirms the plan before spawning anything, because spawning agents spends real money against
 real keys, and a misread number should be a question rather than an invoice.

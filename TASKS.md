@@ -2642,6 +2642,24 @@ answers questions rather than two that behave differently.
 Spawned agents do not get these tools. An agent that can spawn agents that can spawn agents is
 A8-01, which has its own design, and inheriting it by accident would let a fan out multiply.
 
+**Hardening 2026-07-28 on `fix/dispatch-hardening`.** Four gaps between this block's prose and the
+code, closed with regression tests:
+
+- The sentence above was stated but not enforced: a non-isolated spawned agent shared the engine's
+  registry, which is exactly where the dispatch tools were attached. Spawned agents are now marked
+  and the dispatch tools are structurally removed from their tool set in `toolsForLocked`.
+- A spawn onto a profile no agent had run yet copied its model from whichever agent already
+  existed, pairing one provider's key with another provider's model name. The profile's default
+  model now travels with the dispatch, and a profile with no default model is refused with the
+  `canopy keys model` command that fixes it.
+- "use 3 agents for this" names no profile. The deterministic default is the profile the
+  orchestrating conversation itself runs on, disclosed in the tool description and marked in
+  `list_profiles`. With nothing to default to, the refusal lists the real names. Count and task
+  stay strict: an unclear count still asks rather than guesses.
+- A profile named in the wrong case resolves to the real name, exact matches winning so two
+  profiles differing only in case both stay reachable, and a name matching two by case is refused
+  with both candidates.
+
 ### A5-09 Cost preview and budget guardrails
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A5-08, A2-05`
 `scope: internal/agent/, internal/tui/`
