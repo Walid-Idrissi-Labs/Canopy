@@ -36,6 +36,16 @@ type Palette struct {
 	Border    lipgloss.TerminalColor
 	Highlight lipgloss.TerminalColor
 
+	// Flame is the campfire in the mark, and the one colour here named for a thing rather than for a
+	// meaning. It gets that exemption because the thing is a drawing and there is no meaning to name
+	// it after: a fire is not a success and not a warning, it is a fire.
+	//
+	// Its own entry rather than Success borrowed, even though the two are the same value in the
+	// default palette. Reusing Success would mean a theme could not warm the fire without warming
+	// every passing test with it, and would make the mark change colour the day somebody decides
+	// green is the wrong colour for a tick.
+	Flame lipgloss.TerminalColor
+
 	// The four categories a hand written lexer can tell apart without a full parser. Named for what
 	// a reader is looking at, not for the hue, so a colour blind palette or a light theme can pick
 	// values that suit it without any call site changing.
@@ -64,6 +74,7 @@ type Theme struct {
 	Info    lipgloss.Style
 
 	Logo   lipgloss.Style
+	Flame  lipgloss.Style
 	Border lipgloss.Style
 	Footer lipgloss.Style
 	Key    lipgloss.Style
@@ -127,6 +138,12 @@ var Default = Palette{
 	Border:    lipgloss.AdaptiveColor{Light: "#d6d6d6", Dark: "#3a3a3a"},
 	Highlight: lipgloss.AdaptiveColor{Light: "#f2f4f5", Dark: "#16242b"},
 
+	// The campfire takes the secondary brand colour, which is the one place in the interface it is
+	// used for something that is not an outcome. It is also what makes the mark carry two of the
+	// three brand colours at once rather than one, which is the difference between a logo in a
+	// colour and a logo with a palette.
+	Flame: lipgloss.AdaptiveColor{Light: brandSecondaryLight, Dark: brandSecondary},
+
 	// Syntax highlighting keeps to the same family, so a code block does not look like it was
 	// pasted in from another program. Keyword takes the primary, string takes the secondary, and
 	// comment takes the grey, which is what a comment should be anyway.
@@ -150,6 +167,7 @@ func New(p Palette) Theme {
 		Warning:  lipgloss.NewStyle().Foreground(p.Warning),
 		Info:     lipgloss.NewStyle().Foreground(p.Info),
 		Logo:     lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
+		Flame:    lipgloss.NewStyle().Bold(true).Foreground(p.Flame),
 		Border:   lipgloss.NewStyle().Foreground(p.Border),
 		Footer:   lipgloss.NewStyle().Foreground(p.Muted),
 		Key:      lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
@@ -242,6 +260,7 @@ var Monochrome = Palette{
 	Info:      lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
 	Border:    lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
 	Highlight: lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#222222"},
+	Flame:     lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
 
 	CodeKeyword: lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
 	CodeString:  lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},

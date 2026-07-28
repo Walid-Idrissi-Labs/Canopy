@@ -93,6 +93,30 @@ func TestTheSharedStylesFollowTheSelectedTheme(t *testing.T) {
 	}
 }
 
+// The campfire in the mark has a colour of its own.
+//
+// Two colours in one logo is what stops it reading as a stencil, and the whole reason the palette
+// carries a Flame at all rather than reusing Success: a theme has to be able to warm the fire
+// without warming every passing test with it.
+func TestTheFlameIsNotTheSameColourAsTheMark(t *testing.T) {
+	under(t, theme.Default, func() {
+		current := theme.Current()
+		if colourKey(current.Flame) == colourKey(current.Logo) {
+			t.Errorf("the flame and the tent are both %s, so the mark is a shape in one colour",
+				colourKey(current.Logo))
+		}
+	})
+
+	// And it follows the theme like everything else, or a terminal running with no colour gets a
+	// green fire in the corner of an otherwise monochrome screen.
+	var coloured, mono string
+	under(t, theme.Default, func() { coloured = colourKey(theme.Current().Flame) })
+	under(t, theme.Monochrome, func() { mono = colourKey(theme.Current().Flame) })
+	if coloured == mono {
+		t.Errorf("the flame is %s under both themes, so it is not themed", coloured)
+	}
+}
+
 // The bare colours are the awkward case: lipgloss.TerminalColor cannot be implemented outside
 // lipgloss, so these cannot resolve lazily and are refreshed through a change hook instead. A hook
 // nobody fires is the failure mode, and it looks exactly like the bug that was just fixed.

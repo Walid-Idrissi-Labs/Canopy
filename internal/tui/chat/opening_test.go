@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 )
 
@@ -72,6 +73,32 @@ func TestTheMarkSitsInTheBottomRightCorner(t *testing.T) {
 	// side of the terminal.
 	if got := len([]rune(strings.TrimRight(last, " "))); got != width-2 {
 		t.Errorf("the mark reaches column %d of %d, so it is not in the corner", got, width)
+	}
+}
+
+// Giving the flame its own colour means slicing each row of the mark into three pieces and styling
+// the middle one. Sliced wrongly that drops or duplicates a glyph, and under a test it is the only
+// part of the change that can be seen at all: lipgloss finds no terminal here, so it renders every
+// style as plain text and the colours themselves are invisible. The colours are asserted where they
+// can be, on the styles, in internal/tui/theming_test.go.
+func TestColouringTheFlameLeavesTheMarkExactlyAsDrawn(t *testing.T) {
+	const width = 100
+	// The margin the opening screen keeps to the right of the mark.
+	const margin = 2
+
+	lines := openingAt(width, 30)
+	frame := brand.Frame(0)
+	start := width - margin - brand.MarkWidth
+
+	for i, want := range frame {
+		row := []rune(lines[len(lines)-len(frame)+i])
+		if len(row) < start {
+			t.Errorf("row %d of the mark stops before column %d: %q", i, start, string(row))
+			continue
+		}
+		if got := strings.TrimRight(string(row[start:]), " "); got != want {
+			t.Errorf("row %d of the mark came out as %q, and the brand package draws %q", i, got, want)
+		}
 	}
 }
 

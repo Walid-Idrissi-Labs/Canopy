@@ -192,6 +192,83 @@ func TestTheTentDoesNotMoveBetweenFrames(t *testing.T) {
 	}
 }
 
+// The flame is drawn in a colour of its own, so something has to say where it is. If the region
+// drifts off the fire, the caller colours part of the tent instead and the mark looks like a
+// rendering fault rather than like a campsite.
+//
+// Checked against every frame, because the region is one rectangle and the fire is three pictures:
+// a region that fitted only the frame it was measured from would be wrong two thirds of the time.
+//
+// Scoped to the flame's own rows, which is a correction. The first version of this asserted that
+// nothing anywhere else in the mark changed inside the fire's columns, and that is simply false: the
+// smoke drifts through the same columns four rows higher. Sharing columns with the smoke is fine,
+// because the smoke is drawn in the mark's own colour like everything else.
+func TestTheFireRegionCoversTheFlameAndNothingElse(t *testing.T) {
+	row, column, height, width := brand.FireRegion()
+
+	still := brand.Lines()
+	if row < 0 || row+height > len(still) {
+		t.Fatalf("the fire region is rows %d to %d of a mark %d rows tall", row, row+height, len(still))
+	}
+	// The ground line is not fire. Including it would run the flame's colour along the whole width
+	// of the mark, which is the one row that is definitely the campsite and not the campfire.
+	if row+height > len(still)-1 {
+		t.Errorf("the fire region reaches row %d, which is the ground line", len(still)-1)
+	}
+
+	var moves bool
+	for step := range brand.Frames {
+		frame := brand.Frame(step)
+		for i := row; i < row+height; i++ {
+			// Everything on the flame's rows that is outside the region has to be the same in every
+			// frame as it is in the still mark. If it is not, the region is in the wrong place or too
+			// narrow, and a caller would colour part of the flame and leave the rest behind.
+			if before(still[i], column) != before(frame[i], column) {
+				t.Errorf("frame %d moves something on row %d to the left of the fire region", step, i)
+			}
+			if after(still[i], column+width) != after(frame[i], column+width) {
+				t.Errorf("frame %d moves something on row %d to the right of the fire region", step, i)
+			}
+			if window(still[i], column, width) != window(frame[i], column, width) {
+				moves = true
+			}
+		}
+	}
+	if !moves {
+		t.Error("nothing inside the fire region ever changes between frames, so it is not on the fire")
+	}
+}
+
+// window is the runes a row shows across a span of columns, padded when the row stops short.
+func window(line string, column, width int) string {
+	runes := []rune(line)
+	out := make([]rune, 0, width)
+	for i := column; i < column+width; i++ {
+		if i < len(runes) {
+			out = append(out, runes[i])
+			continue
+		}
+		out = append(out, ' ')
+	}
+	return string(out)
+}
+
+func before(line string, column int) string {
+	runes := []rune(line)
+	if len(runes) > column {
+		runes = runes[:column]
+	}
+	return strings.TrimRight(string(runes), " ")
+}
+
+func after(line string, column int) string {
+	runes := []rune(line)
+	if len(runes) <= column {
+		return ""
+	}
+	return strings.TrimRight(string(runes[column:]), " ")
+}
+
 // A wisp that returns to where it was reads as a loop rather than as smoke.
 func TestNoTwoFramesAreIdentical(t *testing.T) {
 	seen := map[string]int{}

@@ -145,9 +145,34 @@ func (o opening) floor(rows int) []string {
 			lines[i] = left
 			continue
 		}
-		lines[i] = o.beside(left, mark[i-markTop])
+		row := i - markTop
+		lines[i] = o.beside(left, paint(row, mark[row]))
 	}
 	return lines
+}
+
+// paint styles one row of the mark, giving the campfire a colour of its own.
+//
+// Two colours rather than one, which is what stops the mark reading as a stencil: the tent takes the
+// primary and the flame takes the secondary, so the logo carries two thirds of the palette instead
+// of being a shape in a single hue. The brand package hands over where the fire is rather than what
+// colour it should be, because it constructs no colours at all.
+func paint(row int, line string) string {
+	t := theme.Current()
+
+	top, column, height, width := brand.FireRegion()
+	runes := []rune(line)
+	if row < top || row >= top+height || len(runes) <= column {
+		return t.Logo.Render(line)
+	}
+
+	end := column + width
+	if end > len(runes) {
+		end = len(runes)
+	}
+	return t.Logo.Render(string(runes[:column])) +
+		t.Flame.Render(string(runes[column:end])) +
+		t.Logo.Render(string(runes[end:]))
 }
 
 // mark is the logo at the current step, or nothing when there is no room for it.
@@ -179,7 +204,8 @@ func (o opening) mark(rows int) []string {
 	return frame
 }
 
-// beside puts one row of the mark against the right hand edge, after whatever is on the left.
+// beside puts one already styled row of the mark against the right hand edge, after whatever is on
+// the left.
 func (o opening) beside(left, row string) string {
 	pad := o.width - markMargin - brand.MarkWidth - lipgloss.Width(left)
 	if pad < 1 {
@@ -187,7 +213,7 @@ func (o opening) beside(left, row string) string {
 		// check cannot produce a line wider than the terminal, which wraps the whole frame.
 		return left
 	}
-	return left + strings.Repeat(" ", pad) + theme.Current().Logo.Render(row)
+	return left + strings.Repeat(" ", pad) + row
 }
 
 // centre puts a line in the middle of the width.

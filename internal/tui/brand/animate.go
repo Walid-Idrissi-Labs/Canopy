@@ -59,12 +59,23 @@ func Frame(step int) []string {
 	out := make([]string, len(lines))
 	copy(out, lines)
 
-	// The fire occupies the last three rows and the smoke the four above it, both to the right of
-	// the tent. Composed by overwriting columns rather than by rebuilding the row, so the tent
-	// cannot drift by a column when the fire changes width.
-	overlay(out, len(out)-4, fireColumn, fire[step])
-	overlay(out, len(out)-9, smokeColumn, smoke[step])
+	// The fire occupies three rows above the ground line and the smoke the four above it, both to
+	// the right of the tent. Composed by overwriting columns rather than by rebuilding the row, so
+	// the tent cannot drift by a column when the fire changes width.
+	overlay(out, len(out)-fireFromBottom, fireColumn, fire[step])
+	overlay(out, len(out)-smokeFromBottom, smokeColumn, smoke[step])
 	return out
+}
+
+// FireRegion is where the flame sits inside the mark: the row it starts on, the column it starts at,
+// and how many rows and columns it covers.
+//
+// A region rather than a pre-coloured string, because this package constructs no colours, which is
+// the rule internal/tui/theme opens with and the one the whole interface was found breaking at
+// M-07. A caller that wants the fire in a colour of its own slices those columns out of the row and
+// styles the middle, and this package goes on knowing nothing about which colour that is.
+func FireRegion() (row, column, height, width int) {
+	return len(Lines()) - fireFromBottom, fireColumn, len(fire[0]), fireWidth
 }
 
 // fireColumn and smokeColumn are where the moving parts sit, measured from the left of the mark.
@@ -75,6 +86,16 @@ func Frame(step int) []string {
 const (
 	fireColumn  = 25
 	smokeColumn = 27
+
+	// fireWidth is how many columns one row of the flame occupies, and every row of fire is exactly
+	// that wide so the region a caller colours is a rectangle rather than a ragged shape.
+	fireWidth = 5
+
+	// Counted up from the bottom of the mark rather than down from the top, because the ground line
+	// is what both are drawn standing on, and a mark that grew a row at the top would otherwise move
+	// the fire into the sky.
+	fireFromBottom  = 4
+	smokeFromBottom = 9
 )
 
 // overlay writes a block into the lines at a column, padding short rows to reach it.
