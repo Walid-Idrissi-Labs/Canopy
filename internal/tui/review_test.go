@@ -345,9 +345,9 @@ func TestTheConflictRadarNamesTheFileAndTheAgents(t *testing.T) {
 		{Path: "gone.go", Agents: []string{"one", "three"}, Deleted: []string{"three"}},
 	}
 
-	model = press(model, "tab", "tab")
+	model = press(model, "tab", "tab", "tab")
 	if model.Pane() != "overlap" {
-		t.Fatalf("two tabs landed on %q", model.Pane())
+		t.Fatalf("three tabs landed on %q", model.Pane())
 	}
 
 	body := stripANSI(model.Body())
@@ -361,7 +361,7 @@ func TestTheConflictRadarNamesTheFileAndTheAgents(t *testing.T) {
 
 func TestACleanRadarDoesNotPromiseAMerge(t *testing.T) {
 	model, _ := loaded(t)
-	model = press(model, "tab", "tab")
+	model = press(model, "tab", "tab", "tab")
 
 	body := model.Body()
 	if !strings.Contains(body, "no two agents") {

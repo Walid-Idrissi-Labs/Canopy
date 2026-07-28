@@ -47,6 +47,7 @@ const (
 	// same task.
 	paneQueue reviewPane = iota
 	paneRanking
+	paneCosts
 	paneOverlap
 	paneFiles
 	panePatch
@@ -56,6 +57,7 @@ const (
 // ReviewModel is the review screen.
 type ReviewModel struct {
 	source ReviewSource
+	costs  CostOutcomeSource
 
 	pane    reviewPane
 	cursor  int
@@ -91,6 +93,8 @@ func (m ReviewModel) Pane() string {
 	switch m.pane {
 	case paneRanking:
 		return "ranking"
+	case paneCosts:
+		return "cost versus outcome"
 	case paneOverlap:
 		return "overlap"
 	case paneFiles:
@@ -103,6 +107,9 @@ func (m ReviewModel) Pane() string {
 		return "queue"
 	}
 }
+
+// SetCostOutcomes adds the project-local historical comparison.
+func (m *ReviewModel) SetCostOutcomes(source CostOutcomeSource) { m.costs = source }
 
 // Agent is the agent whose changes are open, if any. For tests.
 func (m ReviewModel) Agent() string { return m.agent }
@@ -128,6 +135,8 @@ func (m ReviewModel) Update(msg tea.Msg) (ReviewModel, tea.Cmd) {
 		case paneQueue:
 			m.pane, m.cursor = paneRanking, 0
 		case paneRanking:
+			m.pane, m.cursor = paneCosts, 0
+		case paneCosts:
 			m.pane, m.cursor = paneOverlap, 0
 		case paneOverlap:
 			m.pane, m.cursor = paneQueue, 0
@@ -364,6 +373,8 @@ func (m ReviewModel) Context() string {
 	switch m.pane {
 	case paneRanking:
 		return "ranking"
+	case paneCosts:
+		return "cost versus verified outcome"
 	case paneOverlap:
 		return "overlap between agents"
 	case paneFiles:
@@ -389,6 +400,17 @@ func (m ReviewModel) Body() string {
 		lines = m.queueLines()
 	case paneRanking:
 		lines = m.rankingLines()
+	case paneCosts:
+		if m.costs == nil {
+			lines = []string{styleMuted.Render("cost outcome history is not available")}
+		} else {
+			history, err := m.costs.CostOutcomes()
+			if err != nil {
+				lines = []string{styleCaveat.Render(err.Error())}
+			} else {
+				lines = costOutcomeLines(history)
+			}
+		}
 	case paneOverlap:
 		lines = m.overlapLines()
 	case paneCommit:
@@ -637,8 +659,10 @@ func (m ReviewModel) Footer() string {
 		return Keys(m.width, "type", "the subject", "ctrl+s", "commit", "esc", "cancel")
 	case paneOverlap:
 		return Keys(m.width, "j/k", "move", "tab", "queue", "esc", "agents")
+	case paneCosts:
+		return Keys(m.width, "tab", "overlap", "esc", "agents")
 	case paneRanking:
-		return Keys(m.width, "j/k", "move", "enter", "changes", "tab", "overlap", "esc", "agents")
+		return Keys(m.width, "j/k", "move", "enter", "changes", "tab", "costs", "esc", "agents")
 	default:
 		return Keys(m.width, "j/k", "move", "enter", "changes", "tab", "ranking", "esc", "agents")
 	}

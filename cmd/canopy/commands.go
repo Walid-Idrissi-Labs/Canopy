@@ -56,12 +56,17 @@ func runChat() error {
 	if err != nil {
 		return fmt.Errorf("finding the working directory: %w", err)
 	}
+	// History is one database for every repository. Scope new sessions before the first one is
+	// created so estimates and outcome comparisons cannot mix unrelated projects.
+	projectID := gitpkg.WorkspaceID(dir)
+	engine.SetProjectID(projectID)
 
 	// Tools are scoped to the directory Canopy was started in, which is what "run canopy in a
 	// project" means. A workspace that could not be opened is a directory the agent cannot work in,
 	// and a conversation with no tools is still a useful thing, so it is a warning rather than a
 	// failure.
 	project := loadProject(dir)
+	commands := loadCommands(project.Commands)
 
 	if err := attachTools(engine, dir, project); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
@@ -103,14 +108,21 @@ func runChat() error {
 	// the one this used to lie about: it was handed four invented worktrees and a timer that
 	// pretended one of them was being edited.
 	var review tui.ReviewSource
+	var costs tui.CostOutcomeSource
 	monitor := newWorktrees("", nil)
 	if verification != nil {
-		review = verification.verifier
+		insights := &reviewInsights{
+			Verifier: verification.verifier, engine: engine, projectID: projectID,
+		}
+		review = insights
+		costs = insights
 		monitor = verification.store
 	}
 	defer monitor.Close()
 
-	return tui.RunAppWithReview(monitor, keyStore, engine, filepath.Base(dir), keyName, review)
+	return tui.RunAppConfigured(monitor, keyStore, engine, filepath.Base(dir), keyName, tui.AppOptions{
+		Review: review, Commands: commands, Costs: costs,
+	})
 }
 
 // attachTools gives the agent something to do besides talk.

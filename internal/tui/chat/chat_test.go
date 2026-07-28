@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -169,6 +170,97 @@ func TestTypingAndSending(t *testing.T) {
 	}
 	if m.InputValue() != "" {
 		t.Errorf("the box should empty on send, got %q", m.InputValue())
+	}
+}
+
+func TestSlashCommandsExpandAtTheInputBoundary(t *testing.T) {
+	engine := &fakeEngine{}
+	m := model(engine)
+	m.SetCommands(config.ResolveCommands(nil, []config.Command{{
+		Name: "review", Description: "review one area", Prompt: "Review carefully:\n$ARGUMENTS",
+	}}))
+	m = typeText(m, "/review auth and $(not-a-shell)")
+
+	m = press(m, tea.KeyEnter)
+	if len(engine.sent) != 1 || engine.sent[0] != "Review carefully:\nauth and $(not-a-shell)" {
+		t.Errorf("engine received %q", engine.sent)
+	}
+
+	// The reusable invocation, not its expanded body, is what up-arrow recalls.
+	m = press(m, tea.KeyUp)
+	if got := m.InputValue(); got != "/review auth and $(not-a-shell)" {
+		t.Errorf("history recalled %q", got)
+	}
+}
+
+func TestUnknownSlashCommandsStayInTheBoxAndNeverReachTheModel(t *testing.T) {
+	engine := &fakeEngine{}
+	m := typeText(model(engine), "/typo an argument")
+
+	m = press(m, tea.KeyEnter)
+	if len(engine.sent) != 0 {
+		t.Errorf("unknown command reached the model: %v", engine.sent)
+	}
+	if m.InputValue() != "/typo an argument" {
+		t.Errorf("the invocation was lost: %q", m.InputValue())
+	}
+	if !strings.Contains(plain(m.Body()), "unknown command /typo") {
+		t.Errorf("the error does not explain what happened:\n%s", plain(m.Body()))
+	}
+}
+
+func TestDoubleSlashSendsALiteralSlashPrompt(t *testing.T) {
+	engine := &fakeEngine{}
+	m := press(typeText(model(engine), "//not-a-command"), tea.KeyEnter)
+
+	if len(engine.sent) != 1 || engine.sent[0] != "/not-a-command" {
+		t.Errorf("sent %v", engine.sent)
+	}
+	if !m.InputEmpty() {
+		t.Errorf("successful escaped prompt remained in the box: %q", m.InputValue())
+	}
+}
+
+func TestCommandsListsActiveDefinitionsWithoutCallingTheModel(t *testing.T) {
+	engine := &fakeEngine{}
+	m := model(engine)
+	m.SetCommands(config.ResolveCommands(
+		[]config.Command{{Name: "explain", Description: "explain it", Prompt: "explain"}},
+		[]config.Command{{Name: "review", Description: "review it", Prompt: "review"}},
+	))
+
+	m = press(typeText(m, "/commands"), tea.KeyEnter)
+	if len(engine.sent) != 0 {
+		t.Errorf("the built-in listing reached the model: %v", engine.sent)
+	}
+	for _, want := range []string{"/explain", "global", "/review", "project"} {
+		if !strings.Contains(m.Notice(), want) {
+			t.Errorf("listing %q does not contain %q", m.Notice(), want)
+		}
+	}
+}
+
+func TestTabCompletesAUniqueCommandAndListsAmbiguousMatches(t *testing.T) {
+	m := model(&fakeEngine{})
+	m.SetCommands(config.ResolveCommands(nil, []config.Command{
+		{Name: "review", Description: "review it", Prompt: "review"},
+		{Name: "release", Description: "release it", Prompt: "release"},
+	}))
+
+	m = press(typeText(m, "/rev"), tea.KeyTab)
+	if m.InputValue() != "/review " || m.Notice() != "review it" {
+		t.Errorf("unique completion = input %q notice %q", m.InputValue(), m.Notice())
+	}
+
+	m = model(&fakeEngine{})
+	m.SetCommands(config.ResolveCommands(nil, []config.Command{
+		{Name: "review", Description: "review it", Prompt: "review"},
+		{Name: "release", Description: "release it", Prompt: "release"},
+	}))
+	m = press(typeText(m, "/re"), tea.KeyTab)
+	if m.InputValue() != "/re" ||
+		!strings.Contains(m.Notice(), "/review") || !strings.Contains(m.Notice(), "/release") {
+		t.Errorf("ambiguous completion = input %q notice %q", m.InputValue(), m.Notice())
 	}
 }
 
