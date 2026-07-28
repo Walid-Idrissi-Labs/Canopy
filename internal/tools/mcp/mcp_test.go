@@ -32,6 +32,53 @@ func only(t *testing.T, session *Session) core.Tool {
 	return tools[0]
 }
 
+// MCP is bidirectional and both sides number their requests from one, so a server's request and a
+// client's request collide on the id constantly. Correlating on the id alone delivers the server's
+// request to whoever is waiting on that number, which corrupts two calls at once: the caller gets a
+// frame with no result in it, and the real reply arrives later to find nobody waiting.
+//
+// The server here sends a request carrying the exact id of the call that is in flight.
+func TestARequestFromTheServerIsNotMistakenForTheReply(t *testing.T) {
+	session := connect(t, "docs", "collides-on-ids")
+	tool := only(t, session)
+
+	result, err := tool.Run(context.Background(), json.RawMessage(`{"query":"widgets"}`))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(result.Content, "the real reply") {
+		t.Errorf("result = %q, want the server's actual reply: a request that arrived on the same "+
+			"id was handed over as though it were the answer", result.Content)
+	}
+}
+
+// The other half. A server that asks something and is never answered waits, and a server waiting on
+// its client has stopped serving tools. Canopy advertises no capabilities, so the honest answer is
+// method not found rather than silence.
+//
+// The id here is a string, which the protocol permits. Decoding ids as numbers meant the whole frame
+// failed to parse and was dropped, so the answer and the id are checked together.
+func TestARequestFromTheServerIsAnsweredRatherThanIgnored(t *testing.T) {
+	session := connect(t, "docs", "asks-for-sampling")
+	tool := only(t, session)
+
+	result, err := tool.Run(context.Background(), json.RawMessage(`{"query":"widgets"}`))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if strings.Contains(result.Content, "nothing came back") {
+		t.Fatalf("the server's request was never answered, so it would wait forever: %q", result.Content)
+	}
+	if !strings.Contains(result.Content, `id="srv-a"`) {
+		t.Errorf("result = %q, want the string id echoed back exactly: re-encoding a correlation "+
+			"identifier is how it stops matching", result.Content)
+	}
+	if !strings.Contains(result.Content, "code=-32601") {
+		t.Errorf("result = %q, want method not found", result.Content)
+	}
+}
+
 // The ordinary path, end to end through a real subprocess.
 func TestAServersToolsBecomeCallableTools(t *testing.T) {
 	session := connect(t, "docs", "normal")

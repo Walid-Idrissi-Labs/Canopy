@@ -59,6 +59,15 @@ func runFakeServer(mode string) {
 		_, _ = fmt.Fprintf(out, `{"jsonrpc":"2.0","id":%s,"result":%s}`+"\n", id, encoded)
 		_ = out.Flush()
 	}
+	// ask sends a request the other way, which MCP allows and which this package has to survive.
+	ask := func(id json.RawMessage, method string) {
+		_, _ = fmt.Fprintf(out, `{"jsonrpc":"2.0","id":%s,"method":%q,"params":{}}`+"\n", id, method)
+		_ = out.Flush()
+	}
+
+	// answer is whatever the client sent back to a request of ours, reported through a tool result
+	// because that is the only channel a test on the other side can read.
+	answer := "nothing came back"
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
@@ -68,12 +77,24 @@ func runFakeServer(mode string) {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params json.RawMessage `json:"params"`
+			Error  *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
 			continue
 		}
 
 		switch msg.Method {
+		case "":
+			// A response to something this server asked for. Recorded rather than acted on.
+			if msg.Error != nil {
+				answer = fmt.Sprintf("id=%s code=%d", msg.ID, msg.Error.Code)
+			} else {
+				answer = fmt.Sprintf("id=%s with no error", msg.ID)
+			}
+
 		case "initialize":
 			if mode == "silent-handshake" {
 				time.Sleep(2 * time.Minute)
@@ -88,10 +109,28 @@ func runFakeServer(mode string) {
 			// A notification carries no id and expects no reply.
 
 		case "tools/list":
+			if mode == "asks-for-sampling" {
+				// A string id, which the protocol permits and which a client that decodes ids as
+				// numbers cannot even parse. Sent before the list is answered so that the reply to
+				// it has arrived by the time a tool is called.
+				ask(json.RawMessage(`"srv-a"`), "sampling/createMessage")
+			}
+			if mode == "endless-pages" {
+				reply(msg.ID, map[string]any{
+					"tools":      fakeTools(mode),
+					"nextCursor": fmt.Sprintf("page-%d", time.Now().UnixNano()),
+				})
+				continue
+			}
 			reply(msg.ID, map[string]any{"tools": fakeTools(mode)})
 
 		case "tools/call":
-			handleCall(mode, msg.ID, msg.Params, reply)
+			if mode == "collides-on-ids" {
+				// The same id as the call that is in flight right now. A client correlating on the
+				// id alone hands this to the caller as though it were the reply.
+				ask(msg.ID, "sampling/createMessage")
+			}
+			handleCall(mode, msg.ID, msg.Params, reply, answer)
 		}
 	}
 	os.Exit(0)
@@ -136,8 +175,20 @@ func fakeTools(mode string) []map[string]any {
 	}
 }
 
-func handleCall(mode string, id, params json.RawMessage, reply func(json.RawMessage, any)) {
+func handleCall(mode string, id, params json.RawMessage, reply func(json.RawMessage, any), answer string) {
 	switch mode {
+	case "asks-for-sampling":
+		// What the client sent back to the request this server made, which is the only way a test on
+		// the other side can see that it was answered at all.
+		reply(id, map[string]any{
+			"content": []map[string]any{{"type": "text", "text": answer}},
+		})
+
+	case "collides-on-ids":
+		reply(id, map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "the real reply"}},
+		})
+
 	case "dies-on-call":
 		os.Exit(1)
 
