@@ -3243,8 +3243,8 @@ cloud, and the per-row symmetry rule was dropped to allow the fire: symmetry is 
 silhouette and wrong for a scene, and what it was really protecting is checked directly now.
 
 ### M-08 The new conversation screen, and the mark in motion
-`status: blocked | owner: none | branch: none | depends: M-07`
-`scope: internal/tui/chat/model.go, internal/tui/app.go, cmd/canopy/`
+`status: review | owner: Claude | branch: feat/interface-polish | depends: M-07`
+`scope: internal/tui/chat/model.go, internal/tui/chat/opening.go, internal/tui/app.go, cmd/canopy/`
 
 Deliverable: opening Canopy puts you in a new conversation, composed the way the supervisors asked
 for it: the drawn name centred above the message box, the box itself near the middle of the screen,
@@ -3255,28 +3255,47 @@ Acceptance: a fresh start never lands in somebody's previous conversation. The a
 costing anything the moment the conversation is no longer empty. A printed code resumes the exact
 session it names and says so plainly when it does not match one.
 
-`verify: claude [ ]   codex [ ]`
+Still open, and deliberately not done here: the drawn name in the top right of every other screen.
+It was asked for on 2026-07-27 and then superseded for this screen on the same day by "written logo
+at the center", so what remains is whether the other screens carry it. It costs two rows of chrome
+everywhere, on screens somebody is reading rather than arriving at, and that is a decision rather
+than a detail. Left for the supervisors.
 
-notes: **added 2026-07-27.** Blocked on process rather than on design, and the block is temporary.
+`verify: claude [x] 2026-07-28   codex [ ]`
 
-Every part of this needs a file another branch is open in, which is the one thing section 2.1 exists
-to prevent. `Welcome` is the sharpest example and was found late: it takes a width and no height, so
-it cannot centre anything vertically, and adding the parameter changes its only call site, which is
-in `chat/model.go`. The corner placement is blocked by the same missing argument as the animation
-rather than by the ticker alone. An animation in Bubble Tea is a command that reschedules itself from `Update`, and the
-only two `Update` functions that could own it are `internal/tui/chat/model.go` and
-`internal/tui/app.go`. Starting in a new conversation is decided in `app.go`. The resume code needs
-session storage, which is `internal/session/storage.go`. All four are touched by PR #19.
+notes: **added 2026-07-27, unblocked and built 2026-07-28** once PR #19 merged and the four files
+this needed were free.
 
-The animation frames are built and tested in `brand`, so what is left really is only the wiring:
-`Frame(step)` returns the mark drawn at a step, the tent is pinned so only the fire and smoke move,
-and no two frames are the same picture. What was buildable without them is done and is M-07. The frames and the placement can be written in
-`brand` and `chat/transcript.go`, which are free, so what actually waits here is small: a ticker, a
-startup decision and a command. Recorded rather than started, because taking the conflict to save
-twenty minutes is how the merge on 2026-07-27 stopped compiling.
+A product bug was sitting in the middle of it. The application built its chat screen on a hardcoded
+`session-1`, and the engine loads saved conversations at startup and numbers new ones from the
+highest ID it finds, so after the first run `session-1` is the oldest chat in the database. Every
+launch reopened it while the agent that had just been started talked into a session with no screen
+attached to it. Which conversation to open is passed in now, and nothing named starts a new one.
 
-A chat picker is explicitly out of scope here and comes later. The code printed on exit is the
-resume path for 0.1.
+The empty conversation is composed rather than being a transcript with nothing in it. The middle of
+the space between the drawn name and the message box lands on the middle of the screen, which is the
+requirement stated precisely: centring the block instead is right only while the box and the name
+are the same height, and it stopped being right the moment the box grew to three lines.
+
+The mark is dropped rather than clipped when the screen is too short for it, which is the rule the
+brand package already applies to width. That threshold is a real cost and is worth writing down:
+with the taller box it needs about thirty four rows, so an eighty by twenty four terminal gets the
+name and the box and no mark.
+
+Two things found while wiring it. The animation overlaid the fire a column left of where the mark
+draws it, so starting it slid the campfire sideways under a tent that stayed put; `Frame(0)` is the
+still mark now and a test says so. And `internal/agent/plan.go` has a complete plan and execute
+phase that is called from nowhere, which is the same shape as the theme being unreachable at M-07.
+Plan mode here uses the trust level rather than that code, because a level is enforced by the
+permission layer and a prompt is not.
+
+Added along the way at the supervisors' request: the mode and the model written into the top edge of
+the message box, `shift+tab` between planning and building, the campfire in the secondary brand
+colour, and no launch screen.
+
+A chat picker is still out of scope and comes later. The code printed on exit is the resume path for
+0.1, and it is the conversation's number rather than a token, because a token needs a table mapping
+it back and would still only work on the machine that printed it.
 
 ### PG-M Phase M gate
 `status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`
