@@ -143,7 +143,7 @@ not a green tick.
 ```
 
 The argument form is the default and the shell form has to be asked for, because a shell always
-starts successfully. Run `go tset ./...` through one and you get exit 127, which looks exactly like a
+starts successfully. Run `go test ./...` through one and you get exit 127, which looks exactly like a
 failing test suite, and you go looking for the bug in your code. Run it as an argument list and
 Canopy says the program does not exist, which is what actually happened. Reach for `shell` when you
 need a pipe or a redirect, and know that you are giving that distinction up.

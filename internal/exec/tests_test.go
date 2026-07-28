@@ -106,6 +106,17 @@ func TestTheThreeOutcomesStayThree(t *testing.T) {
 	})
 }
 
+func TestAnArgumentCommandDisplayPreservesBoundaries(t *testing.T) {
+	one := Argv("printf", "a b").Display()
+	two := Argv("printf", "a", "b").Display()
+	if one == two {
+		t.Fatalf("different argv collapsed to the same display %q", one)
+	}
+	if one != `["printf","a b"]` {
+		t.Errorf("display = %q, want exact JSON argv", one)
+	}
+}
+
 // The point of the whole file: the result belongs to the code that was on disk when the command
 // started reading it.
 func TestTheRevisionIsCapturedBeforeTheCommandRuns(t *testing.T) {

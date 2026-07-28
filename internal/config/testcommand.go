@@ -62,9 +62,15 @@ func (c *TestCommand) UnmarshalJSON(data []byte) error {
 	}
 
 	// An alias so the tag driven decoding still happens without recursing back into this method.
+	//
+	// The outer project decoder is strict, but DisallowUnknownFields does not pass through a custom
+	// UnmarshalJSON implementation. Decode strictly again here or a misspelling such as "argcv" is
+	// discarded and then misreported as a missing command.
 	type plain TestCommand
 	var raw plain
-	if err := json.Unmarshal(data, &raw); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
 		return err
 	}
 	*c = TestCommand(raw)
@@ -99,6 +105,11 @@ func (c TestCommand) Validate() error {
 		// ignores something the user wrote.
 		return fmt.Errorf("it sets both argv and shell, so it is not clear which one should run")
 
+	case c.AllowShell && !hasShell:
+		return fmt.Errorf(
+			`it sets "allow_shell": true without a shell command; that opt-in is valid only ` +
+				`alongside "shell"`)
+
 	case !hasArgv && !hasShell:
 		return fmt.Errorf(`it has no command: give it {"argv": ["go", "test", "./..."]}`)
 
@@ -121,7 +132,8 @@ func (c TestCommand) Validate() error {
 // Display is the command as a person would read it, for the interface and the audit trail.
 func (c TestCommand) Display() string {
 	if len(c.Argv) > 0 {
-		return strings.Join(c.Argv, " ")
+		encoded, _ := json.Marshal(c.Argv)
+		return string(encoded)
 	}
 	return c.Shell
 }

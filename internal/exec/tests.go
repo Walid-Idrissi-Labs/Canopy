@@ -14,6 +14,7 @@ package exec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -57,7 +58,8 @@ func ShellLine(line string) Invocation { return Invocation{Shell: line} }
 // Display is the command as a person would read it.
 func (i Invocation) Display() string {
 	if len(i.Argv) > 0 {
-		return strings.Join(i.Argv, " ")
+		encoded, _ := json.Marshal(i.Argv)
+		return string(encoded)
 	}
 	return i.Shell
 }

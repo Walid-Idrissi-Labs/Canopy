@@ -18,8 +18,41 @@ func TestAnArgumentVectorNeedsNoOptIn(t *testing.T) {
 	if len(got.Argv) != 3 || got.Argv[0] != "go" || got.Argv[2] != "./..." {
 		t.Errorf("argv = %q, want the three arguments as written", got.Argv)
 	}
-	if got.Display() != "go test ./..." {
+	if got.Display() != `["go","test","./..."]` {
 		t.Errorf("Display = %q", got.Display())
+	}
+}
+
+func TestAnUnknownFieldInsideACommandIsRefusedAsUnknown(t *testing.T) {
+	_, err := Parse([]byte(
+		`{"tests":[{"name":"unit","command":{"argcv":["go","test"]}}]}`))
+	if err == nil {
+		t.Fatal("a misspelled command field was accepted")
+	}
+	if !strings.Contains(err.Error(), "unknown field") || !strings.Contains(err.Error(), "argcv") {
+		t.Errorf("the nested typo was not identified as an unknown field: %v", err)
+	}
+}
+
+func TestAllowShellWithoutAShellCommandIsRefused(t *testing.T) {
+	_, err := Parse([]byte(
+		`{"tests":[{"name":"unit","command":{"argv":["go","test"],"allow_shell":true}}]}`))
+	if err == nil {
+		t.Fatal("allow_shell was accepted without a shell command")
+	}
+	if !strings.Contains(err.Error(), "without a shell command") {
+		t.Errorf("the error does not explain the stale opt-in: %v", err)
+	}
+}
+
+func TestArgumentDisplayPreservesBoundaries(t *testing.T) {
+	one := TestCommand{Argv: []string{"printf", "a b"}}.Display()
+	two := TestCommand{Argv: []string{"printf", "a", "b"}}.Display()
+	if one == two {
+		t.Fatalf("different argv collapsed to the same display %q", one)
+	}
+	if one != `["printf","a b"]` {
+		t.Errorf("display = %q, want exact JSON argv", one)
 	}
 }
 
