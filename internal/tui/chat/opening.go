@@ -53,6 +53,9 @@ type opening struct {
 	// Already styled, because it is several styles on one line.
 	context []string
 
+	// menu is the command list, drawn under the box. Empty when it is not open.
+	menu []string
+
 	// step is where the animation has got to.
 	step int
 }
@@ -63,6 +66,11 @@ func (o opening) render() string {
 	// it has anything to say.
 	gap := []string{"", o.status}
 	block := append(append(append([]string(nil), head...), gap...), o.box...)
+	// The command list hangs off the bottom of the box and does not move it. The centring below is
+	// computed from the name and the gap alone, so opening the list leaves the name and the box
+	// exactly where they were: a menu that shunted the box up the screen as it filtered would be
+	// unusable to type into.
+	block = append(block, o.menu...)
 
 	// The middle of that gap is what lands on the middle of the screen.
 	//

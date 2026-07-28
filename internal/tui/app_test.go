@@ -61,6 +61,7 @@ type stubEngine struct {
 	created  int
 	asking   bool
 	trust    core.TrustLevel
+	undone   []string
 }
 
 func (e *stubEngine) Session(id string) (core.Session, bool) {
@@ -123,6 +124,11 @@ func (e *stubEngine) Trust(string) core.TrustLevel {
 }
 
 func (e *stubEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
+
+func (e *stubEngine) Undo(_ context.Context, _, turnID string) error {
+	e.undone = append(e.undone, turnID)
+	return nil
+}
 
 // Create hands back a session that is genuinely different from the one before it, since a stub
 // returning the same ID every time would make "the screen moved to the new conversation" pass

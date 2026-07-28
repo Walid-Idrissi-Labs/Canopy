@@ -53,7 +53,62 @@ type CommandScope string
 const (
 	CommandGlobal  CommandScope = "global"
 	CommandProject CommandScope = "project"
+
+	// CommandBuiltin is a command Canopy answers itself.
+	CommandBuiltin CommandScope = "built in"
 )
+
+// Builtin is a command Canopy answers rather than sending to the model.
+//
+// It has no prompt, which is the whole difference: a user's command is a reusable phrasing and these
+// are things the program does. A coding tool needs the second far more than the first, which is why
+// what ships by default is all of this kind and none of the other.
+type Builtin struct {
+	Name        string
+	Description string
+}
+
+// Builtins are the commands that ship, in the order they are offered.
+//
+// The order is the answer to "what should typing a bare slash show", so it is by how often somebody
+// would reach for one rather than alphabetical. Alphabetical is what a list of matches gets, because
+// by then the person has told you what they are looking for.
+//
+// Kept here, in the package that validates command files, rather than next to the code that runs
+// them. The list has to be reserved as well as offered, and two copies of it in two packages is one
+// copy that goes stale the first time somebody adds a command to only one of them.
+func Builtins() []Builtin {
+	return []Builtin{
+		{"help", "every key, on one screen"},
+		{"commands", "list every command available here"},
+		{"new", "start a fresh conversation, keeping this one"},
+		{"compact", "summarise the conversation so far, to free context"},
+		{"undo", "put the workspace back as it was before the last turn"},
+		{"cost", "what this conversation has cost so far"},
+		{"agents", "the agents that are running"},
+		{"keys", "the credentials Canopy can use"},
+	}
+}
+
+// Reserving a name costs the user that name, so the list above is only what is unmistakably the
+// program's own. `/review` was on it, for the screen of the same name, and came off: it is one of
+// the most natural things somebody would want as their own command, and taking it would mean an
+// error on load for a repository that had been defining it since before Canopy reserved it. The
+// review screen is a keystroke from the agents view and does not need to cost anybody a name.
+
+// IsBuiltin reports whether a name is one Canopy answers itself.
+//
+// Used to refuse the name in a command file. A user command that shadowed `/undo` would be invoked
+// by somebody expecting their workspace back, which is the one kind of surprise worth forbidding
+// outright rather than resolving by precedence.
+func IsBuiltin(name string) bool {
+	for _, builtin := range Builtins() {
+		if builtin.Name == name {
+			return true
+		}
+	}
+	return false
+}
 
 // ResolvedCommand is a command together with the scope whose definition won.
 type ResolvedCommand struct {
@@ -191,8 +246,9 @@ func validateCommandList(commands []Command) error {
 		case !validCommandName(command.Name):
 			return fmt.Errorf("the command name %q must use lowercase letters, numbers, hyphens or underscores",
 				command.Name)
-		case command.Name == "commands":
-			return errors.New(`the command name "commands" is reserved for listing available commands`)
+		case IsBuiltin(command.Name):
+			return fmt.Errorf(
+				"the command name %q is reserved for the one Canopy answers itself", command.Name)
 		case strings.TrimSpace(command.Description) == "":
 			return fmt.Errorf("the command %q has no description, so a listing cannot explain it", command.Name)
 		case strings.ContainsAny(command.Description, "\r\n"):

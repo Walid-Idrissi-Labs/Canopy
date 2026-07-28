@@ -49,6 +49,12 @@ type Engine interface {
 	// UseCredential points this conversation at a different credential and model.
 	UseCredential(sessionID, keyName, model string) error
 
+	// Undo puts the workspace back as it was before a turn, from the checkpoint taken before it ran.
+	// The conversation is left alone: undoing the files and deleting the exchange are different
+	// things to want, and doing both would throw away the record of what was tried along with the
+	// attempt, which is the half worth keeping when something did not work.
+	Undo(ctx context.Context, sessionID, turnID string) error
+
 	// Trust is how much the agent in this conversation may do, and SetTrust changes it. This pair is
 	// what plan mode is made of: the permission layer decides against the level and the tool list
 	// the model is shown is filtered by it, so an agent that is planning cannot edit a file by
@@ -163,6 +169,9 @@ type Model struct {
 	markStep       int
 	markGeneration int
 
+	// menu is the command list that drops out of the message box.
+	menu menu
+
 	// buildTrust is the level to go back to when this conversation leaves plan mode.
 	//
 	// Remembered rather than assumed, because an agent running at broad trust that planned and then
@@ -270,6 +279,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.markStep++
 		return m, markTick(m.markGeneration)
+
+	case undoneMsg:
+		m.notice = ""
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.notice = "the workspace is back as it was before the last turn, and the conversation is unchanged"
+		m.refresh()
+		return m, nil
 
 	case compactedMsg:
 		m.compacting = false
@@ -431,14 +450,46 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.answerPrompt(msg)
 	}
 
+	// The list takes the keys that mean something in a list, and only those, and only while it is
+	// up. Everything else still reaches the box, so a command can go on being typed without the
+	// menu having to hand each character back.
+	if m.menu.open {
+		switch msg.String() {
+		case "up":
+			m.menu.move(-1)
+			return m, nil
+		case "down":
+			m.menu.move(1)
+			return m, nil
+		case "esc":
+			// Closes the list and leaves what was typed. Escape also stops a running turn, and that
+			// still happens on the next press: dismissing a menu is the more local meaning and gets
+			// the first one.
+			m.menu = menu{}
+			return m, nil
+		case "tab":
+			// Tab always completes and never sends, which is the split every shell uses.
+			if m.acceptFromMenu() {
+				return m, nil
+			}
+		case "enter":
+			// Enter completes when there is something left to complete, and sends when there is
+			// not. Without the second half, typing a command out in full and pressing enter would
+			// put the name you already typed back in the box and do nothing, which reads as the
+			// key having stopped working.
+			if chosen, ok := m.menu.chosen(); ok && m.input.Value() != "/"+chosen.name {
+				m.acceptFromMenu()
+				return m, nil
+			}
+			m.menu = menu{}
+		}
+	}
+
 	switch msg.String() {
 	case "enter":
 		return m.send()
 
 	case "tab":
-		if m.completeCommand() {
-			return m, nil
-		}
 		return m, nil
 
 	case "shift+tab":
@@ -479,40 +530,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	if m.input.Update(msg) {
 		m.err = ""
+		m.refreshMenu()
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m *Model) completeCommand() bool {
-	value := m.input.Value()
-	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") ||
-		strings.ContainsAny(value, " \t\r\n") {
+// acceptFromMenu puts the highlighted command in the box, and reports whether there was one.
+//
+// The name and a trailing space rather than sending it outright. Half of these take arguments, and a
+// menu that sent on enter would make the ones that do unreachable from the menu at all. It is also
+// what happens elsewhere: the tab key completed rather than submitted before this list existed.
+func (m *Model) acceptFromMenu() bool {
+	chosen, ok := m.menu.chosen()
+	if !ok {
 		return false
 	}
-	prefix := strings.TrimPrefix(value, "/")
-	var matches []config.ResolvedCommand
-	for _, command := range m.commands.All() {
-		if strings.HasPrefix(command.Name, prefix) {
-			matches = append(matches, command)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		m.err = fmt.Sprintf("no command begins with /%s; type /commands to list the commands available here",
-			prefix)
-	case 1:
-		m.input.SetValue("/" + matches[0].Name + " ")
-		m.notice = matches[0].Description
-		m.err = ""
-	default:
-		names := make([]string, 0, len(matches))
-		for _, command := range matches {
-			names = append(names, "/"+command.Name)
-		}
-		m.notice = strings.Join(names, "  ")
-		m.err = ""
-	}
+	m.input.SetValue("/" + chosen.name + " ")
+	m.menu = menu{}
+	m.notice = chosen.description
+	m.err = ""
 	return true
 }
 
@@ -523,11 +560,16 @@ func (m Model) send() (Model, tea.Cmd) {
 
 	typed := m.input.Value()
 	trimmed := strings.TrimSpace(typed)
-	if trimmed == "/commands" {
-		m.notice = commandListing(m.commands)
-		m.err = ""
-		m.input.Clear()
-		return m, nil
+
+	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
+	// and never cost anything, so they are decided before the path that does either.
+	if name, arguments, ok := builtinInvocation(trimmed); ok {
+		if handled, cmd := m.runBuiltin(name, arguments); handled {
+			m.input.Remember(typed)
+			m.input.Clear()
+			m.menu = menu{}
+			return m, cmd
+		}
 	}
 
 	prompt := typed
@@ -567,19 +609,8 @@ func (m Model) send() (Model, tea.Cmd) {
 	return m, nil
 }
 
-func commandListing(commands config.CommandSet) string {
-	all := commands.All()
-	if len(all) == 0 {
-		return "no custom commands are available here"
-	}
-
-	var lines []string
-	for _, command := range all {
-		lines = append(lines, fmt.Sprintf("/%s  %s (%s)",
-			command.Name, command.Description, command.Scope))
-	}
-	return strings.Join(lines, "\n")
-}
+// The listing moved to builtin.go, so that what Canopy ships and what a project defines are printed
+// by one function rather than by two that can come to disagree about the format.
 
 // refresh re-reads the session from the engine.
 //
@@ -773,6 +804,9 @@ func (m Model) transcriptHeight() int {
 	if pane := m.taskPane(); pane != "" {
 		h -= strings.Count(pane, "\n") + 1
 	}
+	// The command list takes its rows from the conversation rather than from the box. Taking them
+	// from the box would shrink what somebody is typing into at the exact moment they are typing.
+	h -= m.menu.height()
 	if h < 1 {
 		return 1
 	}
@@ -789,6 +823,10 @@ func (m Model) Body() string {
 			status:  m.statusRow(0),
 			context: m.contextLines(),
 			step:    m.markStep,
+			// Below the box here, because the box is in the middle of the screen and below is where
+			// the room is. On a conversation in progress the box is on the floor and the list goes
+			// above it instead.
+			menu: m.menu.lines(m.width),
 		}.render()
 	}
 
@@ -823,6 +861,12 @@ func (m Model) Body() string {
 	if tasks := m.taskPane(); tasks != "" {
 		b.WriteString("\n")
 		b.WriteString(tasks)
+	}
+	// Above the box, because on a conversation in progress the box is already on the floor of the
+	// screen and there is nothing below it to drop into.
+	for _, line := range m.menu.lines(m.width) {
+		b.WriteString("\n")
+		b.WriteString(line)
 	}
 	b.WriteString("\n")
 	b.WriteString(m.statusRow(len(lines) - end))
