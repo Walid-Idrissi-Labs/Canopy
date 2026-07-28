@@ -47,19 +47,22 @@ func (e *Engine) WithGate(gate Gate) {
 // are left in and a turn that breaks the build in step two and fixes it in step nine has kept it.
 // Checking mid turn would roll back work that was on its way to being correct.
 func (e *Engine) keepGreen(ctx context.Context, sessionID, turnID string) {
+	// Released on every path out of here, including the ones that return early, because the
+	// conversation was closed to new messages before the turn was marked terminal and a hold that is
+	// not released is a conversation nobody can type into again.
+	defer e.releaseConversation(sessionID)
+
 	e.mu.Lock()
-	gate := e.gate
 	// Through the resolver, not straight out of the map. A conversation reopened in runway has its
 	// mode waiting to be restored from history rather than sitting in sessionMode, and reading the
 	// map alone would find nothing, decide the mode does not keep the workspace green, and skip the
 	// check entirely. Runway would then look exactly like runway and revert nothing, which is the
-	// failure this whole file exists to prevent. It happens to work today only because a turn always
-	// resolves the mode on its way past for the system prompt, and depending on the order two
-	// unrelated things run in is not a safety property.
-	mode := e.modeLocked(sessionID)
+	// failure this whole file exists to prevent.
+	applies := e.gateAppliesLocked(sessionID)
+	gate := e.gate
 	e.mu.Unlock()
 
-	if gate == nil || !mode.KeepsGreen {
+	if !applies {
 		return
 	}
 

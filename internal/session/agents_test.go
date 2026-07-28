@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -360,16 +361,32 @@ func TestBuildModeSendsNoSystemPrompt(t *testing.T) {
 }
 
 // stubGate answers the green check with whatever a test puts in it.
+//
+// The counter is behind a mutex because the gate is called from the turn's own goroutine while the
+// test reads it from its own. An unguarded int here is a data race whether or not the value happens
+// to come out right, and the race detector is the reason a wrong answer is a failure rather than an
+// occasional flake nobody can reproduce.
 type stubGate struct {
 	green  bool
 	reason string
 	err    error
+
+	mu     sync.Mutex
 	checks int
 }
 
 func (g *stubGate) Check(context.Context, string) (bool, string, error) {
+	g.mu.Lock()
 	g.checks++
+	g.mu.Unlock()
 	return g.green, g.reason, g.err
+}
+
+// ran is how many times the gate has been asked.
+func (g *stubGate) ran() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.checks
 }
 
 func runwayEngine(t *testing.T, gate Gate) (*Engine, *scriptedClient) {
@@ -401,9 +418,10 @@ func TestRunwayPutsTheWorkspaceBackWhenATurnEndsRed(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitForTurn(t, e, created.ID, turnID)
+	waitForCheck(t, e, created.ID)
 
-	if gate.checks != 1 {
-		t.Fatalf("the gate ran %d times, want once", gate.checks)
+	if got := gate.ran(); got != 1 {
+		t.Fatalf("the gate ran %d times, want once", got)
 	}
 	turn := turnIn(t, e, created.ID, turnID)
 	if turn.RolledBack == "" {
@@ -432,6 +450,7 @@ func TestRunwayKeepsATurnThatEndsGreen(t *testing.T) {
 
 	turnID, _ := e.Send(created.ID, "rename a field")
 	waitForTurn(t, e, created.ID, turnID)
+	waitForCheck(t, e, created.ID)
 
 	if turn := turnIn(t, e, created.ID, turnID); turn.RolledBack != "" {
 		t.Errorf("a green turn was annotated: %q", turn.RolledBack)
@@ -452,6 +471,7 @@ func TestRunwayKeepsTheTurnWhenTheCheckItselfFails(t *testing.T) {
 
 	turnID, _ := e.Send(created.ID, "do the thing")
 	waitForTurn(t, e, created.ID, turnID)
+	waitForCheck(t, e, created.ID)
 
 	turn := turnIn(t, e, created.ID, turnID)
 	if !strings.Contains(turn.RolledBack, "kept") {
@@ -473,9 +493,10 @@ func TestOnlyRunwayRunsTheGate(t *testing.T) {
 
 		turnID, _ := e.Send(created.ID, "go")
 		waitForTurn(t, e, created.ID, turnID)
+		waitForCheck(t, e, created.ID)
 
-		if gate.checks != 0 {
-			t.Errorf("%s ran the gate %d times", name, gate.checks)
+		if got := gate.ran(); got != 0 {
+			t.Errorf("%s ran the gate %d times", name, got)
 		}
 	}
 }

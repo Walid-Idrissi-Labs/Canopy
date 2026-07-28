@@ -63,6 +63,16 @@ type Engine struct {
 	// alone would make them the same setting with two names.
 	sessionMode map[string]core.Mode
 
+	// verifying is the sessions whose last turn is terminal and not yet finished with.
+	//
+	// A turn in a mode that keeps the workspace green is not done when the model stops talking. The
+	// checks still have to run and the workspace may still be put back, and until both have happened
+	// the conversation is not free. Without this the sequence is: the turn goes terminal, the
+	// interface sees nothing running and accepts the next message, that turn starts editing, and then
+	// the first turn's gate comes back red and restores a checkpoint over work the second one did.
+	// Losing somebody's work to a safety feature is the worst thing in this file.
+	verifying map[string]bool
+
 	// restoredMode is a mode read back from history and not yet applied, by session.
 	//
 	// Kept apart from sessionMode because a stored mode is a request rather than a fact: runway needs
@@ -153,6 +163,7 @@ func New(resolver Resolver) *Engine {
 		budgets:     newBudgets(),
 		projects:    make(map[string]string),
 		sessionMode: make(map[string]core.Mode),
+		verifying:   make(map[string]bool),
 	}
 }
 
@@ -636,6 +647,16 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 		e.mu.Unlock()
 		return "", ErrBusy
 	}
+	// Terminal is not the same as finished. A turn whose mode keeps the workspace green is still
+	// being checked after its last word, and may still be rolled back, so the conversation stays
+	// closed until that has settled. Wrapped rather than returned bare, so callers matching on
+	// ErrBusy keep working while a person reads why this one is different from the ordinary wait.
+	if e.verifying[sessionID] {
+		e.mu.Unlock()
+		return "", fmt.Errorf(
+			"%w: the workspace is still being checked after the last turn, which may still be undone",
+			ErrBusy)
+	}
 	e.mu.Unlock()
 
 	// Before the turn is registered, not after the reply comes back. A cap checked afterwards is a
@@ -797,6 +818,13 @@ func (e *Engine) run(
 			"finishes successfully", outcome.Stop)
 	}
 
+	// Claimed before the turn is marked terminal, which is the whole point of doing it here rather
+	// than inside keepGreen. finish is what makes the turn terminal, and a terminal turn is what the
+	// interface reads as "you may send the next message". Claiming afterwards leaves a window where
+	// a second turn can be accepted and start editing while the first one's checks are still running,
+	// and the first one's rollback then restores over work the second one did.
+	held := state == core.TurnComplete && e.holdConversation(sessionID)
+
 	e.finish(sessionID, turnID, state, reason, usage, client.Name())
 
 	// Only a turn that finished on its own terms is worth checking. A cancelled or failed turn has
@@ -805,9 +833,44 @@ func (e *Engine) run(
 	//
 	// Deliberately after finish, with a fresh context. The turn's own context is cancelled the moment
 	// it is terminal, and the checks are about what that turn left behind rather than part of it.
-	if state == core.TurnComplete {
+	if held {
 		e.keepGreen(context.WithoutCancel(ctx), sessionID, turnID)
 	}
+}
+
+// holdConversation closes a conversation to new messages while its last turn is being checked.
+//
+// Returns whether it engaged, so the caller knows whether there is anything to release. False for
+// every conversation whose mode does not promise to keep the workspace green, which is most of them:
+// nothing is going to be checked, nothing can be rolled back, and holding the conversation shut
+// would be a wait with no purpose.
+func (e *Engine) holdConversation(sessionID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if !e.gateAppliesLocked(sessionID) {
+		return false
+	}
+	if e.verifying == nil {
+		e.verifying = map[string]bool{}
+	}
+	e.verifying[sessionID] = true
+	return true
+}
+
+// releaseConversation reopens it, whatever the checks concluded.
+func (e *Engine) releaseConversation(sessionID string) {
+	e.mu.Lock()
+	delete(e.verifying, sessionID)
+	e.mu.Unlock()
+}
+
+// gateAppliesLocked reports whether this conversation's turns have to be checked after they end.
+//
+// One definition, used by the hold above and by the check itself. Two copies of this would be two
+// chances for the conversation to be held shut by something that then never runs.
+func (e *Engine) gateAppliesLocked(sessionID string) bool {
+	return e.gate != nil && e.modeLocked(sessionID).KeepsGreen
 }
 
 // snapshot returns a copy of a session, or the zero value if it has gone.

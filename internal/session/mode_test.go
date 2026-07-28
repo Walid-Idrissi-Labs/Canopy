@@ -2,8 +2,10 @@ package session
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
@@ -227,8 +229,78 @@ func TestARestoredRunwayStillRunsTheGate(t *testing.T) {
 		t.Fatalf("Send: %v", err)
 	}
 	waitForTurn(t, e, created, turnID)
+	waitForCheck(t, e, created)
 
-	if gate.checks == 0 {
+	if gate.ran() == 0 {
 		t.Error("the gate was never asked, so a restored runway kept a turn it should have reverted")
+	}
+}
+
+// blockingGate holds the check open until a test lets it go.
+//
+// The window this exists to observe is real and short: a turn goes terminal, its checks run, and the
+// workspace may still be put back. Holding the check open makes that window wide enough to send a
+// message into, which is exactly what the interface would do on its own.
+type blockingGate struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newBlockingGate() *blockingGate {
+	return &blockingGate{entered: make(chan struct{}, 1), release: make(chan struct{})}
+}
+
+func (g *blockingGate) Check(context.Context, string) (bool, string, error) {
+	select {
+	case g.entered <- struct{}{}:
+	default:
+	}
+	<-g.release
+	return false, "the tests failed", nil
+}
+
+// A terminal turn is not a finished one, and the difference is somebody's work.
+//
+// The turn goes terminal when the model stops talking, and in runway the checks run after that and
+// may roll the workspace back. If the conversation reopens at the terminal transition, the interface
+// accepts the next message, that turn starts editing, and then the first turn's rollback restores a
+// checkpoint over what the second one just did. A safety feature destroying work is the worst
+// outcome available here, worse than not checking at all.
+func TestAConversationStaysClosedUntilItsChecksHaveFinished(t *testing.T) {
+	gate := newBlockingGate()
+	e, _ := runwayEngine(t, gate)
+	e.WithCheckpoints(git.NewTaker(t.TempDir()))
+
+	created := e.Create("claude", "claude-opus-5")
+	runway, _ := core.ModeByName(core.ModeRunway)
+	e.mu.Lock()
+	e.sessionMode[created.ID] = runway
+	e.mu.Unlock()
+
+	turnID, err := e.Send(created.ID, "refactor the parser")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForTurn(t, e, created.ID, turnID)
+
+	select {
+	case <-gate.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the gate was never entered")
+	}
+
+	// The turn is terminal and the checks are running. This is the moment the interface would offer
+	// the message box back.
+	if _, err := e.Send(created.ID, "and now rename the fields"); !errors.Is(err, ErrBusy) {
+		t.Fatalf("Send while the checks were running = %v, want ErrBusy: a second turn would have "+
+			"started editing under a rollback that was already coming", err)
+	}
+
+	close(gate.release)
+	waitForCheck(t, e, created.ID)
+
+	// And it reopens afterwards, or the conversation would be closed forever.
+	if _, err := e.Send(created.ID, "and now rename the fields"); err != nil {
+		t.Errorf("Send after the checks finished = %v, want the conversation to reopen", err)
 	}
 }
