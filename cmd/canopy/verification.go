@@ -481,6 +481,17 @@ func hostOf(baseURL string) string {
 func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.ToolRegistry, sessionID string) error {
 	source := profiles{store: store, engine: engine}
 
+	// Asked at call time rather than captured once, because UseCredential can point the
+	// conversation at a different profile after this is attached, and the default for "use 3
+	// agents for this" should be the profile actually in use when it is said.
+	current := func() string {
+		agent, ok := engine.AgentFor(sessionID)
+		if !ok {
+			return ""
+		}
+		return agent.KeyName
+	}
+
 	confirm := func(c session.Confirmation) bool {
 		// Routed through the same approver the tool calls use, so there is one place a person answers
 		// questions rather than two that behave differently. The question text carries the count, the
@@ -502,7 +513,7 @@ func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.To
 		})
 	}
 
-	for _, tool := range session.DispatchTools(source, confirm) {
+	for _, tool := range session.DispatchTools(source, current, confirm) {
 		if err := registry.Register(tool); err != nil {
 			return err
 		}

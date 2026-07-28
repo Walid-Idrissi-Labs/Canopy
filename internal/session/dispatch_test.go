@@ -56,10 +56,14 @@ func dispatching(t *testing.T, answer bool) (*spawnTool, *fakeDispatcher, *[]Con
 	}
 
 	var asked []Confirmation
-	tool := &spawnTool{dispatcher: dispatcher, confirm: func(c Confirmation) bool {
-		asked = append(asked, c)
-		return answer
-	}}
+	tool := &spawnTool{
+		dispatcher: dispatcher,
+		current:    func() string { return "claude" },
+		confirm: func(c Confirmation) bool {
+			asked = append(asked, c)
+			return answer
+		},
+	}
 	return tool, dispatcher, &asked
 }
 
@@ -323,6 +327,110 @@ func TestWithNoProfilesTheModelIsToldWhatToDo(t *testing.T) {
 	}
 }
 
+// "use 2 Sonnet agents" and a profile stored as "sonnet" are the same request. Refusing over case
+// would send the model on a listing round trip for a distinction no user intends.
+func TestAProfileNamedInAnotherCaseResolvesToTheRealOne(t *testing.T) {
+	tool, dispatcher, asked := dispatching(t, true)
+
+	result := call(t, tool, `{"count": 2, "profile": "Sonnet", "task": "refactor auth"}`)
+	if result.IsError {
+		t.Fatalf("a case difference was refused: %q", result.Content)
+	}
+	if dispatcher.spawned[0].Profile != "sonnet" {
+		t.Errorf("the dispatch carries %q, want the real name %q", dispatcher.spawned[0].Profile, "sonnet")
+	}
+	if question := (*asked)[0].Question(); !strings.Contains(question, "sonnet") {
+		t.Errorf("the confirmation does not show the resolved name: %q", question)
+	}
+}
+
+// Two profiles differing only in case are both real, so a name that matches both is a genuine
+// ambiguity rather than a typo to paper over.
+func TestANameMatchingTwoProfilesByCaseIsRefused(t *testing.T) {
+	tool, dispatcher, asked := dispatching(t, true)
+	dispatcher.profiles = []Profile{
+		{Name: "nim", Model: "a"},
+		{Name: "NIM", Model: "b"},
+	}
+
+	result := call(t, tool, `{"count": 1, "profile": "Nim", "task": "refactor"}`)
+	if !result.IsError {
+		t.Fatal("an ambiguous name was accepted")
+	}
+	if len(dispatcher.spawned) != 0 || len(*asked) != 0 {
+		t.Error("an ambiguous name got as far as the confirmation")
+	}
+	if !strings.Contains(result.Content, "nim") || !strings.Contains(result.Content, "NIM") {
+		t.Errorf("the refusal does not list both candidates: %q", result.Content)
+	}
+}
+
+// "use 3 agents for this" names no profile, and the deterministic default is the one this
+// conversation already runs on, which is also the one the person watching would guess.
+func TestNoProfileFallsBackToTheConversationsOwn(t *testing.T) {
+	tool, dispatcher, asked := dispatching(t, true)
+
+	result := call(t, tool, `{"count": 3, "task": "refactor auth"}`)
+	if result.IsError {
+		t.Fatalf("an unnamed profile was refused instead of defaulted: %q", result.Content)
+	}
+	if dispatcher.spawned[0].Profile != "claude" {
+		t.Errorf("the dispatch ran on %q, want the conversation's own profile", dispatcher.spawned[0].Profile)
+	}
+	if question := (*asked)[0].Question(); !strings.Contains(question, "claude") {
+		t.Errorf("the confirmation does not show which profile was defaulted to: %q", question)
+	}
+}
+
+func TestNoProfileAndNoFallbackSaysWhichOnesExist(t *testing.T) {
+	tool, dispatcher, asked := dispatching(t, true)
+	tool.current = nil
+
+	result := call(t, tool, `{"count": 2, "task": "refactor auth"}`)
+	if !result.IsError {
+		t.Fatal("a request with no profile and nothing to default to was accepted")
+	}
+	for _, want := range []string{"claude", "sonnet", "nim"} {
+		if !strings.Contains(result.Content, want) {
+			t.Errorf("the refusal does not list %q: %q", want, result.Content)
+		}
+	}
+	if len(dispatcher.spawned) != 0 || len(*asked) != 0 {
+		t.Error("something happened before the profile question was settled")
+	}
+}
+
+// The engine has never known what a credential is, so the profile's default model has to travel
+// with the request. Without it, a fresh profile's agents start on whatever model another profile
+// happened to be running, which is a key from one provider paired with a model name from another.
+func TestTheProfilesDefaultModelTravelsWithTheDispatch(t *testing.T) {
+	tool, dispatcher, _ := dispatching(t, true)
+
+	call(t, tool, `{"count": 2, "profile": "nim", "task": "refactor"}`)
+	if got := dispatcher.spawned[0].Model; got != "minimaxai/minimax-m2.7" {
+		t.Errorf("the dispatch carries model %q, want the profile's own default", got)
+	}
+}
+
+func TestListingProfilesMarksTheConversationsOwn(t *testing.T) {
+	_, dispatcher, _ := dispatching(t, true)
+	tool := &profilesTool{dispatcher: dispatcher, current: func() string { return "claude" }}
+
+	result := call(t, tool, `{}`)
+	marked := false
+	for _, line := range strings.Split(result.Content, "\n") {
+		if strings.Contains(line, "claude (") && strings.Contains(line, "this conversation") {
+			marked = true
+		}
+		if strings.Contains(line, "sonnet") && strings.Contains(line, "this conversation") {
+			t.Errorf("a profile that is not the conversation's is marked as it: %q", line)
+		}
+	}
+	if !marked {
+		t.Errorf("the conversation's own profile is not marked:\n%s", result.Content)
+	}
+}
+
 func TestAConfirmedSpawnReportsWhatItStarted(t *testing.T) {
 	tool, dispatcher, _ := dispatching(t, true)
 
@@ -338,5 +446,120 @@ func TestAConfirmedSpawnReportsWhatItStarted(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "Do not do the task yourself") {
 		t.Errorf("nothing stops the orchestrator doing the work as well: %q", result.Content)
+	}
+}
+
+func dispatchEngine(t *testing.T) *Engine {
+	t.Helper()
+	e := New(fixedResolver{
+		client: &scriptedClient{name: "claude", events: reply("done")},
+		id:     anthropicID(),
+	})
+	t.Cleanup(e.Close)
+
+	_, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", KeyName: "claude", Model: "claude-opus-5",
+		Dir: t.TempDir(), Trust: core.TrustStandard,
+	})
+	if err != nil {
+		t.Fatalf("AddAgent: %v", err)
+	}
+	return e
+}
+
+// "use 2 nemotron agents" with no agent on that profile yet has to produce agents that run the
+// nemotron profile's own model. Copying the model from whichever agent already existed pairs one
+// provider's key with another provider's model name, and every spawned agent fails on its first
+// request.
+func TestASpawnOnAFreshProfileRunsTheProfilesOwnModel(t *testing.T) {
+	e := dispatchEngine(t)
+
+	created, err := e.Spawn(context.Background(), Dispatch{
+		Count: 2, Profile: "nemotron", Task: "try the migration",
+		Model: "nvidia/nemotron-ultra",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	for _, agent := range created {
+		if agent.KeyName != "nemotron" {
+			t.Errorf("%s runs on %q, want the requested profile", agent.Name, agent.KeyName)
+		}
+		if agent.Model != "nvidia/nemotron-ultra" {
+			t.Errorf("%s runs %q, want the profile's own model", agent.Name, agent.Model)
+		}
+	}
+}
+
+// A profile somebody already runs an agent on keeps that agent's model, because it is a choice the
+// person made and a fan out should inherit it rather than resetting it.
+func TestASpawnOnAKnownProfileInheritsTheExistingAgentsModel(t *testing.T) {
+	e := dispatchEngine(t)
+
+	created, err := e.Spawn(context.Background(), Dispatch{
+		Count: 1, Profile: "claude", Task: "fix the failing test",
+		Model: "some-other-default",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if created[0].Model != "claude-opus-5" {
+		t.Errorf("the spawn runs %q, want the model the existing agent was already on", created[0].Model)
+	}
+}
+
+// An OpenAI compatible profile with no default model cannot run a fresh agent, and the refusal has
+// to name the command that fixes it rather than failing later on the first request.
+func TestASpawnOnAProfileWithNoDefaultModelSaysHowToSetOne(t *testing.T) {
+	e := dispatchEngine(t)
+
+	_, err := e.Spawn(context.Background(), Dispatch{
+		Count: 1, Profile: "nemotron", Task: "try the migration",
+	})
+	if err == nil {
+		t.Fatal("an agent was created with no model to run")
+	}
+	if !strings.Contains(err.Error(), "canopy keys model nemotron") {
+		t.Errorf("the refusal does not say how to fix it: %v", err)
+	}
+}
+
+// A spawned agent must not see the dispatch tools, or one confirmation can multiply into an
+// unbounded fan out. The orchestrating conversation keeps them; the spawned one loses them, even
+// though the two share the engine's registry when the spawn is not isolated.
+func TestADispatchedAgentDoesNotGetTheDispatchTools(t *testing.T) {
+	e := dispatchEngine(t)
+
+	registry := core.NewToolRegistry()
+	for _, tool := range DispatchTools(&fakeDispatcher{limit: 8}, nil, nil) {
+		registry.MustRegister(tool)
+	}
+	e.WithTools(registry, core.TrustStandard, nil)
+
+	created, err := e.Spawn(context.Background(), Dispatch{
+		Count: 1, Profile: "nemotron", Task: "try the migration",
+		Model: "nvidia/nemotron-ultra",
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	main, _ := e.Agent("main")
+
+	names := func(sessionID string) map[string]bool {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		tools, _ := e.toolsForLocked(sessionID)
+		out := map[string]bool{}
+		for _, tool := range tools.Tools() {
+			out[tool.Name()] = true
+		}
+		return out
+	}
+
+	if got := names(main.SessionID); !got[spawnToolName] || !got[profilesToolName] {
+		t.Errorf("the orchestrating conversation lost its dispatch tools: %v", got)
+	}
+	if got := names(created[0].SessionID); got[spawnToolName] || got[profilesToolName] {
+		t.Errorf("a spawned agent can spawn agents of its own: %v", got)
 	}
 }
