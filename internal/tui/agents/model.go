@@ -22,6 +22,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -544,6 +545,10 @@ func (m Model) namePrompt() string {
 
 // directPrompt names the mode and exact workspace before AddAgent can run. It also says what the
 // workspace root cannot promise: an enabled shell is still a process running as the user.
+//
+// It wears the same heavy needs-you frame the chat's permission question does, because it is the
+// same kind of moment: the one question on this screen that creates something with access to the
+// checkout, drawn so it cannot be mistaken for information.
 func (m Model) directPrompt() string {
 	t := theme.Current()
 	workspace := m.dir
@@ -551,23 +556,50 @@ func (m Model) directPrompt() string {
 		workspace = "(current directory)"
 	}
 
-	var b strings.Builder
-	b.WriteString(t.Title.Render("Create direct agent?"))
-	b.WriteString("\n\n")
-	b.WriteString(t.Warning.Render("  Direct mode"))
-	b.WriteString("\n")
-	b.WriteString(t.Body.Render("  Workspace: " + workspace))
-	b.WriteString("\n\n")
-	b.WriteString(t.Danger.Render(
-		"  This agent works directly in this checkout, which may be the primary checkout."))
-	b.WriteString("\n")
-	b.WriteString(t.Muted.Render(
-		"  Structured tools may modify it when trust permits. An enabled shell is not contained here."))
-	b.WriteString("\n\n")
-	b.WriteString(t.Key.Render("  y") + t.Body.Render(" create direct agent"))
-	b.WriteString("\n")
-	b.WriteString(t.Key.Render("  esc") + t.Body.Render(" go back"))
-	return b.String()
+	body := []string{
+		t.Title.Render("Create direct agent?"),
+		"",
+		t.Warning.Render("Direct mode") + t.Body.Render("  in "+workspace),
+		"",
+		t.Danger.Render("This agent works directly in this checkout, which may be the primary checkout."),
+		t.Muted.Render("Structured tools may modify it when trust permits."),
+		t.Muted.Render("An enabled shell is not contained here."),
+		"",
+		t.Key.Render("y") + t.Body.Render(" create direct agent   ") +
+			t.Key.Render("esc") + t.Body.Render(" go back"),
+	}
+	return strings.Join(needsYouPanel(body, m.width-8), "\n")
+}
+
+// needsYouPanel is the heavy warning frame around a question that creates or spends something.
+//
+// The same drawing the chat uses around a permission prompt, kept in step by eye and by the shared
+// reverse video chip: every other frame in the interface is a thin rounded line, so the heavy one
+// means "this is not information, this is a question", and reverse video is the one emphasis that
+// survives NO_COLOR and a dull palette.
+func needsYouPanel(body []string, inner int) []string {
+	t := theme.Current()
+
+	const indent = "  "
+	for i, line := range body {
+		body[i] = truncate(line, inner)
+	}
+
+	chip := t.Warning.Reverse(true).Bold(true).Render(" needs you ")
+	top := t.Warning.Render("┏━") + chip
+	if rest := inner + 1 - lipgloss.Width(chip); rest > 0 {
+		top += t.Warning.Render(strings.Repeat("━", rest) + "┓")
+	} else {
+		top = t.Warning.Render("┏" + strings.Repeat("━", maxInt(inner, 1)+2) + "┓")
+	}
+
+	out := make([]string, 0, len(body)+2)
+	out = append(out, indent+top)
+	for _, line := range body {
+		out = append(out, indent+t.Warning.Render("┃")+" "+pad(line, inner)+" "+
+			t.Warning.Render("┃"))
+	}
+	return append(out, indent+t.Warning.Render("┗"+strings.Repeat("━", maxInt(inner, 1)+2)+"┛"))
 }
 
 func (m Model) empty() string {
