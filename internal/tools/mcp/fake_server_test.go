@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	osexec "os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,11 +46,31 @@ func serverSpec(name, mode string) Spec {
 	}
 }
 
+// pidFileEnv tells the fake server where to record the pid of the child it starts.
+//
+// A file rather than the protocol, because the point of the test that uses it is what survives after
+// the protocol connection has gone.
+const pidFileEnv = "CANOPY_MCP_PID_FILE"
+
 // runFakeServer speaks just enough MCP to exercise this package, and misbehaves on request.
 func runFakeServer(mode string) {
 	if mode == "refuses-to-start" {
 		fmt.Fprintln(os.Stderr, "the widget backend is not configured")
 		os.Exit(3)
+	}
+
+	if mode == "spawns-a-child" {
+		// What `npx` in front of node looks like from here: the process Canopy started is a launcher,
+		// and the thing doing the work is one level down. The child inherits stdout, which is what
+		// makes it hold the pipe open after its parent has gone.
+		child := osexec.Command("sleep", "30")
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "could not start the child:", err)
+			os.Exit(4)
+		}
+		if path := os.Getenv(pidFileEnv); path != "" {
+			_ = os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)), 0o600)
+		}
 	}
 
 	out := bufio.NewWriter(os.Stdout)
@@ -223,12 +245,4 @@ func handleCall(mode string, id, params json.RawMessage, reply func(json.RawMess
 	}
 }
 
-// stillRunning reports whether a process is alive, for the teardown tests.
-func stillRunning(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 asks the kernel whether the process exists without disturbing it.
-	return process.Signal(nil) == nil
-}
+// stillRunning is per platform, in liveness_unix_test.go and liveness_windows_test.go.
