@@ -2706,7 +2706,7 @@ reporting may not survive.
 
 ### A5-11 Mosaic agents view
 `status: review | owner: Claude | branch: tui/agent-mosaic | depends: A5-10`
-`scope: internal/tui/agents/, internal/tui/app.go (agents routing and footer only), internal/tui/help.go (agents rows only)`
+`scope: internal/tui/agents/, internal/tui/app.go (agents routing and footer only), internal/tui/help.go (agents rows only), internal/tui/chat/model.go (permission prompt panel and its wording only)`
 
 Deliverable: the agents screen becomes the place you see every agent at once, not two of them.
 Four layouts:
@@ -2755,9 +2755,20 @@ Three decisions worth Codex's attention on review:
    application now keeps the agents view's command in its broadcast path instead of dropping it,
    and tells the view whether it is in front. Without the first the ticker dies on the next
    engine event; without the second it burns frames behind other screens.
-3. **The chat screen is untouched.** A single conversation looks exactly as it did, wordmark and
-   all. Pane chrome exists only inside the agents screen's body, which is what the supervisor
-   asked for out loud.
+3. **The chat screen's layout is untouched.** A single conversation looks exactly as it did,
+   wordmark and all. Pane chrome exists only inside the agents screen's body, which is what the
+   supervisor asked for out loud.
+
+Two follow-ups landed on the same branch at Walid's direction on 2026-07-28, and the second
+widens the scope line above. The panes now render through chat.Transcript rather than their own
+summary, so a pane is the conversation screen in miniature. And the permission prompt, the one
+place a person authorises agents being created on their account, moved from a thin rounded box to
+a heavy frame with a reverse video needs-you chip, because it was not being seen; the dispatch
+confirmation now also says "start more agents" instead of "run a command", and the direct-agent
+confirmation on the agents screen wears the same frame. The prompt panel edit is inside
+`internal/tui/chat/model.go`, which section 2.1 gives to Codex's pair: it is confined to
+promptPanel, describeRequest and directPrompt, and is flagged here so it is impossible to merge
+unseen.
 
 ### PG-A5 Phase A5 gate
 `status: todo | depends: A5-07, A5-08, A5-09, A5-10`
