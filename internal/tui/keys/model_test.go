@@ -2,14 +2,17 @@ package keys
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 const canary = "sk-ant-api03-TYPED-INTO-THE-TUI-MUST-NOT-RENDER"
@@ -419,4 +422,39 @@ func (s *stubStore) SetModel(ref core.KeyRef, model string) error {
 		}
 	}
 	return errors.New("no such credential")
+}
+
+// The credential screen carried its own four colours and therefore ignored the selected theme
+// entirely, which is the same bug that was found in internal/tui/styles.go. Two copies of one
+// mistake in one tree is the argument for asserting it per package rather than once centrally:
+// nothing about finding the first would have led anybody to the second.
+func TestTheCredentialScreenFollowsTheSelectedTheme(t *testing.T) {
+	key := func(style lipgloss.Style) string {
+		fg := style.GetForeground()
+		if fg == nil {
+			return "none"
+		}
+		// The value the style holds, not what it renders. Under go test lipgloss finds no terminal,
+		// renders with the styling stripped and resolves every adaptive colour to black, so both of
+		// the obvious comparisons would compare two identical things and pass regardless.
+		return fmt.Sprintf("%#v", fg)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		style themed
+	}{
+		{"muted", styleMuted}, {"error", styleErr},
+		{"ok", styleOK}, {"warning", styleWarn},
+	} {
+		theme.Set(theme.Default)
+		coloured := key(tc.style())
+		theme.Set(theme.Monochrome)
+		mono := key(tc.style())
+		theme.Set(theme.Default)
+
+		if coloured == mono {
+			t.Errorf("%s is the same colour under both themes, so it is not themed", tc.name)
+		}
+	}
 }

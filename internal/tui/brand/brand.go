@@ -11,32 +11,84 @@ package brand
 
 import "strings"
 
-// mark is a canopy over a trunk.
+// mark is a tent.
+//
+// A canopy is a shelter you sit under, and that is the reading the name is meant to carry: several
+// agents working away, and somewhere comfortable to watch them from. It took two attempts to get
+// here. The first drawing was a tree canopy, and a wide dome on a narrow stem is not a tree, it is
+// a mushroom cloud, which is an unfortunate thing to open a coding tool with.
+//
+// The doorway is the part doing the work. A plain triangle is a mountain; a triangle with an
+// opening in it is somewhere you would go and sit. It is left as a hole rather than filled in, so
+// whatever the terminal background is shows through, which is warmer than any colour this package
+// could pick and is the same reason nothing here sets a background.
 //
 // Drawn from the three block characters that every terminal font has, rather than from the quadrant
 // and corner blocks that look better in the two fonts they render correctly in and like a row of
 // missing glyph boxes everywhere else. This is the first thing a new user sees and it is not the
 // place to find out which font they are running.
 //
-// The silhouette is symmetric about its centre column on every row. An asymmetric one reads as a
-// rendering fault rather than as a drawing, which is the opposite of the point.
+// The guy ropes and their pegs are what stop it reading as a pyramid. A tent is recognised by the
+// things holding it down as much as by its outline, and two pegs leaning away place it on the
+// ground rather than floating it in the middle of the screen.
+//
+// **It is deliberately not symmetric, and that is a reversal.** The rule used to be that every row
+// mirrored about its centre, on the grounds that an asymmetric silhouette reads as a rendering
+// fault. That is true of a lone shape and false of a scene: the fire and its smoke are obviously
+// placed rather than broken, and the moment there are two objects the symmetry that was reassuring
+// becomes the thing that makes it look machine generated. A campsite is not symmetric. What the
+// old rule was really protecting, that nothing looks accidentally clipped, is now covered by the
+// no-trailing-space and width checks, which are the parts that were load bearing.
 const mark = `
-       ▄▄▄▄▄▄▄
-    ▄███████████▄
-  ▄███████████████▄
-  ▀███████████████▀
-     ▀▀▀▀███▀▀▀▀
-         ███
-        ▄███▄`
+            █                ▄▀
+           ███              ▀▄
+          █████              ▄▀
+         ███████            ▀
+        █████████          ▄
+       ████▀▀▀████         ▄
+  ▄   ████     ████   ▄   ▄█▄
+  █  ████       ████  █  █▀█▀█
+ ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄`
 
 // MarkWidth is how many columns the mark occupies.
-const MarkWidth = 21
+const MarkWidth = 33
 
 // minimumWidth is the narrowest terminal the mark is drawn in.
 //
 // Below it the art is dropped rather than scaled or clipped. A clipped logo is worse than no logo:
 // half a tree looks like the program is broken, while the wordmark on its own looks deliberate.
 const minimumWidth = MarkWidth + 4
+
+// wordmark is the name in block letters.
+//
+// The name is drawn as well as written because a mark on its own is not a brand, it is a shape.
+// Every terminal program worth recognising, and every one this is measured against, puts its name on
+// the screen at launch in letters you can read across a room.
+//
+// Three rows rather than five, because it sits in the corner of every screen and five would spend a
+// tenth of a short terminal on a logo. The letters are drawn on a six row grid and packed two rows
+// to a line, so the half blocks buy twice the vertical resolution a three line font would otherwise
+// have. That is what makes it legible at this height instead of looking like a blocky approximation
+// of letters.
+const wordmark = `
+▄▀▀▀▀ ▄▀▀▀▄ █▄  █ ▄▀▀▀▄ █▀▀▀▄ █   █
+█     █▄▄▄█ █ ▀▄█ █   █ █▄▄▄▀  ▀▄▀
+▀▄▄▄▄ █   █ █   █ ▀▄▄▄▀ █       █`
+
+// WordmarkWidth is how many columns the drawn name occupies.
+const WordmarkWidth = 35
+
+// Wordmark returns the name in block letters, or nothing when it will not fit.
+//
+// Nothing rather than a smaller version, for the same reason the mark is dropped rather than
+// clipped: half a word looks like a fault, and the plain text name that always accompanies it
+// already covers the narrow case.
+func Wordmark(width int) []string {
+	if width < WordmarkWidth {
+		return nil
+	}
+	return strings.Split(strings.TrimLeft(wordmark, "\n"), "\n")
+}
 
 // Tagline is the one line description, kept here so the splash and the empty conversation cannot
 // describe the program differently.

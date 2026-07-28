@@ -3199,6 +3199,104 @@ and scrolls with `j` and `k` while any other key still closes it.
 Scoped by that criterion rather than by taste, or this becomes the task that is never finished. It
 is pre-alpha. The bar is that nothing blocks you, not that everything is beautiful.
 
+### M-07 The interface for the release
+`status: review | owner: Claude | branch: feat/interface-polish | depends: A9-03`
+`scope: internal/tui/theme/, internal/tui/styles.go, internal/tui/brand/, internal/tui/layout.go, internal/tui/chat/transcript.go`
+
+Deliverable: the palette, the mark and the drawn name, so the program looks like something somebody
+chose rather than something that accumulated.
+
+Acceptance: selecting a theme changes every screen and not some of them. Every state stays
+distinguishable with the colour stripped. The mark and the drawn name each declare a width that
+matches what they actually draw.
+
+`verify: claude [x] 2026-07-27   codex [ ]`
+
+notes: **added 2026-07-27**, at Walid's request, ahead of the release.
+
+It started by finding that the theme system was not connected. `internal/tui/theme` opens by saying
+no other package constructs a colour and `styles.go` declared six of its own, duplicating the
+default palette by value, so selecting the monochrome theme changed the chat and the agents view and
+left the worktree monitor, the review screen and the help overlay in full colour. The test meant to
+cover it looped over both themes and then asserted every state has a word and a single width glyph,
+which is true whatever the palette is. Third instance this week of a test whose body cannot fail for
+the reason its name implies, after the `git_branch` kind and the context window table.
+
+Styles resolve at render time now, so no call site changed and none of them can capture whichever
+palette happened to be current at package initialisation. The few places needing a bare colour
+rather than a style are refreshed through a change hook, because `lipgloss.TerminalColor` has an
+unexported method and cannot be implemented outside lipgloss.
+
+Worth knowing before writing any test near this: under `go test` lipgloss finds no terminal. It
+renders with the styling stripped and resolves every adaptive colour to black, so both obvious
+assertions, comparing rendered text and comparing resolved RGBA, compare two identical things and
+pass whatever the styles are. The tests compare the colour value the style is holding.
+
+The brand colours are the supervisors': `#0c87b7`, `#b4cc03`, `#b7b7b7`. Danger stays red and
+warning stays amber deliberately and are not brand colours, because those two meanings are carried
+by convention across every program a user has ever seen and overriding them to fit a palette is how
+a failure comes to look like a success. No theme sets a background, so the terminal's own shows
+through, including through the doorway of the mark.
+
+The mark is a tent with a campfire beside it. It was a tree canopy first, which read as a mushroom
+cloud, and the per-row symmetry rule was dropped to allow the fire: symmetry is right for a lone
+silhouette and wrong for a scene, and what it was really protecting is checked directly now.
+
+### M-08 The new conversation screen, and the mark in motion
+`status: review | owner: Claude | branch: feat/interface-polish | depends: M-07`
+`scope: internal/tui/chat/model.go, internal/tui/chat/opening.go, internal/tui/app.go, cmd/canopy/`
+
+Deliverable: opening Canopy puts you in a new conversation, composed the way the supervisors asked
+for it: the drawn name centred above the message box, the box itself near the middle of the screen,
+the commands along the bottom, and the mark animated in the bottom right corner. Ending a session
+prints a code, and `canopy pickup <code>` returns to that conversation.
+
+Acceptance: a fresh start never lands in somebody's previous conversation. The animation stops
+costing anything the moment the conversation is no longer empty. A printed code resumes the exact
+session it names and says so plainly when it does not match one.
+
+Still open, and deliberately not done here: the drawn name in the top right of every other screen.
+It was asked for on 2026-07-27 and then superseded for this screen on the same day by "written logo
+at the center", so what remains is whether the other screens carry it. It costs two rows of chrome
+everywhere, on screens somebody is reading rather than arriving at, and that is a decision rather
+than a detail. Left for the supervisors.
+
+`verify: claude [x] 2026-07-28   codex [ ]`
+
+notes: **added 2026-07-27, unblocked and built 2026-07-28** once PR #19 merged and the four files
+this needed were free.
+
+A product bug was sitting in the middle of it. The application built its chat screen on a hardcoded
+`session-1`, and the engine loads saved conversations at startup and numbers new ones from the
+highest ID it finds, so after the first run `session-1` is the oldest chat in the database. Every
+launch reopened it while the agent that had just been started talked into a session with no screen
+attached to it. Which conversation to open is passed in now, and nothing named starts a new one.
+
+The empty conversation is composed rather than being a transcript with nothing in it. The middle of
+the space between the drawn name and the message box lands on the middle of the screen, which is the
+requirement stated precisely: centring the block instead is right only while the box and the name
+are the same height, and it stopped being right the moment the box grew to three lines.
+
+The mark is dropped rather than clipped when the screen is too short for it, which is the rule the
+brand package already applies to width. That threshold is a real cost and is worth writing down:
+with the taller box it needs about thirty four rows, so an eighty by twenty four terminal gets the
+name and the box and no mark.
+
+Two things found while wiring it. The animation overlaid the fire a column left of where the mark
+draws it, so starting it slid the campfire sideways under a tent that stayed put; `Frame(0)` is the
+still mark now and a test says so. And `internal/agent/plan.go` has a complete plan and execute
+phase that is called from nowhere, which is the same shape as the theme being unreachable at M-07.
+Plan mode here uses the trust level rather than that code, because a level is enforced by the
+permission layer and a prompt is not.
+
+Added along the way at the supervisors' request: the mode and the model written into the top edge of
+the message box, `shift+tab` between planning and building, the campfire in the secondary brand
+colour, and no launch screen.
+
+A chat picker is still out of scope and comes later. The code printed on exit is the resume path for
+0.1, and it is the conversation's number rather than a token, because a token needs a table mapping
+it back and would still only work on the machine that printed it.
+
 ### PG-M Phase M gate
 `status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`
 

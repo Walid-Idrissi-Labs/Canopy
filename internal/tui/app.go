@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"time"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -31,8 +29,7 @@ type Engine interface {
 type screen int
 
 const (
-	screenSplash screen = iota
-	screenChat
+	screenChat screen = iota
 	screenAgents
 	screenDashboard
 	screenReview
@@ -40,14 +37,14 @@ const (
 	screenHelp
 )
 
-// splashDuration is how long the launch screen stays before the application appears.
+// There was a launch screen here, shown for nine hundred milliseconds before the application
+// appeared. It is gone, at the supervisors' request, and the request is right: a splash is a delay
+// somebody has to sit through to reach the thing they typed a command to reach, and the argument
+// for it was recognition, which the opening screen already does while being usable. Every terminal
+// tool worth being measured against opens on something you can type into.
 //
-// Short on purpose. A splash is worth a moment of recognition and nothing more, and any key
-// dismisses it, so nobody who is in a hurry ever waits.
-const splashDuration = 900 * time.Millisecond
-
-// splashDoneMsg ends the splash.
-type splashDoneMsg struct{}
+// The mark and the drawn name did not go with it. They are on the screen a conversation opens on,
+// which is where somebody is looking anyway.
 
 // App is the top level model. It owns which screen is showing and routes messages to it.
 //
@@ -66,10 +63,6 @@ type App struct {
 	// can do for itself: the chat screen shows a session and the agents screen makes agents, and a
 	// plain new conversation belongs to neither.
 	engine Engine
-
-	// afterSplash is the screen to show once the launch screen clears, decided at construction so
-	// the splash never has to know anything about credentials.
-	afterSplash screen
 
 	// confirmingNew is true when a new conversation has been asked for while a reply is still
 	// arriving, and the same key pressed again will go through with it.
@@ -109,6 +102,16 @@ type AppOptions struct {
 	Review   ReviewSource
 	Commands chat.Commands
 	Costs    CostOutcomeSource
+
+	// Session is the conversation to open. Empty starts a new one.
+	//
+	// Which conversation you land in is a decision for whoever ran Canopy, not for the interface, so
+	// it arrives here rather than being worked out here. This field replaces a hardcoded "session-1",
+	// which was correct on a machine with no history and wrong on every machine after that: the
+	// engine loads saved conversations at startup and numbers new ones from the highest it found, so
+	// "session-1" is the oldest chat in the database. Every launch opened it, while the agent that
+	// had just been created sat in a conversation nobody could see.
+	Session string
 }
 
 // NewApp builds the application.
@@ -141,31 +144,42 @@ func NewAppConfigured(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	options AppOptions,
 ) App {
+	credentials := keysui.New(keyStore)
+	model := credentials.ModelFor(keyName)
+
+	// Nothing named means a fresh conversation, made here because there is nothing to show
+	// otherwise. Starting a new one is the safe direction to be wrong in: an unwanted new
+	// conversation costs a keystroke to leave, and landing in the wrong old one is how somebody
+	// appends tonight's question to last week's context without noticing.
+	sessionID := options.Session
+	if sessionID == "" {
+		sessionID = engine.Create(keyName, model).ID
+	}
+
 	app := App{
-		screen:      screenSplash,
-		engine:      engine,
-		afterSplash: screenChat,
-		chat:        chat.New(engine, "session-1", dir, keyName),
-		agents:      agentsui.New(engine),
-		dashboard:   New(store),
-		review:      NewReview(options.Review),
-		keys:        keysui.New(keyStore),
-		cameFrom:    screenChat,
-		usingKey:    keyName,
-		dir:         dir,
-		dim:         Dimensions{Width: 80, Height: 24},
+		screen:    screenChat,
+		engine:    engine,
+		chat:      chat.New(engine, sessionID, dir, keyName),
+		agents:    agentsui.New(engine),
+		dashboard: New(store),
+		review:    NewReview(options.Review),
+		keys:      credentials,
+		cameFrom:  screenChat,
+		usingKey:  keyName,
+		dir:       dir,
+		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
 	app.review.SetCostOutcomes(options.Costs)
 	// What a new agent inherits. Without it every agent created from that screen was built with an
 	// empty credential and an empty working directory, which fails on its first message.
-	app.agents.SetDefaults(keyName, keysui.New(keyStore).ModelFor(keyName), dir)
+	app.agents.SetDefaults(keyName, model, dir)
 	// The credential screen comes first when there is no credential to run on, which is not the same
 	// as having none stored. With several stored and none chosen there is no obvious default, and
 	// landing on the chat means typing a message and watching it fail, which is a worse introduction
 	// than being asked the one question that makes everything else work.
 	if app.keys.IsEmpty() || keyName == "" {
-		app.afterSplash = screenKeys
+		app.screen = screenKeys
 	}
 
 	app.resize(app.dim)
@@ -180,11 +194,7 @@ func (a *App) resize(dim Dimensions) {
 }
 
 func (a App) Init() tea.Cmd {
-	return tea.Batch(
-		a.dashboard.Init(),
-		a.chat.Init(),
-		tea.Tick(splashDuration, func(time.Time) tea.Msg { return splashDoneMsg{} }),
-	)
+	return tea.Batch(a.dashboard.Init(), a.chat.Init())
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -192,9 +202,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentsui.SwitchMsg:
 		// The agents view asks and the application decides, which is what keeps "which screen is
 		// showing" in one place.
-		a.chat.SetSession(m.SessionID, m.AgentName)
+		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
 		a.screen = screenChat
-		return a, nil
+		return a, cmd
 
 	case tea.MouseMsg:
 		// Routed to the screen in front rather than broadcast, for the same reason keystrokes are:
@@ -213,22 +223,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		a.resize(Dimensions{Width: m.Width, Height: m.Height})
-	case splashDoneMsg:
-		if a.screen == screenSplash {
-			a.screen = a.afterSplash
-		}
-		return a, nil
 	}
 
 	if key, ok := msg.(tea.KeyMsg); ok {
-		// Any key dismisses the splash, and is then not passed on. Swallowing it is deliberate:
-		// the first keystroke after launch is usually impatience rather than a command, and acting
-		// on it would mean landing somewhere you did not ask for.
-		if a.screen == screenSplash {
-			a.screen = a.afterSplash
-			return a, nil
-		}
-
 		// Help is answered before anything else, and any key leaves it except the ones that scroll
 		// it. Somebody who opened it by accident should not have to find the one key that closes it,
 		// and somebody reading it should not be thrown out for trying to see the rest.
@@ -373,7 +370,8 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 					"a reply is still arriving, ctrl+n again for a new conversation and this one keeps going")
 				return true, a, nil
 			}
-			return true, a.newConversation(), nil
+			next, cmd := a.newConversation()
+			return true, next, cmd
 
 		case "ctrl+k", "ctrl+d":
 			// Navigation is disabled while a question is open, for the same reason: leaving the
@@ -484,13 +482,16 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 // Nothing is deleted. The previous conversation is still in the session list with its history and
 // its running turn, which is what makes this safe to press without thinking. A key that silently
 // destroyed an hour of work is one nobody presses twice.
-func (a App) newConversation() App {
+func (a App) newConversation() (App, tea.Cmd) {
 	created := a.engine.Create(a.usingKey, a.keys.ModelFor(a.usingKey))
-	a.chat.SetSession(created.ID, "")
+	// The command returned is what restarts the mark on the opening screen. A new conversation is
+	// the one place it always has something to animate, so dropping it here would mean the corner
+	// was alive on the conversation Canopy launched into and still on every one after it.
+	cmd := a.chat.SetSession(created.ID, "")
 	a.chat.SetNotice("")
 	a.confirmingNew = false
 	a.screen = screenChat
-	return a
+	return a, cmd
 }
 
 // typing reports whether a keystroke currently belongs to a text field.
@@ -521,9 +522,6 @@ func (a App) typing() bool {
 }
 
 func (a App) View() string {
-	if a.screen == screenSplash {
-		return Splash(a.dim, "a terminal coding agent for running several at once")
-	}
 	if !a.dim.Usable() {
 		return TooSmall(a.dim)
 	}
@@ -558,13 +556,15 @@ func (a App) View() string {
 		// needs first rather than what the program does most. At eighty columns only about five
 		// survive, and the ones that have to be among them are how to get help and how to reach a
 		// credential, because everything else in the program is downstream of those two.
-		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "↑", "history",
-			"ctrl+n", "new", "ctrl+k", "keys", "ctrl+d", "agents", "ctrl+r", "compact",
-			"ctrl+c", "quit")
+		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "shift+tab", a.chat.Mode(),
+			"↑", "history", "ctrl+n", "new", "ctrl+k", "keys", "ctrl+d", "agents",
+			"ctrl+r", "compact", "ctrl+c", "quit")
 		if a.chat.InputEmpty() {
-			footer = Keys(a.dim.Width, "enter", "send", "?", "help", "ctrl+k", "keys",
-				"ctrl+n", "new", "ctrl+d", "agents", "↑", "history", "ctrl+r", "compact",
-				"esc", "stop", "ctrl+c", "quit")
+			// The mode is named after the key rather than described, so the footer says which one
+			// you are in as well as how to change it, in the space one hint costs.
+			footer = Keys(a.dim.Width, "enter", "send", "shift+tab", a.chat.Mode(), "?", "help",
+				"ctrl+k", "keys", "ctrl+n", "new", "ctrl+d", "agents", "↑", "history",
+				"ctrl+r", "compact", "esc", "stop", "ctrl+c", "quit")
 		}
 		if a.chat.Awaiting() {
 			footer = Keys(a.dim.Width, "y", "allow once", "a", "always", "any other key", "refuse")
@@ -582,8 +582,6 @@ func (a App) View() string {
 // Screen reports which view is in front. For tests.
 func (a App) Screen() string {
 	switch a.screen {
-	case screenSplash:
-		return "splash"
 	case screenChat:
 		return "chat"
 	case screenAgents:
@@ -601,9 +599,9 @@ func (a App) Screen() string {
 
 // SubscribeCmd returns the command that waits on the next engine event.
 //
-// Init batches this with the splash timer, and a batched command yields a tea.BatchMsg rather than
-// the event itself, so a test driving the event path needs the subscription on its own. Exported
-// for that reason and no other.
+// Init batches this with the chat's own commands, and a batched command yields a tea.BatchMsg rather
+// than the event itself, so a test driving the event path needs the subscription on its own.
+// Exported for that reason and no other.
 func (a App) SubscribeCmd() tea.Cmd { return a.dashboard.Init() }
 
 // ChatInput exposes what has been typed into the message box. For tests.
@@ -612,34 +610,19 @@ func (a App) ChatInput() string { return a.chat.InputValue() }
 // ChatSubscribeCmd is the same, for the chat screen's own event stream.
 func (a App) ChatSubscribeCmd() tea.Cmd { return a.chat.SubscribeCmd() }
 
-// DismissSplash skips the launch screen. For tests, which should not wait on a timer.
-func (a App) DismissSplash() App {
-	if a.screen == screenSplash {
-		a.screen = a.afterSplash
-	}
-	return a
-}
+// ChatSession is the conversation the chat screen is on. For the caller, which prints the code to
+// come back to it, and for tests.
+func (a App) ChatSession() string { return a.chat.SessionID() }
 
-// RunApp starts the full application.
-func RunApp(
-	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
-) error {
-	return RunAppWithReview(store, keyStore, engine, dir, keyName, nil)
-}
-
-// RunAppWithReview starts the application with a source for the review screen.
-func RunAppWithReview(
-	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
-	review ReviewSource,
-) error {
-	return RunAppConfigured(store, keyStore, engine, dir, keyName, AppOptions{Review: review})
-}
-
-// RunAppConfigured starts the application with project-specific capabilities.
+// RunAppConfigured starts the application and returns the conversation it was left in.
+//
+// The conversation comes back because whoever started Canopy is the one that prints how to return
+// to it, and by the time the program exits the answer is not the one that was passed in: somebody
+// who pressed ctrl+n four times is in a different conversation from the one they opened.
 func RunAppConfigured(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	options AppOptions,
-) error {
+) (string, error) {
 	// Mouse reporting is asked for so the wheel arrives as a wheel.
 	//
 	// Without it, a terminal in the alternate screen translates the wheel into arrow key sequences,
@@ -656,6 +639,10 @@ func RunAppConfigured(
 	program := tea.NewProgram(
 		NewAppConfigured(store, keyStore, engine, dir, keyName, options),
 		tea.WithAltScreen(), tea.WithMouseCellMotion())
-	_, err := program.Run()
-	return err
+
+	final, err := program.Run()
+	if app, ok := final.(App); ok {
+		return app.ChatSession(), err
+	}
+	return "", err
 }

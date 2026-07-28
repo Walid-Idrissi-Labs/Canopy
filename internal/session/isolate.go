@@ -116,16 +116,10 @@ func (e *Engine) isolate(ctx context.Context, agent *Agent) (*core.ToolRegistry,
 // that gap would have bitten hardest, since the reason to confine an agent to a worktree is usually
 // to let it work more freely inside one.
 func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.TrustLevel) {
-	tools, trust := e.tools, e.trust
+	tools, trust := e.tools, e.trustForLocked(sessionID)
 
 	if registry, ok := e.agentTools[sessionID]; ok {
 		tools = registry
-	}
-	for _, agent := range e.agents {
-		if agent.SessionID == sessionID && agent.Trust != "" {
-			trust = agent.Trust
-			break
-		}
 	}
 	if tools != nil {
 		// Do not describe structurally denied tools to the model. Enforcement still happens for
@@ -140,6 +134,23 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 		})
 	}
 	return tools, trust
+}
+
+// trustForLocked is how much one conversation may do, most specific decision first.
+//
+// The per conversation override wins over the agent's own level because it is both the more specific
+// and the more recent, and because it is the one somebody made on purpose while watching that
+// conversation. The agent's level wins over the engine's for the same reason one step up.
+func (e *Engine) trustForLocked(sessionID string) core.TrustLevel {
+	if trust, ok := e.sessionTrust[sessionID]; ok && trust != "" {
+		return trust
+	}
+	for _, agent := range e.agents {
+		if agent.SessionID == sessionID && agent.Trust != "" {
+			return agent.Trust
+		}
+	}
+	return e.trust
 }
 
 // PrepareAgent brings an isolated agent's worktree to a state where the project runs.

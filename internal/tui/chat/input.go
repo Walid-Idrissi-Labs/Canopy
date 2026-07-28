@@ -34,10 +34,18 @@ type Input struct {
 	// MaxLines caps how tall the box may grow before it scrolls internally, so a pasted essay
 	// cannot push the conversation off the screen.
 	MaxLines int
+	// MinLines is how tall the box is with nothing in it.
+	//
+	// Three rather than one. A one line box reads as a search field, and what people write here is
+	// several sentences or a pasted stack trace, so the box that fits it should be the box they are
+	// looking at rather than one that grows on the second word and jogs the whole screen up. It also
+	// gives the mode and the model written into the top edge something to sit above, instead of
+	// leaving them as a caption on a bare rule.
+	MinLines int
 }
 
 // NewInput builds an empty input.
-func NewInput() Input { return Input{Width: 80, MaxLines: 6} }
+func NewInput() Input { return Input{Width: 80, MaxLines: 6, MinLines: 3} }
 
 // HistoryLimit is how many sent messages are kept per conversation.
 //
@@ -293,13 +301,18 @@ func (i Input) Lines() []string {
 
 	lines := wrapWithMarkers(before, head, tail, width)
 
-	if len(lines) <= i.MaxLines {
-		return lines
+	if len(lines) > i.MaxLines {
+		// Scrolled to keep the last lines, which is where the cursor is while typing. A box that
+		// scrolled from the top would show the beginning of a long message and hide what is being
+		// written.
+		return lines[len(lines)-i.MaxLines:]
 	}
-	// Scrolled to keep the last lines, which is where the cursor is while typing. A box that
-	// scrolled from the top would show the beginning of a long message and hide what is being
-	// written.
-	return lines[len(lines)-i.MaxLines:]
+	if len(lines) < i.MinLines {
+		// Padded below rather than above, so the first line of what is being typed stays on the
+		// first line of the box and the cursor does not start halfway down it.
+		lines = append(lines, make([]string, i.MinLines-len(lines))...)
+	}
+	return lines
 }
 
 // Height is how many lines the box will occupy, including its border.

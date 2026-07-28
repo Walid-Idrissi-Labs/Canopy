@@ -7,6 +7,7 @@ package keys
 
 import (
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -370,11 +371,25 @@ func max(a, b int) int {
 	return b
 }
 
+// The credential screen renders through the theme like everything else.
+//
+// It did not. These were four adaptive colours declared here, which is the same bug that was found
+// in internal/tui/styles.go and fixed a few commits ago: the values duplicated the old default
+// palette, so this screen stayed in those colours whatever theme was selected. Finding the second
+// copy is the argument for the rule internal/tui/theme opens with, since nothing about the first
+// one would have led anybody here.
+//
+// Resolved at render time behind a Render method, so no call site changed and none of these can
+// capture whichever palette happened to be current when the package was initialised.
+type themed func() lipgloss.Style
+
+func (t themed) Render(strs ...string) string { return t().Render(strs...) }
+
 var (
-	styleTitle  = lipgloss.NewStyle().Bold(true)
-	styleMuted  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6e7781", Dark: "#8b949e"})
-	styleErr    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#cf222e", Dark: "#f85149"})
-	styleOK     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#1a7f37", Dark: "#3fb950"})
-	styleWarn   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9a6700", Dark: "#d29922"})
-	styleSelect = lipgloss.NewStyle().Bold(true)
+	styleTitle  = themed(func() lipgloss.Style { return theme.Current().Title })
+	styleMuted  = themed(func() lipgloss.Style { return theme.Current().Muted })
+	styleErr    = themed(func() lipgloss.Style { return theme.Current().Danger })
+	styleOK     = themed(func() lipgloss.Style { return theme.Current().Success })
+	styleWarn   = themed(func() lipgloss.Style { return theme.Current().Warning })
+	styleSelect = themed(func() lipgloss.Style { return theme.Current().Selected })
 )

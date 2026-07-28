@@ -12,6 +12,50 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 )
 
+// M-08, and the bug it was written from.
+//
+// The application opened on a conversation called "session-1" whatever it had been handed. On a
+// machine with no history that is the conversation the caller had just created and everything
+// looked fine. On every machine after the first run it is the oldest chat in the database, because
+// the engine loads what is saved at startup and numbers new ones from the highest ID it found. So
+// launching Canopy reopened the first conversation you ever had, and the agent that had just been
+// started was talking into a session with no screen attached to it.
+func TestTheApplicationOpensTheConversationItWasGiven(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{sessions: map[string]core.Session{
+		"session-1": {ID: "session-1", Turns: []core.Turn{{
+			Request: core.Message{Text: "something asked last week"},
+			Text:    "and answered last week",
+			State:   core.TurnComplete,
+		}}},
+		"session-9": {ID: "session-9"},
+	}}
+
+	view := plain(launchSession(store, withOneKey(), engine, "session-9").(tui.App).View())
+	if strings.Contains(view, "something asked last week") {
+		t.Errorf("opening session-9 landed in an older conversation:\n%s", view)
+	}
+}
+
+// And with nothing named it starts one, rather than picking a conversation for you.
+//
+// This is the property that makes `canopy` with no arguments mean a new chat. The safe direction to
+// be wrong in is a new conversation nobody wanted, which costs a keystroke, rather than an old one
+// somebody is now unknowingly adding to.
+func TestTheApplicationWithNothingNamedStartsANewConversation(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{}
+	tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude", tui.AppOptions{})
+
+	if engine.created != 1 {
+		t.Errorf("%d conversations started with none named, want one", engine.created)
+	}
+}
+
 // M-04. Quitting and restarting to get a clean context is what people do when there is no key for
 // this, and it costs them their credential choice every time.
 func TestANewConversationStartsEmptyAndKeepsTheCredential(t *testing.T) {

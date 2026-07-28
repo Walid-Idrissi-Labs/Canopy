@@ -48,6 +48,14 @@ type Engine interface {
 
 	// UseCredential points this conversation at a different credential and model.
 	UseCredential(sessionID, keyName, model string) error
+
+	// Trust is how much the agent in this conversation may do, and SetTrust changes it. This pair is
+	// what plan mode is made of: the permission layer decides against the level and the tool list
+	// the model is shown is filtered by it, so an agent that is planning cannot edit a file by
+	// ignoring the instruction to plan. A mode the model could talk its way out of would be worth
+	// less than no mode at all, because it would look like a guarantee.
+	Trust(sessionID string) core.TrustLevel
+	SetTrust(sessionID string, trust core.TrustLevel)
 }
 
 // Commands is the catalog resolved for this chat's project.
@@ -73,6 +81,28 @@ type compactedMsg struct {
 // Slow enough not to be the reason a terminal redraws. A spinner is the least important thing on
 // screen and should never be what wakes the program up more often than the work does.
 const spinnerInterval = 120 * time.Millisecond
+
+// markInterval is how often the mark on the opening screen redraws.
+//
+// Six times slower than the spinner, and deliberately. A spinner is telling you something is
+// happening and has to keep up with it; the campfire is telling you nothing at all, and the thing
+// that makes a fire across a clearing restful rather than distracting is that it moves at about this
+// rate. Three frames at this interval is a cycle of a little over two seconds.
+const markInterval = 750 * time.Millisecond
+
+// markTickMsg advances the mark, and says which conversation's ticker sent it.
+//
+// The generation is what stops two tickers running at once. Starting a new conversation schedules a
+// tick, and with no way to tell it from the one already in flight the animation would run at double
+// speed after the first new chat and faster after every one after that. A tick from a conversation
+// that has been left is dropped and not rescheduled, which is also how the old ticker stops.
+type markTickMsg struct{ generation int }
+
+func markTick(generation int) tea.Cmd {
+	return tea.Tick(markInterval, func(time.Time) tea.Msg {
+		return markTickMsg{generation: generation}
+	})
+}
 
 // spinnerFrames are braille dots rather than the rotating slash.
 //
@@ -127,6 +157,18 @@ type Model struct {
 	// input boundary, so the engine receives an ordinary prompt and no model or tool path gains a
 	// second command language.
 	commands config.CommandSet
+
+	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
+	// says which conversation its ticker belongs to. See markTickMsg.
+	markStep       int
+	markGeneration int
+
+	// buildTrust is the level to go back to when this conversation leaves plan mode.
+	//
+	// Remembered rather than assumed, because an agent running at broad trust that planned and then
+	// went back to building would otherwise come out at standard. That is a silent demotion, and the
+	// kind nobody notices until a command they expected to run stops to ask permission.
+	buildTrust core.TrustLevel
 }
 
 // New builds a chat model over an engine and a session.
@@ -158,9 +200,9 @@ func promptsOf(s core.Session) []string {
 	return out
 }
 
-// Init subscribes to engine events and starts the spinner.
+// Init subscribes to engine events and starts the spinner and the mark.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.subscribe(), tick())
+	return tea.Batch(m.subscribe(), tick(), markTick(m.markGeneration))
 }
 
 // SubscribeCmd returns the event subscription on its own.
@@ -213,6 +255,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// guarantees the screen catches up regardless.
 		m.refresh()
 		return m, tick()
+
+	case markTickMsg:
+		if msg.generation != m.markGeneration {
+			// A ticker left behind by a conversation that has been closed. Dropped and not
+			// rescheduled, which is what ends it.
+			return m, nil
+		}
+		if !m.blank() {
+			// The moment there is a conversation there is no opening screen to animate, and the
+			// ticker is not scheduled again, so the mark stops costing anything at all rather than
+			// going on redrawing something nobody can see. A new conversation starts a new one.
+			return m, nil
+		}
+		m.markStep++
+		return m, markTick(m.markGeneration)
 
 	case compactedMsg:
 		m.compacting = false
@@ -384,6 +441,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "shift+tab":
+		// Beside tab rather than on a letter, because every printable key belongs to the message
+		// box, and next to the key that completes a command because both are about what is going to
+		// happen rather than about what has been said.
+		m.togglePlanning()
+		return m, nil
+
 	case "esc":
 		// Stops the turn rather than leaving the screen. With a reply streaming, escape means stop,
 		// and a screen that navigated away instead would abandon a running turn out of sight.
@@ -511,7 +575,7 @@ func commandListing(commands config.CommandSet) string {
 
 	var lines []string
 	for _, command := range all {
-		lines = append(lines, fmt.Sprintf("/%s — %s (%s)",
+		lines = append(lines, fmt.Sprintf("/%s  %s (%s)",
 			command.Name, command.Description, command.Scope))
 	}
 	return strings.Join(lines, "\n")
@@ -544,9 +608,13 @@ func (m Model) Working() bool { return m.working }
 // The scroll position and the half typed message are cleared with it. Carrying either across would
 // mean arriving in one agent's conversation scrolled to a position from another's, and finding text
 // in the box that was meant for somebody else.
-func (m *Model) SetSession(sessionID, label string) {
+// Returns the command that restarts the mark, since the conversation being arrived in may well be
+// an empty one. A method that changed what is on screen and left the caller to work out that
+// something now needs driving is how the animation would be live in some new conversations and not
+// in others, depending on which key got you there.
+func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	if sessionID == m.sessionID {
-		return
+		return nil
 	}
 	m.sessionID = sessionID
 	m.agentName = label
@@ -558,6 +626,10 @@ func (m *Model) SetSession(sessionID, label string) {
 	// History belongs to the conversation, not to the box. Carrying it across would offer you, on
 	// the first press of up, the message you sent to a different agent.
 	m.input.LoadHistory(promptsOf(m.session))
+
+	m.markStep = 0
+	m.markGeneration++
+	return markTick(m.markGeneration)
 }
 
 // SetNotice puts a line above the message box.
@@ -606,18 +678,86 @@ func (m Model) InputEmpty() bool { return m.input.Empty() }
 
 func (m Model) spinnerFrame() string { return spinnerFrames[m.spinner] }
 
-func (m Model) transcript() []string {
-	if !m.loaded || len(m.session.Turns) == 0 {
-		return Welcome(m.width, m.dir, m.keyName)
-	}
+// blank reports whether this conversation still has nothing in it, and so opens on the composed
+// screen rather than on a transcript.
+//
+// A waiting tool call disqualifies it. In practice a conversation with no turns cannot have one, and
+// the opening screen has nowhere to put a question, so relying on that rather than checking it is
+// how a permission prompt would one day be drawn on a screen that has no room for it.
+func (m Model) blank() bool {
+	return (!m.loaded || len(m.session.Turns) == 0) && !m.awaiting
+}
 
-	lines := Transcript(m.session, m.width, m.spinnerFrame())
+func (m Model) transcript() []string {
+	var lines []string
+	if len(m.session.Turns) > 0 {
+		lines = Transcript(m.session, m.width, m.spinnerFrame())
+	}
 	if m.awaiting {
 		// At the bottom of the transcript rather than in a dialogue over it, so the command being
 		// approved sits directly under the reasoning that led to it. A modal that covers the
 		// conversation asks somebody to decide with the context hidden.
-		lines = append(lines, "")
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
 		lines = append(lines, m.promptLines()...)
+	}
+	return lines
+}
+
+// Planning reports whether this conversation is in plan mode.
+//
+// Read from the engine rather than from a flag of its own, so there is one answer to the question
+// and the box cannot say "build" over a conversation the permission layer is refusing every write
+// in. Two sources of truth for a mode is how an interface comes to lie about a guarantee.
+func (m Model) Planning() bool {
+	return m.engine.Trust(m.sessionID) == core.TrustReadOnly
+}
+
+// Mode is the word the box shows: what this conversation is doing.
+func (m Model) Mode() string {
+	if m.Planning() {
+		return "plan"
+	}
+	return "build"
+}
+
+// togglePlanning moves between planning and building.
+func (m *Model) togglePlanning() {
+	if !m.Planning() {
+		m.buildTrust = m.engine.Trust(m.sessionID)
+		m.engine.SetTrust(m.sessionID, core.TrustReadOnly)
+		m.notice = ""
+		return
+	}
+
+	if m.buildTrust == "" || m.buildTrust == core.TrustReadOnly {
+		// There is nothing to go back to, because this agent is read-only by its own profile rather
+		// than because somebody put it in plan mode. Said out loud, since a key that silently does
+		// nothing reads as a key that is broken.
+		m.notice = "this agent is read-only, so planning is all it can do"
+		return
+	}
+	m.engine.SetTrust(m.sessionID, m.buildTrust)
+	m.notice = ""
+}
+
+// contextLines are what the opening screen says along its bottom left: where the agent is working
+// and what it is talking to.
+func (m Model) contextLines() []string {
+	t := theme.Current()
+
+	var lines []string
+	if m.dir != "" {
+		lines = append(lines, t.Muted.Render("working in ")+t.Body.Render(m.dir))
+	}
+	if m.keyName != "" {
+		lines = append(lines, t.Muted.Render("using ")+t.Body.Render(m.keyName))
+	} else {
+		// The one thing that makes the rest of the program work, said plainly rather than left to be
+		// discovered when the first message fails.
+		lines = append(lines, t.Warning.Render("no credential yet")+
+			t.Muted.Render(", press ")+t.Key.Render("ctrl+k")+t.Muted.Render(" to add one"))
 	}
 	return lines
 }
@@ -641,6 +781,17 @@ func (m Model) transcriptHeight() int {
 
 // Body renders the screen.
 func (m Model) Body() string {
+	if m.blank() {
+		return opening{
+			width:   m.width,
+			height:  m.height,
+			box:     strings.Split(m.inputBox(), "\n"),
+			status:  m.statusRow(0),
+			context: m.contextLines(),
+			step:    m.markStep,
+		}.render()
+	}
+
 	lines := m.transcript()
 	visible := m.transcriptHeight()
 
@@ -791,7 +942,7 @@ func (m Model) inputBox() string {
 	rule := strings.Repeat(horizontal, inner+2)
 
 	var b strings.Builder
-	b.WriteString(" " + t.Border.Render(topLeft+rule+topRight) + "\n")
+	b.WriteString(" " + m.boxTop(topLeft, topRight, horizontal, inner+2) + "\n")
 	for _, line := range m.input.Lines() {
 		// Padded to the full inner width so the right hand border stays in one column whatever is
 		// typed. A border that moves with the text reads as a rendering fault.
@@ -804,6 +955,49 @@ func (m Model) inputBox() string {
 	}
 	b.WriteString(" " + t.Border.Render(bottomLeft+rule+bottomRight))
 	return b.String()
+}
+
+// boxTop draws the top edge of the message box with the mode and the model written into it.
+//
+// On the edge rather than on a line of its own, which is the whole reason it is here: these two
+// facts are worth having on screen at all times and are not worth a row of the terminal each. The
+// box already draws a rule across the full width and this spends part of it.
+//
+// Both matter for the same reason. Which model is answering changes what a reply is worth and what
+// it costs, and it is set per conversation and per credential, so it is genuinely easy to lose
+// track of. The mode matters more: plan and build differ in whether the agent can change your files,
+// and a person who thinks they are planning while the agent is building finds out afterwards.
+func (m Model) boxTop(left, right, horizontal string, width int) string {
+	t := theme.Current()
+
+	label := m.Mode()
+	if model := m.session.Model; model != "" {
+		label += "  " + model
+	}
+
+	// Two for the spaces either side of the label, and two more so the rule is still visibly a rule
+	// on both sides rather than a stub. Below that the label is dropped and the plain edge is drawn,
+	// because a truncated model name is worse than no model name: it looks like a different model.
+	if lipgloss.Width(label)+4 > width {
+		return t.Border.Render(left + strings.Repeat(horizontal, width) + right)
+	}
+
+	mode := t.Info
+	if m.Planning() {
+		// Amber, and the word is what carries it. Plan is the narrower mode and the one somebody
+		// needs to notice they are in, since it is the difference between an agent that will change
+		// files and one that cannot.
+		mode = t.Warning
+	}
+
+	written := mode.Render(m.Mode())
+	if model := m.session.Model; model != "" {
+		written += t.Muted.Render("  " + model)
+	}
+
+	rest := width - lipgloss.Width(label) - 3
+	return t.Border.Render(left+horizontal) + " " + written + " " +
+		t.Border.Render(strings.Repeat(horizontal, rest)+right)
 }
 
 // Context is what the frame shows beside the title.

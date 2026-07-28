@@ -50,15 +50,26 @@ func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 // not about conversations, so it answers with an empty session and records nothing.
 type stubEngine struct {
 	session core.Session
-	sent    []string
-	agents  []session.AgentStatus
-	added   []session.Agent
-	using   [2]string
-	created int
-	asking  bool
+	// sessions is for the few tests that need more than one, and so need the stub to be able to
+	// tell them apart. Everything else uses the single session above and does not care which ID it
+	// is asked for.
+	sessions map[string]core.Session
+	sent     []string
+	agents   []session.AgentStatus
+	added    []session.Agent
+	using    [2]string
+	created  int
+	asking   bool
+	trust    core.TrustLevel
 }
 
-func (e *stubEngine) Session(string) (core.Session, bool) { return e.session, true }
+func (e *stubEngine) Session(id string) (core.Session, bool) {
+	if e.sessions != nil {
+		s, ok := e.sessions[id]
+		return s, ok
+	}
+	return e.session, true
+}
 
 func (e *stubEngine) Send(_, prompt string) (string, error) {
 	e.sent = append(e.sent, prompt)
@@ -103,6 +114,16 @@ func (e *stubEngine) UseCredential(_, keyName, model string) error {
 	return nil
 }
 
+// Trust is what plan mode is made of, so this holds a real level rather than answering a constant.
+func (e *stubEngine) Trust(string) core.TrustLevel {
+	if e.trust == "" {
+		return core.TrustStandard
+	}
+	return e.trust
+}
+
+func (e *stubEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
+
 // Create hands back a session that is genuinely different from the one before it, since a stub
 // returning the same ID every time would make "the screen moved to the new conversation" pass
 // without the screen having moved anywhere.
@@ -119,14 +140,24 @@ func (e *stubEngine) Create(keyName, model string) core.Session {
 	return created
 }
 
-// launch builds the application past the splash and at a known size, which is the state every
-// test below actually cares about. Tests should not wait on a timer.
+// launch builds the application at a known size, which is the state every test below actually cares
+// about.
 func launch(store core.SnapshotStore, keyStore keysui.Store) tea.Model {
 	return launchWith(store, keyStore, &stubEngine{})
 }
 
 func launchWith(store core.SnapshotStore, keyStore keysui.Store, engine tui.Engine) tea.Model {
-	app := tui.NewApp(store, keyStore, engine, "myproject", "claude").DismissSplash()
+	// The conversation is named, so these tests count only the conversations they start themselves.
+	// Left empty the application would open a new one, which is right in the product and would put
+	// every "how many were created" assertion below one out.
+	return launchSession(store, keyStore, engine, "session-1")
+}
+
+func launchSession(
+	store core.SnapshotStore, keyStore keysui.Store, engine tui.Engine, sessionID string,
+) tea.Model {
+	app := tui.NewAppConfigured(store, keyStore, engine, "myproject", "claude",
+		tui.AppOptions{Session: sessionID})
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return next
 }
@@ -168,7 +199,10 @@ func TestWithKeysOpensOnChat(t *testing.T) {
 		t.Errorf("opened on %q, want chat", app.Screen())
 	}
 	view := plain(app.View())
-	if !strings.Contains(view, "Canopy") || !strings.Contains(view, "Type a message") {
+	// The name, and what to do next. The second used to be a line of its own on the welcome block
+	// and is the frame's footer now, which was already saying the same thing one row lower: two
+	// lists of the keys is one list that goes stale the first time the other is edited.
+	if !strings.Contains(view, "Canopy") || !strings.Contains(view, "enter send") {
 		t.Errorf("the chat screen should introduce itself:\n%s", view)
 	}
 }
@@ -341,7 +375,7 @@ func TestTheChatFooterKeepsHelpAndCredentialsAtEightyColumns(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 	narrow, _ := app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
 	view := plain(narrow.(tui.App).View())
@@ -361,42 +395,45 @@ func lastLine(view string) string {
 	return lines[len(lines)-1]
 }
 
-// The splash is the first thing anyone sees, so it has to appear, get out of the way on its own,
-// and get out of the way faster if the user is quicker than the timer.
-func TestSplashAppearsAndClears(t *testing.T) {
+// There is no launch screen, and the first keystroke belongs to whoever typed it.
+//
+// This replaces the pair of tests that checked the splash appeared and cleared. It was shown for
+// nine hundred milliseconds before the application arrived, which is a delay between somebody typing
+// a command and reaching the thing they typed it for. The name and the mark did not go with it: they
+// are on the screen a conversation opens on, which is usable while it is being looked at.
+//
+// Worth keeping as a test rather than deleting outright, because the failure this guards against is
+// specific. The splash swallowed the first keystroke on purpose, so somebody impatient did not land
+// somewhere they had not asked for. With it gone that keystroke has to reach the message box, or the
+// first character of the first message is dropped on every run.
+func TestThereIsNoLaunchScreenAndTheFirstKeystrokeCounts(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
 	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
-	if app.Screen() != "splash" {
-		t.Fatalf("launched on %q, want the splash", app.Screen())
+	if app.Screen() != "chat" {
+		t.Fatalf("launched on %q, want a conversation straight away", app.Screen())
 	}
 	if !strings.Contains(plain(app.View()), "Canopy") {
-		t.Errorf("the splash should show the name:\n%s", plain(app.View()))
+		t.Errorf("the opening screen does not show the name:\n%s", plain(app.View()))
 	}
 
-	// Any key dismisses it, and is swallowed rather than acted on: the first keystroke after
-	// launch is usually impatience, not a command.
 	next := key(app, "j")
-	if next.(tui.App).Screen() != "chat" {
-		t.Errorf("a keystroke should dismiss the splash and land on chat, got %q",
-			next.(tui.App).Screen())
-	}
-	// And is swallowed rather than typed into the message box, or the first impatient keypress
-	// would end up in the message somebody is about to write.
-	if got := next.(tui.App).ChatInput(); got != "" {
-		t.Errorf("the dismissing keystroke landed in the input box as %q", got)
+	if got := next.(tui.App).ChatInput(); got != "j" {
+		t.Errorf("the first keystroke reached the box as %q, so a character was swallowed", got)
 	}
 }
 
-func TestSplashGoesToCredentialsWhenThereAreNone(t *testing.T) {
+// With no credential the credential screen is still what comes first, which was true before and is
+// the one case where a form beats a conversation: an agent with no key can be talked to and cannot
+// answer, and finding that out by typing a message is a worse introduction than being asked.
+func TestWithNoCredentialsTheCredentialScreenComesFirst(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := key(tui.NewApp(store, &fakeKeyStore{}, &stubEngine{}, "myproject", ""), "j")
-	if app.(tui.App).Screen() != "keys" {
-		t.Errorf("with no credentials the splash should lead to the credential screen, got %q",
-			app.(tui.App).Screen())
+	app := tui.NewApp(store, &fakeKeyStore{}, &stubEngine{}, "myproject", "")
+	if app.Screen() != "keys" {
+		t.Errorf("with no credentials the application opened on %q", app.Screen())
 	}
 }
 
@@ -407,7 +444,7 @@ func TestLayoutFillsAndReflows(t *testing.T) {
 	defer store.Close()
 
 	for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}, {200, 60}} {
-		app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
+		app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 		next, _ := app.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 
 		lines := strings.Split(plain(next.View()), "\n")
@@ -430,7 +467,7 @@ func TestTooSmallSaysSoRatherThanRenderingBadly(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
 
 	view := plain(next.View())
@@ -448,7 +485,7 @@ func TestHelpOpensFromAnyScreenAndLeavesOnAnyKey(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude").DismissSplash()
+	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 
 	// From chat with a message already started, where a question mark belongs to the message box
 	// and must not open anything. Stealing a character out of the middle of a sentence somebody is
@@ -579,13 +616,13 @@ func TestWithNoCredentialChosenTheKeyScreenComesFirst(t *testing.T) {
 		{Ref: core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible}, Model: "some/model"},
 	}}
 
-	app := tui.NewApp(store, keyStore, &stubEngine{}, "myproject", "").DismissSplash()
+	app := tui.NewApp(store, keyStore, &stubEngine{}, "myproject", "")
 	if got := app.Screen(); got != "keys" {
 		t.Errorf("with nothing chosen the app opened on %q, want the credential screen", got)
 	}
 
 	// And with one chosen it opens on the conversation, which is the home screen.
-	chosen := tui.NewApp(store, keyStore, &stubEngine{}, "myproject", "nim").DismissSplash()
+	chosen := tui.NewApp(store, keyStore, &stubEngine{}, "myproject", "nim")
 	if got := chosen.Screen(); got != "chat" {
 		t.Errorf("with a credential chosen the app opened on %q", got)
 	}

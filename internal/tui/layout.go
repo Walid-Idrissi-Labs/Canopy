@@ -3,9 +3,6 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -40,27 +37,10 @@ func (d Dimensions) BodyHeight() int {
 	return 1
 }
 
-// Splash renders the launch screen.
-//
-// The mark lives in the brand package because the empty conversation draws it too, and the launch
-// screen and the first thing you see after starting a new chat should not be two different pictures
-// that were each somebody's idea of the logo.
-func Splash(d Dimensions, subtitle string) string {
-	t := theme.Current()
-
-	// The name appears as text as well as art. Block letters are unreadable to a screen reader,
-	// unrecognisable in a narrow terminal, and unsearchable in a pasted bug report.
-	var block string
-	if brand.Fits(d.Width) {
-		block = t.Logo.Render(strings.Join(brand.Lines(), "\n")) + "\n\n"
-	}
-	block += t.Title.Render("Canopy") + "\n" + t.Muted.Render(subtitle)
-
-	if !d.Usable() {
-		return block
-	}
-	return lipgloss.Place(d.Width, d.Height, lipgloss.Center, lipgloss.Center, block)
-}
+// A launch screen lived here, drawing the mark and the name for nine hundred milliseconds before
+// the application appeared. It is gone: a splash is a delay between somebody typing a command and
+// reaching the thing they typed it for, and the argument for one was recognition, which the screen
+// a conversation opens on already does while also being usable.
 
 // Frame composes a screen: title bar, body, and a footer pinned to the bottom.
 func Frame(d Dimensions, title, context, body, footer string) string {
