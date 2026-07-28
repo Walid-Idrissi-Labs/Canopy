@@ -60,7 +60,8 @@ type stubEngine struct {
 	using    [2]string
 	created  int
 	asking   bool
-	trust    core.TrustLevel
+	mode     core.Mode
+	steered  []string
 	undone   []string
 }
 
@@ -115,15 +116,18 @@ func (e *stubEngine) UseCredential(_, keyName, model string) error {
 	return nil
 }
 
-// Trust is what plan mode is made of, so this holds a real level rather than answering a constant.
-func (e *stubEngine) Trust(string) core.TrustLevel {
-	if e.trust == "" {
-		return core.TrustStandard
+// The mode is what the box shows, so this holds a real one rather than answering a constant.
+func (e *stubEngine) Mode(string) core.Mode {
+	if e.mode.Name == "" {
+		return core.ModeForTrust(core.TrustStandard)
 	}
-	return e.trust
+	return e.mode
 }
 
-func (e *stubEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
+func (e *stubEngine) SetMode(_ string, mode core.Mode) error {
+	e.mode = mode
+	return nil
+}
 
 func (e *stubEngine) Fork(_, _ string) (core.Session, error) {
 	return core.Session{ID: "session-forked"}, nil
@@ -638,4 +642,9 @@ func TestWithNoCredentialChosenTheKeyScreenComesFirst(t *testing.T) {
 	if got := chosen.Screen(); got != "chat" {
 		t.Errorf("with a credential chosen the app opened on %q", got)
 	}
+}
+
+func (e *stubEngine) Steer(_, guidance string) error {
+	e.steered = append(e.steered, guidance)
+	return nil
 }

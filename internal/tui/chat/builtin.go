@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
@@ -80,6 +81,12 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 	case "cost":
 		m.notice = m.spending()
 
+	case "mode":
+		m.describeOrSetMode(arguments)
+
+	case "steer":
+		m.steer(arguments)
+
 	case "context":
 		m.notice = m.contextUse()
 
@@ -127,6 +134,53 @@ func (m Model) spending() string {
 		return tokens + ", cost unknown because this provider does not publish prices"
 	}
 	return fmt.Sprintf("%s, $%.4f", tokens, usage.CostUSD)
+}
+
+// describeOrSetMode says which mode this is, or moves to a named one.
+//
+// Bare it lists the ladder with what each one may change, which is the question somebody actually
+// has when they type it: not "what is it called" but "what is it allowed to do to my code".
+func (m *Model) describeOrSetMode(name string) {
+	if name != "" {
+		m.setMode(strings.ToLower(name))
+		return
+	}
+
+	current := m.Mode()
+	lines := make([]string, 0, len(core.Modes())+1)
+	for _, mode := range core.Modes() {
+		marker := "  "
+		if mode.Name == current {
+			marker = "> "
+		}
+		lines = append(lines, marker+mode.Name+"  "+mode.Description)
+	}
+	lines = append(lines, "  shift+tab moves between them, and takes effect mid reply")
+	m.notice = strings.Join(lines, "\n")
+}
+
+// steer corrects the agent without throwing away what it has done.
+//
+// The distinction between this and escape is the whole point, and it is worth restating here because
+// the two look interchangeable from the outside. Escape stops the turn now and keeps whatever text
+// arrived. This queues the correction and lets the turn in flight finish, so an agent that is three
+// tool calls in and has just read the wrong file is told at the next place where being told is
+// possible, rather than being made to start again and rebuild the reasoning that got it there.
+func (m *Model) steer(guidance string) {
+	if guidance == "" {
+		m.err = "what should it do differently? For example `/steer use the existing parser`"
+		return
+	}
+	if err := m.engine.Steer(m.sessionID, guidance); err != nil {
+		m.err = err.Error()
+		return
+	}
+	if m.working {
+		m.notice = "queued, and it arrives when this turn finishes rather than interrupting it"
+		return
+	}
+	m.notice = "sent"
+	m.refresh()
 }
 
 // contextUse is how much of the window this conversation is using.

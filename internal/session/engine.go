@@ -56,9 +56,12 @@ type Engine struct {
 	approver agent.Approver
 	trail    *permission.Trail
 
-	// sessionTrust is a per-conversation override, set by whoever is watching that conversation.
-	// This is what plan mode is made of: a level, not an instruction in the prompt.
-	sessionTrust map[string]core.TrustLevel
+	// sessionMode is the mode one conversation is in, set by whoever is watching it.
+	//
+	// The mode rather than the level, because two modes share a level: runway and cruise can both do
+	// anything, and what separates them is what happens to a turn afterwards. Storing the level
+	// alone would make them the same setting with two names.
+	sessionMode map[string]core.Mode
 
 	// storage is optional. An engine without one still works completely and forgets everything on
 	// exit, which is what the tests want and what a first run before the config directory exists
@@ -129,13 +132,13 @@ type Engine struct {
 // New builds an engine that forgets everything when it exits.
 func New(resolver Resolver) *Engine {
 	return &Engine{
-		sessions:     map[string]*core.Session{},
-		cancels:      map[string]context.CancelFunc{},
-		resolver:     resolver,
-		events:       store.NewBroker(),
-		budgets:      newBudgets(),
-		projects:     make(map[string]string),
-		sessionTrust: make(map[string]core.TrustLevel),
+		sessions:    map[string]*core.Session{},
+		cancels:     map[string]context.CancelFunc{},
+		resolver:    resolver,
+		events:      store.NewBroker(),
+		budgets:     newBudgets(),
+		projects:    make(map[string]string),
+		sessionMode: make(map[string]core.Mode),
 	}
 }
 
@@ -146,20 +149,49 @@ func (e *Engine) Trust(sessionID string) core.TrustLevel {
 	return e.trustForLocked(sessionID)
 }
 
-// SetTrust changes it, for that conversation alone.
+// Mode is what the agent in one conversation is doing.
+//
+// Falls back to the mode its trust level corresponds to, so an agent configured read-only reports
+// that it is planning whether or not anybody used the word. A conversation always has a mode; the
+// map only records the ones somebody chose.
+func (e *Engine) Mode(sessionID string) core.Mode {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if mode, ok := e.sessionMode[sessionID]; ok && mode.Name != "" {
+		return mode
+	}
+	return core.ModeForTrust(e.trustForLocked(sessionID))
+}
+
+// SetMode changes it, for that conversation alone.
 //
 // Per conversation because the decision belongs to whoever is watching that one, and enforced rather
-// than requested: the level set here is what the permission layer decides against and what the tool
+// than requested: the mode's level is what the permission layer decides against and what the tool
 // list handed to the model is filtered by. That is the difference between plan mode and asking a
 // model nicely to plan. An agent told to plan and choosing to edit a file anyway is stopped by the
 // permission layer, which is the only kind of instruction worth relying on.
-func (e *Engine) SetTrust(sessionID string, trust core.TrustLevel) {
+// A mode can lower what an agent may do and can never raise it above what its configuration allows.
+// That is the one rule here worth stating as a rule: an agent started read-only is read-only because
+// somebody decided it should be, and a keystroke in a chat window is not the place to overrule that.
+// The refusal is returned rather than swallowed, because a key that silently does nothing reads as a
+// key that is broken.
+func (e *Engine) SetMode(sessionID string, mode core.Mode) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.sessionTrust == nil {
-		e.sessionTrust = make(map[string]core.TrustLevel)
+
+	// An engine with no tools attached has no configured level and so no ceiling to enforce. Valid
+	// is what tells the two apart: an unset level is not a restrictive one, and treating it as
+	// restrictive would refuse every mode on a conversation that has no tools to govern anyway.
+	ceiling := e.configuredTrustLocked(sessionID)
+	if ceiling.Valid() && !ceiling.AtLeast(mode.Trust) {
+		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode, which needs %s",
+			ceiling, mode.Name, mode.Trust)
 	}
-	e.sessionTrust[sessionID] = trust
+	if e.sessionMode == nil {
+		e.sessionMode = make(map[string]core.Mode)
+	}
+	e.sessionMode[sessionID] = mode
+	return nil
 }
 
 // SetProjectID scopes new sessions and cost analysis to one project.
@@ -617,7 +649,14 @@ func (e *Engine) run(
 		SessionID: sessionID,
 	}
 
-	outcome, err := loop.Run(ctx, core.Request{Model: model, Messages: history},
+	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never
+	// explained, so a planning agent tries to edit, is refused, tries again, and spends the turn
+	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
+	// call, because a system prompt that changed mid conversation would rewrite what the model
+	// believes it was told earlier.
+	request := core.Request{Model: model, Messages: history, System: e.Mode(sessionID).Prompt}
+
+	outcome, err := loop.Run(ctx, request,
 		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
 	if err != nil {
 		// failureState rather than a flat TurnFailed: a provider can take several seconds to send

@@ -173,19 +173,35 @@ func (o opening) floor(rows int) []string {
 func paint(row int, line string) string {
 	t := theme.Current()
 
-	top, column, height, width := brand.FireRegion()
-	runes := []rune(line)
-	if row < top || row >= top+height || len(runes) <= column {
-		return t.Logo.Render(line)
+	fireTop, fireColumn, fireHeight, fireWidth := brand.FireRegion()
+	if inside(row, fireTop, fireHeight) {
+		return tint(line, fireColumn, fireWidth, t.Flame)
 	}
 
+	smokeTop, smokeColumn, smokeHeight, smokeWidth := brand.SmokeRegion()
+	if inside(row, smokeTop, smokeHeight) {
+		return tint(line, smokeColumn, smokeWidth, t.Smoke)
+	}
+	return t.Logo.Render(line)
+}
+
+func inside(row, top, height int) bool { return row >= top && row < top+height }
+
+// tint styles one span of a row differently from the rest of it.
+func tint(line string, column, width int, style lipgloss.Style) string {
+	logo := theme.Current().Logo
+
+	runes := []rune(line)
+	if len(runes) <= column {
+		return logo.Render(line)
+	}
 	end := column + width
 	if end > len(runes) {
 		end = len(runes)
 	}
-	return t.Logo.Render(string(runes[:column])) +
-		t.Flame.Render(string(runes[column:end])) +
-		t.Logo.Render(string(runes[end:]))
+	return logo.Render(string(runes[:column])) +
+		style.Render(string(runes[column:end])) +
+		logo.Render(string(runes[end:]))
 }
 
 // mark is the logo at the current step, or nothing when there is no room for it.

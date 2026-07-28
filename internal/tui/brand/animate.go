@@ -78,6 +78,14 @@ func FireRegion() (row, column, height, width int) {
 	return len(Lines()) - fireFromBottom, fireColumn, len(fire[0]), fireWidth
 }
 
+// SmokeRegion is where the wisp above the flame sits, in the same terms and for the same reason.
+//
+// Its own region rather than one box covering both, because the two are different colours and a
+// single rectangle around them would take in the right hand side of the tent between them.
+func SmokeRegion() (row, column, height, width int) {
+	return len(Lines()) - smokeFromBottom, smokeColumn, len(smoke[0]), smokeWidth
+}
+
 // fireColumn and smokeColumn are where the moving parts sit, measured from the left of the mark.
 //
 // These are not free numbers. They have to land the fire and the smoke on the columns the mark
@@ -87,9 +95,10 @@ const (
 	fireColumn  = 25
 	smokeColumn = 27
 
-	// fireWidth is how many columns one row of the flame occupies, and every row of fire is exactly
-	// that wide so the region a caller colours is a rectangle rather than a ragged shape.
-	fireWidth = 5
+	// fireWidth and smokeWidth are how many columns one row of each occupies. Every row of each is
+	// exactly that wide, so the region a caller colours is a rectangle rather than a ragged shape.
+	fireWidth  = 5
+	smokeWidth = 4
 
 	// Counted up from the bottom of the mark rather than down from the top, because the ground line
 	// is what both are drawn standing on, and a mark that grew a row at the top would otherwise move

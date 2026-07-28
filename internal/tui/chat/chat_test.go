@@ -2,6 +2,7 @@ package chat_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,11 @@ type fakeEngine struct {
 
 	forkedThrough string
 	trail         *permission.Trail
+
+	// mode is what has been chosen, and trust is the ceiling it cannot be raised above. Empty trust
+	// means no ceiling, which is what most of these tests want.
+	mode    core.Mode
+	steered []string
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -82,16 +88,30 @@ func (e *fakeEngine) Answer(_ string, approved, remember bool) bool {
 	return true
 }
 
-// Trust is what plan mode is made of, so the fake holds a real level rather than answering a
-// constant: a stub that always said "standard" would make the mode indicator untestable.
-func (e *fakeEngine) Trust(string) core.TrustLevel {
-	if e.trust == "" {
-		return core.TrustStandard
+// The mode is what the box shows and what the permission layer decides against, so the fake holds a
+// real one rather than answering a constant: a stub that always said "build" would make the
+// indicator untestable.
+//
+// The ceiling is honoured too, since "a keystroke can never give an agent more than its
+// configuration allows" is the property most worth being able to test.
+func (e *fakeEngine) Mode(string) core.Mode {
+	if e.mode.Name != "" {
+		return e.mode
 	}
-	return e.trust
+	if e.trust != "" {
+		return core.ModeForTrust(e.trust)
+	}
+	// No ceiling configured, so the ordinary default rather than the top of the ladder.
+	return core.ModeForTrust(core.TrustStandard)
 }
 
-func (e *fakeEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
+func (e *fakeEngine) SetMode(_ string, mode core.Mode) error {
+	if e.trust != "" && !e.trust.AtLeast(mode.Trust) {
+		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode", e.trust, mode.Name)
+	}
+	e.mode = mode
+	return nil
+}
 
 func (e *fakeEngine) Fork(_, throughTurnID string) (core.Session, error) {
 	e.forkedThrough = throughTurnID
@@ -857,5 +877,10 @@ func TestAQuestionTakesTheKeyboard(t *testing.T) {
 
 func (e *fakeEngine) UseCredential(_, keyName, model string) error {
 	e.usingKey, e.usingModel = keyName, model
+	return nil
+}
+
+func (e *fakeEngine) Steer(_, guidance string) error {
+	e.steered = append(e.steered, guidance)
 	return nil
 }

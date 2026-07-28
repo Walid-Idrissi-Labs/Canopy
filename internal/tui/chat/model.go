@@ -55,13 +55,17 @@ type Engine interface {
 	// attempt, which is the half worth keeping when something did not work.
 	Undo(ctx context.Context, sessionID, turnID string) error
 
-	// Trust is how much the agent in this conversation may do, and SetTrust changes it. This pair is
-	// what plan mode is made of: the permission layer decides against the level and the tool list
-	// the model is shown is filtered by it, so an agent that is planning cannot edit a file by
-	// ignoring the instruction to plan. A mode the model could talk its way out of would be worth
-	// less than no mode at all, because it would look like a guarantee.
-	Trust(sessionID string) core.TrustLevel
-	SetTrust(sessionID string, trust core.TrustLevel)
+	// Mode is what this conversation's agent is doing, and SetMode changes it. This pair is what a
+	// mode is made of: the permission layer decides against the mode's level and the tool list the
+	// model is shown is filtered by it, so an agent that is planning cannot edit a file by ignoring
+	// the instruction to plan. A mode the model could talk its way out of would be worth less than
+	// no mode at all, because it would look like a guarantee.
+	//
+	// SetMode returns an error rather than nothing, because a mode can lower what an agent may do
+	// and can never raise it above what its configuration allows, and a key that silently declines
+	// reads as a key that is broken.
+	Mode(sessionID string) core.Mode
+	SetMode(sessionID string, mode core.Mode) error
 
 	// Fork branches a conversation at a turn, keeping everything said up to it. The original is
 	// untouched, which is what makes trying a second approach cheap enough to be worth doing.
@@ -71,6 +75,11 @@ type Engine interface {
 	// recording, which is a legitimate state rather than an error: a conversation with no tools
 	// attached has nothing to record.
 	Trail() *permission.Trail
+
+	// Steer queues a correction for the next turn boundary and never cancels anything. Distinct from
+	// Cancel on purpose: correcting an agent by interrupting it throws away the work in progress,
+	// which usually means throwing away the reasoning that led to it.
+	Steer(sessionID, guidance string) error
 }
 
 // Commands is the catalog resolved for this chat's project.
@@ -180,13 +189,6 @@ type Model struct {
 
 	// menu is the command list that drops out of the message box.
 	menu menu
-
-	// buildTrust is the level to go back to when this conversation leaves plan mode.
-	//
-	// Remembered rather than assumed, because an agent running at broad trust that planned and then
-	// went back to building would otherwise come out at standard. That is a silent demotion, and the
-	// kind nobody notices until a command they expected to run stops to ask permission.
-	buildTrust core.TrustLevel
 }
 
 // New builds a chat model over an engine and a session.
@@ -505,7 +507,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// Beside tab rather than on a letter, because every printable key belongs to the message
 		// box, and next to the key that completes a command because both are about what is going to
 		// happen rather than about what has been said.
-		m.togglePlanning()
+		m.cycleMode()
 		return m, nil
 
 	case "esc":
@@ -746,40 +748,52 @@ func (m Model) transcript() []string {
 }
 
 // Planning reports whether this conversation is in plan mode.
+func (m Model) Planning() bool { return m.Mode() == core.ModePlan }
+
+// Mode is the word the box shows: what this conversation is doing.
 //
 // Read from the engine rather than from a flag of its own, so there is one answer to the question
 // and the box cannot say "build" over a conversation the permission layer is refusing every write
 // in. Two sources of truth for a mode is how an interface comes to lie about a guarantee.
-func (m Model) Planning() bool {
-	return m.engine.Trust(m.sessionID) == core.TrustReadOnly
+func (m Model) Mode() string { return m.engine.Mode(m.sessionID).Name }
+
+// cycleMode moves to the next mode in the ladder.
+//
+// Skips past any the agent cannot be put in rather than stopping on them, so the key always does
+// something on an agent that has a ceiling below the top of the ladder. Stopping would mean a
+// confined agent whose key appeared to have jammed, and refusing outright would mean it could not
+// reach plan mode either, which it certainly can.
+func (m *Model) cycleMode() {
+	current := m.Mode()
+	for range core.Modes() {
+		next := core.NextMode(current)
+		if err := m.engine.SetMode(m.sessionID, next); err == nil {
+			m.notice = next.Name + ", " + next.Description
+			m.err = ""
+			return
+		}
+		current = next.Name
+	}
+	// Every mode was refused, which means the agent's ceiling admits none of them. Not reachable
+	// while plan mode sits at read-only, and said plainly rather than left as a key that does
+	// nothing if that ever changes.
+	m.err = "this agent cannot be put into any of the modes"
 }
 
-// Mode is the word the box shows: what this conversation is doing.
-func (m Model) Mode() string {
-	if m.Planning() {
-		return "plan"
-	}
-	return "build"
-}
-
-// togglePlanning moves between planning and building.
-func (m *Model) togglePlanning() {
-	if !m.Planning() {
-		m.buildTrust = m.engine.Trust(m.sessionID)
-		m.engine.SetTrust(m.sessionID, core.TrustReadOnly)
-		m.notice = ""
+// setMode puts this conversation in a named mode, for the slash commands.
+func (m *Model) setMode(name string) {
+	mode, ok := core.ModeByName(name)
+	if !ok {
+		m.err = "there is no mode called " + name + ", try one of: " +
+			strings.Join(core.ModeNames(), ", ")
 		return
 	}
-
-	if m.buildTrust == "" || m.buildTrust == core.TrustReadOnly {
-		// There is nothing to go back to, because this agent is read-only by its own profile rather
-		// than because somebody put it in plan mode. Said out loud, since a key that silently does
-		// nothing reads as a key that is broken.
-		m.notice = "this agent is read-only, so planning is all it can do"
+	if err := m.engine.SetMode(m.sessionID, mode); err != nil {
+		m.err = err.Error()
 		return
 	}
-	m.engine.SetTrust(m.sessionID, m.buildTrust)
-	m.notice = ""
+	m.notice = mode.Name + ", " + mode.Description
+	m.err = ""
 }
 
 // contextLines are what the opening screen says along its bottom left: where the agent is working
