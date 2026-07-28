@@ -351,6 +351,31 @@ func (l *Loop) invoke(
 		})
 	}
 
+	// Refused before anything decides about it and before it runs, because after this point every
+	// part of Canopy is looking at the same collapsed map and none of them can tell.
+	//
+	// A repeated key is not a formatting quibble on a call that leaves the machine. Canopy keeps the
+	// last value, as most JSON libraries do, but the format does not require that and some keep the
+	// first. So the prompt can show a read, the approval can be remembered as a read, and the server
+	// can be handed bytes it is entitled to read as a delete. The person agreed to one document and
+	// another was acted on. The only place to stop that is here, while the raw bytes still exist.
+	//
+	// Asked only of tools whose arguments Canopy did not define. For its own tools the same map backs
+	// the prompt, the scope and the call, so there is no second reader to disagree with.
+	if externalArguments(tool) {
+		if name, repeated := duplicateArgument(call.Input); repeated {
+			entry.Outcome = permission.Deny
+			entry.Reason = "ambiguous arguments"
+			return finish(core.ToolResult{
+				CallID: call.ID, IsError: true,
+				Content: fmt.Sprintf("refused: the argument %q was given more than once, so this "+
+					"call does not have one meaning. Canopy would read the last value and the server "+
+					"may read the first, and an approval shown for one of them is not consent to the "+
+					"other. Send each argument once.", name),
+			})
+		}
+	}
+
 	req := permission.Request{
 		AgentID:   l.AgentID,
 		SessionID: l.SessionID,
@@ -449,6 +474,84 @@ func commandIn(input json.RawMessage) string {
 		return value
 	}
 	return ""
+}
+
+// duplicateArgument reports the first object key that appears twice anywhere in a call.
+//
+// Only asked of tools whose arguments Canopy did not define, and the reason is a confused deputy
+// rather than tidiness. Decoding into a map keeps the last value for a repeated key, and so do most
+// JSON libraries, but the specification does not require it and some keep the first. So this:
+//
+//	{"operation": "delete", "operation": "read"}
+//
+// is read here as a read, displayed on the prompt as a read, approved as a read, and then sent to
+// the server as the bytes above, which that server is entitled to read as a delete. The person
+// agreed to one document and a different one was acted on. Nothing downstream can catch it, because
+// by then every part of Canopy is looking at the same collapsed map.
+//
+// Walked with the token reader rather than decoded, since a decoder is exactly the thing that
+// collapses them. Malformed JSON is not this function's business and is reported as no duplicate:
+// the schema check answers for that, with a message the model can act on.
+func duplicateArgument(input json.RawMessage) (string, bool) {
+	if len(bytes.TrimSpace(input)) == 0 {
+		return "", false
+	}
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+
+	key, found, err := duplicateIn(decoder)
+	if err != nil {
+		return "", false
+	}
+	return key, found
+}
+
+// duplicateIn walks one value, descending into objects and arrays.
+func duplicateIn(decoder *json.Decoder) (string, bool, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return "", false, err
+	}
+
+	delim, isDelim := token.(json.Delim)
+	if !isDelim {
+		return "", false, nil
+	}
+
+	switch delim {
+	case '{':
+		seen := make(map[string]bool)
+		for decoder.More() {
+			nameToken, err := decoder.Token()
+			if err != nil {
+				return "", false, err
+			}
+			name, ok := nameToken.(string)
+			if !ok {
+				return "", false, fmt.Errorf("an object key was %T rather than a string", nameToken)
+			}
+			if seen[name] {
+				return name, true, nil
+			}
+			seen[name] = true
+
+			if duplicate, found, err := duplicateIn(decoder); err != nil || found {
+				return duplicate, found, err
+			}
+		}
+		_, err := decoder.Token()
+		return "", false, err
+
+	case '[':
+		for decoder.More() {
+			if duplicate, found, err := duplicateIn(decoder); err != nil || found {
+				return duplicate, found, err
+			}
+		}
+		_, err := decoder.Token()
+		return "", false, err
+	}
+	return "", false, nil
 }
 
 // externalArguments reports whether a tool's arguments are somebody else's vocabulary.

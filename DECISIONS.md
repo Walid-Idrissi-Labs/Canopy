@@ -756,6 +756,28 @@ so the sentence read and the approval held cannot come apart.
 This extends D-33 rather than replacing any part of it. The trust level still decides what may run
 at all; this decides only how far a "yes" reaches once one has been given.
 
+## D-36 A duplicated argument on an external call is refused. Decided 2026-07-28.
+
+A JSON object with the same key twice does not have one meaning. Canopy keeps the last value, as most
+libraries do, but the format does not require that and some keep the first.
+
+For a call that leaves the machine, that is a confused deputy rather than an untidiness. The prompt
+shows the value Canopy read, the approval is remembered against the text Canopy produced, and the
+server is handed the original bytes, which it is entitled to read the other way:
+
+	{"operation": "delete", "operation": "read"}
+
+The person agreed to a read and a delete was performed. Nothing downstream can catch it, because by
+that point every part of Canopy is looking at the same collapsed map.
+
+**So a repeated key anywhere in an external call is refused before permission is evaluated and before
+the tool runs**, and audited as a call that did not run. The refusal names the argument and says to
+send it once, because a model told that can fix it and a model told "invalid input" guesses.
+
+Canopy's own tools are not checked this way. The same map backs the prompt, the scope and the call,
+so there is no second reader to disagree with, and the schema check already answers for malformed
+input with a better message.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

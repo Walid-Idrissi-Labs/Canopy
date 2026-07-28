@@ -436,3 +436,100 @@ func TestAFingerprintNeverDisplacesAPathOrACommand(t *testing.T) {
 		t.Errorf("scope = %+v, want it scoped by the path", got)
 	}
 }
+
+// The D-33 regression matrix for an approval scoped to an exact external call.
+//
+// D-33 says direct and isolated agents have different workspace contracts and the same permission
+// contract: which workspace an agent was assigned decides what its tools can reach, and never how
+// far a "yes" reaches. Since D-35 made the scope for an external tool the whole call, that promise
+// needs holding down across every level, both assignments, and in both directions of the grant.
+func TestExternalCallApprovalAcrossTrustLevelsAndWorkspaces(t *testing.T) {
+	// The two assignments differ only in identity, which is exactly the point: nothing about which
+	// workspace an agent was given reaches the permission decision.
+	assignments := map[string]struct{ agent, session string }{
+		"direct":   {"main", "s-direct"},
+		"isolated": {"parser", "s-isolated"},
+	}
+
+	call := func(a struct{ agent, session string }, arguments string) Request {
+		return Request{
+			AgentID: a.agent, SessionID: a.session,
+			Tool: "mcp__tracker__transition", Kind: core.ToolExecute,
+			Arguments: arguments, Opaque: true,
+		}
+	}
+	const read = `{"issue":"P-1","operation":"read"}`
+	const del = `{"issue":"P-1","operation":"delete"}`
+
+	for _, level := range []core.TrustLevel{core.TrustReadOnly, core.TrustConfined} {
+		for name, assignment := range assignments {
+			grants := NewGrants()
+			req := call(assignment, read)
+
+			decision := Decide(req, level, grants)
+			if decision.Outcome != Deny {
+				t.Errorf("%s/%s: outcome = %s, want deny", level, name, decision.Outcome)
+			}
+
+			// A structural denial is not something an approval can undo. Granting the exact call and
+			// asking again has to change nothing, or a level somebody chose would be advisory.
+			grants.Grant(Scope{Tool: req.Tool, Arguments: fingerprint(read)})
+			if got := Decide(req, level, grants).Outcome; got != Deny {
+				t.Errorf("%s/%s: a stored grant widened a structural denial to %s", level, name, got)
+			}
+		}
+	}
+
+	for name, assignment := range assignments {
+		grants := NewGrants()
+
+		first := Decide(call(assignment, read), core.TrustStandard, grants)
+		if first.Outcome != Ask {
+			t.Fatalf("standard/%s: outcome = %s, want a question", name, first.Outcome)
+		}
+		grants.Grant(first.Scope)
+
+		if got := Decide(call(assignment, read), core.TrustStandard, grants).Outcome; got != Allow {
+			t.Errorf("standard/%s: the identical call was asked about twice (%s)", name, got)
+		}
+		if got := Decide(call(assignment, del), core.TrustStandard, grants).Outcome; got != Ask {
+			t.Errorf("standard/%s: approving a read also approved a delete (%s)", name, got)
+		}
+
+		// Broad runs execute tools without asking, which is what broad means. Stated here rather than
+		// left implied, because it is the level where the scope above stops being what protects you.
+		if got := Decide(call(assignment, del), core.TrustBroad, NewGrants()).Outcome; got != Allow {
+			t.Errorf("broad/%s: outcome = %s, want allow without asking", name, got)
+		}
+	}
+
+	// And the two assignments agree at every level, so nothing about workspace assignment has leaked
+	// into the decision.
+	for _, level := range core.AllTrustLevels() {
+		direct := Decide(call(assignments["direct"], read), level, NewGrants()).Outcome
+		isolated := Decide(call(assignments["isolated"], read), level, NewGrants()).Outcome
+		if direct != isolated {
+			t.Errorf("%s: direct decided %s and isolated decided %s for the same call",
+				level, direct, isolated)
+		}
+	}
+}
+
+// A grant is bounded by the tool it was given for, so approving one server's call does not approve
+// another server's call that happens to carry the same arguments.
+func TestAnExternalGrantDoesNotCrossTools(t *testing.T) {
+	grants := NewGrants()
+	const arguments = `{"issue":"P-1","operation":"read"}`
+
+	approved := Request{
+		AgentID: "a1", SessionID: "s1", Tool: "mcp__tracker__transition",
+		Kind: core.ToolExecute, Arguments: arguments, Opaque: true,
+	}
+	grants.Grant(Decide(approved, core.TrustStandard, grants).Scope)
+
+	other := approved
+	other.Tool = "mcp__billing__transition"
+	if got := Decide(other, core.TrustStandard, grants).Outcome; got != Ask {
+		t.Errorf("an approval for %s also covered %s", approved.Tool, other.Tool)
+	}
+}

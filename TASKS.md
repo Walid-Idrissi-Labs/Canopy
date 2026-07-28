@@ -3547,7 +3547,7 @@ box and never reach the model. Both files are strict, and a broken global file d
 layer with a warning. D-34, README and limitations record the contract.
 
 ### A8-05 Hooks and automations
-`status: review | owner: Claude | branch: feat/hooks | depends: A8-03, PG-A6`
+`status: claimed | owner: Claude | branch: feat/hooks | depends: A8-03, PG-A6, Q-17`
 `scope: internal/hooks/, internal/config/hooks.go`
 
 Deliverable: run something on an event. Tests green, auto commit. Tests red, notify. Agent idle,
@@ -3556,9 +3556,14 @@ nudge.
 Acceptance: a hook fires only on a real state transition, never on a stale or unknown one. A
 failing hook is visible and never silently swallowed.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [ ]   codex [ ]`
 
-notes: where verification and orchestration compound. The truth engine is what makes the triggers
+notes: **back to claimed on 2026-07-28.** Two parts of the acceptance are unmet now that the wiring
+makes the package reachable: a failing hook is only visible when Canopy exits, and a committing hook
+fires again at the revision its own commit produced. Neither can be signed off as done, and the
+earlier signature was given when nothing called any of this.
+
+where verification and orchestration compound. The truth engine is what makes the triggers
 trustworthy, so hooks firing on unverified state would poison both.
 
 Its own package, `internal/hooks`, rather than a file under `internal/agent`. The scope line said
@@ -3570,9 +3575,15 @@ Three rules carry the acceptance criterion, and each is a way this goes quietly 
 
 **A hook fires once per revision, not once per state.** The poller says where every workspace stands
 every couple of seconds, so firing on the state would be an auto-commit every two seconds for as long
-as the build stayed green. It also ends the loop that the first hook anybody writes creates: commit on
-green moves HEAD, which moves the revision, which makes the results stale, which makes them run and
-pass again.
+as the build stayed green.
+
+**It does not end the commit loop, and this document said it did.** Commit on green moves HEAD, which
+moves the revision, which makes the results stale, which makes them run and pass again, and a pass at
+a new revision is a new event by the rule below. So a committing hook fires again: `git commit -am`
+fails harmlessly the second time, and one using `--allow-empty` keeps going. The claim contradicted
+the passing-stale-passing rule three lines further down, and it was invisible for as long as nothing
+called the package. Q-17 is where the rule for recognising a hook-originated revision has to be
+decided.
 
 **Nothing fires on stale or unknown evidence.** A green that no longer describes the code is the
 failure this project exists to refuse, and a hook that commits on the strength of one writes that
@@ -3749,16 +3760,25 @@ fire on a real state change.
 Goal: someone who is not us installs it and gets value without being told how.
 
 ### A9-01 Robustness sweep
-`status: review | owner: Claude | branch: worktree-agent-a58ce100b84defd03 | depends: PG-A8`
+`status: claimed | owner: Claude | branch: worktree-agent-a58ce100b84defd03 | depends: PG-A8`
 `scope: internal/exec/, internal/store/broker.go, internal/git/worktree.go, tests in internal/core, internal/session, internal/tools`
 
-Acceptance: timeouts terminate the right process group, no final state transition is dropped under
-load, huge output cannot freeze the UI, paths and branch names with spaces work, externally removed
-worktrees disappear safely, and quitting leaves no child processes behind.
+Acceptance: timeouts terminate the process group Canopy started, no final state transition is
+dropped under load, huge output cannot freeze the UI, paths and branch names with spaces work,
+externally removed worktrees disappear safely, and quitting leaves no child processes behind.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [ ]   codex [ ]`
 
-notes: carries forward P4-01 to P4-07.
+notes: **back to claimed on 2026-07-28, and the first acceptance clause is narrowed.** It said the
+right process group is terminated. After the group leader has been reaped that cannot be established:
+`kill(-pid, 0)` proves only that some group holds the number, not that it is still ours, and the
+answer can go stale between the check and the signal. Closing it needs an identifier the kernel will
+not recycle, which means a pidfd on Linux and nothing that exists on darwin. The residual risk is
+real and small, and a comment in the source cannot make a stronger acceptance clause true. Which way
+to go is a supervisor decision: redesign termination around an owned identity, or accept the risk
+explicitly and leave the clause narrowed as it now is.
+
+carries forward P4-01 to P4-07.
 
 **Claimed against an unsigned PG-A8, on instruction rather than by the rule.** A8-05 and A8-06 are
 being built right now, so the gate this depends on is not merely unsigned, its own dependencies are

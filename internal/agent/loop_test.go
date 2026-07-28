@@ -814,3 +814,82 @@ func TestCanonicalArgumentsAreStableAndFaithful(t *testing.T) {
 		t.Errorf("trailing content was dropped from the fingerprint: %q", got)
 	}
 }
+
+// A repeated key on a call that leaves the machine is a confused deputy, not a formatting quibble.
+//
+// Canopy keeps the last value, as most JSON libraries do, but the format does not require it and
+// some keep the first. So the prompt can show a read, the approval can be remembered as a read, and
+// the server can be handed bytes it is entitled to read as a delete: the person agreed to one
+// document and another was acted on. Nothing downstream can catch it, because by then every part of
+// Canopy is looking at the same collapsed map.
+func TestARemoteCallWithARepeatedArgumentIsRefusedAndNotRun(t *testing.T) {
+	tool := &remoteishTool{countingTool{
+		name: "workspace_op", kind: core.ToolExecute, answer: "done",
+		schema: `{"type":"object","properties":{"operation":{"type":"string"}},` +
+			`"required":["operation"]}`,
+	}}
+
+	asked := 0
+	l := loop(&scriptedClient{turns: [][]core.StreamEvent{
+		asksFor("workspace_op", `{"operation":"delete","operation":"read"}`),
+		says("done"),
+	}}, registryWith(tool), core.TrustStandard)
+	l.Approver = ApproverFunc(func(context.Context, permission.Request, permission.Decision) bool {
+		asked++
+		return true
+	})
+
+	out, err := l.Run(context.Background(), ask("tidy up"), nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if tool.count() != 0 {
+		t.Errorf("the tool ran %d times with arguments that have two meanings", tool.count())
+	}
+	if asked != 0 {
+		t.Errorf("a person was asked to approve a call with two meanings")
+	}
+
+	// Audited as refused rather than as something that ran and failed, which is the distinction the
+	// whole trail depends on.
+	entries := l.Trail.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("%d audit entries, want 1", len(entries))
+	}
+	if entries[0].Outcome != permission.Deny {
+		t.Errorf("outcome = %s, want deny", entries[0].Outcome)
+	}
+
+	// And the model is told what to do about it rather than being left to guess.
+	var refusal string
+	for _, message := range out.Messages {
+		for _, result := range message.ToolResults {
+			if result.IsError {
+				refusal = result.Content
+			}
+		}
+	}
+	if !strings.Contains(refusal, "more than once") {
+		t.Errorf("the model was not told what was wrong: %q", refusal)
+	}
+}
+
+// Nested and repeated deeper in the document, since a guard that only looked at the top level would
+// be one somebody could walk around by wrapping the argument in an object.
+func TestARepeatedArgumentIsFoundAtAnyDepth(t *testing.T) {
+	cases := map[string]bool{
+		`{"a":1,"b":2}`:                    false,
+		`{"a":1,"a":2}`:                    true,
+		`{"outer":{"inner":1,"inner":2}}`:  true,
+		`{"list":[{"x":1},{"y":1,"y":2}]}`: true,
+		`{"list":[{"x":1},{"x":2}]}`:       false,
+		`{"a":{"b":1},"c":{"b":1}}`:        false,
+		`not json at all`:                  false,
+	}
+	for input, want := range cases {
+		if _, got := duplicateArgument(json.RawMessage(input)); got != want {
+			t.Errorf("duplicateArgument(%s) = %v, want %v", input, got, want)
+		}
+	}
+}
