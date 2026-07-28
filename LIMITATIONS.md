@@ -148,7 +148,17 @@ be rediscovered by getting burned by it.
 
 - Sub agents, one agent spawning helper agents for a subtask, and agent handoff with model
   escalation, handing a worktree and a summary from a cheap model to a stronger one, are both
-  unbuilt (A8-01, A8-02).
+  **cut from 0.1** rather than merely unbuilt (A8-01, A8-02, D-40). Sub agents need their own depth
+  and fan-out limits and their own cost attribution before they can exist safely, since inheriting
+  dispatch by accident turns one confirmation into an unbounded fan out. Handoff depends on them.
+
+- Plan first mode is **cut from 0.1** (A4-09, D-40). The engine is built and tested and nothing
+  reaches it: turning it on needs a profile setting and a screen that shows a plan and takes an
+  approval, and neither exists. The four modes on `shift+tab` are a different feature and they do
+  work.
+
+- An agent keeps a todo list and there is no pane showing it live (A4-10, D-40). The list appears in
+  what the agent says it is doing rather than in a panel of its own.
 
 ## Providers and cost
 
@@ -191,9 +201,10 @@ be rediscovered by getting burned by it.
 
 ## Tools and permissions
 
-- Web search is not built. `fetch_url` works, so an agent can read a page it already knows the
-  address of, which covers checking a library version or similar, but it cannot discover a page it
-  has never heard of, because no search provider or account has been chosen yet (A4-07).
+- Web search is **cut from 0.1** (A4-07, D-40). `fetch_url` works and ships, so an agent can read a
+  page it already knows the address of, which covers checking a library version or similar. It cannot
+  discover a page it has never heard of, because no search provider or account has been chosen and
+  that choice is Q-11.
 
 - There are four modes on `shift+tab`, and each is a trust level the permission layer enforces
   rather than an instruction the model is asked to follow (M-09). Plan reads and thinks, build edits
@@ -238,9 +249,10 @@ be rediscovered by getting burned by it.
   commitment; it would take a measurable drop in output quality on a large codebase to revisit
   (D-27).
 
-- Part of the extensibility layer is unbuilt: no shareable skills format (A8-09). Custom slash
-  commands are prompts only: they do not register tools, execute shell, or provide a general
-  template language.
+- There is no shareable skills format, and it is **cut from 0.1** rather than pending (A8-09, D-40):
+  a distribution format is a compatibility promise, and making one before there is anybody to make it
+  to is the wrong order. Custom slash commands are prompts only: they do not register tools, execute
+  shell, or provide a general template language.
 
 - Hooks run, and a failing one is only reported when Canopy exits (A8-05). A hook fires on a
   verification state that is current rather than stale, and a command bound to `tests-passed` is

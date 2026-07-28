@@ -878,6 +878,32 @@ one hook, weighed against a loop that stops only when somebody quits Canopy. No 
 two cases without asking the hook to declare itself, and a hook that has to be trusted to declare
 itself is the thing being guarded against.
 
+## D-40 What 0.1 does not include. Decided 2026-07-28.
+
+Six features were built partially or not at all, and leaving them in an ambiguous state costs more
+than cutting them. A half-built feature with no decision against it reads to a reader of the ledger
+as work in progress, and to a user of the release as something that should be there and is broken.
+
+Each is either finished or explicitly out. There is no third option, and the ones below are out.
+
+| Task | State | Out of 0.1 because |
+|---|---|---|
+| A4-07 web **search** | not built | Needs a search provider and an account, which is Q-11 and unanswered. `fetch_url` is built, registered and ships. |
+| A4-09 plan first mode | engine built, unreachable | `Loop.Plan` and `Loop.Execute` work and are tested, and nothing calls them. Reaching them needs a screen and a profile setting, and the screen is the other pair's side of the boundary. |
+| A4-10 todo tracking | tool built, no pane | An agent can keep a list and nothing shows it live. The visible half went to M-03 and the rest is not worth a screen of its own for 0.1. |
+| A8-01 sub agents | not built | Needs its own depth and fan-out limits and its own cost attribution. Getting those wrong turns one confirmation into an unbounded fan out. |
+| A8-02 handoff and escalation | not built | Depends on A8-01. |
+| A8-09 shareable skills | not built | A distribution format is a compatibility promise, and making one before there are users to make it to is the wrong order. |
+
+**The reason for cutting rather than finishing** is the same in every case: none of them is what makes
+Canopy worth using. The argument is that several agents work in parallel and are ranked on evidence
+rather than on confidence, and that argument is carried by A6 and A7, which are built. Adding a sixth
+half-feature does not strengthen it and does delay the point where somebody can try the first one.
+
+**What "deferred" means here**, and it is not "abandoned": the code that exists stays, the tests that
+exist keep running, and each task keeps its acceptance criteria for whoever picks it up. What changes
+is that nothing is waiting on them and LIMITATIONS says plainly that they are not there.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
