@@ -125,6 +125,13 @@ func (r Report) Summary() string {
 // Executor runs a command. Injected so the tests do not need a shell.
 type Executor func(ctx context.Context, command, dir string, env []string) (string, error)
 
+// Revision reads a subject's revision from the worktree as it is now.
+//
+// Read after a hook finishes, not from the last poll, because the whole question is what the hook
+// just did and the poller has not looked yet. The second return is false when the revision cannot be
+// established, which suppresses nothing: an unknown answer is not evidence that a hook committed.
+type Revision func(ctx context.Context, subject string) (core.RevisionKey, bool)
+
 // Runner decides what fires and runs it.
 //
 // The zero value is not usable. Use New.
@@ -132,8 +139,9 @@ type Runner struct {
 	hooks map[Event][]Hook
 	dir   string
 
-	exec   Executor
-	report func(Report)
+	exec     Executor
+	report   func(Report)
+	revision Revision
 
 	mu sync.Mutex
 	// firedAt remembers the revision each code event last fired for, per subject. Storing the last
@@ -143,6 +151,10 @@ type Runner struct {
 	// entered remembers which agent-state events are currently true, so those fire on entering a
 	// state rather than on being in one.
 	entered map[string]map[Event]bool
+	// inFlight counts the hooks currently running for one subject and code event. A revision that
+	// appears before those hooks return is inside their interval and must be claimed immediately;
+	// waiting until the executor returns leaves enough time for the poller to start the hook again.
+	inFlight map[string]int
 
 	running sync.WaitGroup
 }
@@ -152,18 +164,24 @@ type Runner struct {
 // Reports go to the callback, which is how a failure reaches a person. A nil callback is allowed and
 // means the caller has decided not to surface them, which is a choice they have to make explicitly
 // rather than the default.
-func New(hooks []Hook, dir string, exec Executor, report func(Report)) *Runner {
+//
+// revision is a parameter rather than an optional setter because forgetting it reintroduces the loop
+// in Q-17, and a hook that commits then runs forever is not a failure anybody notices quickly. A nil
+// revision is accepted and documented as the caller taking that on: see the comment on ownRevision.
+func New(hooks []Hook, dir string, exec Executor, report func(Report), revision Revision) *Runner {
 	byEvent := make(map[Event][]Hook, len(hooks))
 	for _, hook := range hooks {
 		byEvent[hook.On] = append(byEvent[hook.On], hook)
 	}
 	return &Runner{
-		hooks:   byEvent,
-		dir:     dir,
-		exec:    exec,
-		report:  report,
-		firedAt: map[string]string{},
-		entered: map[string]map[Event]bool{},
+		hooks:    byEvent,
+		dir:      dir,
+		exec:     exec,
+		report:   report,
+		revision: revision,
+		firedAt:  map[string]string{},
+		entered:  map[string]map[Event]bool{},
+		inFlight: map[string]int{},
 	}
 }
 
@@ -207,6 +225,13 @@ func (r *Runner) Observe(ctx context.Context, obs Observation) []Event {
 
 		key := obs.Subject + "\x00" + string(event)
 		if aboutCode(event) {
+			if r.inFlight[key] > 0 {
+				// The poller can observe and verify a commit before the hook process that made it
+				// returns. Claim it now, while the interval is visibly in progress, rather than
+				// starting another copy and hoping the post-run read wins the race.
+				r.firedAt[key] = obs.Revision.String()
+				continue
+			}
 			// Once per revision. That is both halves at once: the poller reporting the same green
 			// every two seconds sees the same revision and fires nothing, and a hook that commits
 			// moves HEAD, which moves the revision, which makes the tests stale, which makes them
@@ -220,6 +245,7 @@ func (r *Runner) Observe(ctx context.Context, obs Observation) []Event {
 				continue
 			}
 			r.firedAt[key] = obs.Revision.String()
+			r.inFlight[key] += len(r.hooks[event])
 		} else if previous[event] {
 			// An agent event is about the agent, so it fires on entering the state and not again
 			// while it stays there. Keying these on the revision instead would fire "idle" a second
@@ -257,12 +283,12 @@ func (r *Runner) start(ctx context.Context, obs Observation, event Event, hook H
 	}()
 }
 
-func (r *Runner) run(ctx context.Context, obs Observation, event Event, hook Hook) {
+func (r *Runner) run(parent context.Context, obs Observation, event Event, hook Hook) {
 	timeout := hook.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	started := time.Now()
@@ -275,6 +301,8 @@ func (r *Runner) run(ctx context.Context, obs Observation, event Event, hook Hoo
 		err = fmt.Errorf("it did not finish within %s", timeout)
 	}
 
+	r.finishCodeInterval(parent, obs, event)
+
 	if r.report != nil {
 		r.report(Report{
 			Subject:  obs.Subject,
@@ -286,6 +314,65 @@ func (r *Runner) run(ctx context.Context, obs Observation, event Event, hook Hoo
 		})
 	}
 }
+
+// finishCodeInterval claims whatever the hook batch just produced and records that one member of
+// the batch finished, so the hook does not fire on its own work.
+//
+// This is the answer to Q-17, recorded as D-39. It is the only rule available that does not depend
+// on trusting the hook. A committing hook otherwise re-triggers itself forever: it commits, HEAD
+// moves, the results go stale, the tests run again, they pass again, and at a new revision the
+// once-per-revision guard is satisfied again. `git commit -am` fails harmlessly the second time
+// around and `git commit -am --allow-empty` does not, so a repository fills with empty commits for
+// as long as the session runs.
+//
+// What makes a revision recognisable is not anything about the revision itself. Comparing the commit
+// author catches nothing when the hook commits as the user, and remembering one revision fails when
+// the hook makes several. What is knowable is the interval: the runner holds the revision the hook
+// fired at, and reads the revision again when the hook returns. Anything that moved in between moved
+// while this hook was running, and the hook is the only thing that was asked to do anything.
+//
+// The cost, stated rather than hidden: a person who commits their own work in the seconds a hook is
+// running has that revision claimed too, and the hook does not fire for it. One missed firing in a
+// window the length of a hook, against a loop that does not terminate. There is no rule that
+// separates those two cases without asking the hook to declare itself, and a hook that has to be
+// trusted to declare itself is the thing being guarded against.
+//
+// A nil reader means the caller opted out and the loop above is theirs to own.
+func (r *Runner) finishCodeInterval(ctx context.Context, obs Observation, event Event) {
+	if !aboutCode(event) {
+		return
+	}
+
+	var (
+		after core.RevisionKey
+		ok    bool
+	)
+	if r.revision != nil {
+		// Detached from the hook's own deadline, which has usually just expired if the hook timed
+		// out. A hook killed halfway may still have committed, and that revision is worth claiming.
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revisionReadTimeout)
+		after, ok = r.revision(readCtx, obs.Subject)
+		cancel()
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := obs.Subject + "\x00" + string(event)
+	if ok && after.String() != obs.Revision.String() {
+		r.firedAt[key] = after.String()
+	}
+	if r.inFlight[key] <= 1 {
+		delete(r.inFlight, key)
+	} else {
+		r.inFlight[key]--
+	}
+}
+
+// revisionReadTimeout bounds reading the revision back after a hook.
+//
+// Short. This is one git call against a worktree that was just being written to, and the cost of
+// giving up on it is one hook firing a second time rather than anything being wrong.
+const revisionReadTimeout = 10 * time.Second
 
 // DefaultTimeout bounds a hook that does not set one.
 //
