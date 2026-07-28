@@ -63,6 +63,15 @@ type Engine struct {
 	// alone would make them the same setting with two names.
 	sessionMode map[string]core.Mode
 
+	// restoredMode is a mode read back from history and not yet applied, by session.
+	//
+	// Kept apart from sessionMode because a stored mode is a request rather than a fact: runway needs
+	// a gate and cruise needs checkpoints, and history is attached before either exists. Applying it
+	// at load would either refuse every mode or, worse, restore runway into a run with no gate, where
+	// nothing checks the turns it promises to check. So it waits here and is resolved on first use,
+	// by which time everything it depends on has been attached or has definitively not been.
+	restoredMode map[string]string
+
 	// storage is optional. An engine without one still works completely and forgets everything on
 	// exit, which is what the tests want and what a first run before the config directory exists
 	// gets. Persistence being optional rather than assumed is also what stops a storage failure
@@ -147,6 +156,81 @@ func New(resolver Resolver) *Engine {
 	}
 }
 
+// modeUnusableLocked reports why a mode cannot be entered here, or nil if it can.
+//
+// One function rather than the checks written out at each site, because there are now three: setting
+// a mode, restoring one from history, and carrying one across a fork. Three copies of a safety rule
+// is three places for it to be updated twice.
+func (e *Engine) modeUnusableLocked(sessionID string, mode core.Mode) error {
+	// An engine with no tools attached has no configured level and so no ceiling to enforce. Valid
+	// is what tells the two apart: an unset level is not a restrictive one, and treating it as
+	// restrictive would refuse every mode on a conversation that has no tools to govern anyway.
+	if ceiling := e.configuredTrustLocked(sessionID); ceiling.Valid() && !ceiling.AtLeast(mode.Trust) {
+		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode, which needs %s",
+			ceiling, mode.Name, mode.Trust)
+	}
+	if mode.NeedsUndo && e.checkpoints == nil {
+		return fmt.Errorf(
+			"%s needs to be able to put the workspace back, which needs a git repository", mode.Name)
+	}
+	if mode.KeepsGreen && e.gate == nil {
+		return fmt.Errorf(
+			"%s needs to be able to check the workspace, which needs a configured test", mode.Name)
+	}
+	return nil
+}
+
+// modeLocked is the mode a conversation is in, resolving anything read back from history on the way.
+//
+// The one place both Mode and trustForLocked go through, so what the box shows and what the
+// permission layer enforces cannot come from two different answers.
+func (e *Engine) modeLocked(sessionID string) core.Mode {
+	if mode, ok := e.sessionMode[sessionID]; ok && mode.Name != "" {
+		return mode
+	}
+
+	if name, ok := e.restoredMode[sessionID]; ok {
+		// Consumed either way. A stored mode that cannot be honoured here should be reported once and
+		// then stop being asked about, rather than failing the same check on every tool call.
+		delete(e.restoredMode, sessionID)
+
+		if mode, known := core.ModeByName(name); known {
+			if e.modeUnusableLocked(sessionID, mode) == nil {
+				e.sessionMode[sessionID] = mode
+				return mode
+			}
+			// Stored but not usable here: runway reopened where nothing can check the workspace, or a
+			// mode above what this agent is configured for.
+			//
+			// Down to build, never to the level the stored mode happens to share with a weaker one.
+			// Runway and cruise are both broad, so resolving by level would turn runway, which reverts
+			// a turn that ends red, into cruise, which keeps it. Silently becoming the more dangerous
+			// mode below is the worst way a safety setting can fail. Build is at or below every mode
+			// that can reach here, because plan is usable everywhere and so never does.
+			return e.fallBackLocked(sessionID, core.ModeBuild)
+		}
+
+		// A name from a version that had a mode this one does not. Nothing can be restored and
+		// nothing can be assumed, so the narrowest mode there is, which is visible in the box the
+		// moment somebody looks and is one keystroke to leave.
+		return e.fallBackLocked(sessionID, core.ModePlan)
+	}
+
+	return core.ModeForTrust(e.configuredTrustLocked(sessionID))
+}
+
+// fallBackLocked settles a conversation into the named mode, or into plan where even that is too
+// much for how the agent is configured.
+func (e *Engine) fallBackLocked(sessionID, name string) core.Mode {
+	if mode, ok := core.ModeByName(name); ok && e.modeUnusableLocked(sessionID, mode) == nil {
+		e.sessionMode[sessionID] = mode
+		return mode
+	}
+	plan, _ := core.ModeByName(core.ModePlan)
+	e.sessionMode[sessionID] = plan
+	return plan
+}
+
 // Trust is how much the agent in one conversation may do without asking.
 func (e *Engine) Trust(sessionID string) core.TrustLevel {
 	e.mu.Lock()
@@ -162,10 +246,7 @@ func (e *Engine) Trust(sessionID string) core.TrustLevel {
 func (e *Engine) Mode(sessionID string) core.Mode {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if mode, ok := e.sessionMode[sessionID]; ok && mode.Name != "" {
-		return mode
-	}
-	return core.ModeForTrust(e.trustForLocked(sessionID))
+	return e.modeLocked(sessionID)
 }
 
 // SetMode changes it, for that conversation alone.
@@ -182,27 +263,24 @@ func (e *Engine) Mode(sessionID string) core.Mode {
 // key that is broken.
 func (e *Engine) SetMode(sessionID string, mode core.Mode) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// An engine with no tools attached has no configured level and so no ceiling to enforce. Valid
-	// is what tells the two apart: an unset level is not a restrictive one, and treating it as
-	// restrictive would refuse every mode on a conversation that has no tools to govern anyway.
-	ceiling := e.configuredTrustLocked(sessionID)
-	if ceiling.Valid() && !ceiling.AtLeast(mode.Trust) {
-		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode, which needs %s",
-			ceiling, mode.Name, mode.Trust)
-	}
-	if checkpoints, gate := e.checkpoints, e.gate; mode.NeedsUndo && checkpoints == nil {
-		return fmt.Errorf(
-			"%s needs to be able to put the workspace back, which needs a git repository", mode.Name)
-	} else if mode.KeepsGreen && gate == nil {
-		return fmt.Errorf(
-			"%s needs to be able to check the workspace, which needs a configured test", mode.Name)
+	if err := e.modeUnusableLocked(sessionID, mode); err != nil {
+		e.mu.Unlock()
+		return err
 	}
 	if e.sessionMode == nil {
 		e.sessionMode = make(map[string]core.Mode)
 	}
 	e.sessionMode[sessionID] = mode
+	// Whatever history had to say is settled now, so it must not be resolved later over the top of a
+	// decision somebody has just made.
+	delete(e.restoredMode, sessionID)
+	e.mu.Unlock()
+
+	// Written after the lock is released, because persist takes it. Remembered by name rather than
+	// by value: the prompt and the trust level belong to this build of Canopy and the name is the
+	// part somebody chose, so an upgrade that improves a prompt reaches conversations that already
+	// exist instead of leaving them on the old one forever.
+	e.persist(func(s *Storage) error { return s.SaveSessionMode(sessionID, mode.Name) })
 	return nil
 }
 
@@ -246,9 +324,19 @@ func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
 	if err != nil {
 		return err
 	}
+	modes, err := storage.sessionModes()
+	if err != nil {
+		return err
+	}
 	e.mu.Lock()
 	for sessionID, projectID := range projects {
 		e.projects[sessionID] = projectID
+	}
+	if len(modes) > 0 && e.restoredMode == nil {
+		e.restoredMode = make(map[string]string, len(modes))
+	}
+	for sessionID, mode := range modes {
+		e.restoredMode[sessionID] = mode
 	}
 	e.mu.Unlock()
 	return nil

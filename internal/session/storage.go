@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 6
+const schemaVersion = 7
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -177,6 +177,13 @@ var migrations = []string{
 	);
 	CREATE INDEX cost_outcomes_by_project ON cost_outcomes (project_id, observed_at);
 	`,
+
+	// Added when modes landed with nowhere to be remembered. Without this, a conversation left in
+	// plan mode came back in whatever the agent was configured for, which is build: quitting was a
+	// way to widen what an agent may do, and nothing on screen said so. The empty default means
+	// "nobody chose", which is a different thing from any particular mode and is why it is not
+	// defaulted to one.
+	`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT '';`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -305,6 +312,41 @@ func (s *Storage) SaveSessionForProject(session core.Session, projectID string) 
 		return err
 	}
 	return s.saveForks(session)
+}
+
+// SaveSessionMode records the mode a conversation was left in.
+//
+// Its own statement rather than another column on SaveSessionForProject, because a mode is chosen
+// deliberately and rarely while a title and a task list are rewritten constantly. Folding it into
+// the common path would mean every routine save carried a safety setting along with it, and any
+// caller that built a session value without one would quietly clear it.
+func (s *Storage) SaveSessionMode(sessionID, mode string) error {
+	if sessionID == "" {
+		return errors.New("a session needs an ID for its mode to be saved")
+	}
+	if _, err := s.db.Exec(`UPDATE sessions SET mode = ? WHERE id = ?`, mode, sessionID); err != nil {
+		return fmt.Errorf("saving the mode for session %s: %w", sessionID, err)
+	}
+	return nil
+}
+
+// sessionModes reads back every recorded mode, by session.
+func (s *Storage) sessionModes() (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT id, mode FROM sessions WHERE mode <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("loading session modes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[string]string)
+	for rows.Next() {
+		var sessionID, mode string
+		if err := rows.Scan(&sessionID, &mode); err != nil {
+			return nil, err
+		}
+		out[sessionID] = mode
+	}
+	return out, rows.Err()
 }
 
 func (s *Storage) projectIDs() (map[string]string, error) {

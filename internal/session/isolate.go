@@ -142,7 +142,7 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 // and the more recent, and because it is the one somebody made on purpose while watching that
 // conversation. The agent's level wins over the engine's for the same reason one step up.
 func (e *Engine) trustForLocked(sessionID string) core.TrustLevel {
-	if mode, ok := e.sessionMode[sessionID]; ok && mode.Trust != "" {
+	if mode := e.modeLocked(sessionID); mode.Trust != "" {
 		return mode.Trust
 	}
 	return e.configuredTrustLocked(sessionID)
