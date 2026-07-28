@@ -3298,7 +3298,7 @@ A chat picker is still out of scope and comes later. The code printed on exit is
 it back and would still only work on the machine that printed it.
 
 ### M-09 The mode ladder
-`status: todo | owner: none | branch: none | depends: M-08`
+`status: partial | owner: Claude | branch: feat/modes-and-commands | depends: M-08`
 `scope: internal/permission/, internal/agent/loop.go, internal/core/profile.go, internal/session/, internal/tui/chat/`
 
 Deliverable: seven modes, four of them on `shift+tab`, each one a capability, an approval policy and
@@ -3374,6 +3374,35 @@ separate. Its own task when somebody wants it.
 
 Read before starting: Claude Code's six modes and its classifier fallback, Kimi Code's read-only
 plan sub-agent, OpenCode's per tool allow/ask/deny, Codex CLI's two axes, Aider's three chat modes.
+
+**Done 2026-07-28.** The four cycle modes, each carrying a level, a prompt and a name. The prompt
+goes out as the system prompt, which the engine was not setting at all, so that half was a seam
+nothing used rather than a change to anything. The level is asked before every tool call rather
+than once at the top of the turn, so switching mid reply takes hold on the next thing the model
+tries. A mode can lower what an agent may do and can never raise it above what its configuration
+allows, and the key skips past what it cannot reach so it still does something on a confined agent.
+
+**Left, in the order it is worth doing.**
+
+The **green gate that makes runway what it is**. The mode is declared and carries `KeepsGreen`, and
+nothing reads that field yet, so runway is currently cruise with a better prompt. It needs the turn
+completion path to ask the verifier, and to restore the checkpoint it already took when the answer
+is no. Until it lands, runway claims something it does not do, which is the one state this task
+should not be left in for long.
+
+`NeedsUndo` is declared and unread for the same reason. Both runway and cruise carry it, and neither
+refuses yet outside a git repository, so cruise with no undo is currently possible and should not be.
+
+The **capability and approval split**, which is the structural half and is not needed by any of the
+four cycle modes: all four are expressible with the existing ladder, which is why they shipped
+first. It is what `ask`, `sealed` and `fixed` need, and what makes review-every-edit sayable at all.
+
+**`/btw`**, asked for on 2026-07-28. A question answered from the conversation's own context without
+joining it and without disturbing a turn in flight, which is the half `/steer` does not cover:
+steering changes what the agent does, and this is for asking something while deliberately changing
+nothing. It needs a one-off provider call outside the turn machinery, which `cmd/canopy/ask.go`
+already does at the command line and the engine has no path for. The answer is printed and not
+recorded, or it is not a side channel, it is a message.
 
 ### PG-M Phase M gate
 `status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`

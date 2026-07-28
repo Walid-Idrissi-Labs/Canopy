@@ -302,3 +302,58 @@ func TestResumingAConversationThatIsNotThereIsRefused(t *testing.T) {
 		t.Errorf("a conversation was created while refusing to resume one: %d", len(e.Sessions()))
 	}
 }
+
+// M-09. The mode's prompt reaches the model.
+//
+// Without this the level is enforced and never explained, so a planning agent tries to edit, is
+// refused, tries again, and spends the turn thrashing against a boundary nobody told it about. The
+// engine was not setting a system prompt at all before modes existed, so this is the whole of the
+// wiring and worth pinning: it is invisible from the interface and would fail silently.
+func TestTheModePromptIsSentAsTheSystemPrompt(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("a plan")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+
+	created := e.Create("claude", "claude-opus-5")
+	plan, _ := core.ModeByName(core.ModePlan)
+	if err := e.SetMode(created.ID, plan); err != nil {
+		t.Fatalf("SetMode: %v", err)
+	}
+
+	turnID, err := e.Send(created.ID, "what should we do about the parser")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForTurn(t, e, created.ID, turnID)
+
+	client.mu.Lock()
+	got := client.system
+	client.mu.Unlock()
+
+	if got != plan.Prompt {
+		t.Errorf("the provider was sent system prompt %q, want the plan mode prompt", got)
+	}
+}
+
+// And build sends none, which is the deliberate exception: it is the ordinary way to work, and
+// describing it would spend context telling the model that nothing unusual is going on.
+func TestBuildModeSendsNoSystemPrompt(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+
+	created := e.Create("claude", "claude-opus-5")
+	turnID, err := e.Send(created.ID, "rename the field")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForTurn(t, e, created.ID, turnID)
+
+	client.mu.Lock()
+	got := client.system
+	client.mu.Unlock()
+
+	if got != "" {
+		t.Errorf("build sent a system prompt: %q", got)
+	}
+}
