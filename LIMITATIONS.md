@@ -304,10 +304,13 @@ be rediscovered by getting burned by it.
   added. In practice this means rolling back to an older build can leave your history unreadable
   until you upgrade again.
 
-- Compaction summarises older turns once a conversation nears the model's context limit, and the
-  model then works from that summary rather than the original text for anything before it. The full,
-  original text stays in storage and stays searchable regardless, but the model's working context
-  from that point on is a shortened version of what was actually said (D-28).
+- Compaction summarises older turns, and the model then works from that summary rather than the
+  original text for anything before it. The full, original text stays in storage and stays
+  searchable regardless, but the model's working context from that point on is a shortened version
+  of what was actually said (D-28). Today compaction only happens when you ask for it, with ctrl+r
+  or /compact; the meter warns near the limit, but nothing compacts by itself, and a conversation
+  that outgrows the window fails its next turn until you compact by hand. The automatic half of
+  D-28 is planned as E-02 and does not exist yet.
 
 ## Interface
 

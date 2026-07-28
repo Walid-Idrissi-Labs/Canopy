@@ -928,6 +928,72 @@ and build respectively. Broad resolves to cruise only where the undo safety net 
 it falls back to build, just as an explicit cruise selection does. The displayed default and the
 enforced default therefore agree without bypassing a mode's prerequisites.
 
+## D-42 Every token saving is visible, and elision is compaction's sibling. Decided 2026-07-28.
+
+Extends D-28 from compaction to every mechanism that changes what the model is sent. Phase E
+implements this; the decision is recorded here so the rules survive the tasks.
+
+1. Anything that shortens or rewrites the outgoing request, compaction, elision, ranged reads,
+   instruction bounds, announces itself where the user is looking and never touches stored
+   history. D-28 said this about compaction; it now covers the whole family.
+2. Only deterministic reads may be elided: read_file, glob and grep results superseded by the
+   same tool with the same arguments, or invalidated by a later edit to the same path. Shell and
+   MCP output is never elided, because nothing can re-derive it, and shortening evidence that
+   cannot be regenerated is destroying it.
+3. A prefix rewrite forfeits the provider cache, so rewrites are batched to the moments the
+   prefix is changing anyway, or to when the pricing table shows the saving beats the rewrite
+   premium. The arithmetic is computed from recorded rates and shown, never assumed. A saving
+   that costs more than it saves is a spend wearing the wrong name.
+4. Cache health is on screen. Caching is the one saving that degrades silently, so its absence
+   must be as visible as its presence, in the product and not only in headless output.
+5. Usage a provider billed is recorded even when the turn failed. A failed turn that vanishes
+   from the totals is a bill the totals are lying about.
+
+None of this blocks 0.1. Phase E starts after PG-M, per the release instruction of 2026-07-27.
+
+## D-43 Navigation never answers, attention is ambient, reflexes never spend. Decided 2026-07-28.
+
+Three interface rules, recorded together because each one exists to protect the person running
+several agents at once, and each was being violated by one concrete screen when written.
+
+1. **Navigation never answers a question.** Scrolling, paging and moving between screens decide
+   nothing. A pending prompt is answered only by an explicit answer; leaving the screen leaves it
+   pending. The default for an unrecognised key on a prompt remains refusal, which is Q-09's
+   settled reflex-safety property, but the navigation set is carved out of it: reading before
+   deciding must be possible with the keyboard, or the safe default punishes exactly the person
+   it exists for.
+2. **Attention is ambient.** An agent needing a person is visible from every screen, and no
+   screen is ever locked against leaving. The product's premise is parallel agents; an indicator
+   that lives only on the agents screen is a smoke alarm installed inside the fire.
+3. **No reflex spends money.** No single unconfirmed keystroke starts a paid model call.
+   Confirmations for spending name what will be spent, on which key, within what bound.
+
+Phase U implements these. A future screen that violates one of them is wrong even if every test
+passes, in the same way a false green is wrong.
+
+## D-44 Declared and unreachable is a defect, not a feature in waiting. Decided 2026-07-28.
+
+The 2026-07-28 audits found the pattern the change log had already counted four instances of, at
+larger scale: mechanisms that are built, tested, documented in doc comments as though live, and
+called by nothing. The full inventory at the time of writing: the fallback chain, budgets and
+their interface, `AgentProfile.SystemPrompt` with `MaxTokens` and `Temperature`, `Loop.MaxTokens`,
+`config.Instructions`, `Engine.ClearSteering`, `Engine.RemoveAgent`, `Grants.Granted` and
+`Grants.Revoke`, `permission.PathScope`, `permission.GrantableKinds`, `agent/plan.go`, and
+auto-compaction, whose deciding decision shipped while its trigger did not.
+
+The rule going forward has three parts:
+
+1. A ledger status may not outrun reachability. A task whose mechanism cannot be driven by a
+   person or by another live mechanism is at most partial, whatever its tests say. Four blocks
+   were set back under this rule today.
+2. Every item in the inventory is either wired by a named task (E-02, E-07, E-09, U-07, U-08,
+   U-12, U-13) or cut by a decision that says what existed, the way D-40 cuts. No third state.
+3. Review asks "what calls this?" of new exported affordances, and a doc comment describing an
+   interface that does not exist is treated as the doc comment lying.
+
+This does not supersede D-40: deferred features keep their code and their tests. It closes the
+gap D-40 left, where code that was not deferred and not finished sat in between, reading as done.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
