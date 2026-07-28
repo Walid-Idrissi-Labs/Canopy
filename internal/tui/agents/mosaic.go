@@ -21,6 +21,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -355,8 +356,10 @@ func (m Model) paneBottom(status session.AgentStatus, border lipgloss.Style, inn
 	return border.Render("╰"+rule) + " " + fire + " " + border.Render("╯")
 }
 
-// paneBody is what a pane says: what the agent is blocked on if anything, what it was asked, and
-// the tail of what it is saying, newest lines winning the space.
+// paneBody is what a pane shows: the agent's conversation, drawn by the same renderer the chat
+// screen uses, so a pane is a split screen of the view you would get by opening the agent rather
+// than a summary of it. What is blocked stays pinned above the transcript, and the tail wins the
+// space, because what an agent is doing now is at the bottom of its conversation.
 func (m Model) paneBody(status session.AgentStatus, width, height int) []string {
 	t := theme.Current()
 
@@ -372,23 +375,14 @@ func (m Model) paneBody(status session.AgentStatus, width, height int) []string 
 		conversation = []string{t.Muted.Render(m.summary(status)), "",
 			t.Muted.Render("nothing said yet")}
 	} else {
-		last := s.Turns[len(s.Turns)-1]
-		conversation = append(conversation,
-			t.Key.Render("> ")+t.Muted.Render(truncate(last.Request.Text, width-2)), "")
-		// Only the end of the reply is wrapped, because only the end can fit, and wrapping a long
-		// transcript to throw most of it away is work done per pane per frame.
-		reply := wrapPlain(tail(last.Text, height+8), width)
-		// The tail rather than the head, because what an agent is doing now is at the bottom of
-		// its reply and the top is what it was saying half a minute ago.
-		if room := height - len(top) - len(conversation); len(reply) > room && room > 0 {
-			reply = reply[len(reply)-room:]
+		// Only the turns whose tail can fit are rendered, because rendering a long transcript to
+		// throw most of it away is markdown work done per pane per frame. The tool kinds are not
+		// threaded through here, so a pane draws tool calls without their kind labels; the full
+		// labels are one keystroke away in the view this pane is a miniature of.
+		if keep := 3; len(s.Turns) > keep {
+			s.Turns = s.Turns[len(s.Turns)-keep:]
 		}
-		for _, line := range reply {
-			conversation = append(conversation, t.Body.Render(line))
-		}
-		if !last.State.Whole() && last.State.Terminal() {
-			conversation = append(conversation, t.Warning.Render("["+string(last.State)+"]"))
-		}
+		conversation = chat.Transcript(s, width, spinnerFrames[m.step%len(spinnerFrames)], nil)
 	}
 
 	lines := append(top, conversation...)
@@ -400,8 +394,21 @@ func (m Model) paneBody(status session.AgentStatus, width, height int) []string 
 	for len(lines) < height {
 		lines = append(lines, "")
 	}
+	// A transcript line can be wider than the pane when the renderer was given more room than a
+	// word needed, so every line is cut to fit rather than trusted; a torn grid is worse than a
+	// clipped word.
+	for i, line := range lines {
+		if lipgloss.Width(line) > width {
+			lines[i] = truncate(line, width)
+		}
+	}
 	return lines
 }
+
+// spinnerFrames matches the chat's working indicator, so a turn in flight looks the same at every
+// size. It advances on the fire's own ticker here, which is slower and deliberately so: a pane is
+// watched from a distance.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 // paneState is the one word of an agent's state, coloured but never padded, for a border label.
 func paneState(state core.AgentState) string {
