@@ -3487,13 +3487,16 @@ it back and would still only work on the machine that printed it.
 `status: review | owner: Claude | branch: feat/modes-and-commands | depends: M-08`
 `scope: internal/core/mode.go, internal/agent/loop.go, internal/session/gate.go, internal/session/aside.go, internal/tui/chat/, cmd/canopy/gate.go`
 
-Deliverable: seven modes, four of them on `shift+tab`, each one a capability, an approval policy and
-a prompt. Switchable while a turn is running.
+Deliverable: five implemented modes on `shift+tab`, each one a capability, an approval policy and a
+prompt, switchable while a turn is running. The original plan also named three off-cycle postures,
+`ask`, `sealed` and `fixed`; those remain unbuilt pending the capability/approval split below. D-41
+added the fifth cycle posture, `confined`, so the displayed mode, prompt and enforced trust ceiling
+cannot disagree.
 
-Acceptance: every mode is enforced by the permission layer rather than by the prompt, and a test
-proves each one refuses what it claims to refuse. Changing mode mid turn takes effect on the next
-tool call rather than the next message. `runway` and `cruise` refuse to engage where their safety net
-is missing rather than quietly behaving like the mode below them.
+Acceptance: every implemented mode is enforced by the permission layer rather than by the prompt,
+and a test proves each one refuses what it claims to refuse. Changing mode mid turn takes effect on
+the next tool call rather than the next message. `runway` and `cruise` refuse to engage where their
+safety net is missing rather than quietly behaving like the mode below them.
 
 `verify: claude [x] 2026-07-28   codex [ ]`
 
@@ -3527,6 +3530,7 @@ The cycle, ordered by how much can go permanently wrong rather than by how much 
 | mode | can do | asks about | told |
 |---|---|---|---|
 | `plan` | read | nothing, it cannot | write the plan and stop |
+| `confined` | read, structured writes in assigned workspace | network | use structured tools; shell is unavailable |
 | `build` | read, write in workspace | shell, network | nothing. The default |
 | `runway` | read, write, shell | nothing | you may break things while working, not when you stop |
 | `cruise` | everything, destructive git included | nothing | you have the wheel |
@@ -3561,7 +3565,16 @@ separate. Its own task when somebody wants it.
 Read before starting: Claude Code's six modes and its classifier fallback, Kimi Code's read-only
 plan sub-agent, OpenCode's per tool allow/ask/deny, Codex CLI's two axes, Aider's three chat modes.
 
-**Done 2026-07-28.** The four cycle modes, each carrying a level, a prompt and a name. The prompt
+**Corrected 2026-07-28 under D-41.** The original four-mode cycle exposed a real contradiction:
+a profile configured at confined trust opened with `build` on screen while its effective trust was
+clamped below build. The shell was safely absent after the ceiling fix, but the visible mode and
+model prompt still promised the wrong capability. `confined` is now an explicit fifth cycle mode,
+and bare confined profiles resolve to it. A broad default also goes through the same undo
+prerequisite as an explicit cruise selection instead of bypassing that guard. Direct and isolated
+registry tests cover every trust level and tool kind, and denial tests prove a command requested by
+an adversarial provider stays unrun and audited in both registry paths.
+
+**Done 2026-07-28.** The five cycle modes, each carrying a level, a prompt and a name. The prompt
 goes out as the system prompt, which the engine was not setting at all, so that half was a seam
 nothing used rather than a change to anything. The level is asked before every tool call rather
 than once at the top of the turn, so switching mid reply takes hold on the next thing the model

@@ -904,6 +904,30 @@ half-feature does not strengthen it and does delay the point where somebody can 
 exist keep running, and each task keeps its acceptance criteria for whoever picks it up. What changes
 is that nothing is waiting on them and LIMITATIONS says plainly that they are not there.
 
+## D-41 Confined is an explicit mode, not an invisible ceiling. Decided 2026-07-28.
+
+The mode name shown in the interface, the prompt sent to the model and the trust level enforced on
+each tool call must describe the same capability. A hidden clamp is not enough: showing `build`
+while silently enforcing confined trust makes allowed structured edits look broken and invites the
+model to keep requesting a shell it can never receive.
+
+**Confined is therefore the fifth posture in the `shift+tab` cycle**, between plan and build. It may
+read and edit through structured tools in the assigned workspace and may use ordinary path-scoped
+Git tools. It cannot invoke shell. Network calls retain the existing approval requirement. Its
+prompt states those limits and also states that this is capability confinement, not an
+operating-system sandbox.
+
+This explicitly supersedes M-09's four-mode cycle and its statement that all four cycle modes could
+be represented without adding a confined posture. It does not change D-33: direct and isolated
+workspaces remain different contracts, structured path tools remain rooted at the assigned
+workspace, and shell remains opaque and uncontained wherever a higher trust level enables it.
+
+The configured trust level remains an absolute ceiling. A mode may lower the effective level and
+may never raise it. Bare read-only, confined and standard configurations resolve to plan, confined
+and build respectively. Broad resolves to cruise only where the undo safety net exists; otherwise
+it falls back to build, just as an explicit cruise selection does. The displayed default and the
+enforced default therefore agree without bypassing a mode's prerequisites.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

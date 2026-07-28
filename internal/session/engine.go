@@ -227,7 +227,13 @@ func (e *Engine) modeLocked(sessionID string) core.Mode {
 		return e.fallBackLocked(sessionID, core.ModePlan)
 	}
 
-	return core.ModeForTrust(e.configuredTrustLocked(sessionID))
+	mode := core.ModeForTrust(e.configuredTrustLocked(sessionID))
+	if e.modeUnusableLocked(sessionID, mode) == nil {
+		return mode
+	}
+	// Defaults obey the same safety-net rules as an explicit selection. Otherwise a broad profile
+	// outside a repository opens in cruise even though asking for cruise through SetMode is refused.
+	return e.fallBackLocked(sessionID, core.ModeBuild)
 }
 
 // fallBackLocked settles a conversation into the named mode, or into plan where even that is too
