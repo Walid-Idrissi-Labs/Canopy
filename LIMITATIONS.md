@@ -246,10 +246,21 @@ be rediscovered by getting burned by it.
   There is nowhere on screen for a hook failure yet, so one is printed on exit: a long session can
   hide a broken hook for hours. A8-05 is back to claimed for both reasons.
 
-- MCP servers are reachable and three gaps in that client are open (A8-06): a server-initiated
-  request whose id collides with an outstanding call can satisfy the wrong one, a tool list that hits
-  the 50-page bound is returned as though it were complete, and closing a session kills the server
-  process without taking its children with it.
+- MCP servers are started when a conversation opens and stopped when it closes, and their tools are
+  governed exactly as Canopy's own are: every one of them counts as running a command, whatever the
+  server says about itself, so read-only and confined agents get none of them and standard trust sees
+  each call before it runs.
+
+- **Isolated agents do not get MCP tools** (D-38). Servers start once, in the project directory,
+  rather than once per worktree, so a server is not rooted where an isolated agent works. An isolated
+  agent is confined by having its tools rooted at its worktree, and a tool reaching a program started
+  elsewhere would be a way around that. The cost is real and lands on the feature that matters most:
+  the agents in a fan out have strictly less available to them than the one you are talking to.
+  Q-18 carries the per worktree design that would lift it.
+
+- A server's tool list is bounded at 50 pages and 500 tools. Hitting either is reported rather than
+  absorbed, on stderr at startup and in the server's own description, because a tool missing because
+  of a bound Canopy imposed is otherwise indistinguishable from one the server never offered.
 
 ## Storage
 
@@ -279,20 +290,19 @@ be rediscovered by getting burned by it.
   arrives as arrow key presses, and the arrow keys walk back through what you have sent, so
   scrolling up to reread an answer would replace what you were typing.
 
-- Terminating a cancelled command can, in a narrow race, signal a process group that is no longer
-  ours. Canopy puts every command it starts in its own group and kills the group, which is what takes
-  a test runner's workers with it. Once the group leader has been waited on, the number that names
-  the group can be reissued by the kernel, and `kill(-pid, 0)` proves only that some group holds it
-  rather than that it is still the one Canopy started. The check narrows the window and cannot close
-  it: the last member can also exit between the check and the signal. Closing it needs an identifier
-  the kernel will not recycle, which means a pidfd on Linux and nothing that exists on macOS. The
-  alternative, not signalling at all once the leader is reaped, leaves every orphaned child of every
-  cancelled run alive holding its ports. A9-01 is back to claimed while this is decided.
+- A process that detaches its own output and outlives the command that started it is left running
+  (D-37). Canopy puts every command in its own process group and kills the group, which is what takes
+  a test runner's workers with it, and it will not signal a group once that group's leader has been
+  waited on, because the number naming the group can be reissued by the kernel at that point and the
+  signal would land on somebody else's work. In practice the common case is still covered: waiting on
+  a command does not return while a child holds its output open, so an orphaned worker keeps the
+  leader unreaped and the group is signalled safely. What escapes is the child that closes or
+  redirects the streams it inherited, which is to say a daemon. On Windows nothing beyond the process
+  itself is killed at all, because there are no process groups in the POSIX sense there.
 
 - The engine half of the robustness sweep has been run and the interface half has not. Timeouts,
   bounded output, event delivery under load, paths with spaces, externally removed worktrees and
-  orphaned processes on quit are covered by tests of their own now (A9-01), subject to the process
-  group caveat above. Resize
+  orphaned processes on quit are covered by tests of their own now (A9-01). Resize
   handling, readability at 80 columns with several agents, every state being distinguishable without
   colour, and rapid updates not moving the selection are not: they are A9-02 and nothing has
   verified them together.
