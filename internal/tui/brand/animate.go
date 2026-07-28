@@ -24,11 +24,12 @@ const Frames = 3
 // fire is the flame at each frame, drawn bottom up so the base never moves.
 //
 // The base staying put is what stops the whole thing looking like it is jumping around. Only the
-// tip and the smoke change, which is also how a real fire looks from across a clearing.
+// two top rows change — the tip of the flame and the spark beside it — which is also how a real
+// fire looks from across a clearing: the mound burns steadily and the tips do the dancing.
 var fire = [Frames][]string{
-	{"  ▄  ", " ▄█▄ ", "█▀█▀█"},
-	{"  ▀  ", " ▄█▄ ", "█▀█▀█"},
-	{" ▄ ▄ ", " ▄█▄ ", "█▀█▀█"},
+	{"   ▄   ", "  ▄█▄ ▄", " ▄███▄ ", "██▀█▀██"},
+	{"   ▀ ▄ ", " ▄▄█▄  ", " ▄███▄ ", "██▀█▀██"},
+	{" ▄ ▄   ", "  ▄█▄▄ ", " ▄███▄ ", "██▀█▀██"},
 }
 
 // smoke drifts, and never repeats its position between frames.
@@ -78,6 +79,14 @@ func FireRegion() (row, column, height, width int) {
 	return len(Lines()) - fireFromBottom, fireColumn, len(fire[0]), fireWidth
 }
 
+// FireCoreRegion is the heart of the fire: the middle of the mound on its two steady rows, for a
+// caller that wants the centre of the flame a shade brighter than its outside. Inside FireRegion by
+// construction, and confined to the rows the animation never touches, so the brighter heart burns
+// steadily while the tips dance above it.
+func FireCoreRegion() (row, column, height, width int) {
+	return len(Lines()) - fireCoreFromBottom, fireCoreColumn, fireCoreHeight, fireCoreWidth
+}
+
 // SmokeRegion is where the wisp above the flame sits, in the same terms and for the same reason.
 //
 // Its own region rather than one box covering both, because the two are different colours and a
@@ -97,14 +106,22 @@ const (
 
 	// fireWidth and smokeWidth are how many columns one row of each occupies. Every row of each is
 	// exactly that wide, so the region a caller colours is a rectangle rather than a ragged shape.
-	fireWidth  = 5
+	fireWidth  = 7
 	smokeWidth = 4
 
 	// Counted up from the bottom of the mark rather than down from the top, because the ground line
 	// is what both are drawn standing on, and a mark that grew a row at the top would otherwise move
 	// the fire into the sky.
-	fireFromBottom  = 4
+	fireFromBottom  = 5
 	smokeFromBottom = 9
+
+	// The heart of the fire: the middle three columns of the mound, on the two rows the animation
+	// leaves alone. These have to land on the solid centre of the base rows or the brighter shade
+	// would spill onto the flame's outline, and the region tests hold them there.
+	fireCoreColumn     = 27
+	fireCoreWidth      = 3
+	fireCoreFromBottom = 3
+	fireCoreHeight     = 2
 )
 
 // overlay writes a block into the lines at a column, padding short rows to reach it.

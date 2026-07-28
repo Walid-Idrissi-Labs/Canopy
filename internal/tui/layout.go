@@ -3,6 +3,9 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -28,10 +31,37 @@ func (d Dimensions) Usable() bool {
 	return d.Width >= minWidth && d.Height >= minHeight
 }
 
+// HeaderHeight is how many lines the top bar takes.
+//
+// Three ordinarily, and five where there is room to put the drawn name in the corner. It is a
+// function of the terminal rather than a constant because the name is worth two rows on a window
+// that has them and is worth nothing at all on one that does not: a logo that costs somebody two
+// lines of their conversation is a logo working against the program it belongs to.
+func (d Dimensions) HeaderHeight() int {
+	if d.Width >= wordmarkMinWidth && d.Height >= wordmarkMinHeight {
+		return 5
+	}
+	return 3
+}
+
+// wordmarkMinWidth and wordmarkMinHeight are where the drawn name in the header starts paying for
+// itself.
+//
+// The width is the name plus enough room for the details beside it to still be worth reading; below
+// it the name would be pushing out the facts, which is the wrong way round. The height is where two
+// extra rows of chrome stop being a meaningful share of the screen.
+const (
+	wordmarkMinWidth  = brand.WordmarkWidth + 40
+	wordmarkMinHeight = 30
+)
+
 // BodyHeight is the number of lines a screen may use, once the chrome is accounted for.
+//
+// The header plus one. That one line is the gap between the body and the footer, and the arithmetic
+// is written as a relationship rather than as a number so that changing the header's height cannot
+// silently push every screen's footer off the bottom.
 func (d Dimensions) BodyHeight() int {
-	const chrome = 4 // header, blank, blank, footer
-	if h := d.Height - chrome; h > 0 {
+	if h := d.Height - d.HeaderHeight() - 1; h > 0 {
 		return h
 	}
 	return 1
@@ -42,18 +72,16 @@ func (d Dimensions) BodyHeight() int {
 // reaching the thing they typed it for, and the argument for one was recognition, which the screen
 // a conversation opens on already does while also being usable.
 
-// Frame composes a screen: title bar, body, and a footer pinned to the bottom.
-func Frame(d Dimensions, title, context, body, footer string) string {
+// Frame composes a screen: header bar, body, and a footer pinned to the bottom.
+//
+// The header used to be a title, a rule and a blank line. It is now a box whose height varies with
+// the terminal, and BodyHeight is computed from that same height, so the two cannot drift apart.
+func Frame(d Dimensions, s Status, body, footer string) string {
 	t := theme.Current()
 
 	var b strings.Builder
-	b.WriteString(t.Title.Render(title))
-	if context != "" {
-		b.WriteString(t.Muted.Render("  " + context))
-	}
+	b.WriteString(Header(d, s))
 	b.WriteString("\n")
-	b.WriteString(t.Border.Render(strings.Repeat("─", maxInt(1, minInt(d.Width, 200)))))
-	b.WriteString("\n\n")
 
 	bodyLines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	b.WriteString(strings.Join(bodyLines, "\n"))
@@ -102,7 +130,10 @@ func Keys(width int, pairs ...string) string {
 	var parts []string
 	var used int
 	for i := 0; i+1 < len(pairs); i += 2 {
-		cost := len(pairs[i]) + 1 + len(pairs[i+1])
+		// Measured in display cells rather than bytes. An arrow key hint is three bytes and one
+		// cell, and a footer that measures in bytes charges itself triple for it and drops a hint
+		// it had the room to draw.
+		cost := lipgloss.Width(pairs[i]) + 1 + lipgloss.Width(pairs[i+1])
 		if len(parts) > 0 {
 			cost += len(gap)
 		}

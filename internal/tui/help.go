@@ -38,22 +38,23 @@ func bindings() []section {
 	return []section{
 		{"anywhere", []binding{
 			{"?", "this screen, except while a message is half typed"},
+			{"ctrl+c", "quit, asked twice in a conversation"},
 		}},
 		{"chat", []binding{
 			{"enter", "send"},
 			{"shift+tab", "plan or build, which is what the agent may change"},
 			{"/", "the command list, which narrows as you type"},
-			{"up / down", "move the command list, while it is open"},
+			{"up / down", "move the command list, or otherwise your sent history"},
 			{"tab", "take the highlighted command"},
 			{"//", "send a literal prompt beginning with slash"},
-			{"esc", "interrupt the turn, keeping what has arrived"},
-			{"ctrl+c", "stop the turn, or quit when nothing is running"},
-			{"up / down", "walk back through what you have sent here"},
+			{"esc", "interrupt the turn, or clear a half written message"},
+			{"ctrl+c", "stop the turn, then twice to quit"},
 			{"ctrl+n", "a new conversation, keeping this one"},
 			{"ctrl+d", "agents"},
 			{"ctrl+k", "credentials"},
 			{"ctrl+r", "compact the conversation"},
-			{"pgup / pgdown", "scroll the conversation, as does the wheel"},
+			{"pgup / pgdown", "scroll the conversation, or the btw panel while it is up"},
+			{"mouse drag", "select conversation text, copied when you let go"},
 			{"ctrl+home / ctrl+end", "the top, and back to following"},
 			{"alt+enter", "a line break instead of sending"},
 			{"y", "allow a tool call once, while a question is up"},
@@ -91,8 +92,9 @@ func bindings() []section {
 			{"ctrl+s", "commit. nothing is staged until then"},
 			{"esc", "cancel, throwing the message away"},
 		}},
-		{"worktree monitor", []binding{
+		{"worktrees", []binding{
 			{"j / k", "move"},
+			{"g / G", "top and end, as do home and end"},
 			{"r", "refresh"},
 			{"K", "credentials"},
 			{"esc / tab / q", "agents"},
@@ -127,22 +129,16 @@ func HelpFrom(dim Dimensions, from int) string {
 		return strings.Join(lines, "\n")
 	}
 
-	// One line of the footer is spent saying there is more, so it comes out of the body.
-	height--
+	// The footer already says j/k scroll whenever the list overflows, so no body row is spent
+	// repeating it: the row it used to cost goes back to the list, which is the thing somebody
+	// opened this screen to read.
 	if from > len(lines)-height {
 		from = len(lines) - height
 	}
 	if from < 0 {
 		from = 0
 	}
-
-	shown := strings.Join(lines[from:from+height], "\n")
-	remaining := len(lines) - (from + height)
-	if remaining > 0 {
-		return shown + "\n" + styleCaveat.Render(
-			"  "+itoa(remaining)+" more lines, j and k to scroll")
-	}
-	return shown + "\n" + styleMuted.Render("  the end of the list, k to go back up")
+	return strings.Join(lines[from:from+height], "\n")
 }
 
 // HelpHeight is how many lines the overlay needs in full. For tests and for scroll bounds.

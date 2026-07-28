@@ -223,7 +223,7 @@ func TestTheWheelOnlyReachesTheScreenInFront(t *testing.T) {
 	engine := &stubEngine{session: manyTurns(40)}
 	app := launchWith(store, withOneKey(), engine)
 
-	if strings.Contains(plain(app.(tui.App).View()), "more lines below") {
+	if strings.Contains(plain(app.(tui.App).View()), "more below") {
 		t.Fatal("the conversation does not start at the tail, so this test proves nothing")
 	}
 
@@ -237,7 +237,7 @@ func TestTheWheelOnlyReachesTheScreenInFront(t *testing.T) {
 	}
 
 	back, _ := agents.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if view := plain(back.(tui.App).View()); strings.Contains(view, "more lines below") {
+	if view := plain(back.(tui.App).View()); strings.Contains(view, "more below") {
 		t.Errorf("scrolling on the agents view moved the conversation behind it:\n%s", view)
 	}
 }
@@ -253,7 +253,7 @@ func TestTheWheelScrollsTheConversationInFront(t *testing.T) {
 
 	scrolled, _ := app.(tui.App).Update(
 		tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
-	if view := plain(scrolled.(tui.App).View()); !strings.Contains(view, "more lines below") {
+	if view := plain(scrolled.(tui.App).View()); !strings.Contains(view, "more below") {
 		t.Errorf("the wheel did not scroll the conversation:\n%s", view)
 	}
 }

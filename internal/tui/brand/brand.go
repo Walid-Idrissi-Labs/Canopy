@@ -39,15 +39,20 @@ import "strings"
 // becomes the thing that makes it look machine generated. A campsite is not symmetric. What the
 // old rule was really protecting, that nothing looks accidentally clipped, is now covered by the
 // no-trailing-space and width checks, which are the parts that were load bearing.
+//
+// The fire is four rows rather than three, and layered: a mound of flame with a tip above it and a
+// spark drifting off to the side. The extra row is what makes it read as a campfire rather than as
+// a pile of bright cells, and the layers give the caller somewhere to put a second shade — the
+// heart of the fire, reported by FireCoreRegion, can be drawn a step brighter than its outside.
 const mark = `
             █                ▄▀
            ███              ▀▄
           █████              ▄▀
          ███████            ▀
-        █████████          ▄
-       ████▀▀▀████         ▄
-  ▄   ████     ████   ▄   ▄█▄
-  █  ████       ████  █  █▀█▀█
+        █████████           ▄
+       ████▀▀▀████         ▄█▄ ▄
+  ▄   ████     ████   ▄   ▄███▄
+  █  ████       ████  █  ██▀█▀██
  ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄`
 
 // MarkWidth is how many columns the mark occupies.

@@ -21,6 +21,8 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
+	tools *core.ToolRegistry
+
 	usingKey   string
 	usingModel string
 
@@ -42,10 +44,11 @@ type fakeEngine struct {
 
 	// mode is what has been chosen, and trust is the ceiling it cannot be raised above. Empty trust
 	// means no ceiling, which is what most of these tests want.
-	mode     core.Mode
-	steered  []string
-	asked    []string
-	asideErr error
+	mode           core.Mode
+	steered        []string
+	queuedSteering []string
+	asked          []string
+	asideErr       error
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -495,12 +498,12 @@ func TestScrollingAwayFromTheTailSaysSo(t *testing.T) {
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
-	if !strings.Contains(plain(m.Body()), "more lines below") {
+	if !strings.Contains(plain(m.Body()), "more below") {
 		t.Errorf("scrolling up should say the view is no longer following:\n%s", plain(m.Body()))
 	}
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlEnd})
-	if strings.Contains(plain(m.Body()), "more lines below") {
+	if strings.Contains(plain(m.Body()), "more below") {
 		t.Error("ctrl+end should return to following the tail")
 	}
 }
@@ -518,7 +521,7 @@ func TestSendingReturnsToTheTail(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 
 	m = press(typeText(m, "next question"), tea.KeyEnter)
-	if strings.Contains(plain(m.Body()), "more lines below") {
+	if strings.Contains(plain(m.Body()), "more below") {
 		t.Error("sending a message should return to the tail")
 	}
 }
@@ -884,8 +887,14 @@ func (e *fakeEngine) UseCredential(_, keyName, model string) error {
 
 func (e *fakeEngine) Steer(_, guidance string) error {
 	e.steered = append(e.steered, guidance)
+	// The real engine only queues while a turn is running; steering an idle session is a send.
+	if _, running := e.session.Active(); running {
+		e.queuedSteering = append(e.queuedSteering, guidance)
+	}
 	return nil
 }
+
+func (e *fakeEngine) Steering(string) []string { return e.queuedSteering }
 
 func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error) {
 	e.asked = append(e.asked, question)
@@ -893,4 +902,26 @@ func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error
 		return "", e.asideErr
 	}
 	return "the parser lives in internal/config", nil
+}
+
+func (e *fakeEngine) Tools() (*core.ToolRegistry, bool) { return e.tools, e.tools != nil }
+
+// The whole error, not its first line. The provider clients go to some trouble to keep the
+// provider's own words on the message, and a renderer that cut everything past the first line or
+// the first eighty columns would throw that detail away at the very last step.
+func TestAFailedTurnShowsTheWholeError(t *testing.T) {
+	failed := turn("t1", "go", "", core.TurnFailed)
+	failed.Error = "anthropic: rate-limited: rate limited, retry in 20s. The provider said: " +
+		"tokens per minute limit exceeded for this organization, see the usage page"
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{failed}}}
+
+	m := model(engine)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	view := plain(m.Body())
+	for _, want := range []string{"✗", "retry in 20s", "usage page"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the failed turn lost %q:\n%s", want, view)
+		}
+	}
 }

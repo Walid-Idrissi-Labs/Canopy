@@ -46,8 +46,17 @@ type Palette struct {
 	// green is the wrong colour for a tick.
 	Flame lipgloss.TerminalColor
 
+	// FlameCore is the heart of the fire, a step brighter than Flame. Its own entry for the same
+	// reason Flame is: it is a colour for a drawing, and borrowing a meaning for it would tie the
+	// middle of a campfire to whatever that meaning does next.
+	FlameCore lipgloss.TerminalColor
+
 	// Smoke is the wisp above the flame, and it gets the same exemption for the same reason.
 	Smoke lipgloss.TerminalColor
+
+	// SmokeFaint is smoke about to disappear: the highest wisp above the fire, a step dimmer than
+	// Smoke, which is what makes it read as fading out rather than as a stack of grey marks.
+	SmokeFaint lipgloss.TerminalColor
 
 	// The four categories a hand written lexer can tell apart without a full parser. Named for what
 	// a reader is looking at, not for the hue, so a colour blind palette or a light theme can pick
@@ -76,12 +85,14 @@ type Theme struct {
 	Warning lipgloss.Style
 	Info    lipgloss.Style
 
-	Logo   lipgloss.Style
-	Flame  lipgloss.Style
-	Smoke  lipgloss.Style
-	Border lipgloss.Style
-	Footer lipgloss.Style
-	Key    lipgloss.Style
+	Logo       lipgloss.Style
+	Flame      lipgloss.Style
+	FlameCore  lipgloss.Style
+	Smoke      lipgloss.Style
+	SmokeFaint lipgloss.Style
+	Border     lipgloss.Style
+	Footer     lipgloss.Style
+	Key        lipgloss.Style
 
 	// Cursor stands in for the terminal's own cursor, which cannot be positioned inside composed
 	// text without tracking every style's effect on the offset. A reversed cell is what terminal
@@ -148,10 +159,18 @@ var Default = Palette{
 	// colour and a logo with a palette.
 	Flame: lipgloss.AdaptiveColor{Light: brandSecondaryLight, Dark: brandSecondary},
 
+	// The heart of the fire is the same green pushed a step towards white on a dark terminal and a
+	// step towards ink on a light one: the same hue at a brighter weight, not a new colour, which is
+	// what keeps the fire reading as one thing with depth rather than as two things stacked.
+	FlameCore: lipgloss.AdaptiveColor{Light: "#8a9b02", Dark: "#d8ef3a"},
+
 	// And the smoke takes the accent grey, which is the third of the three and the only colour smoke
 	// could sensibly be. Between them the mark carries all three brand colours: the tent in the
 	// primary, the fire in the secondary, the smoke in the accent.
 	Smoke: lipgloss.AdaptiveColor{Light: brandAccentLight, Dark: brandAccent},
+
+	// The highest wisp is the same grey on its way to the background, which is where smoke goes.
+	SmokeFaint: lipgloss.AdaptiveColor{Light: "#9c9c9c", Dark: "#6e6e6e"},
 
 	// Syntax highlighting keeps to the same family, so a code block does not look like it was
 	// pasted in from another program. Keyword takes the primary, string takes the secondary, and
@@ -165,23 +184,25 @@ var Default = Palette{
 // New builds the styles for a palette.
 func New(p Palette) Theme {
 	return Theme{
-		Palette:  p,
-		Title:    lipgloss.NewStyle().Bold(true).Foreground(p.Text),
-		Heading:  lipgloss.NewStyle().Bold(true).Foreground(p.Muted),
-		Body:     lipgloss.NewStyle().Foreground(p.Text),
-		Muted:    lipgloss.NewStyle().Foreground(p.Muted),
-		Selected: lipgloss.NewStyle().Bold(true).Foreground(p.Text),
-		Success:  lipgloss.NewStyle().Foreground(p.Success),
-		Danger:   lipgloss.NewStyle().Foreground(p.Danger),
-		Warning:  lipgloss.NewStyle().Foreground(p.Warning),
-		Info:     lipgloss.NewStyle().Foreground(p.Info),
-		Logo:     lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
-		Flame:    lipgloss.NewStyle().Bold(true).Foreground(p.Flame),
-		Smoke:    lipgloss.NewStyle().Foreground(p.Smoke),
-		Border:   lipgloss.NewStyle().Foreground(p.Border),
-		Footer:   lipgloss.NewStyle().Foreground(p.Muted),
-		Key:      lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
-		Cursor:   lipgloss.NewStyle().Reverse(true),
+		Palette:    p,
+		Title:      lipgloss.NewStyle().Bold(true).Foreground(p.Text),
+		Heading:    lipgloss.NewStyle().Bold(true).Foreground(p.Muted),
+		Body:       lipgloss.NewStyle().Foreground(p.Text),
+		Muted:      lipgloss.NewStyle().Foreground(p.Muted),
+		Selected:   lipgloss.NewStyle().Bold(true).Foreground(p.Text),
+		Success:    lipgloss.NewStyle().Foreground(p.Success),
+		Danger:     lipgloss.NewStyle().Foreground(p.Danger),
+		Warning:    lipgloss.NewStyle().Foreground(p.Warning),
+		Info:       lipgloss.NewStyle().Foreground(p.Info),
+		Logo:       lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
+		Flame:      lipgloss.NewStyle().Bold(true).Foreground(p.Flame),
+		FlameCore:  lipgloss.NewStyle().Bold(true).Foreground(p.FlameCore),
+		Smoke:      lipgloss.NewStyle().Foreground(p.Smoke),
+		SmokeFaint: lipgloss.NewStyle().Foreground(p.SmokeFaint),
+		Border:     lipgloss.NewStyle().Foreground(p.Border),
+		Footer:     lipgloss.NewStyle().Foreground(p.Muted),
+		Key:        lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
+		Cursor:     lipgloss.NewStyle().Reverse(true),
 
 		InlineCode: lipgloss.NewStyle().Foreground(p.Text).Background(p.Highlight),
 
@@ -260,18 +281,20 @@ func Set(p Palette) {
 // It is also the honest choice on a terminal whose own palette fights the default one, which is
 // most of the sixteen colour ones.
 var Monochrome = Palette{
-	Name:      "mono",
-	Text:      lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Muted:     lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	Accent:    lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Success:   lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Danger:    lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Warning:   lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	Info:      lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	Border:    lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
-	Highlight: lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#222222"},
-	Flame:     lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	Smoke:     lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
+	Name:       "mono",
+	Text:       lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Muted:      lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	Accent:     lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Success:    lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Danger:     lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Warning:    lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	Info:       lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	Border:     lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
+	Highlight:  lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#222222"},
+	Flame:      lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	FlameCore:  lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	Smoke:      lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
+	SmokeFaint: lipgloss.AdaptiveColor{Light: "#bbbbbb", Dark: "#444444"},
 
 	CodeKeyword: lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
 	CodeString:  lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},

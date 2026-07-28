@@ -317,34 +317,54 @@ func (c *Client) classify(err error) *core.ProviderError {
 		}
 	}
 
+	// The provider's own words, kept and appended rather than replaced. The canned advice on each
+	// branch says what to do; the provider's message says what specifically happened — which limit,
+	// which model, what the billing state is — and throwing it away sends somebody to a dashboard
+	// to rediscover a sentence this function was already holding.
+	words := c.scrub(said(apiErr))
+	full := words
+	if full == "" {
+		full = c.scrub(safeMessage(apiErr))
+	}
+
 	out := &core.ProviderError{
 		Provider:   c.Name(),
 		StatusCode: apiErr.StatusCode,
-		Message:    c.scrub(safeMessage(apiErr)),
+		Message:    full,
 		Err:        err,
+	}
+	if apiErr.Response != nil {
+		out.RetryAfter = core.ParseRetryAfter(apiErr.Response.Header.Get("Retry-After"))
 	}
 
 	switch apiErr.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		out.Kind = core.ErrAuthentication
-		out.Message = "the credential was rejected. Check it with `canopy keys test`, or add it again"
+		out.Message = core.WithDetail(
+			"the credential was rejected. Check it with `canopy keys test`, or add it again", words)
 	case http.StatusNotFound:
 		out.Kind = core.ErrInvalidRequest
-		out.Message = "unknown model or endpoint. Check the model name on the profile"
+		out.Message = core.WithDetail(
+			"unknown model or endpoint. Check the model name on the profile", words)
 	case http.StatusRequestEntityTooLarge:
 		out.Kind = core.ErrContextLength
-		out.Message = "the request is too large. Compact the conversation or shorten the input"
+		out.Message = core.WithDetail(
+			"the request is too large. Compact the conversation or shorten the input", words)
 	case http.StatusTooManyRequests:
 		out.Kind = core.ErrRateLimited
-		out.Message = "rate limited"
+		advice := "rate limited"
+		if out.RetryAfter > 0 {
+			advice += ", retry in " + out.RetryAfter.String()
+		}
+		out.Message = core.WithDetail(advice, words)
 	case 529:
 		out.Kind = core.ErrOverloaded
-		out.Message = "the provider is overloaded"
+		out.Message = core.WithDetail("the provider is overloaded", words)
 	case http.StatusBadRequest:
 		out.Kind = core.ErrInvalidRequest
 		// A context length failure arrives as an ordinary 400, and it needs a different response
 		// from every other 400: compact the conversation rather than fix the request.
-		if strings.Contains(strings.ToLower(safeMessage(apiErr)), "context") {
+		if strings.Contains(strings.ToLower(full), "context") {
 			out.Kind = core.ErrContextLength
 		}
 	default:
@@ -356,6 +376,24 @@ func (c *Client) classify(err error) *core.ProviderError {
 	}
 
 	return out
+}
+
+// said is the message the provider wrote inside its error envelope, or nothing when it said
+// nothing beyond the status line.
+//
+// Distinct from safeMessage, which is the SDK's whole rendering of the failure: method, URL,
+// status and raw body. That is the right fallback for an unclassified error and the wrong thing to
+// append to advice, where only the provider's own sentence carries information the status did not.
+func said(apiErr *sdk.Error) string {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(apiErr.RawJSON()), &envelope) != nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.Error.Message)
 }
 
 // safeMessage reads an SDK error's text without trusting it not to panic.

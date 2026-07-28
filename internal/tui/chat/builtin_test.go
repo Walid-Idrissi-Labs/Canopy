@@ -288,3 +288,122 @@ func boxedChat(engine chat.Engine) chat.Model {
 	m.SetSize(96, 28)
 	return m
 }
+
+// The answer arrives in a panel of its own, bordered and exactly as wide as the message box, rather
+// than as a status line that lasted until the next keystroke.
+func TestBtwAnswersArriveInABorderedPanel(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "build the parser"}, State: core.TurnComplete},
+	}}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, cmd := run(m, "/btw which file holds the parser")
+	next, _ = next.Update(cmd())
+
+	lines := strings.Split(plain(next.Body()), "\n")
+	label, answer := -1, -1
+	for i, line := range lines {
+		if strings.Contains(line, "btw") && strings.Contains(line, "╭") {
+			label = i
+		}
+		if strings.Contains(line, "internal/config") {
+			answer = i
+		}
+	}
+	if label < 0 {
+		t.Fatalf("no labelled border above the answer:\n%s", strings.Join(lines, "\n"))
+	}
+	if answer < label {
+		t.Fatalf("the answer is outside the panel:\n%s", strings.Join(lines, "\n"))
+	}
+
+	// As wide as the message box, measured on the box's own top corner.
+	box := -1
+	for i := label + 1; i < len(lines); i++ {
+		if strings.Contains(lines[i], "╭─") {
+			box = i
+			break
+		}
+	}
+	if box < 0 {
+		t.Fatalf("no message box under the panel:\n%s", strings.Join(lines, "\n"))
+	}
+	panelEnd := len([]rune(strings.TrimRight(lines[label], " ")))
+	boxEnd := len([]rune(strings.TrimRight(lines[box], " ")))
+	if panelEnd != boxEnd {
+		t.Errorf("the panel ends at column %d and the box at %d, so they are not the same width",
+			panelEnd, boxEnd)
+	}
+}
+
+// Every aside asked in a conversation stays in the panel, and a bare /btw brings them back after
+// the panel has been folded away.
+func TestPreviousBtwsAreKeptAndABareBtwReopensThem(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "build the parser"}, State: core.TurnComplete},
+	}}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, cmd := run(m, "/btw where is the parser")
+	next, _ = next.Update(cmd())
+	next, cmd = run(next, "/btw why that library")
+	next, _ = next.Update(cmd())
+
+	view := plain(next.Body())
+	for _, want := range []string{"where is the parser", "why that library"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the panel lost %q:\n%s", want, view)
+		}
+	}
+
+	// Esc folds it away and the questions leave the screen with it.
+	closed, _ := press2(next, tea.KeyEsc)
+	if strings.Contains(plain(closed.Body()), "where is the parser") {
+		t.Errorf("esc did not close the panel:\n%s", plain(closed.Body()))
+	}
+
+	// A bare /btw is how they come back.
+	reopened, _ := run(closed, "/btw")
+	if !strings.Contains(plain(reopened.Body()), "where is the parser") {
+		t.Errorf("a bare /btw did not reopen the panel:\n%s", plain(reopened.Body()))
+	}
+	if len(engine.asked) != 2 {
+		t.Errorf("a bare /btw asked the model something: %v", engine.asked)
+	}
+}
+
+// A panel taller than its window scrolls, and the scroll stops at both ends.
+func TestTheBtwPanelScrollsAndStopsAtItsEnds(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "x"}, State: core.TurnComplete},
+	}}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 40)
+
+	next := m
+	var cmd tea.Cmd
+	for _, q := range []string{"one", "two", "three", "four", "five", "six"} {
+		next, cmd = run(next, "/btw "+q)
+		next, _ = next.Update(cmd())
+	}
+
+	// Six exchanges of two lines with blanks between them overflow eight rows, so the first
+	// question is off the top until the panel is scrolled.
+	if view := plain(next.Body()); strings.Contains(view, "? one") {
+		t.Fatalf("the panel shows more than its window:\n%s", view)
+	}
+	for range 20 {
+		next, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	}
+	if view := plain(next.Body()); !strings.Contains(view, "? one") {
+		t.Errorf("scrolling up never reaches the first aside:\n%s", view)
+	}
+	for range 40 {
+		next, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	}
+	if view := plain(next.Body()); !strings.Contains(view, "? six") {
+		t.Errorf("scrolling back down never returns to the newest aside:\n%s", view)
+	}
+}

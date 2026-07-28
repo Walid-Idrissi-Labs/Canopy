@@ -228,3 +228,33 @@ func TestTheKeySkipsModesThisAgentCannotEnter(t *testing.T) {
 		t.Errorf("the key landed on %q after confined, want build", got)
 	}
 }
+
+// A queued correction stays on screen, as itself, until it is delivered. The old feedback was one
+// sentence in the status row that vanished on the next keystroke, which read as the correction
+// having been swallowed — and a person who believes that types it again.
+func TestQueuedSteeringStaysOnScreenUntilDelivered(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{{
+		ID: "turn-1", Request: core.Message{Text: "build it"}, Text: "on it",
+		State: core.TurnStreaming,
+	}}}}
+	m := boxed(engine)
+
+	next, _ := run(m, "/steer use the existing parser")
+	view := plain(next.Body())
+	if !strings.Contains(view, "steering") || !strings.Contains(view, "use the existing parser") {
+		t.Fatalf("the queued guidance is not on screen:\n%s", view)
+	}
+
+	// Still there after other keystrokes, which is the whole point.
+	next = typeText(next, "meanwhile")
+	if !strings.Contains(plain(next.Body()), "use the existing parser") {
+		t.Errorf("the guidance vanished on the next keystroke:\n%s", plain(next.Body()))
+	}
+
+	// And gone the moment the engine no longer holds it, because by then it is an ordinary message
+	// in the transcript and there is nothing left to wait for.
+	engine.queuedSteering = nil
+	if strings.Contains(plain(next.Body()), "use the existing parser") {
+		t.Errorf("the pane outlived the queue:\n%s", plain(next.Body()))
+	}
+}

@@ -15,11 +15,14 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/clipboard"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -76,10 +79,24 @@ type Engine interface {
 	// attached has nothing to record.
 	Trail() *permission.Trail
 
+	// Tools is the registry this conversation was given, used to label a call by what kind of thing
+	// it is rather than by guessing from its name.
+	//
+	// Asked for rather than inferred because the transcript renders calls from tools it has never
+	// heard of. A table of known names would label the built in ones and leave everything from an
+	// MCP server unlabelled, which is exactly backwards: a tool from somebody else's server is the
+	// one where knowing it can run commands matters most. False when no tools are attached.
+	Tools() (*core.ToolRegistry, bool)
+
 	// Steer queues a correction for the next turn boundary and never cancels anything. Distinct from
 	// Cancel on purpose: correcting an agent by interrupting it throws away the work in progress,
 	// which usually means throwing away the reasoning that led to it.
 	Steer(sessionID, guidance string) error
+
+	// Steering is the guidance waiting for a session, oldest first. The screen shows it until it is
+	// delivered, because a correction that vanishes the moment it is typed reads as one that was
+	// swallowed, and somebody who thinks that types it again.
+	Steering(sessionID string) []string
 
 	// Aside answers a question from this conversation's context without joining it. Nothing is
 	// recorded, no turn is created, and a turn in flight is undisturbed, which is what separates
@@ -191,9 +208,40 @@ type Model struct {
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
 	markGeneration int
+	// True only while a mark tick is outstanding. A completed conversation draws static coals,
+	// so keeping a second animation timer alive there would redraw identical pixels forever.
+	markRunning bool
 
 	// menu is the command list that drops out of the message box.
 	menu menu
+
+	// asides is every btw asked in this conversation, oldest first, and btwOpen is whether the panel
+	// showing them is up. Kept here and only here: the engine deliberately records nothing about an
+	// aside, so the screen remembering what was asked is the whole of the history there is, and it
+	// leaves with the screen rather than being written anywhere.
+	asides []asideExchange
+
+	btwOpen bool
+	// btwScroll is how many lines up from the bottom of the panel the view is held, zero when
+	// following the latest answer.
+	btwScroll int
+
+	// sel is the mouse selection over the conversation, and clip is what puts its text on the
+	// clipboard. A function rather than a call, so tests can catch the text instead of writing to
+	// the machine's actual clipboard from a test run.
+	sel  selection
+	clip func(string) error
+
+	// copied is whether the "copied" confirmation is up, and copiedGeneration is which copy it
+	// belongs to, so the timer from an old copy cannot take down a newer one's message.
+	copied           bool
+	copiedGeneration int
+}
+
+// asideExchange is one btw question and the answer it got.
+type asideExchange struct {
+	question string
+	answer   string
 }
 
 // New builds a chat model over an engine and a session.
@@ -210,8 +258,10 @@ func New(engine Engine, sessionID, dir, keyName string) Model {
 		height:    20,
 		dir:       dir,
 		keyName:   keyName,
+		clip:      clipboard.Write,
 	}
 	m.refresh()
+	m.markRunning = m.markVisible()
 	m.input.LoadHistory(promptsOf(m.session))
 	return m
 }
@@ -227,7 +277,11 @@ func promptsOf(s core.Session) []string {
 
 // Init subscribes to engine events and starts the spinner and the mark.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.subscribe(), tick(), markTick(m.markGeneration))
+	commands := []tea.Cmd{m.subscribe(), tick()}
+	if m.markRunning {
+		commands = append(commands, markTick(m.markGeneration))
+	}
+	return tea.Batch(commands...)
 }
 
 // SubscribeCmd returns the event subscription on its own.
@@ -279,7 +333,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// one notification or, under load, as none at all for a moment, and this is the beat that
 		// guarantees the screen catches up regardless.
 		m.refresh()
-		return m, tick()
+		return m, tea.Batch(tick(), m.ensureMark())
 
 	case markTickMsg:
 		if msg.generation != m.markGeneration {
@@ -287,10 +341,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// rescheduled, which is what ends it.
 			return m, nil
 		}
-		if !m.blank() {
-			// The moment there is a conversation there is no opening screen to animate, and the
-			// ticker is not scheduled again, so the mark stops costing anything at all rather than
-			// going on redrawing something nobody can see. A new conversation starts a new one.
+		if !m.markVisible() {
+			m.markRunning = false
 			return m, nil
 		}
 		m.markStep++
@@ -302,10 +354,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.notice = ""
 			return m, nil
 		}
-		// Shown above the box rather than folded into the transcript, because it is not part of the
-		// conversation and putting it there would make it look like one. It goes when the next thing
-		// happens, which is right: an aside is read once.
-		m.notice = "btw " + msg.question + "\n" + msg.answer
+		// Into the panel above the box rather than folded into the transcript, because an aside is
+		// not part of the conversation and putting it there would make it look like one. The panel
+		// keeps every aside asked here, so an answer half remembered from twenty minutes ago is a
+		// bare /btw away rather than gone, and it opens on the newest.
+		m.asides = append(m.asides, asideExchange{question: msg.question, answer: msg.answer})
+		m.btwOpen = true
+		m.btwScroll = 0
+		m.notice = ""
 		m.err = ""
 		return m, nil
 
@@ -332,6 +388,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.refresh()
 		return m, nil
 
+	case copiedClearMsg:
+		// Only the timer that belongs to the message on screen takes it down. See finishSelection.
+		if msg.generation == m.copiedGeneration {
+			m.copied = false
+		}
+		return m, nil
+
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
@@ -348,22 +411,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // ignoring most of the gesture.
 const wheelStep = 3
 
-// handleMouse scrolls the conversation.
+// handleMouse scrolls the conversation with the wheel, and selects it with a drag.
 //
 // The wheel is the conversation's, and only the conversation's. It used to be the message box's by
 // accident: in the alternate screen most terminals translate the wheel into arrow key sequences, so
 // once up and down recalled what you had sent, scrolling back to reread something replaced what you
 // were typing with an old message. Asking for mouse events is what stops the translation happening,
-// which is the whole reason this exists.
+// which is the whole reason this exists — and it is also what takes the terminal's own
+// drag-to-select away, which the drag handling below gives back. See select.go.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress {
+	switch msg.Action {
+	case tea.MouseActionPress:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.scrollBy(wheelStep)
+		case tea.MouseButtonWheelDown:
+			m.scrollBy(-wheelStep)
+		case tea.MouseButtonLeft:
+			m.beginSelection(msg.X, msg.Y)
+		}
 		return m, nil
-	}
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		m.scrollBy(wheelStep)
-	case tea.MouseButtonWheelDown:
-		m.scrollBy(-wheelStep)
+
+	case tea.MouseActionMotion:
+		m.extendSelection(msg.X, msg.Y)
+		return m, nil
+
+	case tea.MouseActionRelease:
+		if m.sel.dragging {
+			return m.finishSelection()
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -408,9 +485,9 @@ func (m Model) promptLines() []string {
 	t := theme.Current()
 	req := m.prompt.Request
 
-	var lines []string
-	lines = append(lines, t.Warning.Render("This agent wants to "+describeRequest(req)))
-	lines = append(lines, "")
+	var body []string
+	body = append(body, t.Warning.Render("This agent wants to "+describeRequest(req)))
+	body = append(body, "")
 
 	// The thing being approved, shown verbatim and in full. A command summarised or truncated is a
 	// command somebody approved without having seen it.
@@ -420,30 +497,66 @@ func (m Model) promptLines() []string {
 	// remote server, and what an approval covers there is the exact call. Offering "always, this tool
 	// with exactly these arguments" while showing none of them asks somebody to agree to something
 	// they cannot see.
+	inner := m.width - promptChrome
 	switch {
 	case req.Opaque && req.Arguments != "":
-		for _, line := range wrap(req.Arguments, m.width-4) {
-			lines = append(lines, "  "+t.Body.Render(line))
+		for _, line := range wrap(req.Arguments, inner) {
+			body = append(body, t.Body.Render(line))
 		}
 	default:
 		if req.Command != "" {
-			for _, line := range wrap(req.Command, m.width-4) {
-				lines = append(lines, "  "+t.Body.Render(line))
+			for _, line := range wrap(req.Command, inner) {
+				body = append(body, t.Body.Render(line))
 			}
 		}
 		for _, path := range req.Paths {
-			lines = append(lines, "  "+t.Body.Render(path))
+			body = append(body, t.Body.Render(path))
 		}
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, t.Muted.Render("  "+m.prompt.Decision.Reason))
-	lines = append(lines, "")
-	lines = append(lines,
-		"  "+t.Key.Render("y")+t.Muted.Render(" once   ")+
+	body = append(body, "")
+	body = append(body, t.Muted.Render(m.prompt.Decision.Reason))
+	body = append(body, "")
+	body = append(body,
+		t.Key.Render("y")+t.Muted.Render(" once   ")+
 			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
-	return lines
+
+	return promptPanel(body, inner)
+}
+
+// promptChrome is the columns the question's frame spends on itself: an indent, two walls and a
+// space of padding inside each.
+const promptChrome = 8
+
+// promptPanel puts the question in a box of its own.
+//
+// It used to be plain lines at the bottom of the transcript, which put the most consequential thing
+// on the screen in the same shape as everything the agent had been saying up to it. A person
+// answering this is about to let something run on their machine, and the moment they are asked
+// should not look like more conversation.
+//
+// The frame is drawn in the warning colour rather than the border colour, so the box itself carries
+// the signal and the answer does not depend on somebody reading the first line. It sits inside the
+// transcript rather than over it, which is the existing decision and the right one: a modal covering
+// the conversation asks somebody to decide with the context hidden.
+func promptPanel(body []string, inner int) []string {
+	t := theme.Current()
+
+	const indent = "  "
+	rule := strings.Repeat("─", inner+2)
+
+	out := make([]string, 0, len(body)+2)
+	out = append(out, indent+t.Warning.Render("╭"+rule+"╮"))
+	for _, line := range body {
+		pad := inner - lipgloss.Width(ansi.Strip(line))
+		if pad < 0 {
+			pad = 0
+		}
+		out = append(out, indent+t.Warning.Render("│")+" "+line+strings.Repeat(" ", pad)+
+			" "+t.Warning.Render("│"))
+	}
+	return append(out, indent+t.Warning.Render("╰"+rule+"╯"))
 }
 
 // describeRequest says what is being asked for in words rather than in tool names.
@@ -527,6 +640,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	}
 
+	// The btw panel takes the keys that mean something to a panel, and only those, and only while
+	// it is up. Everything else still reaches the box, so a message can go on being typed over it.
+	if m.btwOpen {
+		switch msg.String() {
+		case "esc":
+			// The more local meaning gets the first press, which is the menu's rule too: stopping
+			// a turn or clearing the box is still one more press away.
+			m.btwOpen = false
+			return m, nil
+		case "pgup":
+			m.btwScrollBy(btwVisible / 2)
+			return m, nil
+		case "pgdown":
+			m.btwScrollBy(-btwVisible / 2)
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "enter":
 		return m.send()
@@ -548,6 +679,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.engine.Cancel(m.sessionID)
 			return m, nil
 		}
+		// With nothing running, escape clears a half written message, which is what it means in
+		// every comparable tool. Before this the only way to abandon a draft was ctrl+u, a key
+		// the footer never mentions.
+		if !m.input.Empty() {
+			m.input.Clear()
+			m.refreshMenu()
+			return m, nil
+		}
 		return m, nil
 
 	case "ctrl+r":
@@ -565,7 +704,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.scroll = len(m.transcript())
 		return m, nil
 
-	case "ctrl+end":
+	case "ctrl+end", "ctrl+down":
+		// Two keys for one thing, because ctrl+end is the one a terminal veteran reaches for and
+		// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
+		// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
 		m.scroll = 0
 		return m, nil
 	}
@@ -694,6 +836,14 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	m.scroll = 0
 	m.err = ""
 	m.notice = ""
+	// The asides go with the conversation they were asked about. Carrying them across would show
+	// answers about one agent's work over another agent's conversation. The selection goes too,
+	// since it is a place in a transcript that is no longer on screen.
+	m.asides = nil
+	m.btwOpen = false
+	m.btwScroll = 0
+	m.sel = selection{}
+	m.copied = false
 	m.input.Clear()
 	m.refresh()
 	// History belongs to the conversation, not to the box. Carrying it across would offer you, on
@@ -702,6 +852,24 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 
 	m.markStep = 0
 	m.markGeneration++
+	m.markRunning = m.markVisible()
+	if !m.markRunning {
+		return nil
+	}
+	return markTick(m.markGeneration)
+}
+
+func (m Model) markVisible() bool {
+	return m.blank() || m.working || m.compacting
+}
+
+// ensureMark starts the mark ticker on the transition from static to animated. Both the engine event
+// and spinner refresh paths call it; markRunning makes those observations converge on one timer.
+func (m *Model) ensureMark() tea.Cmd {
+	if m.markRunning || !m.markVisible() {
+		return nil
+	}
+	m.markRunning = true
 	return markTick(m.markGeneration)
 }
 
@@ -742,6 +910,10 @@ func (m Model) Awaiting() bool { return m.awaiting }
 // Input exposes the message box. For tests.
 func (m Model) InputValue() string { return m.input.Value() }
 
+// SetClipboard replaces what a finished selection writes to. For tests, which want to catch the
+// text rather than write to the machine's actual clipboard from a test run.
+func (m *Model) SetClipboard(write func(string) error) { m.clip = write }
+
 // InputEmpty reports whether there is nothing in the box.
 //
 // The screen around this one uses it to decide what a printable key means. With nothing typed there
@@ -761,10 +933,16 @@ func (m Model) blank() bool {
 	return (!m.loaded || len(m.session.Turns) == 0) && !m.awaiting
 }
 
+// Blank reports whether this conversation is still on its opening screen.
+//
+// Exported for the shell, which draws the name in the header only once the opening screen has gone.
+// Two copies of the name on one screen, one in the middle and one in the corner, is one too many.
+func (m Model) Blank() bool { return m.blank() }
+
 func (m Model) transcript() []string {
 	var lines []string
 	if len(m.session.Turns) > 0 {
-		lines = Transcript(m.session, m.width, m.spinnerFrame())
+		lines = Transcript(m.session, m.width, m.spinnerFrame(), m.toolKind)
 	}
 	if m.awaiting {
 		// At the bottom of the transcript rather than in a dialogue over it, so the command being
@@ -854,18 +1032,36 @@ func (m Model) contextLines() []string {
 // off the bottom of the terminal. That is the failure this arithmetic exists to prevent, and it is
 // invisible until somebody with a seven item list cannot see what they are typing.
 func (m Model) transcriptHeight() int {
-	h := m.height - m.input.Height() - 1 // one line for the status row
+	// The status row is measured rather than assumed to be one line. Several of the slash commands
+	// answer with a listing many lines tall, and budgeting one line for it pushed the box and the
+	// footer off the bottom of the frame the first time somebody ran /commands on a small terminal.
+	h := m.height - m.input.Height() - m.statusHeight()
 	if pane := m.taskPane(); pane != "" {
 		h -= strings.Count(pane, "\n") + 1
 	}
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+
+	// The btw panel and the queued steering take their rows from the conversation too, for the
+	// same reason.
+	h -= len(m.btwPanel())
+	h -= len(m.steeringPane())
+
+	// The jump pill takes its rows from the conversation too, and only while it is on screen. It is
+	// keyed on the scroll position rather than on the rendered pill because the pill's height is
+	// needed here to decide how much transcript to render, and asking the renderer would be a loop.
+	if m.scroll > 0 {
+		h -= pillHeight
+	}
 	if h < 1 {
 		return 1
 	}
 	return h
 }
+
+// pillHeight is how many rows the jump marker costs: two borders and its label.
+const pillHeight = 3
 
 // Body renders the screen.
 func (m Model) Body() string {
@@ -879,54 +1075,113 @@ func (m Model) Body() string {
 			step:    m.markStep,
 			// Below the box here, because the box is in the middle of the screen and below is where
 			// the room is. On a conversation in progress the box is on the floor and the list goes
-			// above it instead.
-			menu: m.menu.lines(m.width),
+			// above it instead. The btw panel goes with it, for the same reason.
+			panel: m.btwPanel(),
+			menu:  m.menu.lines(m.width, m.menuFilter()),
 		}.render()
 	}
 
-	lines := m.transcript()
-	visible := m.transcriptHeight()
-
 	// The tail is what matters, unless the user has deliberately scrolled away from it. A view that
 	// jumped to the top on every token would be unusable, and one that always pinned the bottom
-	// would make it impossible to read anything while an agent was talking.
-	end := len(lines) - m.scroll
-	if end > len(lines) {
-		end = len(lines)
-	}
-	if end < 1 {
-		end = 1
-	}
-	start := end - visible
-	if start < 0 {
-		start = 0
-	}
+	// would make it impossible to read anything while an agent was talking. The windowing itself
+	// lives in window(), which the mouse selection shares: the two have to agree exactly or the
+	// highlight lands one row off the pointer.
+	lines, start, end := m.window()
+	visible := m.transcriptHeight()
 
-	var b strings.Builder
-	shown := lines[start:end]
-	b.WriteString(strings.Join(shown, "\n"))
+	rows := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		rows = append(rows, m.highlighted(lines[i], i))
+	}
 
 	// Pad so the input box stays at the bottom rather than floating under however much has been
 	// said so far.
-	if pad := visible - len(shown); pad > 0 {
-		b.WriteString(strings.Repeat("\n", pad))
+	for pad := visible - len(rows); pad > 0; pad-- {
+		rows = append(rows, "")
 	}
 
 	if tasks := m.taskPane(); tasks != "" {
-		b.WriteString("\n")
-		b.WriteString(tasks)
+		rows = append(rows, strings.Split(tasks, "\n")...)
 	}
+	// Guidance waiting for the agent stays on screen until it is delivered.
+	rows = append(rows, m.steeringPane()...)
+	// The btw panel sits above the box, where the answers to questions about the conversation are
+	// close to the conversation they are about without being in it.
+	rows = append(rows, m.btwPanel()...)
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
-	for _, line := range m.menu.lines(m.width) {
-		b.WriteString("\n")
-		b.WriteString(line)
-	}
+	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
+	// Last before the status row and the box, which puts it directly on top of the thing somebody
+	// is about to type into. See jumpPill.
+	rows = append(rows, m.jumpPill(len(lines)-end)...)
+
+	// The smoke drifts up from the fire into whatever air these rows have spare.
+	m.driftSmoke(rows)
+
+	var b strings.Builder
+	b.WriteString(strings.Join(rows, "\n"))
 	b.WriteString("\n")
-	b.WriteString(m.statusRow(len(lines) - end))
+	b.WriteString(m.flameOver(m.statusRow(len(lines) - end)))
 	b.WriteString("\n")
 	b.WriteString(m.inputBox())
 	return b.String()
+}
+
+// flameOver puts the tip of the fire above its base, at the right hand end of the status row.
+//
+// The base rides the box's top edge and holds still; this is the part that dances. It is drawn only
+// while the fire is lit, so a finished turn leaves coals on the rule and nothing above them.
+//
+// Right aligned to the same columns the base occupies, computed from the box rather than guessed, so
+// the flame sits on the fire instead of near it. The status row's own text is measured with its
+// styling stripped, because a row measured with escape sequences in it comes out far too wide and the
+// padding disappears.
+func (m Model) flameOver(status string) string {
+	if m.blank() || (!m.working && !m.compacting) {
+		return status
+	}
+
+	// One space of padding inside the box wall, then the fire, then the wall itself.
+	column := m.width - 2 - brand.EmberWidth
+	used := lipgloss.Width(ansi.Strip(status))
+	if column <= used {
+		return status
+	}
+	return status + strings.Repeat(" ", column-used) +
+		theme.Current().Flame.Render(brand.EmberTip(m.markStep))
+}
+
+// driftSmoke lets a wisp or two rise from the fire into the rows above the status row, in place.
+//
+// A little way into the conversation and no further: the near wisp one row above the flame's tip and
+// a fainter, sparser one a row above that, so the smoke visibly thins and fades rather than climbing
+// through somebody's transcript. Each wisp is drawn only where its row has nothing else in those
+// columns — smoke goes behind words, not over them — and not at all while the view is scrolled away
+// from the tail, where the rows above the box are the middle of something being read.
+func (m Model) driftSmoke(rows []string) {
+	if m.blank() || (!m.working && !m.compacting) || m.scroll > 0 {
+		return
+	}
+	t := theme.Current()
+	fades := []lipgloss.Style{t.Smoke, t.SmokeFaint}
+
+	column := m.width - 2 - brand.EmberWidth
+	for rise := 1; rise <= len(fades); rise++ {
+		i := len(rows) - rise
+		if i < 0 {
+			return
+		}
+		if used := lipgloss.Width(ansi.Strip(rows[i])); used <= column {
+			wisp := strings.TrimRight(brand.EmberWisp(m.markStep, rise), " ")
+			rows[i] += strings.Repeat(" ", column-used+leading(wisp)) +
+				fades[rise-1].Render(strings.TrimLeft(wisp, " "))
+		}
+	}
+}
+
+// leading is how many columns of air position a wisp inside its block.
+func leading(wisp string) int {
+	return len([]rune(wisp)) - len([]rune(strings.TrimLeft(wisp, " ")))
 }
 
 // maxTaskLines is how tall the task pane may grow before it summarises instead.
@@ -981,10 +1236,209 @@ func (m Model) taskPane() string {
 	return b.String()
 }
 
+// btwVisible is how many content rows the panel shows at once.
+//
+// Eight. Enough for a question and a real answer with a previous exchange peeking above it, few
+// enough that the panel is a margin note rather than a second transcript competing with the first.
+const btwVisible = 8
+
+// btwContent is every aside laid out for the panel, oldest first, wrapped to its width.
+func (m Model) btwContent(inner int) []string {
+	t := theme.Current()
+
+	var lines []string
+	for i, exchange := range m.asides {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		// The question carries a marker and the answer sits under it in the muted colour, so a
+		// stack of exchanges reads as questions with answers rather than as one run of text.
+		for j, line := range wrap(exchange.question, inner-2) {
+			prefix := t.Key.Render("? ")
+			if j > 0 {
+				prefix = "  "
+			}
+			lines = append(lines, prefix+t.Body.Render(line))
+		}
+		for _, line := range wrap(exchange.answer, inner) {
+			lines = append(lines, t.Muted.Render(line))
+		}
+	}
+	return lines
+}
+
+// btwScrollBy moves the panel's view, bounded at both ends for the reason the transcript's is.
+func (m *Model) btwScrollBy(lines int) {
+	m.btwScroll += lines
+	inner := m.width - boxChrome
+	if inner < 6 {
+		inner = 6
+	}
+	if limit := len(m.btwContent(inner)) - btwVisible; m.btwScroll > limit {
+		m.btwScroll = limit
+	}
+	if m.btwScroll < 0 {
+		m.btwScroll = 0
+	}
+}
+
+// btwPanel is the asides in a box of their own, above the message box and exactly as wide.
+//
+// A bordered panel rather than a line in the status row, which is where the answer used to go and
+// where it lasted until the next keystroke. An aside somebody asked twenty minutes ago is still
+// here, scrolled to with pgup, and the whole thing folds away on esc and comes back on a bare /btw.
+// It is deliberately in the border colour rather than a signal colour: nothing in it is part of the
+// conversation, and the frame should say so.
+func (m Model) btwPanel() []string {
+	if !m.btwOpen || len(m.asides) == 0 {
+		return nil
+	}
+	t := theme.Current()
+
+	inner := m.width - boxChrome
+	if inner < 6 {
+		inner = 6
+	}
+
+	content := m.btwContent(inner)
+	end := len(content) - m.btwScroll
+	if end > len(content) {
+		end = len(content)
+	}
+	if end < 1 {
+		end = 1
+	}
+	start := end - btwVisible
+	if start < 0 {
+		start = 0
+	}
+
+	// The edge names the panel and says how to work it, in the space the rule was spending anyway.
+	// Dropped whole on a terminal too narrow for it, because a label that wraps the edge breaks the
+	// frame it is written on.
+	label := "btw"
+	if len(content) > btwVisible {
+		label = "btw · pgup to scroll"
+	}
+	label += " · esc to close"
+
+	top := " " + t.Border.Render("╭"+strings.Repeat("─", inner+2)+"╮")
+	if rest := inner - lipgloss.Width(label) - 1; rest >= 0 {
+		top = " " + t.Border.Render("╭─") + " " + t.Muted.Render(label) + " " +
+			t.Border.Render(strings.Repeat("─", rest)+"╮")
+	}
+
+	out := make([]string, 0, btwVisible+2)
+	out = append(out, top)
+	for _, line := range content[start:end] {
+		pad := inner - lipgloss.Width(ansi.Strip(line))
+		if pad < 0 {
+			pad = 0
+		}
+		out = append(out, " "+t.Border.Render("│")+" "+line+strings.Repeat(" ", pad)+
+			" "+t.Border.Render("│"))
+	}
+	out = append(out, " "+t.Border.Render("╰"+strings.Repeat("─", inner+2)+"╯"))
+	return out
+}
+
+// steeringChip is the label a queued correction sits behind, sized once so continuation lines can
+// line their text up under the first.
+const steeringChip = "  steering  "
+
+// steeringPane is the guidance waiting for the agent, shown from the keystroke that queued it until
+// the moment it is delivered.
+//
+// It shows the correction itself rather than a sentence about it, which is the difference between
+// feedback and reassurance: "queued" tells you something happened, the text tells you the right
+// thing happened, and it staying on screen tells you it has not been forgotten. It disappears on
+// its own when the turn finishes, because that is when the guidance becomes an ordinary message in
+// the transcript and there is nothing left to wait for.
+func (m Model) steeringPane() []string {
+	if m.blank() {
+		return nil
+	}
+	queued := m.engine.Steering(m.sessionID)
+	if len(queued) == 0 {
+		return nil
+	}
+	t := theme.Current()
+
+	// The arrival note rides the first line, and is dropped whole on a terminal too narrow to give
+	// the guidance most of the row: the guidance is the content, the note is a caption.
+	const note = "  · delivered when this turn finishes"
+	suffix := note
+	room := m.width - len(steeringChip) - len(note) - 2
+	if room < 16 {
+		suffix = ""
+		room = m.width - len(steeringChip) - 2
+	}
+
+	out := make([]string, 0, len(queued))
+	for i, guidance := range queued {
+		if i == 0 {
+			out = append(out, t.Info.Render(steeringChip)+
+				t.Body.Render(truncate(guidance, room))+t.Muted.Render(suffix))
+			continue
+		}
+		out = append(out, strings.Repeat(" ", len(steeringChip))+
+			t.Body.Render(truncate(guidance, m.width-len(steeringChip)-2)))
+	}
+	return out
+}
+
+// jumpPill is the marker that appears when the view has stopped following the tail.
+//
+// It exists because scrolling up to reread something and an agent having gone quiet look identical
+// from the outside: in both cases the bottom of the transcript stops moving. Somebody who has
+// forgotten they scrolled will sit and wait for a reply that arrived four screens ago.
+//
+// A bordered marker rather than the line of text this used to be, and it sits directly on top of the
+// message box rather than in the status row. That position is the whole idea: it is between the
+// conversation and the place your eyes already are when you go back to typing, so it is in the way
+// in the one sense that helps and no other. The status row it vacated is now free for the thing that
+// belongs there, which is what the agent is doing.
+//
+// Returns nothing when the view is at the tail, which is most of the time.
+func (m Model) jumpPill(below int) []string {
+	if below <= 0 {
+		return nil
+	}
+	t := theme.Current()
+
+	label := fmt.Sprintf(" ↓ %d more below   ctrl+↓ to jump ", below)
+	if lipgloss.Width(label) > m.width-4 {
+		// Narrow terminals lose the count rather than the key. The number is interesting and the
+		// way out is the part somebody actually needs.
+		label = " ↓ ctrl+↓ "
+	}
+
+	inner := lipgloss.Width(label)
+	top := "╭" + strings.Repeat("─", inner) + "╮"
+	bottom := "╰" + strings.Repeat("─", inner) + "╯"
+
+	// Indented to sit above the message box rather than flush against the edge, so it reads as
+	// belonging to the box it is pointing at.
+	const indent = "  "
+	return []string{
+		indent + t.Warning.Render(top),
+		indent + t.Warning.Render("│") + t.Warning.Render(label) + t.Warning.Render("│"),
+		indent + t.Warning.Render(bottom),
+	}
+}
+
+// statusHeight is how many rows the status will occupy.
+func (m Model) statusHeight() int { return 1 + strings.Count(m.statusRow(0), "\n") }
+
 // statusRow is the line between the conversation and the box.
 func (m Model) statusRow(below int) string {
 	t := theme.Current()
 
+	// The copy confirmation outranks everything, because it is the acknowledgement of the thing
+	// that happened most recently and it takes itself away in a moment either way.
+	if m.copied {
+		return t.Success.Render("  ✓ copied to clipboard")
+	}
 	if m.err != "" {
 		return t.Danger.Render("  " + m.err)
 	}
@@ -992,11 +1446,6 @@ func (m Model) statusRow(below int) string {
 	// keystroke, and a spinner saying "working" is not the thing to answer.
 	if m.notice != "" {
 		return t.Warning.Render("  " + m.notice)
-	}
-	if below > 0 {
-		// Said explicitly, because a view that has silently stopped following the tail looks
-		// identical to one where nothing is happening.
-		return t.Warning.Render(fmt.Sprintf("  %d more lines below, ctrl+end to follow", below))
 	}
 	if m.awaiting {
 		return t.Warning.Render("  waiting for you")
@@ -1041,7 +1490,7 @@ func (m Model) inputBox() string {
 
 	var b strings.Builder
 	b.WriteString(" " + m.boxTop(topLeft, topRight, horizontal, inner+2) + "\n")
-	for _, line := range m.input.Lines() {
+	for _, line := range m.commandLit(m.input.Lines()) {
 		// Padded to the full inner width so the right hand border stays in one column whatever is
 		// typed. A border that moves with the text reads as a rendering fault.
 		pad := inner - lipgloss.Width(line)
@@ -1053,6 +1502,63 @@ func (m Model) inputBox() string {
 	}
 	b.WriteString(" " + t.Border.Render(bottomLeft+rule+bottomRight))
 	return b.String()
+}
+
+// menuFilter is the command fragment being typed, for the list to light its matches by.
+func (m Model) menuFilter() string {
+	prefix, ok := commandPrefix(m.input.Value())
+	if !ok {
+		return ""
+	}
+	return prefix
+}
+
+// commandLit colours a command at the head of the box in the secondary colour, once it names one
+// that actually exists.
+//
+// The colour is confirmation, not decoration: the moment /new turns green you know it will run as a
+// command rather than be sent as a message, which is otherwise only discoverable by sending it. A
+// name that matches nothing stays plain, which is the same signal in the other direction.
+func (m Model) commandLit(lines []string) []string {
+	name, ok := m.typedCommand()
+	if !ok || len(lines) == 0 {
+		return lines
+	}
+	// Matched on the rendered line rather than assumed, because the drawn cursor is escape
+	// sequences in the middle of the text: with the cursor inside the name the prefix will not
+	// match, and skipping the highlight there is right anyway — the menu is open and doing it.
+	token := "/" + name
+	if !strings.HasPrefix(lines[0], token) {
+		return lines
+	}
+	lines[0] = theme.Current().Success.Render(token) + lines[0][len(token):]
+	return lines
+}
+
+// typedCommand is the command the box currently begins with, when it names one that exists.
+func (m Model) typedCommand() (string, bool) {
+	value := m.input.Value()
+	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") {
+		return "", false
+	}
+	name := strings.TrimPrefix(value, "/")
+	if at := strings.IndexAny(name, " \t\r\n"); at >= 0 {
+		name = name[:at]
+	}
+	if name == "" {
+		return "", false
+	}
+	for _, item := range builtinItems() {
+		if item.name == name {
+			return name, true
+		}
+	}
+	for _, command := range m.commands.All() {
+		if command.Name == name {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 // boxTop draws the top edge of the message box with the mode and the model written into it.
@@ -1094,23 +1600,88 @@ func (m Model) boxTop(left, right, horizontal string, width int) string {
 	}
 
 	rest := width - lipgloss.Width(label) - 3
+
+	// The campfire rides on the right hand end of the rule, once the opening screen has gone.
+	//
+	// The mark in the corner of the opening screen is the same fire, and it disappears with that
+	// screen. Losing it entirely the moment somebody says something makes the program feel like two
+	// programs, so it moves here: five cells at the far end of a rule that was empty anyway.
+	//
+	// **It is lit while the agent is working and out when it is not**, which is the part that earns
+	// it the space. A spinner already says something is happening and says it in the status row,
+	// where somebody has to look. This says the same thing in the corner of the box they are already
+	// looking at, and it says the opposite just as clearly: a fire that has gone out is a turn that
+	// has finished. The shape changes as well as the colour, so it still reads under NO_COLOR.
+	fire := ""
+	if !m.blank() && rest >= brand.EmberWidth+2 {
+		if m.working || m.compacting {
+			fire = " " + emberBase() + " "
+		} else {
+			fire = " " + emberCoals() + " "
+		}
+		rest -= brand.EmberWidth + 2
+	}
+
 	return t.Border.Render(left+horizontal) + " " + written + " " +
-		t.Border.Render(strings.Repeat(horizontal, rest)+right)
+		t.Border.Render(strings.Repeat(horizontal, rest)) + fire + t.Border.Render(right)
+}
+
+// emberBase draws the bed of the fire, its heart a step brighter than its ends.
+//
+// Two shades of the same green rather than one, because a fire is brightest in the middle, and that
+// small difference is what makes seven cells on a border rule read as burning rather than as a row
+// of green marks. The split columns come from the brand package so the two cannot drift apart.
+func emberBase() string {
+	t := theme.Current()
+	return heartOf(brand.EmberBase, t.Flame, t.FlameCore)
+}
+
+// emberCoals draws the fire gone out: cold grey at the edges, the last of the warmth in the middle.
+//
+// The same split as the lit base and the opposite direction of contrast — the ends fade towards the
+// background while the centre keeps the plainer grey — which is what a real fire does as it dies:
+// it goes out from the outside in.
+func emberCoals() string {
+	t := theme.Current()
+	return heartOf(brand.EmberOut, t.SmokeFaint, t.Smoke)
+}
+
+// heartOf styles a seven cell drawing with one style at its ends and another over its middle, the
+// split coming from the brand package so the two cannot drift apart.
+func heartOf(drawing string, ends, middle lipgloss.Style) string {
+	runes := []rune(drawing)
+	core, end := brand.EmberCoreColumn, brand.EmberCoreColumn+brand.EmberCoreWidth
+	return ends.Render(string(runes[:core])) +
+		middle.Render(string(runes[core:end])) +
+		ends.Render(string(runes[end:]))
 }
 
 // Context is what the frame shows beside the title.
-func (m Model) Context() string {
+// Context is the detail line, joined. Kept for callers that want one string.
+func (m Model) Context() string { return strings.Join(m.ContextParts(), "  ") }
+
+// ContextParts is the same detail, in the order it should survive a narrow terminal.
+//
+// Separate from Context because the header drops these from the right rather than truncating the
+// joined string. Truncating a joined string cuts a fact in half, and half of "12.3k tokens" is a
+// number with no unit on it.
+func (m Model) ContextParts() []string {
 	parts := []string{}
 	if m.agentName != "" {
 		// First, because with several agents the question "whose conversation am I in" comes before
 		// every other thing this line says.
 		parts = append(parts, m.agentName)
 	}
-	if m.dir != "" {
-		parts = append(parts, m.dir)
-	}
-	if m.keyName != "" {
-		parts = append(parts, m.keyName)
+	// The opening screen already says where the agent is working and what it is talking to, along
+	// its bottom left, so while that screen is up the header does not say the same two things three
+	// rows above it. They move up here the moment the conversation starts and takes the floor back.
+	if !m.blank() {
+		if m.dir != "" {
+			parts = append(parts, m.dir)
+		}
+		if m.keyName != "" {
+			parts = append(parts, m.keyName)
+		}
 	}
 
 	usage := m.session.Usage()
@@ -1130,21 +1701,74 @@ func (m Model) Context() string {
 	if len(m.session.Turns) > 0 {
 		parts = append(parts, m.contextMeter())
 	}
-	return strings.Join(parts, "  ")
+	return parts
 }
 
 // contextMeter is the "how full is this conversation" figure in the header.
+//
+// A drawn bar as well as the number, because a bar is read at a glance from across a desk and a
+// percentage has to be found and parsed. The number stays beside it for the person who wants the
+// exact figure, and the bar is built from the same two characters as every rule in the interface,
+// so it degrades to nothing stranger than a line on a font that has trouble.
+//
+// The fill goes through the traffic light as it grows: the signature green while there is plenty of
+// room, amber past the halfway-and-some mark, red when compaction is due. The number takes the same
+// colour, so the two halves of the meter cannot tell different stories, and the empty track stays in
+// the border grey, which is what makes the filled part read as filled.
 func (m Model) contextMeter() string {
 	t := theme.Current()
 	use := m.session.ContextUse()
+	fraction := use.Fraction()
 
-	text := "context " + use.String()
+	tone := t.Success
 	switch {
-	case use.NeedsCompaction():
-		return t.Warning.Render(text + ", ctrl+r to compact")
-	case use.Fraction() > 0.5:
-		return t.Info.Render(text)
-	default:
-		return t.Muted.Render(text)
+	case use.NeedsCompaction() || fraction >= 0.85:
+		tone = t.Danger
+	case fraction >= 0.6:
+		tone = t.Warning
 	}
+
+	filled := int(fraction*float64(meterWidth) + 0.5)
+	if filled > meterWidth {
+		filled = meterWidth
+	}
+	// Anything at all shows one cell. A conversation that has started using context showing an
+	// empty bar reads as a meter that is broken rather than one that is barely used.
+	if filled <= 0 {
+		filled = 0
+		if fraction > 0 {
+			filled = 1
+		}
+	}
+
+	out := t.Muted.Render("context ") +
+		tone.Render(strings.Repeat("█", filled)) +
+		t.Border.Render(strings.Repeat("─", meterWidth-filled)) +
+		" " + tone.Render(use.String())
+	if use.NeedsCompaction() {
+		out += t.Warning.Render(", ctrl+r to compact")
+	}
+	return out
+}
+
+// meterWidth is how many cells the header bar spends. Ten: enough steps that the colour change
+// lands mid bar rather than at its ends, few enough that the bar is a detail rather than a banner.
+const meterWidth = 10
+
+// toolKind answers what kind of thing a tool is, for the transcript's labels.
+//
+// Asked of the registry this conversation was actually given rather than of a list of known names,
+// so a tool from an MCP server is labelled by the same rule as a built in one. That matters more for
+// the remote ones: every MCP tool is an execute tool whatever its server calls it, and "run" against
+// a name somebody has never seen is the most useful thing the label says all day.
+func (m Model) toolKind(name string) (core.ToolKind, bool) {
+	registry, ok := m.engine.Tools()
+	if !ok || registry == nil {
+		return "", false
+	}
+	tool, found := registry.Get(name)
+	if !found {
+		return "", false
+	}
+	return tool.Kind(), true
 }

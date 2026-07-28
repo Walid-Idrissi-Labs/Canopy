@@ -178,11 +178,10 @@ func (m *Model) steer(guidance string) {
 		m.err = err.Error()
 		return
 	}
-	if m.working {
-		m.notice = "queued, and it arrives when this turn finishes rather than interrupting it"
-		return
-	}
-	m.notice = "sent"
+	// No notice in either case, because both outcomes are visible as themselves from this keystroke
+	// on: guidance queued behind a running turn sits in the steering pane above the box until it is
+	// delivered, and guidance sent to an idle agent appears in the transcript as the message it
+	// became. A sentence describing either would be the screen saying what it is already showing.
 	m.refresh()
 }
 
@@ -194,6 +193,14 @@ func (m *Model) steer(guidance string) {
 // goes on working. The model in the next real turn has no idea it was asked.
 func (m *Model) aside(question string) tea.Cmd {
 	if question == "" {
+		// Bare, it reopens the panel of everything asked so far, which is how an answer from
+		// twenty minutes ago is found again. Only when nothing has been asked yet does it explain
+		// itself instead.
+		if len(m.asides) > 0 {
+			m.btwOpen = !m.btwOpen
+			m.btwScroll = 0
+			return nil
+		}
 		m.err = "what would you like to know? For example `/btw which file holds the parser`"
 		return nil
 	}

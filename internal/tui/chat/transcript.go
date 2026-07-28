@@ -1,6 +1,8 @@
 package chat
 
 import (
+	"github.com/charmbracelet/lipgloss"
+
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -24,7 +26,16 @@ import (
 // a reply be shown as a finished answer, and every other state gets a label saying what it actually
 // is. A refusal, a truncation and an interruption all leave text that reads like an answer, and the
 // label is the only thing standing between that text and somebody acting on it.
-func Transcript(session core.Session, width int, spinner string) []string {
+// KindOf says what kind of thing a tool is, by name.
+//
+// A function rather than a table in this file, because the transcript renders calls from tools it has
+// never heard of. A table would label the built in ones and leave everything from an MCP server
+// blank, which is exactly backwards: a tool from somebody else's server is the one where knowing it
+// can run commands matters most. False for a name nothing knows about, which draws no label rather
+// than a wrong one.
+type KindOf func(name string) (core.ToolKind, bool)
+
+func Transcript(session core.Session, width int, spinner string, kinds KindOf) []string {
 	if width < 20 {
 		width = 20
 	}
@@ -43,7 +54,7 @@ func Transcript(session core.Session, width int, spinner string) []string {
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, renderTurn(turn, width, spinner)...)
+		lines = append(lines, renderTurn(turn, width, spinner, kinds)...)
 	}
 	return lines
 }
@@ -82,7 +93,7 @@ func shortCount(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-func renderTurn(turn core.Turn, width int, spinner string) []string {
+func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf) []string {
 	t := theme.Current()
 	var lines []string
 
@@ -112,12 +123,10 @@ func renderTurn(turn core.Turn, width int, spinner string) []string {
 	}
 
 	for _, call := range turn.ToolCalls {
-		lines = append(lines, renderToolCall(call, resultFor(turn, call), width)...)
+		lines = append(lines, renderToolCall(call, resultFor(turn, call), width, kinds)...)
 	}
 
-	if status := statusLine(turn, spinner); status != "" {
-		lines = append(lines, status)
-	}
+	lines = append(lines, statusLines(turn, spinner, width)...)
 	return lines
 }
 
@@ -144,40 +153,99 @@ func resultFor(turn core.Turn, call core.ToolCall) *core.ToolResult {
 	return nil
 }
 
-func renderToolCall(call core.ToolCall, result *core.ToolResult, width int) []string {
+func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kinds KindOf) []string {
 	t := theme.Current()
 
-	head := t.Info.Render("  " + call.Name)
+	// The label is what makes a call readable at a glance rather than at a read. A wall of tool
+	// names all in one colour is a wall; the same wall with "run" against the one that shells out is
+	// something an eye can skim for the calls worth looking at.
+	label, labelStyle := kindLabel(call.Name, kinds)
+
+	head := "  " + labelStyle.Render(label) + " " + t.Info.Render(call.Name)
 	if subject := summariseArguments(call.Input); subject != "" {
 		// Truncated to the width rather than wrapped. The argument line is a label, and a file path
 		// spilling onto three lines turns a glance into a paragraph.
-		head += "  " + t.Muted.Render(truncate(subject, width-len(call.Name)-6))
+		spent := 2 + lipgloss.Width(label) + 1 + lipgloss.Width(call.Name) + 2
+		head += "  " + t.Muted.Render(truncate(subject, width-spent))
 	}
 	lines := []string{head}
+
+	// Aligned under the tool name rather than under the label, so the outcome reads as belonging to
+	// the call above it and the labels stay in one column down the left.
+	const indent = "      "
 
 	// No result yet means it is still running, or waiting on a person. Said in words, because a
 	// call that has been sitting there for a minute and a call that finished instantly look
 	// identical if the only difference is a line that is not there.
 	if result == nil {
-		return append(lines, t.Muted.Render("    running"))
+		return append(lines, t.Muted.Render(indent+"running"))
 	}
 
 	timing := formatDuration(result.Duration)
 	if result.IsError {
-		lines = append(lines, t.Danger.Render("    failed after "+timing))
+		lines = append(lines, t.Danger.Render(indent+"✗ failed after "+timing))
 		// The reason, in the agent's own words. This is the line that says whether the agent is
 		// stuck on something a person can fix, such as a missing tool or a refused permission.
-		for _, line := range wrap(firstLine(result.Content), width-6) {
-			lines = append(lines, t.Muted.Render("    "+line))
+		for _, line := range wrap(firstLine(result.Content), width-len(indent)-2) {
+			lines = append(lines, t.Muted.Render(indent+"  "+line))
 		}
 		return lines
 	}
 
-	summary := "    ok in " + timing
+	summary := indent + "✓ " + timing
 	if extra := summariseResult(result.Content); extra != "" {
 		summary += ", " + extra
 	}
 	return append(lines, t.Muted.Render(summary))
+}
+
+// kindLabels are the four character tags, one per kind.
+//
+// Four characters and padded, so the tool names line up in a column no matter which kinds are on
+// screen. A ragged left edge is what makes a list of calls read as noise.
+//
+// Words rather than glyphs. A pencil and a globe are charming in the two fonts that have them and are
+// missing glyph boxes everywhere else, and this is the part of the screen somebody stares at while an
+// agent works. It also means the distinction survives NO_COLOR, which colour alone would not.
+var kindLabels = map[core.ToolKind]string{
+	core.ToolRead:    "read",
+	core.ToolWrite:   "edit",
+	core.ToolExecute: "run ",
+	core.ToolNetwork: "net ",
+	core.ToolGit:     "git ",
+}
+
+// kindLabel is the tag and the colour for one call.
+func kindLabel(name string, kinds KindOf) (string, lipgloss.Style) {
+	t := theme.Current()
+	if kinds == nil {
+		return "    ", t.Muted
+	}
+
+	kind, known := kinds(name)
+	if !known {
+		// A tool nothing can identify gets space rather than a guess, so the column still lines up.
+		return "    ", t.Muted
+	}
+
+	label, ok := kindLabels[kind]
+	if !ok {
+		return "    ", t.Muted
+	}
+
+	// Coloured by how much the kind can do, which is the same ordering the permission model uses.
+	// Running a command is the broadest thing there is and reaching the network is the one whose
+	// results come back untrusted, so those two are the ones that do not read as quiet.
+	switch kind {
+	case core.ToolExecute:
+		return label, t.Warning
+	case core.ToolNetwork:
+		return label, t.Info
+	case core.ToolWrite, core.ToolGit:
+		return label, t.Success
+	default:
+		return label, t.Muted
+	}
 }
 
 // argumentOrder is which argument to show when a tool takes several.
@@ -284,28 +352,29 @@ func truncate(s string, width int) string {
 	return string(runes[:width-1]) + "…"
 }
 
-// statusLine says how a turn ended, or that it has not.
+// statusLines say how a turn ended, or that it has not.
 //
-// Empty for a turn that finished cleanly, because a completed answer speaks for itself and a line
+// Nothing for a turn that finished cleanly, because a completed answer speaks for itself and a line
 // under every reply saying "complete" is noise that trains people to stop reading the ones that
 // matter.
-func statusLine(turn core.Turn, spinner string) string {
+func statusLines(turn core.Turn, spinner string, width int) []string {
 	t := theme.Current()
+	one := func(s string) []string { return []string{s} }
 
 	switch turn.State {
 	case core.TurnPending:
-		return t.Muted.Render(spinner + " thinking")
+		return one(t.Muted.Render(spinner + " thinking"))
 
 	case core.TurnStreaming:
 		// No spinner once text is arriving: the text moving is the progress indicator, and a
 		// spinner next to it is two things claiming to say the same thing.
 		if turn.Text == "" {
-			return t.Muted.Render(spinner + " thinking")
+			return one(t.Muted.Render(spinner + " thinking"))
 		}
-		return ""
+		return nil
 
 	case core.TurnAwaitingTools:
-		return t.Info.Render(spinner + " running tools")
+		return one(t.Info.Render(spinner + " running tools"))
 
 	case core.TurnComplete:
 		if turn.RolledBack != "" {
@@ -313,24 +382,40 @@ func statusLine(turn core.Turn, spinner string) string {
 			// not fail: the model answered and the tools ran, and then the workspace did not verify
 			// and the whole thing was put back. Showing it as a failure would lose the difference
 			// between "this did not work" and "this worked and was not kept".
-			return t.Warning.Render("[" + firstLine(turn.RolledBack) + "]")
+			return one(t.Warning.Render("[" + firstLine(turn.RolledBack) + "]"))
 		}
-		return ""
+		return nil
 
 	case core.TurnInterrupted:
-		return t.Warning.Render("[stopped, the reply above is partial]")
+		return one(t.Warning.Render("[stopped, the reply above is partial]"))
 
 	case core.TurnRefused:
-		return t.Warning.Render("[the provider declined this request]")
+		return one(t.Warning.Render("[the provider declined this request]"))
 
 	case core.TurnTruncated:
-		return t.Warning.Render("[cut off at the output limit, so the reply above is incomplete]")
+		return one(t.Warning.Render("[cut off at the output limit, so the reply above is incomplete]"))
 
 	case core.TurnFailed:
-		return t.Danger.Render("[" + firstLine(turn.Error) + "]")
+		// The whole error, wrapped, rather than its first line in brackets. The classifier goes to
+		// some trouble to keep the provider's own words on the message, and a renderer that cut
+		// everything past the first line would throw that detail away at the last step. The mark is
+		// the same one a failed tool call carries, so red failures look alike wherever they appear.
+		reason := turn.Error
+		if reason == "" {
+			reason = "the turn failed"
+		}
+		out := make([]string, 0, 2)
+		for i, line := range wrap(reason, width-2) {
+			prefix := "✗ "
+			if i > 0 {
+				prefix = "  "
+			}
+			out = append(out, t.Danger.Render(prefix+line))
+		}
+		return out
 
 	default:
-		return ""
+		return nil
 	}
 }
 

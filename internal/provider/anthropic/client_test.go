@@ -490,3 +490,27 @@ func TestBreakpointsStayWithinTheLimit(t *testing.T) {
 		t.Errorf("%d breakpoints, and the API rejects more than 4", total)
 	}
 }
+
+// The advice says what to do and the provider's own sentence says what specifically happened.
+// Both belong on the error: Anthropic's rate limit messages name which limit was hit and its
+// billing messages name the account state, and advice that replaced them sent somebody to the
+// console to rediscover a sentence this package was already holding.
+func TestClassifiedErrorsKeepTheProviderOwnWords(t *testing.T) {
+	client := testClient()
+
+	var apiErr sdk.Error
+	if err := apiErr.UnmarshalJSON([]byte(
+		`{"type":"error","error":{"type":"rate_limit_error",` +
+			`"message":"tokens per minute limit exceeded for this organization"}}`,
+	)); err != nil {
+		t.Fatalf("building the SDK error: %v", err)
+	}
+	apiErr.StatusCode = 429
+
+	got := client.classify(&apiErr)
+	for _, want := range []string{"rate limited", "tokens per minute limit exceeded"} {
+		if !strings.Contains(got.Message, want) {
+			t.Errorf("the message %q lost %q", got.Message, want)
+		}
+	}
+}

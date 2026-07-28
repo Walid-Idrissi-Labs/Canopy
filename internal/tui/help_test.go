@@ -113,7 +113,7 @@ func TestEveryBindingIsReachableByScrolling(t *testing.T) {
 	// And the section headings, since a binding with no context is a key with no screen.
 	for _, heading := range []string{
 		"anywhere", "chat", "agents", "review", "a diff", "writing a commit",
-		"worktree monitor", "credentials",
+		"worktrees", "credentials",
 	} {
 		if !strings.Contains(all, heading) {
 			t.Errorf("scrolling the whole overlay never shows the %q section", heading)
@@ -143,7 +143,8 @@ func TestTheOverlayNeverOverflowsTheFrame(t *testing.T) {
 }
 
 // Scrolling past the end has to stop at the end rather than running off into blank space, which
-// reads as the list having been lost.
+// reads as the list having been lost. The end is recognised by the last binding in the table being
+// on screen; the footer is what says how to scroll, so the body no longer spends a row on it.
 func TestScrollingPastTheEndStops(t *testing.T) {
 	dim := Dimensions{Width: 80, Height: 24}
 
@@ -151,7 +152,7 @@ func TestScrollingPastTheEndStops(t *testing.T) {
 	if strings.TrimSpace(far) == "" {
 		t.Fatal("scrolling far past the end left a blank screen")
 	}
-	if !strings.Contains(far, "the end of the list") {
-		t.Errorf("the bottom of the list does not say it is the bottom:\n%s", far)
+	if !strings.Contains(far, "reload the list") {
+		t.Errorf("scrolling far past the end did not stop on the last section:\n%s", far)
 	}
 }

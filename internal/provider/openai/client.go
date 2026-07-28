@@ -273,38 +273,52 @@ func (c *Client) classifyTransport(err error) *core.ProviderError {
 }
 
 // classifyStatus turns a non-200 into an error a caller can act on.
+//
+// The provider's own message rides along on every branch rather than being replaced by the advice:
+// the advice says what to do, the message says what specifically happened, and on the third-party
+// endpoints this client serves the message is often the only place the real story is told.
 func (c *Client) classifyStatus(resp *http.Response) *core.ProviderError {
 	out := &core.ProviderError{Provider: c.Name(), StatusCode: resp.StatusCode}
+
+	// Read once: the body is a stream, and a second branch reading it again would get nothing.
+	words := c.scrub(readErrorBody(resp))
+	out.RetryAfter = core.ParseRetryAfter(resp.Header.Get("Retry-After"))
 
 	switch resp.StatusCode {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		out.Kind = core.ErrAuthentication
-		out.Message = "the credential was rejected. Check it with `canopy keys test`, or add it again"
+		out.Message = core.WithDetail(
+			"the credential was rejected. Check it with `canopy keys test`, or add it again", words)
 	case http.StatusNotFound:
 		out.Kind = core.ErrInvalidRequest
-		out.Message = "not found. Check the base URL and the model name, since this provider is " +
-			"defined by its endpoint"
+		out.Message = core.WithDetail("not found. Check the base URL and the model name, since "+
+			"this provider is defined by its endpoint", words)
 	case http.StatusRequestEntityTooLarge:
 		out.Kind = core.ErrContextLength
-		out.Message = "the request is too large. Compact the conversation or shorten the input"
+		out.Message = core.WithDetail(
+			"the request is too large. Compact the conversation or shorten the input", words)
 	case http.StatusTooManyRequests:
 		out.Kind = core.ErrRateLimited
-		out.Message = "rate limited"
-		out.RetryAfter = parseRetryAfter(resp.Header.Get("Retry-After"))
+		advice := "rate limited"
+		if out.RetryAfter > 0 {
+			advice += ", retry in " + out.RetryAfter.String()
+		}
+		out.Message = core.WithDetail(advice, words)
 	case http.StatusBadRequest:
 		out.Kind = core.ErrInvalidRequest
-		out.Message = c.scrub(readErrorBody(resp))
-		if strings.Contains(strings.ToLower(out.Message), "context") ||
-			strings.Contains(strings.ToLower(out.Message), "too long") {
+		out.Message = words
+		if strings.Contains(strings.ToLower(words), "context") ||
+			strings.Contains(strings.ToLower(words), "too long") {
 			out.Kind = core.ErrContextLength
 		}
 	default:
 		if resp.StatusCode >= 500 {
 			out.Kind = core.ErrOverloaded
-			out.Message = fmt.Sprintf("the provider returned %d", resp.StatusCode)
+			out.Message = core.WithDetail(
+				fmt.Sprintf("the provider returned %d", resp.StatusCode), words)
 		} else {
 			out.Kind = core.ErrUnknown
-			out.Message = c.scrub(readErrorBody(resp))
+			out.Message = words
 		}
 	}
 
@@ -342,16 +356,6 @@ func readErrorBody(resp *http.Response) string {
 		}
 	}
 	return strings.TrimSpace(string(raw))
-}
-
-func parseRetryAfter(header string) time.Duration {
-	if header == "" {
-		return 0
-	}
-	if seconds, err := time.ParseDuration(header + "s"); err == nil {
-		return seconds
-	}
-	return 0
 }
 
 // scrub removes the credential from text before it leaves this package.

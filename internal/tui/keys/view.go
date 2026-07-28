@@ -182,11 +182,15 @@ func (m Model) footer() string {
 	switch m.mode {
 	case modeList:
 		if len(m.keys) == 0 {
-			return "a add   esc back"
+			// This is the screen a first run lands on, so the way out of the whole program is named
+			// here too rather than discovered.
+			return "a add   esc back   q quit"
 		}
 		return "enter use   m model   a add   d remove   j/k move   esc back"
 	case modeConfirmRemove:
-		return "y confirm   n cancel"
+		// The confirmation line in the body already says y or n, beside the name of the thing being
+		// removed. A footer repeating it is a second list to keep agreeing with the first.
+		return ""
 	case modeProvider:
 		return "j/k choose   enter select   esc cancel"
 	case modeModel:

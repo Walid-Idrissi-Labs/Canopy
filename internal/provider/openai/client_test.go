@@ -489,3 +489,49 @@ func TestActivityRestartsTheStallClock(t *testing.T) {
 		t.Error("a stream producing something every 10ms was treated as stalled")
 	}
 }
+
+// The advice on a classified error says what to do; the provider's own message says what actually
+// happened. Both belong on the error, because on the third-party endpoints this client serves the
+// body is often the only place the real story — which key, which model, what billing state — is
+// told, and replacing it with advice sends somebody to a dashboard to rediscover it.
+func TestClassifiedErrorsKeepTheProviderOwnWords(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = fmt.Fprint(w, `{"error":{"message":"api key expired on 2026-07-01"}}`)
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, core.NewSecret(canary))
+	_, err := client.Stream(context.Background(), request())
+	if err == nil {
+		t.Fatal("a 401 did not fail")
+	}
+	for _, want := range []string{"canopy keys test", "api key expired on 2026-07-01"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error %q lost %q", err, want)
+		}
+	}
+}
+
+// A rate limit that names its retry window shows it, because "rate limited" alone leaves somebody
+// guessing at a number the provider already sent.
+func TestRetryAfterIsShownWhenTheProviderSaysIt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "20")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	client := New(srv.URL, core.NewSecret(canary))
+	_, err := client.Stream(context.Background(), request())
+	if err == nil {
+		t.Fatal("a 429 did not fail")
+	}
+	if !strings.Contains(err.Error(), "retry in 20s") {
+		t.Errorf("the error %q does not name the retry window the provider sent", err)
+	}
+	var perr *core.ProviderError
+	if !errors.As(err, &perr) || perr.RetryAfter != 20*time.Second {
+		t.Errorf("RetryAfter = %v, want 20s", perr.RetryAfter)
+	}
+}
