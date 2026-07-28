@@ -3,6 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +79,34 @@ func TestARequestFromTheServerIsAnsweredRatherThanIgnored(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "code=-32601") {
 		t.Errorf("result = %q, want method not found", result.Content)
+	}
+}
+
+// A server that keeps handing back a fresh cursor has to be stopped, and stopping it is not the part
+// that was wrong. Returning the tools gathered so far with no indication that there were more is: a
+// tool the model needed is then missing, and nothing anywhere says why. A capability that is absent
+// because of a bound Canopy imposed should be a configuration problem rather than a mystery.
+func TestAToolListThatNeverEndsIsBoundedAndSaysWhatItLeftOut(t *testing.T) {
+	session := connect(t, "docs", "endless-pages")
+
+	note := session.Incomplete()
+	if note == "" {
+		t.Fatal("the page bound was hit and the session reports a complete list, so a missing tool " +
+			"would look exactly like a tool the server never offered")
+	}
+	if !strings.Contains(note, "50") {
+		t.Errorf("note = %q, want it to say what the bound was", note)
+	}
+
+	// Said where somebody will see it, not only where a test can reach it.
+	if !strings.Contains(session.Describe(), "incomplete") {
+		t.Errorf("Describe = %q, want it to carry the same warning", session.Describe())
+	}
+
+	// And what did arrive is still usable. Degrading to nothing would be a worse answer than
+	// degrading to most of it.
+	if len(session.Tools()) == 0 {
+		t.Error("the tools that were read were thrown away with the ones that were not")
 	}
 }
 
@@ -335,6 +366,61 @@ func TestAToolThatFailsIsAResultRatherThanAnError(t *testing.T) {
 
 // Quitting must not leave a server running. The same property A9-01 asserts for test commands, and
 // it matters more here because these processes are started for the life of a session.
+// A server is very often a launcher rather than the program: `npx` in front of node, a wrapper
+// script in front of a runtime. Waiting on the process Canopy started says nothing about the process
+// that one started, and those were left running for the rest of the machine's uptime, holding
+// whatever they had open.
+func TestClosingASessionStopsWhatTheServerStartedToo(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+
+	spec := serverSpec("launcher", "spawns-a-child")
+	spec.Env = append(spec.Env, pidFileEnv+"="+pidFile)
+
+	session, err := Connect(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	var child int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			if child, err = strconv.Atoi(strings.TrimSpace(string(raw))); err == nil {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if child == 0 {
+		session.Close()
+		t.Skip("the server never reported a child pid")
+	}
+	if !stillRunning(child) {
+		session.Close()
+		t.Skip("the child was gone before the test began, so this proves nothing")
+	}
+
+	server := session.cmd.Process.Pid
+	session.Close()
+
+	// Cleanup regardless, so a failure here does not leave a process behind for the next run.
+	t.Cleanup(func() {
+		if process, err := os.FindProcess(child); err == nil {
+			_ = process.Kill()
+		}
+	})
+
+	deadline = time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if !stillRunning(child) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("the server (pid %d) was stopped but the process it started (pid %d) is still running",
+		server, child)
+}
+
 func TestClosingASessionStopsTheServer(t *testing.T) {
 	session := connect(t, "docs", "normal")
 	pid := session.cmd.Process.Pid
