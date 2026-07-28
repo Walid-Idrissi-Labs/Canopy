@@ -210,6 +210,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// showing" in one place.
 		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
 		a.screen = screenChat
+		a.agents.SetVisible(false)
 		return a, cmd
 
 	case chat.ActionMsg:
@@ -285,7 +286,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if handled, next, cmd := a.routeKey(key); handled {
-			return next, cmd
+			// The agents view is told whether it ended up in front, because its pane fires
+			// animate and an animation running behind another screen would be waking the program
+			// for frames nobody can see. Told here, at the one place every screen switch passes
+			// through, rather than at each switch.
+			visibility := next.agents.SetVisible(next.screen == screenAgents)
+			return next, tea.Batch(cmd, visibility)
 		}
 
 		// A keystroke belongs to the screen in front and to nothing else.
@@ -347,8 +353,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, chatCmd)
 
 	// The agents view keeps up too, so switching to it shows the current state rather than the
-	// state it had when you last looked.
-	a.agents, _ = a.agents.Update(msg)
+	// state it had when you last looked. Its command is kept, not dropped: the pane fires run on
+	// a ticker of their own, and a ticker whose reschedule is discarded stops on the first engine
+	// event that arrives.
+	var agentsCmd tea.Cmd
+	a.agents, agentsCmd = a.agents.Update(msg)
+	cmds = append(cmds, agentsCmd)
 
 	a.keys, _ = a.keys.Update(msg)
 	return a, tea.Batch(cmds...)
@@ -359,7 +369,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // Chat is the awkward case and it is worth saying why. Every printable key belongs to the message
 // box, so navigation away from chat has to be on keys that are not printable. Anything else would
 // mean the letter that opens the dashboard could never be typed in a message.
-func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
+func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 	switch a.screen {
 	case screenChat:
 		switch msg.String() {
@@ -533,7 +543,9 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 	case chat.ActionKeys:
 		a.cameFrom, a.screen = screenChat, screenKeys
 	}
-	return a, nil
+	// The same visibility bookkeeping the key routing does, for the same reason: the agents
+	// screen animates only while it is in front.
+	return a, a.agents.SetVisible(a.screen == screenAgents)
 }
 
 // newConversationModel is newConversation in the shape Update wants back.
@@ -604,8 +616,11 @@ func (a App) View() string {
 		return Frame(a.dim, Status{Screen: "help"}, HelpFrom(a.dim, a.helpScroll), footer)
 
 	case screenAgents:
-		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
-			"esc", "chat", "w", "worktrees", "r", "review", "K", "credentials", "?", "help")
+		// Credentials and help stay ahead of the movement keys, because they are the two hints
+		// somebody stuck actually needs and the footer drops from the right on a narrow window.
+		footer := Keys(a.dim.Width, "enter", "open", "1-8", "jump", "v", "layout", "n", "new",
+			"esc", "chat", "K", "credentials", "?", "help", "hjkl", "move", "[ ]", "page",
+			"w", "worktrees", "r", "review")
 		if a.agents.ConfirmingDirect() {
 			// The confirmation panel in the body already names its keys, with more room to say what
 			// they mean. A footer repeating them is two lists to keep agreeing, so the footer goes

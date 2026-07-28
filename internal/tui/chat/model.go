@@ -540,23 +540,41 @@ const promptChrome = 8
 // the signal and the answer does not depend on somebody reading the first line. It sits inside the
 // transcript rather than over it, which is the existing decision and the right one: a modal covering
 // the conversation asks somebody to decide with the context hidden.
+//
+// Two things make it unmistakable among the interface's other boxes, because the first version was
+// not: every other frame on screen is a thin rounded line, so this one is heavy, and its top edge
+// carries "needs you" in reverse video. The heavy border says "different in kind" the way a light
+// one cannot, and reverse video is the one emphasis that survives NO_COLOR, a monochrome theme and
+// a terminal palette that renders the warning colour dull. Somebody glancing back at a screen they
+// left should find this box before they find anything else on it.
 func promptPanel(body []string, inner int) []string {
 	t := theme.Current()
 
 	const indent = "  "
-	rule := strings.Repeat("─", inner+2)
+
+	// The chip is drawn from the warning style so the reversal shows the warning colour as the
+	// background, which is the loudest thing this palette can say.
+	chip := t.Warning.Reverse(true).Bold(true).Render(" needs you ")
+	top := t.Warning.Render("┏━") + chip
+	if rest := inner + 1 - lipgloss.Width(ansi.Strip(chip)); rest > 0 {
+		top += t.Warning.Render(strings.Repeat("━", rest) + "┓")
+	} else {
+		// Too narrow for the label, and the border matters more: a heavy frame with no title is
+		// still obviously not conversation.
+		top = t.Warning.Render("┏" + strings.Repeat("━", inner+2) + "┓")
+	}
 
 	out := make([]string, 0, len(body)+2)
-	out = append(out, indent+t.Warning.Render("╭"+rule+"╮"))
+	out = append(out, indent+top)
 	for _, line := range body {
 		pad := inner - lipgloss.Width(ansi.Strip(line))
 		if pad < 0 {
 			pad = 0
 		}
-		out = append(out, indent+t.Warning.Render("│")+" "+line+strings.Repeat(" ", pad)+
-			" "+t.Warning.Render("│"))
+		out = append(out, indent+t.Warning.Render("┃")+" "+line+strings.Repeat(" ", pad)+
+			" "+t.Warning.Render("┃"))
 	}
-	return append(out, indent+t.Warning.Render("╰"+rule+"╯"))
+	return append(out, indent+t.Warning.Render("┗"+strings.Repeat("━", inner+2)+"┛"))
 }
 
 // describeRequest says what is being asked for in words rather than in tool names.
@@ -564,6 +582,12 @@ func promptPanel(body []string, inner int) []string {
 // "run a command" is something somebody can decide about at two in the morning. "run_command" is a
 // symbol from a codebase they have never read.
 func describeRequest(req permission.Request) string {
+	// The dispatch confirmation arrives as an execute, which is honest about its breadth and wrong
+	// as a description: nobody reading "run a command" hears "start agents that will spend money on
+	// your account", and that is the one fact this particular question turns on.
+	if req.Tool == "spawn_agents" {
+		return "start more agents, on your account and at your expense"
+	}
 	switch req.Kind {
 	case core.ToolExecute:
 		return "run a command"
