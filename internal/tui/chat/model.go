@@ -205,6 +205,23 @@ type Model struct {
 
 	// menu is the command list that drops out of the message box.
 	menu menu
+
+	// asides is every btw asked in this conversation, oldest first, and btwOpen is whether the panel
+	// showing them is up. Kept here and only here: the engine deliberately records nothing about an
+	// aside, so the screen remembering what was asked is the whole of the history there is, and it
+	// leaves with the screen rather than being written anywhere.
+	asides []asideExchange
+
+	btwOpen bool
+	// btwScroll is how many lines up from the bottom of the panel the view is held, zero when
+	// following the latest answer.
+	btwScroll int
+}
+
+// asideExchange is one btw question and the answer it got.
+type asideExchange struct {
+	question string
+	answer   string
 }
 
 // New builds a chat model over an engine and a session.
@@ -311,10 +328,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.notice = ""
 			return m, nil
 		}
-		// Shown above the box rather than folded into the transcript, because it is not part of the
-		// conversation and putting it there would make it look like one. It goes when the next thing
-		// happens, which is right: an aside is read once.
-		m.notice = "btw " + msg.question + "\n" + msg.answer
+		// Into the panel above the box rather than folded into the transcript, because an aside is
+		// not part of the conversation and putting it there would make it look like one. The panel
+		// keeps every aside asked here, so an answer half remembered from twenty minutes ago is a
+		// bare /btw away rather than gone, and it opens on the newest.
+		m.asides = append(m.asides, asideExchange{question: msg.question, answer: msg.answer})
+		m.btwOpen = true
+		m.btwScroll = 0
+		m.notice = ""
 		m.err = ""
 		return m, nil
 
@@ -572,6 +593,24 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 	}
 
+	// The btw panel takes the keys that mean something to a panel, and only those, and only while
+	// it is up. Everything else still reaches the box, so a message can go on being typed over it.
+	if m.btwOpen {
+		switch msg.String() {
+		case "esc":
+			// The more local meaning gets the first press, which is the menu's rule too: stopping
+			// a turn or clearing the box is still one more press away.
+			m.btwOpen = false
+			return m, nil
+		case "pgup":
+			m.btwScrollBy(btwVisible / 2)
+			return m, nil
+		case "pgdown":
+			m.btwScrollBy(-btwVisible / 2)
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
 	case "enter":
 		return m.send()
@@ -750,6 +789,11 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	m.scroll = 0
 	m.err = ""
 	m.notice = ""
+	// The asides go with the conversation they were asked about. Carrying them across would show
+	// answers about one agent's work over another agent's conversation.
+	m.asides = nil
+	m.btwOpen = false
+	m.btwScroll = 0
 	m.input.Clear()
 	m.refresh()
 	// History belongs to the conversation, not to the box. Carrying it across would offer you, on
@@ -927,6 +971,9 @@ func (m Model) transcriptHeight() int {
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
 
+	// The btw panel takes its rows from the conversation too, for the same reason.
+	h -= len(m.btwPanel())
+
 	// The jump pill takes its rows from the conversation too, and only while it is on screen. It is
 	// keyed on the scroll position rather than on the rendered pill because the pill's height is
 	// needed here to decide how much transcript to render, and asking the renderer would be a loop.
@@ -954,8 +1001,9 @@ func (m Model) Body() string {
 			step:    m.markStep,
 			// Below the box here, because the box is in the middle of the screen and below is where
 			// the room is. On a conversation in progress the box is on the floor and the list goes
-			// above it instead.
-			menu: m.menu.lines(m.width, m.menuFilter()),
+			// above it instead. The btw panel goes with it, for the same reason.
+			panel: m.btwPanel(),
+			menu:  m.menu.lines(m.width, m.menuFilter()),
 		}.render()
 	}
 
@@ -988,6 +1036,9 @@ func (m Model) Body() string {
 	if tasks := m.taskPane(); tasks != "" {
 		rows = append(rows, strings.Split(tasks, "\n")...)
 	}
+	// The btw panel sits above the box, where the answers to questions about the conversation are
+	// close to the conversation they are about without being in it.
+	rows = append(rows, m.btwPanel()...)
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
@@ -1114,6 +1165,112 @@ func (m Model) taskPane() string {
 		b.WriteString(style.Render(truncate(line, m.width-2)))
 	}
 	return b.String()
+}
+
+// btwVisible is how many content rows the panel shows at once.
+//
+// Eight. Enough for a question and a real answer with a previous exchange peeking above it, few
+// enough that the panel is a margin note rather than a second transcript competing with the first.
+const btwVisible = 8
+
+// btwContent is every aside laid out for the panel, oldest first, wrapped to its width.
+func (m Model) btwContent(inner int) []string {
+	t := theme.Current()
+
+	var lines []string
+	for i, exchange := range m.asides {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		// The question carries a marker and the answer sits under it in the muted colour, so a
+		// stack of exchanges reads as questions with answers rather than as one run of text.
+		for j, line := range wrap(exchange.question, inner-2) {
+			prefix := t.Key.Render("? ")
+			if j > 0 {
+				prefix = "  "
+			}
+			lines = append(lines, prefix+t.Body.Render(line))
+		}
+		for _, line := range wrap(exchange.answer, inner) {
+			lines = append(lines, t.Muted.Render(line))
+		}
+	}
+	return lines
+}
+
+// btwScrollBy moves the panel's view, bounded at both ends for the reason the transcript's is.
+func (m *Model) btwScrollBy(lines int) {
+	m.btwScroll += lines
+	inner := m.width - boxChrome
+	if inner < 6 {
+		inner = 6
+	}
+	if limit := len(m.btwContent(inner)) - btwVisible; m.btwScroll > limit {
+		m.btwScroll = limit
+	}
+	if m.btwScroll < 0 {
+		m.btwScroll = 0
+	}
+}
+
+// btwPanel is the asides in a box of their own, above the message box and exactly as wide.
+//
+// A bordered panel rather than a line in the status row, which is where the answer used to go and
+// where it lasted until the next keystroke. An aside somebody asked twenty minutes ago is still
+// here, scrolled to with pgup, and the whole thing folds away on esc and comes back on a bare /btw.
+// It is deliberately in the border colour rather than a signal colour: nothing in it is part of the
+// conversation, and the frame should say so.
+func (m Model) btwPanel() []string {
+	if !m.btwOpen || len(m.asides) == 0 {
+		return nil
+	}
+	t := theme.Current()
+
+	inner := m.width - boxChrome
+	if inner < 6 {
+		inner = 6
+	}
+
+	content := m.btwContent(inner)
+	end := len(content) - m.btwScroll
+	if end > len(content) {
+		end = len(content)
+	}
+	if end < 1 {
+		end = 1
+	}
+	start := end - btwVisible
+	if start < 0 {
+		start = 0
+	}
+
+	// The edge names the panel and says how to work it, in the space the rule was spending anyway.
+	// Dropped whole on a terminal too narrow for it, because a label that wraps the edge breaks the
+	// frame it is written on.
+	label := "btw"
+	if len(content) > btwVisible {
+		label = "btw · pgup to scroll"
+	}
+	label += " · esc to close"
+
+	top := " " + t.Border.Render("╭"+strings.Repeat("─", inner+2)+"╮")
+	if rest := inner - lipgloss.Width(label) - 1; rest >= 0 {
+		top = " " + t.Border.Render("╭─") + " " + t.Muted.Render(label) + " " +
+			t.Border.Render(strings.Repeat("─", rest)+"╮")
+	}
+
+	out := make([]string, 0, btwVisible+2)
+	out = append(out, top)
+	for _, line := range content[start:end] {
+		pad := inner - lipgloss.Width(ansi.Strip(line))
+		if pad < 0 {
+			pad = 0
+		}
+		out = append(out, " "+t.Border.Render("│")+" "+line+strings.Repeat(" ", pad)+
+			" "+t.Border.Render("│"))
+	}
+	out = append(out, " "+t.Border.Render("╰"+strings.Repeat("─", inner+2)+"╯"))
+	return out
 }
 
 // jumpPill is the marker that appears when the view has stopped following the tail.

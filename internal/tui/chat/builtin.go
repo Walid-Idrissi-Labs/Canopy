@@ -194,6 +194,14 @@ func (m *Model) steer(guidance string) {
 // goes on working. The model in the next real turn has no idea it was asked.
 func (m *Model) aside(question string) tea.Cmd {
 	if question == "" {
+		// Bare, it reopens the panel of everything asked so far, which is how an answer from
+		// twenty minutes ago is found again. Only when nothing has been asked yet does it explain
+		// itself instead.
+		if len(m.asides) > 0 {
+			m.btwOpen = !m.btwOpen
+			m.btwScroll = 0
+			return nil
+		}
 		m.err = "what would you like to know? For example `/btw which file holds the parser`"
 		return nil
 	}

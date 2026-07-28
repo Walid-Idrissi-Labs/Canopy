@@ -54,6 +54,9 @@ type opening struct {
 	// Already styled, because it is several styles on one line.
 	context []string
 
+	// panel is the btw panel, drawn under the box. Empty when it is not open.
+	panel []string
+
 	// menu is the command list, drawn under the box. Empty when it is not open.
 	menu []string
 
@@ -69,10 +72,11 @@ func (o opening) render() string {
 	// and push the box off the bottom of the composition.
 	gap := append([]string{""}, strings.Split(o.status, "\n")...)
 	block := append(append(append([]string(nil), head...), gap...), o.box...)
-	// The command list hangs off the bottom of the box and does not move it. The centring below is
-	// computed from the name and the gap alone, so opening the list leaves the name and the box
-	// exactly where they were: a menu that shunted the box up the screen as it filtered would be
-	// unusable to type into.
+	// The command list and the btw panel hang off the bottom of the box and do not move it. The
+	// centring below is computed from the name and the gap alone, so opening either leaves the name
+	// and the box exactly where they were: a menu that shunted the box up the screen as it filtered
+	// would be unusable to type into.
+	block = append(block, o.panel...)
 	block = append(block, o.menu...)
 
 	// The middle of that gap is what lands on the middle of the screen.
