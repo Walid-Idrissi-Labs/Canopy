@@ -189,9 +189,15 @@ be rediscovered by getting burned by it.
   address of, which covers checking a library version or similar, but it cannot discover a page it
   has never heard of, because no search provider or account has been chosen yet (A4-07).
 
-- Plan-first mode's approval mechanism is built and tested end to end, but there is no profile
-  setting to turn it on and no screen for reviewing a plan before approving it. Nothing calls it
-  yet, so it cannot currently be reached from the running program (A4-09).
+- There are four modes on `shift+tab`, and each is a trust level the permission layer enforces
+  rather than an instruction the model is asked to follow (M-09). Plan reads and thinks, build edits
+  and asks before running anything, runway edits and runs freely and reverts a turn that ends red,
+  cruise runs everything without asking. Runway and cruise refuse to engage where their safety net
+  is missing rather than quietly behaving like the mode below. What is not built is the second axis:
+  capability and approval are one setting, so "edit freely but review every edit" cannot be
+  expressed, and there is no screen for reviewing a plan before approving it (A4-09). The separate
+  plan-and-execute approval mechanism in `internal/agent/plan.go` is still called from nowhere and
+  is now superseded by the mode's trust level.
 
 - The shell tool is not confined by construction the way the file tools are. It hands the permission
   model an opaque command string that can do anything your account can do; whatever stops it is the
@@ -226,11 +232,24 @@ be rediscovered by getting burned by it.
   commitment; it would take a measurable drop in output quality on a large codebase to revisit
   (D-27).
 
-- Most of the extensibility layer is unbuilt: no MCP client, so no third-party tools; no hooks or
-  automations that fire on a state change; no committed project configuration file for profiles or
-  permission posture; no shareable skills format (A8-03, A8-05, A8-06, A8-09). Custom slash
+- Part of the extensibility layer is unbuilt: no shareable skills format (A8-09). Custom slash
   commands are prompts only: they do not register tools, execute shell, or provide a general
-  template language. Everything an agent can execute still comes from the eleven built-in tools.
+  template language.
+
+- Hooks run, and a failing one is only reported when Canopy exits (A8-05). A hook fires on a
+  verification state that is current rather than stale, and a command bound to `tests-passed` is
+  eligible again at the next revision, which is deliberate: tests passing over different code is a
+  different event. It also means a hook that commits moves HEAD, and the pass at that new revision
+  is a second event that fires it again. `git commit -am` fails harmlessly the second time and a
+  hook using `--allow-empty` will keep going. How a revision a hook itself produced should be
+  recognised is undecided (Q-17), and until it is, treat a committing hook as firing more than once.
+  There is nowhere on screen for a hook failure yet, so one is printed on exit: a long session can
+  hide a broken hook for hours. A8-05 is back to claimed for both reasons.
+
+- MCP servers are reachable and three gaps in that client are open (A8-06): a server-initiated
+  request whose id collides with an outstanding call can satisfy the wrong one, a tool list that hits
+  the 50-page bound is returned as though it were complete, and closing a session kills the server
+  process without taking its children with it.
 
 ## Storage
 
@@ -260,9 +279,20 @@ be rediscovered by getting burned by it.
   arrives as arrow key presses, and the arrow keys walk back through what you have sent, so
   scrolling up to reread an answer would replace what you were typing.
 
+- Terminating a cancelled command can, in a narrow race, signal a process group that is no longer
+  ours. Canopy puts every command it starts in its own group and kills the group, which is what takes
+  a test runner's workers with it. Once the group leader has been waited on, the number that names
+  the group can be reissued by the kernel, and `kill(-pid, 0)` proves only that some group holds it
+  rather than that it is still the one Canopy started. The check narrows the window and cannot close
+  it: the last member can also exit between the check and the signal. Closing it needs an identifier
+  the kernel will not recycle, which means a pidfd on Linux and nothing that exists on macOS. The
+  alternative, not signalling at all once the leader is reaped, leaves every orphaned child of every
+  cancelled run alive holding its ports. A9-01 is back to claimed while this is decided.
+
 - The engine half of the robustness sweep has been run and the interface half has not. Timeouts,
-  process groups, bounded output, event delivery under load, paths with spaces, externally removed
-  worktrees and orphaned processes on quit are covered by tests of their own now (A9-01). Resize
+  bounded output, event delivery under load, paths with spaces, externally removed worktrees and
+  orphaned processes on quit are covered by tests of their own now (A9-01), subject to the process
+  group caveat above. Resize
   handling, readability at 80 columns with several agents, every state being distinguishable without
   colour, and rapid updates not moving the selection are not: they are A9-02 and nothing has
   verified them together.
@@ -285,8 +315,10 @@ be rediscovered by getting burned by it.
   They exist to demonstrate the state machine and they say so. The worktree monitor inside the
   running program reads your actual repository, as does the review screen.
 
-- There is no run report yet: no single command that produces a markdown summary of an agent's
-  changes, test results, and cost suitable for a pull request body (A8-08).
+- `canopy report` runs this repository's checks and prints a markdown summary for a pull request
+  body (A8-08). It describes the directory it is run in and the most recent conversation for that
+  project, not a named agent or an arbitrary worktree, and it runs the suite rather than reading a
+  result from elsewhere, so it takes as long as the tests do.
 
 - The commit helper stages everything in the worktree. There is no way to commit a subset, because
   partial staging needs a way to select hunks and that is its own screen. A half version that

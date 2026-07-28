@@ -3518,6 +3518,27 @@ Worth knowing before starting it: `cmd/canopy/gate.go` polls the runner for term
 gate that only runs against a real repository and so the hardest part to test, which is why the
 behaviour lives in the engine against a stub and only the waiting lives there.
 
+**Corrected on 2026-07-28**, after Codex reviewed the merged PRs. Two of the promises above were
+not being kept.
+
+**The green gate never waited for the tests.** It asked whether the roll-up's verdict was running
+rather than whether the run was, and those are different questions: a verdict says what the evidence
+means for the code in the worktree, and a queued run has recorded no revision yet, so the honest
+verdict on one is unknown. Unknown is not running. Every test therefore read as finished the instant
+it was started, the gate read the roll-up of a suite that had not run, and runway reverted every turn
+it was given. That is the acceptance criterion above inverted: the mode did not quietly behave like
+the one below it, it destroyed work instead. Missed because the gate's behaviour is tested in the
+engine against a stub and `cmd/canopy/gate.go` had no tests of its own. It has four now.
+
+**A mode did not survive a fork or a restart.** Forking a planning conversation produced one that
+could edit, because the fork carried the history and not the mode and then resolved its level from
+configuration. Quitting did the same thing: modes were never written down. The mode is stored by
+name now, resolved on first use rather than at load since runway's gate is attached later in
+startup, and a stored mode that cannot be honoured falls back to build rather than to the level it
+shares with cruise.
+
+The capability and approval split described above is still outstanding and is still the right shape.
+
 ### PG-M Phase M gate
 `status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`
 
@@ -3632,7 +3653,7 @@ box and never reach the model. Both files are strict, and a broken global file d
 layer with a warning. D-34, README and limitations record the contract.
 
 ### A8-05 Hooks and automations
-`status: review | owner: Claude | branch: feat/hooks | depends: A8-03, PG-A6`
+`status: claimed | owner: Claude | branch: feat/hooks | depends: A8-03, PG-A6, Q-17`
 `scope: internal/hooks/, internal/config/hooks.go`
 
 Deliverable: run something on an event. Tests green, auto commit. Tests red, notify. Agent idle,
@@ -3641,9 +3662,14 @@ nudge.
 Acceptance: a hook fires only on a real state transition, never on a stale or unknown one. A
 failing hook is visible and never silently swallowed.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [ ]   codex [ ]`
 
-notes: where verification and orchestration compound. The truth engine is what makes the triggers
+notes: **back to claimed on 2026-07-28.** Two parts of the acceptance are unmet now that the wiring
+makes the package reachable: a failing hook is only visible when Canopy exits, and a committing hook
+fires again at the revision its own commit produced. Neither can be signed off as done, and the
+earlier signature was given when nothing called any of this.
+
+where verification and orchestration compound. The truth engine is what makes the triggers
 trustworthy, so hooks firing on unverified state would poison both.
 
 Its own package, `internal/hooks`, rather than a file under `internal/agent`. The scope line said
@@ -3655,9 +3681,15 @@ Three rules carry the acceptance criterion, and each is a way this goes quietly 
 
 **A hook fires once per revision, not once per state.** The poller says where every workspace stands
 every couple of seconds, so firing on the state would be an auto-commit every two seconds for as long
-as the build stayed green. It also ends the loop that the first hook anybody writes creates: commit on
-green moves HEAD, which moves the revision, which makes the results stale, which makes them run and
-pass again.
+as the build stayed green.
+
+**It does not end the commit loop, and this document said it did.** Commit on green moves HEAD, which
+moves the revision, which makes the results stale, which makes them run and pass again, and a pass at
+a new revision is a new event by the rule below. So a committing hook fires again: `git commit -am`
+fails harmlessly the second time, and one using `--allow-empty` keeps going. The claim contradicted
+the passing-stale-passing rule three lines further down, and it was invisible for as long as nothing
+called the package. Q-17 is where the rule for recognising a hook-originated revision has to be
+decided.
 
 **Nothing fires on stale or unknown evidence.** A green that no longer describes the code is the
 failure this project exists to refuse, and a hook that commits on the strength of one writes that
@@ -3685,6 +3717,20 @@ silently never fires cannot be told apart from one that fires and does nothing.
 Not wired yet. The package is complete and tested and nothing calls `Observe`, which needs the poller
 in `internal/verify` or `cmd/canopy`, both of which had another branch open in them. That wiring is
 what PG-A8 will actually be demonstrating, so it is not optional.
+
+**Wired on 2026-07-28**, after Codex reviewed the merged PR and found nothing calling it. Every rule
+above was correct and unreachable: `Observe` had no caller, so a hook validated at load and then
+never ran. `internal/hooks` was imported by `internal/config` and by nothing else.
+
+Observed on the poll tick rather than when a revision changes, because half the vocabulary is about
+the agent rather than the code. An agent going idle or getting blocked moves nothing in git, and a
+hook keyed to a worktree poll would never see it.
+
+Failures are collected and printed when Canopy exits, which is the weak part and is recorded as
+such. The acceptance criterion is that a failing hook is visible, and there is nowhere on screen for
+one yet: an event here is deliberately a thin notification that a consumer answers by re-reading a
+snapshot, and a hook failure has no snapshot to re-read. Giving it a place on screen is its own
+piece of work.
 
 ### A8-06 MCP client
 `status: claimed | owner: Claude | branch: feat/hooks-and-mcp | depends: A4-04`
@@ -3773,6 +3819,23 @@ Not wired to a command yet. Gathering a run means reading the verifier and the s
 lives in `cmd/canopy/verification.go`, and that file had another branch open in it. The wiring is
 mechanical and the honesty rules are the part worth reviewing.
 
+**Wired on 2026-07-28**, after Codex reviewed the merged PR and found the command missing. The scope
+line named `cmd/canopy/report.go` and the file was never written, so the deliverable did not exist
+and every honesty rule above was tested against a renderer nothing called.
+
+Two things came out of writing it. The command runs the checks itself rather than reading whatever
+was last left lying around, because a report describes a revision and evidence gathered earlier does
+not. And it polls git once before running anything, since the verifier learns which revision it is
+looking at from the poller alone: without that the report said the revision could not be determined,
+the tests were unknown, and nothing had changed, and the third of those is the one a reader believes.
+
+Also fixed here: a value that arrives from the repository could write Markdown into the document.
+The branch name, the file paths and the reason a check failed all come from whoever opened the pull
+request, and the report is pasted into a pull request body. A path ending its code span and opening a
+heading that says the run was verified, above a section saying it was not, is this task's acceptance
+criterion failing through the one route it did not consider. And the test line printed the passing
+count against the required count, so four tests with three required read as "4 of 3".
+
 ### A8-09 Shareable skills
 `status: todo | owner: none | branch: none | depends: A8-04`
 `scope: internal/agent/`
@@ -3803,16 +3866,25 @@ fire on a real state change.
 Goal: someone who is not us installs it and gets value without being told how.
 
 ### A9-01 Robustness sweep
-`status: review | owner: Claude | branch: worktree-agent-a58ce100b84defd03 | depends: PG-A8`
+`status: claimed | owner: Claude | branch: worktree-agent-a58ce100b84defd03 | depends: PG-A8`
 `scope: internal/exec/, internal/store/broker.go, internal/git/worktree.go, tests in internal/core, internal/session, internal/tools`
 
-Acceptance: timeouts terminate the right process group, no final state transition is dropped under
-load, huge output cannot freeze the UI, paths and branch names with spaces work, externally removed
-worktrees disappear safely, and quitting leaves no child processes behind.
+Acceptance: timeouts terminate the process group Canopy started, no final state transition is
+dropped under load, huge output cannot freeze the UI, paths and branch names with spaces work,
+externally removed worktrees disappear safely, and quitting leaves no child processes behind.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [ ]   codex [ ]`
 
-notes: carries forward P4-01 to P4-07.
+notes: **back to claimed on 2026-07-28, and the first acceptance clause is narrowed.** It said the
+right process group is terminated. After the group leader has been reaped that cannot be established:
+`kill(-pid, 0)` proves only that some group holds the number, not that it is still ours, and the
+answer can go stale between the check and the signal. Closing it needs an identifier the kernel will
+not recycle, which means a pidfd on Linux and nothing that exists on darwin. The residual risk is
+real and small, and a comment in the source cannot make a stronger acceptance clause true. Which way
+to go is a supervisor decision: redesign termination around an owned identity, or accept the risk
+explicitly and leave the clause narrowed as it now is.
+
+carries forward P4-01 to P4-07.
 
 **Claimed against an unsigned PG-A8, on instruction rather than by the rule.** A8-05 and A8-06 are
 being built right now, so the gate this depends on is not merely unsigned, its own dependencies are
@@ -3976,3 +4048,4 @@ status or verification updates.
 | 2026-07-26 | Claude | Expanded to A1 to A9 after a full spec and features review. Added persistence, compaction, fallback chains, session forking, plan mode, checkpoints, web tools, sub agents, handoff, MCP, hooks, slash commands, skills, diff review, commit helper, conflict radar, cost preview, ready-to-review queue. Restored the environment setup contract as A5-04, which the previous re-plan dropped in error. |
 | 2026-07-27 | Claude | Added phase M between A7 and A8, from Walid using the built program rather than its tests. Six tasks: system tools proven from the chat, input history, a detailed task list on screen, a new conversation key, a better logo, and the first ten minutes. Runs before A8. A4-10 hands its remaining half to M-03 and stays partial. Nothing renumbered. |
 | 2026-07-27 | Claude | Phase M built. Added `internal/tui/brand` for the mark, `internal/core/task.go` for the shared task shape, `cmd/canopy/worktrees.go` for a real worktree store, and `cmd/canopy/live_test.go` for the opt-in provider test. Storage schema went to version 5 for the task column. |
+| 2026-07-28 | Claude | Follow-ups from Codex's review of PRs #20 to #25, on `fix/review-followups`. Six defects fixed and two unreachable features wired. Storage schema went to version 7 for the mode column. The severe one was found on the way: the green gate never waited for the tests, so runway reverted every turn it was given. A8-05 and A8-08 were built and never called from anywhere, which is now the fourth time a complete package has shipped with nothing reaching it. |

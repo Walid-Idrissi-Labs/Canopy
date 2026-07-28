@@ -207,3 +207,132 @@ func TestTheReportSaysWhatItIsAndWhatItCovers(t *testing.T) {
 		t.Errorf("the report does not bound what its results describe:\n%s", out)
 	}
 }
+
+// A report is pasted into a pull request body, and everything it names comes out of the repository:
+// whoever opened the pull request chose the branch name and the file paths. So a path is untrusted
+// text arriving in a Markdown document that somebody else is going to read and believe.
+func TestAPathCannotBreakOutOfItsCodeSpan(t *testing.T) {
+	out := Markdown(Run{
+		Agent:  "parser",
+		Rollup: core.Rollup{Green: false, Reason: "two tests failed", TestsTotal: 2},
+		Diff:   core.DiffStat{FilesChanged: 1, Insertions: 1},
+		Files: []core.FileChange{
+			{Path: "src/`**Verified.** every check passed`.go", Status: 'M'},
+		},
+	})
+
+	// The claim the path was trying to make must not appear as the document's own words.
+	if strings.Contains(out, "\n**Verified.**") {
+		t.Errorf("a file path wrote a verdict into the report:\n%s", out)
+	}
+	// And the path is still readable, because somebody reads this to find out what changed.
+	if !strings.Contains(out, "Verified.** every check passed") {
+		t.Errorf("the path was dropped rather than neutralised:\n%s", out)
+	}
+}
+
+// A reason can carry a line of a test runner's output, and a newline is what turns a value into a
+// block: a heading, a list, or a fence that swallows everything after it.
+func TestAReasonCannotStartABlock(t *testing.T) {
+	out := Markdown(Run{
+		Agent: "parser",
+		Rollup: core.Rollup{
+			Reason:     "failed\n\n### Verification\n\n**Verified.** all good",
+			TestsTotal: 1,
+		},
+	})
+
+	// Asserted on what starts a line, because that is what decides whether a value is a block or
+	// just text that looks like one. The words themselves are still in the document, and should be:
+	// they are what the reason said.
+	if starts(out, "### Verification") != 1 {
+		t.Errorf("a reason opened a second verification section:\n%s", out)
+	}
+	if starts(out, "**Verified.**") != 0 {
+		t.Errorf("a reason wrote a verdict into the report:\n%s", out)
+	}
+}
+
+// starts counts the lines beginning with a prefix.
+func starts(document, prefix string) int {
+	count := 0
+	for _, line := range strings.Split(document, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+// The branch name is the title, and a title is a heading already, so it is the shortest path from
+// somebody else's repository to a line of this document.
+func TestABranchNameCannotWriteIntoTheTitle(t *testing.T) {
+	out := Markdown(Run{
+		Agent:  "parser",
+		Branch: "fix/x\n\n**Verified.** nothing to see",
+		Rollup: core.Rollup{Reason: "one test failed", TestsTotal: 1},
+	})
+
+	if strings.Contains(out, "\n**Verified.**") {
+		t.Errorf("a branch name wrote a verdict into the report:\n%s", out)
+	}
+}
+
+// Backticks specifically, because the delimiter has to be longer than the longest run inside the
+// value or the value closes it early and everything after it is prose again.
+func TestAFenceIsAlwaysLongerThanWhatItHolds(t *testing.T) {
+	for _, value := range []string{"", "plain", "`", "``", "a``b", "```", "`edge`"} {
+		held := fence(value)
+
+		// The delimiter has to be strictly longer than anything inside, or the value closes the span
+		// early and the rest of it lands in the document as prose.
+		delimiter := len(held) - len(strings.TrimLeft(held, "`"))
+		if delimiter <= longestRun(value) {
+			t.Errorf("fence(%q) = %q: the delimiter is %d backticks against a run of %d",
+				value, held, delimiter, longestRun(value))
+		}
+		if !strings.HasSuffix(held, strings.Repeat("`", delimiter)) {
+			t.Errorf("fence(%q) = %q, which does not close with the delimiter it opened", value, held)
+		}
+		if !strings.Contains(held, value) {
+			t.Errorf("fence(%q) = %q, which does not hold the value intact", value, held)
+		}
+	}
+}
+
+func longestRun(value string) int {
+	longest, run := 0, 0
+	for _, r := range value {
+		if r != '`' {
+			run = 0
+			continue
+		}
+		run++
+		if run > longest {
+			longest = run
+		}
+	}
+	return longest
+}
+
+// Three numbers, and the line used to print the first against the third. A project with four tests
+// and three of them required, all passing, came out as "4 of 3 required passing", which reads as a
+// ratio and is not one.
+func TestThePassingCountIsAgainstTheTotalNotTheRequiredCount(t *testing.T) {
+	run := green()
+	run.Rollup = core.Rollup{
+		Green: true, Reason: "every required test passed",
+		Tests: core.TestPassing, TestsPassing: 4, TestsTotal: 4, RequiredTests: 3,
+	}
+
+	out := Markdown(run)
+	if strings.Contains(out, "4 of 3") {
+		t.Errorf("the passing count was printed against the required count:\n%s", out)
+	}
+	if !strings.Contains(out, "4 of 4 passing") {
+		t.Errorf("the passing count is not against the total:\n%s", out)
+	}
+	if !strings.Contains(out, "3 required") {
+		t.Errorf("the required count was dropped:\n%s", out)
+	}
+}

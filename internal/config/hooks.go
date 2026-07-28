@@ -7,6 +7,7 @@ package config
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 )
@@ -24,6 +25,36 @@ type Hook struct {
 
 	// Timeout is a duration string such as "30s". Empty means the runner's default.
 	Timeout string `json:"timeout"`
+}
+
+// HookTimeout is how long this hook may run, or zero for the runner's default.
+//
+// The same shape as a test's, so the two configuration fields behave the same way. Parse errors are
+// caught by validation at load, so a bad value never reaches here; if one somehow did, zero is the
+// safe answer because it means the default rather than no bound at all.
+func (h Hook) HookTimeout() time.Duration {
+	parsed, err := parseDuration(h.Timeout)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+// Runnable converts the configured hooks into what the runner takes.
+//
+// Here rather than in the caller so the two vocabularies meet in one place: this package already
+// depends on internal/hooks to validate the event names, and having the command that runs them do
+// the translation would put a second copy of the mapping somewhere it could drift.
+func (p Project) Runnable() []hooks.Hook {
+	out := make([]hooks.Hook, 0, len(p.Hooks))
+	for _, hook := range p.Hooks {
+		out = append(out, hooks.Hook{
+			On:      hooks.Event(hook.On),
+			Run:     hook.Run,
+			Timeout: hook.HookTimeout(),
+		})
+	}
+	return out
 }
 
 // validateHooks checks what can be checked before the event vocabulary exists.

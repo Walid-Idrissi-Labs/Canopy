@@ -725,6 +725,59 @@ project is a product-contract change, not a refactor.
 
 ---
 
+## D-35 An approval is scoped by who defined the arguments. Decided 2026-07-28.
+
+An approval remembered for a session is scoped by the most specific thing in the call that a person
+can read: the shell command, or the path. Those are picked out by argument name, which is a sound
+reading of the tools Canopy wrote and a guess about everybody else's.
+
+**For a tool whose arguments Canopy did not define, the scope is the whole call and nothing less.**
+An MCP server names its own parameters and is free to call something `path` that is not a path.
+These two calls agree on that field and differ on the one that decides what happens:
+
+	{"path": "project-1", "operation": "read"}
+	{"path": "project-1", "operation": "delete"}
+
+Scoping by the familiar-looking field lets one standing approval cover both. A tool therefore
+declares whether its arguments are its own vocabulary, and anything reached over MCP declares that
+they are.
+
+**The canonical form preserves what was written.** Key order and spacing do not distinguish two
+calls, so they are normalised; numbers do, so they are carried through as their literals. Decoding
+into a generic value turns every JSON number into a float64, which cannot hold every integer:
+9007199254740993 becomes 9007199254740992, and two calls naming different records would be
+indistinguishable. Issue ids, account numbers and row ids are all exactly that shape.
+
+**What is displayed is what is remembered.** The prompt shows the canonical arguments the approval
+covers, because offering "always, this tool with exactly these arguments" while showing none of them
+asks somebody to agree to something they cannot see. The stored key is a digest of that same text,
+so the sentence read and the approval held cannot come apart.
+
+This extends D-33 rather than replacing any part of it. The trust level still decides what may run
+at all; this decides only how far a "yes" reaches once one has been given.
+
+## D-36 A duplicated argument on an external call is refused. Decided 2026-07-28.
+
+A JSON object with the same key twice does not have one meaning. Canopy keeps the last value, as most
+libraries do, but the format does not require that and some keep the first.
+
+For a call that leaves the machine, that is a confused deputy rather than an untidiness. The prompt
+shows the value Canopy read, the approval is remembered against the text Canopy produced, and the
+server is handed the original bytes, which it is entitled to read the other way:
+
+	{"operation": "delete", "operation": "read"}
+
+The person agreed to a read and a delete was performed. Nothing downstream can catch it, because by
+that point every part of Canopy is looking at the same collapsed map.
+
+**So a repeated key anywhere in an external call is refused before permission is evaluated and before
+the tool runs**, and audited as a call that did not run. The refusal names the argument and says to
+send it once, because a model told that can fix it and a model told "invalid input" guesses.
+
+Canopy's own tools are not checked this way. The same map backs the prompt, the scope and the call,
+so there is no second reader to disagree with, and the schema check already answers for malformed
+input with a better message.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

@@ -77,10 +77,23 @@ func (g gate) Check(ctx context.Context, _ string) (bool, string, error) {
 //
 // Reading the roll-up before they have would judge a turn on a suite that is still running, which
 // reports whatever happens to have failed first as the verdict.
+//
+// The run's own state, not the verdict the roll-up would draw from it. Those are two different
+// questions and asking the wrong one broke this completely: a verdict answers "what does this
+// evidence say about the code in the worktree", and a run that has been queued and not yet started
+// has recorded no revision, so the honest answer to that question is "unknown". Unknown is not
+// running, so every test read as finished the instant it was started, every check returned whatever
+// the roll-up made of a suite that had not run, and runway reverted every turn it was given.
+//
+// A test that has never been run at all is not waited for. Nothing is in flight for it, and the
+// roll-up reports it as unknown, which is the true thing to say about a test with no result.
 func settled(snapshot core.WorkspaceSnapshot) bool {
 	for _, test := range snapshot.Tests {
-		switch test.Explain(snapshot.Revision).State {
-		case core.TestRunning, core.TestQueued:
+		if test.Latest == nil {
+			continue
+		}
+		switch test.Latest.State {
+		case core.TestQueued, core.TestRunning:
 			return false
 		}
 	}

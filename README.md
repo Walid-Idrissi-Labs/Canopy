@@ -166,6 +166,32 @@ project definition with the same name wins only for that project. `$ARGUMENTS` i
 in one pass; there is no template evaluation or shell interpolation. When the placeholder is
 absent, arguments are appended under an `Arguments:` heading.
 
+## Modes, on shift+tab
+
+Four postures, and each one is a trust level the permission layer enforces rather than a paragraph
+asking the model to behave. An agent told it is planning and choosing to edit a file anyway is
+stopped, which is the only kind of instruction worth relying on.
+
+- **plan** reads and thinks and changes nothing.
+- **build** edits freely and asks before running anything. The ordinary way to work.
+- **runway** edits and runs freely, and the turn is put back if the workspace does not verify
+  afterwards. Needs a git repository and a configured test, and refuses to engage without them.
+- **cruise** runs everything without asking. Needs a git repository, so there is a way back.
+
+`shift+tab` cycles them, and it works while a turn is running: tightening takes hold on the next
+tool call rather than on the next message.
+
+## A report for the pull request
+
+```bash
+canopy report
+```
+
+Runs this repository's own checks and prints a markdown summary of what changed, whether it
+verified, and what it cost. It never claims a verification state the evidence does not support: if
+the worktree moves while the suite is running, it says the result went stale rather than reporting
+the pass.
+
 ## What it will not do
 
 - No cloud, no account, no hosted control plane. Keys never leave your machine.

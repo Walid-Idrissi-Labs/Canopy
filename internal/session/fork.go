@@ -85,6 +85,21 @@ func (e *Engine) Fork(sessionID, throughTurnID string) (core.Session, error) {
 	e.order = append(e.order, forked.ID)
 	e.projects[forked.ID] = e.projects[source.ID]
 
+	// The mode comes across too, and it has to be the mode the source is actually in rather than
+	// whatever the map happens to hold for it. A conversation with no entry of its own is still in a
+	// mode, resolved from how its agent was configured, and the fork has no agent at all: without
+	// this it would resolve against the engine's own level instead and land in build. Forking a
+	// planning conversation would then hand back one that can edit files, from a command whose whole
+	// job is to continue the same work down a second path.
+	//
+	// Refused rather than carried where the fork cannot honour it, by the same rule everywhere else.
+	forkedMode := e.modeLocked(source.ID)
+	if e.modeUnusableLocked(forked.ID, forkedMode) == nil {
+		e.sessionMode[forked.ID] = forkedMode
+	} else {
+		forkedMode = e.fallBackLocked(forked.ID, core.ModeBuild)
+	}
+
 	out := copySession(*forked)
 	origin := copySession(*source)
 	e.mu.Unlock()
@@ -93,6 +108,8 @@ func (e *Engine) Fork(sessionID, throughTurnID string) (core.Session, error) {
 	// one end knows about is one that disagrees with itself after a restart.
 	e.persistSession(origin)
 	e.persistSession(out)
+	// After the row exists, since this updates it rather than inserting one.
+	e.persist(func(s *Storage) error { return s.SaveSessionMode(out.ID, forkedMode.Name) })
 	for i, turn := range out.Turns {
 		e.persistTurn(out.ID, i, turn)
 	}

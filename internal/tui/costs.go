@@ -68,7 +68,7 @@ func costOutcomeLines(history CostOutcomeHistory) []string {
 		return ordered[i].model < ordered[j].model
 	})
 
-	lines := []string{styleHeader.Render("cost versus verified outcome — this project only")}
+	lines := []string{styleHeader.Render("cost versus verified outcome, this project only")}
 	exact := 0
 	for _, group := range ordered {
 		exact += len(group.costs)

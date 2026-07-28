@@ -124,6 +124,31 @@ func waitForTurn(t *testing.T, e *Engine, sessionID, turnID string) core.Turn {
 	}
 }
 
+// waitForCheck waits until a conversation has finished with its last turn, checks included.
+//
+// waitForTurn returns at the terminal transition, which is deliberately earlier than this: a mode
+// that keeps the workspace green runs its checks after that point and may still roll the turn back,
+// and the conversation stays closed to new messages until it has. A test that read the gate at the
+// terminal transition would be racing the thing it is trying to observe, which is how the first
+// version of this passed on an ordinary run and failed under the race detector.
+func waitForCheck(t *testing.T, e *Engine, sessionID string) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		e.mu.Lock()
+		held := e.verifying[sessionID]
+		e.mu.Unlock()
+		if !held {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("session %s never finished checking its last turn", sessionID)
+		case <-time.After(2 * time.Millisecond):
+		}
+	}
+}
+
 func TestATurnStreamsIntoTheSnapshot(t *testing.T) {
 	client := &scriptedClient{name: "claude", events: []core.StreamEvent{
 		{Kind: core.EventText, Text: "Hello"},

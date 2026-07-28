@@ -354,3 +354,35 @@ not fail on it. Guessing from stderr is locale- and shell-dependent, while treat
 
 Until both supervisors choose, A6-03 is blocked. A later agent must not clear it by matching English
 shell output or by silently redefining exit 126/127.
+
+---
+
+## Q-17 How should a revision a hook itself produced be recognised?
+
+**Added 2026-07-28 by the review of PR #29, which made the hook path reachable.**
+
+A hook fires once per revision, and a pass at a new revision is a new event. That rule is right on
+its own: tests passing over one piece of work and then over the next is two things happening, and
+suppressing the second would silently skip the commit for the second piece of work.
+
+It also means a committing hook re-triggers itself. Commit on green moves HEAD, the results go stale,
+they run again, they pass again, and the hook is eligible again at the new revision. `git commit -am`
+fails harmlessly the second time. `git commit -am ... --allow-empty` does not, and will keep
+producing revisions for as long as the session runs.
+
+TASKS previously claimed once-per-revision ended this loop. It does not, and that claim has been
+removed rather than left to be discovered by somebody whose repository filled with empty commits.
+
+**Supervisor decision required.** Neither option is obviously right and neither should be chosen by
+an agent:
+
+1. **Recognise and suppress a hook-originated revision.** Needs a rule for what counts as one, and
+   every cheap version of it is wrong in a way that matters: comparing the commit author catches
+   nothing when the hook commits as the user, and remembering the revision the hook produced fails
+   the moment the hook makes more than one.
+2. **Accept that a committing hook fires more than once**, record it as a decision, and say plainly
+   in the documentation that a hook must be written to be safe to run twice. This is the smaller
+   change and it puts the burden on whoever writes the hook.
+
+Until this is settled A8-05 stays claimed rather than in review, because "a hook fires only on a real
+state transition" cannot be signed off while the transition a hook caused itself counts as one.

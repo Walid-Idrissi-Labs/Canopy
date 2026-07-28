@@ -63,6 +63,25 @@ type Engine struct {
 	// alone would make them the same setting with two names.
 	sessionMode map[string]core.Mode
 
+	// verifying is the sessions whose last turn is terminal and not yet finished with.
+	//
+	// A turn in a mode that keeps the workspace green is not done when the model stops talking. The
+	// checks still have to run and the workspace may still be put back, and until both have happened
+	// the conversation is not free. Without this the sequence is: the turn goes terminal, the
+	// interface sees nothing running and accepts the next message, that turn starts editing, and then
+	// the first turn's gate comes back red and restores a checkpoint over work the second one did.
+	// Losing somebody's work to a safety feature is the worst thing in this file.
+	verifying map[string]bool
+
+	// restoredMode is a mode read back from history and not yet applied, by session.
+	//
+	// Kept apart from sessionMode because a stored mode is a request rather than a fact: runway needs
+	// a gate and cruise needs checkpoints, and history is attached before either exists. Applying it
+	// at load would either refuse every mode or, worse, restore runway into a run with no gate, where
+	// nothing checks the turns it promises to check. So it waits here and is resolved on first use,
+	// by which time everything it depends on has been attached or has definitively not been.
+	restoredMode map[string]string
+
 	// storage is optional. An engine without one still works completely and forgets everything on
 	// exit, which is what the tests want and what a first run before the config directory exists
 	// gets. Persistence being optional rather than assumed is also what stops a storage failure
@@ -144,7 +163,83 @@ func New(resolver Resolver) *Engine {
 		budgets:     newBudgets(),
 		projects:    make(map[string]string),
 		sessionMode: make(map[string]core.Mode),
+		verifying:   make(map[string]bool),
 	}
+}
+
+// modeUnusableLocked reports why a mode cannot be entered here, or nil if it can.
+//
+// One function rather than the checks written out at each site, because there are now three: setting
+// a mode, restoring one from history, and carrying one across a fork. Three copies of a safety rule
+// is three places for it to be updated twice.
+func (e *Engine) modeUnusableLocked(sessionID string, mode core.Mode) error {
+	// An engine with no tools attached has no configured level and so no ceiling to enforce. Valid
+	// is what tells the two apart: an unset level is not a restrictive one, and treating it as
+	// restrictive would refuse every mode on a conversation that has no tools to govern anyway.
+	if ceiling := e.configuredTrustLocked(sessionID); ceiling.Valid() && !ceiling.AtLeast(mode.Trust) {
+		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode, which needs %s",
+			ceiling, mode.Name, mode.Trust)
+	}
+	if mode.NeedsUndo && e.checkpoints == nil {
+		return fmt.Errorf(
+			"%s needs to be able to put the workspace back, which needs a git repository", mode.Name)
+	}
+	if mode.KeepsGreen && e.gate == nil {
+		return fmt.Errorf(
+			"%s needs to be able to check the workspace, which needs a configured test", mode.Name)
+	}
+	return nil
+}
+
+// modeLocked is the mode a conversation is in, resolving anything read back from history on the way.
+//
+// The one place both Mode and trustForLocked go through, so what the box shows and what the
+// permission layer enforces cannot come from two different answers.
+func (e *Engine) modeLocked(sessionID string) core.Mode {
+	if mode, ok := e.sessionMode[sessionID]; ok && mode.Name != "" {
+		return mode
+	}
+
+	if name, ok := e.restoredMode[sessionID]; ok {
+		// Consumed either way. A stored mode that cannot be honoured here should be reported once and
+		// then stop being asked about, rather than failing the same check on every tool call.
+		delete(e.restoredMode, sessionID)
+
+		if mode, known := core.ModeByName(name); known {
+			if e.modeUnusableLocked(sessionID, mode) == nil {
+				e.sessionMode[sessionID] = mode
+				return mode
+			}
+			// Stored but not usable here: runway reopened where nothing can check the workspace, or a
+			// mode above what this agent is configured for.
+			//
+			// Down to build, never to the level the stored mode happens to share with a weaker one.
+			// Runway and cruise are both broad, so resolving by level would turn runway, which reverts
+			// a turn that ends red, into cruise, which keeps it. Silently becoming the more dangerous
+			// mode below is the worst way a safety setting can fail. Build is at or below every mode
+			// that can reach here, because plan is usable everywhere and so never does.
+			return e.fallBackLocked(sessionID, core.ModeBuild)
+		}
+
+		// A name from a version that had a mode this one does not. Nothing can be restored and
+		// nothing can be assumed, so the narrowest mode there is, which is visible in the box the
+		// moment somebody looks and is one keystroke to leave.
+		return e.fallBackLocked(sessionID, core.ModePlan)
+	}
+
+	return core.ModeForTrust(e.configuredTrustLocked(sessionID))
+}
+
+// fallBackLocked settles a conversation into the named mode, or into plan where even that is too
+// much for how the agent is configured.
+func (e *Engine) fallBackLocked(sessionID, name string) core.Mode {
+	if mode, ok := core.ModeByName(name); ok && e.modeUnusableLocked(sessionID, mode) == nil {
+		e.sessionMode[sessionID] = mode
+		return mode
+	}
+	plan, _ := core.ModeByName(core.ModePlan)
+	e.sessionMode[sessionID] = plan
+	return plan
 }
 
 // Trust is how much the agent in one conversation may do without asking.
@@ -162,10 +257,7 @@ func (e *Engine) Trust(sessionID string) core.TrustLevel {
 func (e *Engine) Mode(sessionID string) core.Mode {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if mode, ok := e.sessionMode[sessionID]; ok && mode.Name != "" {
-		return mode
-	}
-	return core.ModeForTrust(e.trustForLocked(sessionID))
+	return e.modeLocked(sessionID)
 }
 
 // SetMode changes it, for that conversation alone.
@@ -182,28 +274,36 @@ func (e *Engine) Mode(sessionID string) core.Mode {
 // key that is broken.
 func (e *Engine) SetMode(sessionID string, mode core.Mode) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	// An engine with no tools attached has no configured level and so no ceiling to enforce. Valid
-	// is what tells the two apart: an unset level is not a restrictive one, and treating it as
-	// restrictive would refuse every mode on a conversation that has no tools to govern anyway.
-	ceiling := e.configuredTrustLocked(sessionID)
-	if ceiling.Valid() && !ceiling.AtLeast(mode.Trust) {
-		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode, which needs %s",
-			ceiling, mode.Name, mode.Trust)
-	}
-	if checkpoints, gate := e.checkpoints, e.gate; mode.NeedsUndo && checkpoints == nil {
-		return fmt.Errorf(
-			"%s needs to be able to put the workspace back, which needs a git repository", mode.Name)
-	} else if mode.KeepsGreen && gate == nil {
-		return fmt.Errorf(
-			"%s needs to be able to check the workspace, which needs a configured test", mode.Name)
+	if err := e.modeUnusableLocked(sessionID, mode); err != nil {
+		e.mu.Unlock()
+		return err
 	}
 	if e.sessionMode == nil {
 		e.sessionMode = make(map[string]core.Mode)
 	}
 	e.sessionMode[sessionID] = mode
+	// Whatever history had to say is settled now, so it must not be resolved later over the top of a
+	// decision somebody has just made.
+	delete(e.restoredMode, sessionID)
+	e.mu.Unlock()
+
+	// Written after the lock is released, because persist takes it. Remembered by name rather than
+	// by value: the prompt and the trust level belong to this build of Canopy and the name is the
+	// part somebody chose, so an upgrade that improves a prompt reaches conversations that already
+	// exist instead of leaving them on the old one forever.
+	e.persist(func(s *Storage) error { return s.SaveSessionMode(sessionID, mode.Name) })
 	return nil
+}
+
+// ProjectOf is the project a conversation belongs to, or empty if it was recorded without one.
+//
+// Empty is a real answer and not a missing one. Conversations from before history was scoped by
+// project have no association, and so do any started outside a repository, and neither should be
+// treated as belonging to whichever directory happens to be asking.
+func (e *Engine) ProjectOf(sessionID string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.projects[sessionID]
 }
 
 // SetProjectID scopes new sessions and cost analysis to one project.
@@ -246,9 +346,19 @@ func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
 	if err != nil {
 		return err
 	}
+	modes, err := storage.sessionModes()
+	if err != nil {
+		return err
+	}
 	e.mu.Lock()
 	for sessionID, projectID := range projects {
 		e.projects[sessionID] = projectID
+	}
+	if len(modes) > 0 && e.restoredMode == nil {
+		e.restoredMode = make(map[string]string, len(modes))
+	}
+	for sessionID, mode := range modes {
+		e.restoredMode[sessionID] = mode
 	}
 	e.mu.Unlock()
 	return nil
@@ -537,6 +647,16 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 		e.mu.Unlock()
 		return "", ErrBusy
 	}
+	// Terminal is not the same as finished. A turn whose mode keeps the workspace green is still
+	// being checked after its last word, and may still be rolled back, so the conversation stays
+	// closed until that has settled. Wrapped rather than returned bare, so callers matching on
+	// ErrBusy keep working while a person reads why this one is different from the ordinary wait.
+	if e.verifying[sessionID] {
+		e.mu.Unlock()
+		return "", fmt.Errorf(
+			"%w: the workspace is still being checked after the last turn, which may still be undone",
+			ErrBusy)
+	}
 	e.mu.Unlock()
 
 	// Before the turn is registered, not after the reply comes back. A cap checked afterwards is a
@@ -698,6 +818,13 @@ func (e *Engine) run(
 			"finishes successfully", outcome.Stop)
 	}
 
+	// Claimed before the turn is marked terminal, which is the whole point of doing it here rather
+	// than inside keepGreen. finish is what makes the turn terminal, and a terminal turn is what the
+	// interface reads as "you may send the next message". Claiming afterwards leaves a window where
+	// a second turn can be accepted and start editing while the first one's checks are still running,
+	// and the first one's rollback then restores over work the second one did.
+	held := state == core.TurnComplete && e.holdConversation(sessionID)
+
 	e.finish(sessionID, turnID, state, reason, usage, client.Name())
 
 	// Only a turn that finished on its own terms is worth checking. A cancelled or failed turn has
@@ -706,9 +833,44 @@ func (e *Engine) run(
 	//
 	// Deliberately after finish, with a fresh context. The turn's own context is cancelled the moment
 	// it is terminal, and the checks are about what that turn left behind rather than part of it.
-	if state == core.TurnComplete {
+	if held {
 		e.keepGreen(context.WithoutCancel(ctx), sessionID, turnID)
 	}
+}
+
+// holdConversation closes a conversation to new messages while its last turn is being checked.
+//
+// Returns whether it engaged, so the caller knows whether there is anything to release. False for
+// every conversation whose mode does not promise to keep the workspace green, which is most of them:
+// nothing is going to be checked, nothing can be rolled back, and holding the conversation shut
+// would be a wait with no purpose.
+func (e *Engine) holdConversation(sessionID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if !e.gateAppliesLocked(sessionID) {
+		return false
+	}
+	if e.verifying == nil {
+		e.verifying = map[string]bool{}
+	}
+	e.verifying[sessionID] = true
+	return true
+}
+
+// releaseConversation reopens it, whatever the checks concluded.
+func (e *Engine) releaseConversation(sessionID string) {
+	e.mu.Lock()
+	delete(e.verifying, sessionID)
+	e.mu.Unlock()
+}
+
+// gateAppliesLocked reports whether this conversation's turns have to be checked after they end.
+//
+// One definition, used by the hold above and by the check itself. Two copies of this would be two
+// chances for the conversation to be held shut by something that then never runs.
+func (e *Engine) gateAppliesLocked(sessionID string) bool {
+	return e.gate != nil && e.modeLocked(sessionID).KeepsGreen
 }
 
 // snapshot returns a copy of a session, or the zero value if it has gone.

@@ -175,6 +175,15 @@ func (t *remoteTool) Schema() json.RawMessage { return t.schema }
 // be wrong on.
 func (t *remoteTool) Kind() core.ToolKind { return core.ToolExecute }
 
+// External says this tool's arguments are the server's vocabulary rather than Canopy's.
+//
+// Which is the whole nature of MCP: the schema comes from somewhere else and the names in it mean
+// whatever that server decided. The permission layer reads argument names to work out how narrowly
+// an approval should be scoped, and a server naming something "path" does not make it a path. Saying
+// so here is what stops one approval covering every later call that reused the same value in a field
+// that only looked familiar.
+func (t *remoteTool) External() bool { return true }
+
 // Run calls the tool on its server.
 //
 // A failure to reach the server is a Go error rather than a result, which is the distinction the

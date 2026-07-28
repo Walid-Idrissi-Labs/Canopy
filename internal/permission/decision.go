@@ -13,6 +13,8 @@
 package permission
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -72,6 +74,27 @@ type Request struct {
 
 	// Command is the shell command, for execute calls. Empty otherwise.
 	Command string
+
+	// Arguments is the whole call in canonical form, for scoping an approval and for showing one.
+	//
+	// The text rather than a hash of it, deliberately. The prompt has to be able to display exactly
+	// what an approval would cover, and a hash is not something anybody can read: offering "always,
+	// this tool with exactly these arguments" while showing no arguments asks somebody to agree to
+	// something they cannot see. The digest that keys the approval is derived from this, so the
+	// thing displayed and the thing remembered cannot come apart.
+	Arguments string
+
+	// Opaque says the argument names in this call follow a vocabulary Canopy did not define.
+	//
+	// True for anything reached over MCP. It matters because the scope below is otherwise chosen by
+	// looking for arguments called "path" or "command", which is a sound reading of the tools Canopy
+	// wrote and a guess about everybody else's. A remote tool is free to call something "path" that
+	// is not a path: these two differ only outside that field, and scoping by it would let one
+	// standing approval cover both.
+	//
+	//	{"path": "project-1", "operation": "read"}
+	//	{"path": "project-1", "operation": "delete"}
+	Opaque bool
 }
 
 // Decision is the answer, and why.
@@ -102,6 +125,9 @@ type Scope struct {
 	Command string
 	// Kind the approval covers, set only for approvals that cover a whole class of tool.
 	Kind core.ToolKind
+	// Arguments the approval covers, as a fingerprint. Set only when there was no path and no
+	// command to scope by, which is the case for a tool on an MCP server.
+	Arguments string
 }
 
 func (s Scope) String() string {
@@ -112,6 +138,11 @@ func (s Scope) String() string {
 		return fmt.Sprintf("%s on %s", s.Tool, s.Path)
 	case s.Kind != "":
 		return fmt.Sprintf("any %s tool", s.Kind)
+	case s.Arguments != "":
+		// The fingerprint itself is not shown. It is a hash, it means nothing to a reader, and the
+		// sentence has to be one somebody can act on: what they are agreeing to is this call again,
+		// not this tool again.
+		return fmt.Sprintf("%s with exactly these arguments", s.Tool)
 	default:
 		return s.Tool
 	}
@@ -123,7 +154,7 @@ func (s Scope) String() string {
 // was not shown. If the key were coarser than the prompt, somebody would approve one file and grant
 // a directory.
 func (s Scope) key() string {
-	return strings.Join([]string{s.Tool, s.Path, s.Command, string(s.Kind)}, "\x00")
+	return strings.Join([]string{s.Tool, s.Path, s.Command, string(s.Kind), s.Arguments}, "\x00")
 }
 
 // Decide answers whether a call may run, given a trust level and what has already been approved.
@@ -310,14 +341,33 @@ func hasFlag(command, flag string) bool {
 func scopeFor(req Request) Scope {
 	scope := Scope{Tool: req.Tool}
 	switch {
+	case req.Opaque && req.Arguments != "":
+		// First for anything Canopy did not define the arguments of, because for those the field
+		// names below are a guess. A remote tool naming something "path" does not make it one, and
+		// scoping by it would cover every other call that happened to use the same value there.
+		scope.Arguments = fingerprint(req.Arguments)
 	case req.Command != "":
 		scope.Command = req.Command
 	case len(req.Paths) > 0:
 		sorted := append([]string(nil), req.Paths...)
 		sort.Strings(sorted)
 		scope.Path = sorted[0]
+	case req.Arguments != "":
+		// A tool of Canopy's own that names neither. The alternative is a scope of the tool alone,
+		// which is an approval far wider than the one being displayed.
+		scope.Arguments = fingerprint(req.Arguments)
 	}
 	return scope
+}
+
+// fingerprint keys an approval by the exact call it was given for.
+//
+// Hashed rather than held whole because a scope is a map key and an approval is remembered for the
+// life of a session, and some tools take a great deal of input. What the person agreed to is the
+// canonical text, which the prompt shows them; this only has to tell two of them apart.
+func fingerprint(canonical string) string {
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 // PathScope builds an approval covering a directory and everything under it.

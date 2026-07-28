@@ -49,7 +49,7 @@ func Markdown(run Run) string {
 	if run.Branch != "" {
 		title += " on " + run.Branch
 	}
-	fmt.Fprintf(&b, "## %s\n\n", title)
+	fmt.Fprintf(&b, "## %s\n\n", inline(title))
 
 	b.WriteString(verdict(run))
 	b.WriteString("\n")
@@ -91,8 +91,14 @@ func verdict(run Run) string {
 	}
 
 	if r.TestsTotal > 0 {
-		fmt.Fprintf(&b, "\n- Tests: %s, %d of %d required passing\n",
-			r.Tests, r.TestsPassing, r.RequiredTests)
+		// Passing out of the total, and the required count said separately.
+		//
+		// These are three numbers and the line used to print the first against the third, which reads
+		// as one ratio and is not one: a project with four tests and three of them required, all
+		// passing, came out as "4 of 3 required passing". Beyond looking wrong, it is the pairing that
+		// hides the case this section exists for, where a passing count is carried by optional tests.
+		fmt.Fprintf(&b, "\n- Tests: %s, %d of %d passing, %d required\n",
+			r.Tests, r.TestsPassing, r.TestsTotal, r.RequiredTests)
 	}
 	if r.ServicesTotal > 0 {
 		fmt.Fprintf(&b, "- Services: %s, %d of %d up\n", r.Services, r.ServicesUp, r.ServicesTotal)
@@ -129,7 +135,7 @@ func changes(run Run) string {
 
 	fmt.Fprintf(&b, "%s", run.Diff.Summary())
 	if run.Base != "" {
-		fmt.Fprintf(&b, ", against `%s`", run.Base)
+		fmt.Fprintf(&b, ", against %s", fence(run.Base))
 	}
 	b.WriteString("\n")
 
@@ -146,7 +152,7 @@ func changes(run Run) string {
 			shown = shown[:most]
 		}
 		for _, file := range shown {
-			fmt.Fprintf(&b, "- `%s` (%s)\n", file.Path, changeWord(file.Status))
+			fmt.Fprintf(&b, "- %s (%s)\n", fence(file.Path), changeWord(file.Status))
 		}
 		if truncated > 0 {
 			fmt.Fprintf(&b, "- and %d more\n", truncated)
@@ -214,7 +220,81 @@ func ordinal(n int) string {
 	}
 }
 
+// Nothing that reaches this package is trusted, and the report is a document written for somebody
+// else to read.
+//
+// A branch name, a file path and the reason a check failed all pass through here, and all three come
+// from the repository rather than from Canopy: whoever opened the pull request chose the branch name
+// and the paths, and a reason can carry a line of a test runner's output. The report is then pasted
+// into a pull request body, which is a Markdown document, so a value that is allowed to carry
+// Markdown syntax is a value that can write in that document. The worst of it is not formatting
+// going wrong: it is a path ending a code span and opening a heading that says the run was verified
+// when the section above says it was not.
+//
+// So values are neutralised on the way in rather than assumed clean, in the two shapes they arrive
+// in: fence for anything shown as code, inline for anything shown as prose.
+
+// fence wraps a value in a code span that the value cannot break out of.
+//
+// The delimiter is a run of backticks one longer than the longest run inside the value, which is
+// what makes it inescapable rather than merely awkward to escape: there is no sequence the value can
+// contain that closes it. Padding spaces are added when the value itself starts or ends with a
+// backtick, since a delimiter directly against one would be read as part of the same run.
+func fence(value string) string {
+	value = collapse(value)
+
+	longest, run := 0, 0
+	for _, r := range value {
+		if r != '`' {
+			run = 0
+			continue
+		}
+		run++
+		if run > longest {
+			longest = run
+		}
+	}
+
+	pad := ""
+	if value == "" || strings.HasPrefix(value, "`") || strings.HasSuffix(value, "`") {
+		pad = " "
+	}
+	delimiter := strings.Repeat("`", longest+1)
+	return delimiter + pad + value + pad + delimiter
+}
+
+// inline neutralises a value going into a sentence or a heading.
+//
+// Escaped rather than stripped, so the reader still sees what the value actually was. A path with an
+// underscore in it should appear with its underscore rather than silently losing characters, because
+// somebody is reading this to find out what happened and a quietly edited path is a worse answer
+// than an ugly one.
+func inline(value string) string {
+	value = collapse(value)
+
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		if strings.ContainsRune("\\`*_[]<>", r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// collapse puts a value on one line.
+//
+// The first half of both of the above and the more important half. Inline syntax can only make a
+// line look wrong; a newline lets a value start a block, and a block can be a heading, a list, or a
+// fenced code block that swallows everything after it.
+func collapse(value string) string { return strings.Join(strings.Fields(value), " ") }
+
 // sentence makes a reason read as prose in a document rather than as a fragment in a table.
+//
+// Neutralised on the way out rather than at each of the four places a reason is printed, because
+// this is the one function every one of them already goes through, and a rule enforced in one place
+// cannot be forgotten at a fifth.
 func sentence(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -226,7 +306,7 @@ func sentence(text string) string {
 	if !strings.HasSuffix(text, ".") && !strings.HasSuffix(text, "!") {
 		text += "."
 	}
-	return text
+	return inline(text)
 }
 
 // Sorted returns file changes in a stable order, so two reports of the same work read the same.

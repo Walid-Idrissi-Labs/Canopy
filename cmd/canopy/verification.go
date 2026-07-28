@@ -18,8 +18,8 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
-	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
@@ -37,6 +37,21 @@ type verification struct {
 	// store is what the worktree monitor reads. Fed from the same verifier as the review screen, so
 	// the two cannot show different states of the same worktree.
 	store *worktrees
+
+	// runner decides which hooks fire and runs them. Nil when the project declares none, which is
+	// the ordinary case and is why every use of it is guarded.
+	runner *hooks.Runner
+
+	// failures are the hooks that did not work, kept so they can be said out loud on the way out.
+	//
+	// The acceptance criterion for hooks is that a failing one is visible and never silently
+	// swallowed, and the whole point of a hook is that somebody has stopped watching: a failure
+	// nobody is told about means they stopped watching something that stopped working. There is
+	// nowhere on screen for this yet, because a Canopy event is deliberately a thin notification
+	// that a consumer answers by re-reading a snapshot, and a hook failure has no snapshot to
+	// re-read. Reported on exit is late, and late is a great deal better than never.
+	failuresMu sync.Mutex
+	failures   []string
 }
 
 // reviewInsights joins the two exact contracts needed by A8-07: the verifier owns current test
@@ -180,6 +195,70 @@ func (v *verification) Close() {
 	}
 	v.stop()
 	v.verifier.Runner().CancelAll()
+	if v.runner != nil {
+		// Waited on rather than abandoned. A hook is a process Canopy started, and leaving one
+		// running after the program that started it has gone is the same failure the test runner is
+		// held to.
+		v.runner.Wait()
+	}
+}
+
+// observeHooks tells the runner where every watched agent stands, and lets it decide what that
+// newly satisfies.
+//
+// A snapshot per agent rather than a delta, because the poller produces snapshots and because
+// working out what changed is the runner's job. It holds the state that makes "again" answerable,
+// and splitting that decision across two packages is how a hook ends up firing twice.
+func (v *verification) observeHooks(ctx context.Context, engine *session.Engine) {
+	if v == nil || v.runner == nil {
+		return
+	}
+
+	states := make(map[string]core.AgentState)
+	for _, status := range engine.AgentStatuses() {
+		states[status.Agent.Name] = status.State
+	}
+
+	for _, agent := range engine.Agents() {
+		snapshot, ok := v.verifier.Snapshot(agent.Name)
+		if !ok {
+			continue
+		}
+		rollup := core.RollUp(snapshot)
+		v.runner.Observe(ctx, hooks.Observation{
+			Subject: agent.Name,
+			// The derived state rather than the recorded one, so a result that has been overtaken
+			// reads as stale here exactly as it does on screen. This is the whole of the rule that
+			// nothing fires on evidence which no longer describes the code.
+			Revision: snapshot.Revision,
+			Tests:    rollup.Tests,
+			Green:    rollup.Green,
+			Agent:    states[agent.Name],
+		})
+	}
+}
+
+// recordHook is where a hook's outcome lands.
+//
+// Only the failures are kept. A hook that worked is what somebody configured it to do, and a list
+// of those is a log nobody reads; a hook that did not is the thing they need to be told.
+func (v *verification) recordHook(report hooks.Report) {
+	if !report.Failed() {
+		return
+	}
+	v.failuresMu.Lock()
+	defer v.failuresMu.Unlock()
+	v.failures = append(v.failures, report.Summary())
+}
+
+// HookFailures is everything that went wrong, for the caller to say on the way out.
+func (v *verification) HookFailures() []string {
+	if v == nil {
+		return nil
+	}
+	v.failuresMu.Lock()
+	defer v.failuresMu.Unlock()
+	return append([]string(nil), v.failures...)
 }
 
 // startVerification brings up the poller and the verifier for a repository.
@@ -200,17 +279,7 @@ func startVerification(
 		base = defaultBranch(ctx, repo)
 	}
 
-	tests := make([]execpkg.Test, 0, len(project.Tests))
-	for _, test := range project.Tests {
-		tests = append(tests, execpkg.Test{
-			Name:     test.Name,
-			Command:  test.Command,
-			Required: test.Required,
-			Timeout:  test.TestTimeout(),
-		})
-	}
-
-	verifier := verify.New(repo, base, tests, nil)
+	verifier := verify.New(repo, base, testsFor(project), nil)
 
 	// The poller feeds the verifier and nothing else, so the two are wired directly rather than
 	// through the event bus. Going through the bus would mean the verifier learning a revision
@@ -226,6 +295,15 @@ func startVerification(
 
 	watchCtx, stop := context.WithCancel(ctx)
 	v := &verification{verifier: verifier, poller: poller, stop: stop, store: monitor}
+
+	// Hooks fire on what the verifier concludes, which is why they are built here rather than beside
+	// the agent loop. Nothing was calling Observe at all before this: the package decided correctly
+	// which events had happened and was never asked, so every hook anybody configured was a command
+	// that validated at load and then never ran.
+	if configured := project.Runnable(); len(configured) > 0 {
+		v.runner = hooks.New(configured, dir, hooks.Shell, v.recordHook)
+	}
+
 	v.follow(engine)
 
 	// Agents come and go while Canopy runs, so the watched set is refreshed rather than fixed at
@@ -241,6 +319,12 @@ func startVerification(
 				return
 			case <-ticker.C:
 				v.follow(engine)
+				// On the tick rather than on a revision changing, because half the vocabulary is
+				// about the agent rather than about the code: an agent going idle or getting blocked
+				// moves nothing in git, and a hook keyed to a poll of the worktree would never see
+				// it. The runner decides what is new, which is the whole reason it holds that state
+				// rather than the caller.
+				v.observeHooks(watchCtx, engine)
 			}
 		}
 	}()
