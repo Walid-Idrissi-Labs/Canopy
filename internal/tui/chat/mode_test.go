@@ -196,3 +196,27 @@ func TestALongModelNameIsDroppedRatherThanTruncated(t *testing.T) {
 		t.Errorf("the model name was drawn into a box with no room for it:\n%s", view)
 	}
 }
+
+// The key skips what it cannot reach rather than stopping on it.
+//
+// An agent capped at standard can plan and can build, and cannot do either of the bottom two. The
+// key still has to do something: stopping would read as a jammed key, and refusing outright would
+// mean it could not reach plan either, which it certainly can.
+func TestTheKeySkipsModesThisAgentCannotEnter(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}, trust: core.TrustStandard}
+	m := boxed(engine)
+
+	if got := m.Mode(); got != core.ModeBuild {
+		t.Fatalf("an agent capped at standard opens in %q", got)
+	}
+
+	// runway and cruise both need broad, so the next reachable stop is plan.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := m.Mode(); got != core.ModePlan {
+		t.Errorf("the key landed on %q, want it to skip past what it cannot enter", got)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := m.Mode(); got != core.ModeBuild {
+		t.Errorf("the key landed on %q coming back round", got)
+	}
+}
