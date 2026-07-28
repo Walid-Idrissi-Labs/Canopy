@@ -2,6 +2,7 @@ package chat_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,18 @@ type fakeEngine struct {
 	prompt     *session.Prompt
 	answers    [][2]bool
 	trust      core.TrustLevel
+	undone     []string
+	undoErr    error
+
+	forkedThrough string
+	trail         *permission.Trail
+
+	// mode is what has been chosen, and trust is the ceiling it cannot be raised above. Empty trust
+	// means no ceiling, which is what most of these tests want.
+	mode     core.Mode
+	steered  []string
+	asked    []string
+	asideErr error
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -77,16 +90,48 @@ func (e *fakeEngine) Answer(_ string, approved, remember bool) bool {
 	return true
 }
 
-// Trust is what plan mode is made of, so the fake holds a real level rather than answering a
-// constant: a stub that always said "standard" would make the mode indicator untestable.
-func (e *fakeEngine) Trust(string) core.TrustLevel {
-	if e.trust == "" {
-		return core.TrustStandard
+// The mode is what the box shows and what the permission layer decides against, so the fake holds a
+// real one rather than answering a constant: a stub that always said "build" would make the
+// indicator untestable.
+//
+// The ceiling is honoured too, since "a keystroke can never give an agent more than its
+// configuration allows" is the property most worth being able to test.
+func (e *fakeEngine) Mode(string) core.Mode {
+	if e.mode.Name != "" {
+		return e.mode
 	}
-	return e.trust
+	if e.trust != "" {
+		return core.ModeForTrust(e.trust)
+	}
+	// No ceiling configured, so the ordinary default rather than the top of the ladder.
+	return core.ModeForTrust(core.TrustStandard)
 }
 
-func (e *fakeEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
+func (e *fakeEngine) SetMode(_ string, mode core.Mode) error {
+	if e.trust != "" && !e.trust.AtLeast(mode.Trust) {
+		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode", e.trust, mode.Name)
+	}
+	e.mode = mode
+	return nil
+}
+
+func (e *fakeEngine) Fork(_, throughTurnID string) (core.Session, error) {
+	e.forkedThrough = throughTurnID
+	return core.Session{ID: "session-9"}, nil
+}
+
+// Nil is a legitimate answer and the one most of these tests want: a conversation with no tools
+// attached has nothing recording, and the commands that read the trail have to say so rather than
+// falling over.
+func (e *fakeEngine) Trail() *permission.Trail { return e.trail }
+
+func (e *fakeEngine) Undo(_ context.Context, _, turnID string) error {
+	if e.undoErr != nil {
+		return e.undoErr
+	}
+	e.undone = append(e.undone, turnID)
+	return nil
+}
 
 func model(engine chat.Engine) chat.Model {
 	m := chat.New(engine, "s1", "myproject", "claude")
@@ -256,27 +301,37 @@ func TestCommandsListsActiveDefinitionsWithoutCallingTheModel(t *testing.T) {
 	}
 }
 
-func TestTabCompletesAUniqueCommandAndListsAmbiguousMatches(t *testing.T) {
-	m := model(&fakeEngine{})
-	m.SetCommands(config.ResolveCommands(nil, []config.Command{
-		{Name: "review", Description: "review it", Prompt: "review"},
-		{Name: "release", Description: "release it", Prompt: "release"},
-	}))
-
-	m = press(typeText(m, "/rev"), tea.KeyTab)
-	if m.InputValue() != "/review " || m.Notice() != "review it" {
-		t.Errorf("unique completion = input %q notice %q", m.InputValue(), m.Notice())
+// Tab takes whatever the list is pointing at.
+//
+// This used to complete only when exactly one command matched, and print a row of names when more
+// than one did, which asks somebody to already know what they are looking for. There is a list on
+// screen now, so tab has an unambiguous answer whether one command matches or six: the highlighted
+// one. Which one that is, and how to move it, is tested in menu_test.go.
+func TestTabTakesTheHighlightedCommand(t *testing.T) {
+	withTwo := func() chat.Model {
+		m := model(&fakeEngine{})
+		m.SetCommands(config.ResolveCommands(nil, []config.Command{
+			{Name: "review", Description: "review it", Prompt: "review"},
+			{Name: "release", Description: "release it", Prompt: "release"},
+		}))
+		return m
 	}
 
-	m = model(&fakeEngine{})
-	m.SetCommands(config.ResolveCommands(nil, []config.Command{
-		{Name: "review", Description: "review it", Prompt: "review"},
-		{Name: "release", Description: "release it", Prompt: "release"},
-	}))
-	m = press(typeText(m, "/re"), tea.KeyTab)
-	if m.InputValue() != "/re" ||
-		!strings.Contains(m.Notice(), "/review") || !strings.Contains(m.Notice(), "/release") {
-		t.Errorf("ambiguous completion = input %q notice %q", m.InputValue(), m.Notice())
+	m := press(typeText(withTwo(), "/rev"), tea.KeyTab)
+	if m.InputValue() != "/review " || m.Notice() != "review it" {
+		t.Errorf("one match completed to input %q notice %q", m.InputValue(), m.Notice())
+	}
+
+	// Two matches, alphabetical, so the highlight starts on release.
+	m = press(typeText(withTwo(), "/re"), tea.KeyTab)
+	if m.InputValue() != "/release " {
+		t.Errorf("two matches completed to %q, want the highlighted one", m.InputValue())
+	}
+
+	// And down moves it before tab takes it, which is the whole point of there being a list.
+	m = press(press(typeText(withTwo(), "/re"), tea.KeyDown), tea.KeyTab)
+	if m.InputValue() != "/review " {
+		t.Errorf("after moving down, tab took %q", m.InputValue())
 	}
 }
 
@@ -825,4 +880,17 @@ func TestAQuestionTakesTheKeyboard(t *testing.T) {
 func (e *fakeEngine) UseCredential(_, keyName, model string) error {
 	e.usingKey, e.usingModel = keyName, model
 	return nil
+}
+
+func (e *fakeEngine) Steer(_, guidance string) error {
+	e.steered = append(e.steered, guidance)
+	return nil
+}
+
+func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error) {
+	e.asked = append(e.asked, question)
+	if e.asideErr != nil {
+		return "", e.asideErr
+	}
+	return "the parser lives in internal/config", nil
 }

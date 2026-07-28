@@ -49,13 +49,42 @@ type Engine interface {
 	// UseCredential points this conversation at a different credential and model.
 	UseCredential(sessionID, keyName, model string) error
 
-	// Trust is how much the agent in this conversation may do, and SetTrust changes it. This pair is
-	// what plan mode is made of: the permission layer decides against the level and the tool list
-	// the model is shown is filtered by it, so an agent that is planning cannot edit a file by
-	// ignoring the instruction to plan. A mode the model could talk its way out of would be worth
-	// less than no mode at all, because it would look like a guarantee.
-	Trust(sessionID string) core.TrustLevel
-	SetTrust(sessionID string, trust core.TrustLevel)
+	// Undo puts the workspace back as it was before a turn, from the checkpoint taken before it ran.
+	// The conversation is left alone: undoing the files and deleting the exchange are different
+	// things to want, and doing both would throw away the record of what was tried along with the
+	// attempt, which is the half worth keeping when something did not work.
+	Undo(ctx context.Context, sessionID, turnID string) error
+
+	// Mode is what this conversation's agent is doing, and SetMode changes it. This pair is what a
+	// mode is made of: the permission layer decides against the mode's level and the tool list the
+	// model is shown is filtered by it, so an agent that is planning cannot edit a file by ignoring
+	// the instruction to plan. A mode the model could talk its way out of would be worth less than
+	// no mode at all, because it would look like a guarantee.
+	//
+	// SetMode returns an error rather than nothing, because a mode can lower what an agent may do
+	// and can never raise it above what its configuration allows, and a key that silently declines
+	// reads as a key that is broken.
+	Mode(sessionID string) core.Mode
+	SetMode(sessionID string, mode core.Mode) error
+
+	// Fork branches a conversation at a turn, keeping everything said up to it. The original is
+	// untouched, which is what makes trying a second approach cheap enough to be worth doing.
+	Fork(sessionID, throughTurnID string) (core.Session, error)
+
+	// Trail is the record of every tool call and what was decided about it. Nil where nothing is
+	// recording, which is a legitimate state rather than an error: a conversation with no tools
+	// attached has nothing to record.
+	Trail() *permission.Trail
+
+	// Steer queues a correction for the next turn boundary and never cancels anything. Distinct from
+	// Cancel on purpose: correcting an agent by interrupting it throws away the work in progress,
+	// which usually means throwing away the reasoning that led to it.
+	Steer(sessionID, guidance string) error
+
+	// Aside answers a question from this conversation's context without joining it. Nothing is
+	// recorded, no turn is created, and a turn in flight is undisturbed, which is what separates
+	// asking something from saying something.
+	Aside(ctx context.Context, sessionID, question string) (string, error)
 }
 
 // Commands is the catalog resolved for this chat's project.
@@ -163,12 +192,8 @@ type Model struct {
 	markStep       int
 	markGeneration int
 
-	// buildTrust is the level to go back to when this conversation leaves plan mode.
-	//
-	// Remembered rather than assumed, because an agent running at broad trust that planned and then
-	// went back to building would otherwise come out at standard. That is a silent demotion, and the
-	// kind nobody notices until a command they expected to run stops to ask permission.
-	buildTrust core.TrustLevel
+	// menu is the command list that drops out of the message box.
+	menu menu
 }
 
 // New builds a chat model over an engine and a session.
@@ -270,6 +295,29 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.markStep++
 		return m, markTick(m.markGeneration)
+
+	case asideMsg:
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			m.notice = ""
+			return m, nil
+		}
+		// Shown above the box rather than folded into the transcript, because it is not part of the
+		// conversation and putting it there would make it look like one. It goes when the next thing
+		// happens, which is right: an aside is read once.
+		m.notice = "btw " + msg.question + "\n" + msg.answer
+		m.err = ""
+		return m, nil
+
+	case undoneMsg:
+		m.notice = ""
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.notice = "the workspace is back as it was before the last turn, and the conversation is unchanged"
+		m.refresh()
+		return m, nil
 
 	case compactedMsg:
 		m.compacting = false
@@ -431,21 +479,53 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.answerPrompt(msg)
 	}
 
+	// The list takes the keys that mean something in a list, and only those, and only while it is
+	// up. Everything else still reaches the box, so a command can go on being typed without the
+	// menu having to hand each character back.
+	if m.menu.open {
+		switch msg.String() {
+		case "up":
+			m.menu.move(-1)
+			return m, nil
+		case "down":
+			m.menu.move(1)
+			return m, nil
+		case "esc":
+			// Closes the list and leaves what was typed. Escape also stops a running turn, and that
+			// still happens on the next press: dismissing a menu is the more local meaning and gets
+			// the first one.
+			m.menu = menu{}
+			return m, nil
+		case "tab":
+			// Tab always completes and never sends, which is the split every shell uses.
+			if m.acceptFromMenu() {
+				return m, nil
+			}
+		case "enter":
+			// Enter completes when there is something left to complete, and sends when there is
+			// not. Without the second half, typing a command out in full and pressing enter would
+			// put the name you already typed back in the box and do nothing, which reads as the
+			// key having stopped working.
+			if chosen, ok := m.menu.chosen(); ok && m.input.Value() != "/"+chosen.name {
+				m.acceptFromMenu()
+				return m, nil
+			}
+			m.menu = menu{}
+		}
+	}
+
 	switch msg.String() {
 	case "enter":
 		return m.send()
 
 	case "tab":
-		if m.completeCommand() {
-			return m, nil
-		}
 		return m, nil
 
 	case "shift+tab":
 		// Beside tab rather than on a letter, because every printable key belongs to the message
 		// box, and next to the key that completes a command because both are about what is going to
 		// happen rather than about what has been said.
-		m.togglePlanning()
+		m.cycleMode()
 		return m, nil
 
 	case "esc":
@@ -479,40 +559,26 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	if m.input.Update(msg) {
 		m.err = ""
+		m.refreshMenu()
 		return m, nil
 	}
 	return m, nil
 }
 
-func (m *Model) completeCommand() bool {
-	value := m.input.Value()
-	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") ||
-		strings.ContainsAny(value, " \t\r\n") {
+// acceptFromMenu puts the highlighted command in the box, and reports whether there was one.
+//
+// The name and a trailing space rather than sending it outright. Half of these take arguments, and a
+// menu that sent on enter would make the ones that do unreachable from the menu at all. It is also
+// what happens elsewhere: the tab key completed rather than submitted before this list existed.
+func (m *Model) acceptFromMenu() bool {
+	chosen, ok := m.menu.chosen()
+	if !ok {
 		return false
 	}
-	prefix := strings.TrimPrefix(value, "/")
-	var matches []config.ResolvedCommand
-	for _, command := range m.commands.All() {
-		if strings.HasPrefix(command.Name, prefix) {
-			matches = append(matches, command)
-		}
-	}
-	switch len(matches) {
-	case 0:
-		m.err = fmt.Sprintf("no command begins with /%s; type /commands to list the commands available here",
-			prefix)
-	case 1:
-		m.input.SetValue("/" + matches[0].Name + " ")
-		m.notice = matches[0].Description
-		m.err = ""
-	default:
-		names := make([]string, 0, len(matches))
-		for _, command := range matches {
-			names = append(names, "/"+command.Name)
-		}
-		m.notice = strings.Join(names, "  ")
-		m.err = ""
-	}
+	m.input.SetValue("/" + chosen.name + " ")
+	m.menu = menu{}
+	m.notice = chosen.description
+	m.err = ""
 	return true
 }
 
@@ -523,11 +589,16 @@ func (m Model) send() (Model, tea.Cmd) {
 
 	typed := m.input.Value()
 	trimmed := strings.TrimSpace(typed)
-	if trimmed == "/commands" {
-		m.notice = commandListing(m.commands)
-		m.err = ""
-		m.input.Clear()
-		return m, nil
+
+	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
+	// and never cost anything, so they are decided before the path that does either.
+	if name, arguments, ok := builtinInvocation(trimmed); ok {
+		if handled, cmd := m.runBuiltin(name, arguments); handled {
+			m.input.Remember(typed)
+			m.input.Clear()
+			m.menu = menu{}
+			return m, cmd
+		}
 	}
 
 	prompt := typed
@@ -567,19 +638,8 @@ func (m Model) send() (Model, tea.Cmd) {
 	return m, nil
 }
 
-func commandListing(commands config.CommandSet) string {
-	all := commands.All()
-	if len(all) == 0 {
-		return "no custom commands are available here"
-	}
-
-	var lines []string
-	for _, command := range all {
-		lines = append(lines, fmt.Sprintf("/%s  %s (%s)",
-			command.Name, command.Description, command.Scope))
-	}
-	return strings.Join(lines, "\n")
-}
+// The listing moved to builtin.go, so that what Canopy ships and what a project defines are printed
+// by one function rather than by two that can come to disagree about the format.
 
 // refresh re-reads the session from the engine.
 //
@@ -706,40 +766,52 @@ func (m Model) transcript() []string {
 }
 
 // Planning reports whether this conversation is in plan mode.
+func (m Model) Planning() bool { return m.Mode() == core.ModePlan }
+
+// Mode is the word the box shows: what this conversation is doing.
 //
 // Read from the engine rather than from a flag of its own, so there is one answer to the question
 // and the box cannot say "build" over a conversation the permission layer is refusing every write
 // in. Two sources of truth for a mode is how an interface comes to lie about a guarantee.
-func (m Model) Planning() bool {
-	return m.engine.Trust(m.sessionID) == core.TrustReadOnly
+func (m Model) Mode() string { return m.engine.Mode(m.sessionID).Name }
+
+// cycleMode moves to the next mode in the ladder.
+//
+// Skips past any the agent cannot be put in rather than stopping on them, so the key always does
+// something on an agent that has a ceiling below the top of the ladder. Stopping would mean a
+// confined agent whose key appeared to have jammed, and refusing outright would mean it could not
+// reach plan mode either, which it certainly can.
+func (m *Model) cycleMode() {
+	current := m.Mode()
+	for range core.Modes() {
+		next := core.NextMode(current)
+		if err := m.engine.SetMode(m.sessionID, next); err == nil {
+			m.notice = next.Name + ", " + next.Description
+			m.err = ""
+			return
+		}
+		current = next.Name
+	}
+	// Every mode was refused, which means the agent's ceiling admits none of them. Not reachable
+	// while plan mode sits at read-only, and said plainly rather than left as a key that does
+	// nothing if that ever changes.
+	m.err = "this agent cannot be put into any of the modes"
 }
 
-// Mode is the word the box shows: what this conversation is doing.
-func (m Model) Mode() string {
-	if m.Planning() {
-		return "plan"
-	}
-	return "build"
-}
-
-// togglePlanning moves between planning and building.
-func (m *Model) togglePlanning() {
-	if !m.Planning() {
-		m.buildTrust = m.engine.Trust(m.sessionID)
-		m.engine.SetTrust(m.sessionID, core.TrustReadOnly)
-		m.notice = ""
+// setMode puts this conversation in a named mode, for the slash commands.
+func (m *Model) setMode(name string) {
+	mode, ok := core.ModeByName(name)
+	if !ok {
+		m.err = "there is no mode called " + name + ", try one of: " +
+			strings.Join(core.ModeNames(), ", ")
 		return
 	}
-
-	if m.buildTrust == "" || m.buildTrust == core.TrustReadOnly {
-		// There is nothing to go back to, because this agent is read-only by its own profile rather
-		// than because somebody put it in plan mode. Said out loud, since a key that silently does
-		// nothing reads as a key that is broken.
-		m.notice = "this agent is read-only, so planning is all it can do"
+	if err := m.engine.SetMode(m.sessionID, mode); err != nil {
+		m.err = err.Error()
 		return
 	}
-	m.engine.SetTrust(m.sessionID, m.buildTrust)
-	m.notice = ""
+	m.notice = mode.Name + ", " + mode.Description
+	m.err = ""
 }
 
 // contextLines are what the opening screen says along its bottom left: where the agent is working
@@ -773,6 +845,9 @@ func (m Model) transcriptHeight() int {
 	if pane := m.taskPane(); pane != "" {
 		h -= strings.Count(pane, "\n") + 1
 	}
+	// The command list takes its rows from the conversation rather than from the box. Taking them
+	// from the box would shrink what somebody is typing into at the exact moment they are typing.
+	h -= m.menu.height()
 	if h < 1 {
 		return 1
 	}
@@ -789,6 +864,10 @@ func (m Model) Body() string {
 			status:  m.statusRow(0),
 			context: m.contextLines(),
 			step:    m.markStep,
+			// Below the box here, because the box is in the middle of the screen and below is where
+			// the room is. On a conversation in progress the box is on the floor and the list goes
+			// above it instead.
+			menu: m.menu.lines(m.width),
 		}.render()
 	}
 
@@ -823,6 +902,12 @@ func (m Model) Body() string {
 	if tasks := m.taskPane(); tasks != "" {
 		b.WriteString("\n")
 		b.WriteString(tasks)
+	}
+	// Above the box, because on a conversation in progress the box is already on the floor of the
+	// screen and there is nothing below it to drop into.
+	for _, line := range m.menu.lines(m.width) {
+		b.WriteString("\n")
+		b.WriteString(line)
 	}
 	b.WriteString("\n")
 	b.WriteString(m.statusRow(len(lines) - end))

@@ -308,6 +308,13 @@ func statusLine(turn core.Turn, spinner string) string {
 		return t.Info.Render(spinner + " running tools")
 
 	case core.TurnComplete:
+		if turn.RolledBack != "" {
+			// Amber rather than red, and on a turn that is otherwise complete, because the turn did
+			// not fail: the model answered and the tools ran, and then the workspace did not verify
+			// and the whole thing was put back. Showing it as a failure would lose the difference
+			// between "this did not work" and "this worked and was not kept".
+			return t.Warning.Render("[" + firstLine(turn.RolledBack) + "]")
+		}
 		return ""
 
 	case core.TurnInterrupted:

@@ -28,6 +28,7 @@ type scriptedClient struct {
 	// construction, which is why only this field needs it.
 	mu      sync.Mutex
 	history []core.Message
+	system  string
 }
 
 func (c *scriptedClient) Name() string { return c.name }
@@ -35,6 +36,7 @@ func (c *scriptedClient) Name() string { return c.name }
 func (c *scriptedClient) Stream(ctx context.Context, req core.Request) (core.Stream, error) {
 	c.mu.Lock()
 	c.history = req.Messages
+	c.system = req.System
 	c.mu.Unlock()
 
 	if c.openErr != nil {

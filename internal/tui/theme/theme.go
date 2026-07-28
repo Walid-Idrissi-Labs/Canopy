@@ -46,6 +46,9 @@ type Palette struct {
 	// green is the wrong colour for a tick.
 	Flame lipgloss.TerminalColor
 
+	// Smoke is the wisp above the flame, and it gets the same exemption for the same reason.
+	Smoke lipgloss.TerminalColor
+
 	// The four categories a hand written lexer can tell apart without a full parser. Named for what
 	// a reader is looking at, not for the hue, so a colour blind palette or a light theme can pick
 	// values that suit it without any call site changing.
@@ -75,6 +78,7 @@ type Theme struct {
 
 	Logo   lipgloss.Style
 	Flame  lipgloss.Style
+	Smoke  lipgloss.Style
 	Border lipgloss.Style
 	Footer lipgloss.Style
 	Key    lipgloss.Style
@@ -144,6 +148,11 @@ var Default = Palette{
 	// colour and a logo with a palette.
 	Flame: lipgloss.AdaptiveColor{Light: brandSecondaryLight, Dark: brandSecondary},
 
+	// And the smoke takes the accent grey, which is the third of the three and the only colour smoke
+	// could sensibly be. Between them the mark carries all three brand colours: the tent in the
+	// primary, the fire in the secondary, the smoke in the accent.
+	Smoke: lipgloss.AdaptiveColor{Light: brandAccentLight, Dark: brandAccent},
+
 	// Syntax highlighting keeps to the same family, so a code block does not look like it was
 	// pasted in from another program. Keyword takes the primary, string takes the secondary, and
 	// comment takes the grey, which is what a comment should be anyway.
@@ -168,6 +177,7 @@ func New(p Palette) Theme {
 		Info:     lipgloss.NewStyle().Foreground(p.Info),
 		Logo:     lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
 		Flame:    lipgloss.NewStyle().Bold(true).Foreground(p.Flame),
+		Smoke:    lipgloss.NewStyle().Foreground(p.Smoke),
 		Border:   lipgloss.NewStyle().Foreground(p.Border),
 		Footer:   lipgloss.NewStyle().Foreground(p.Muted),
 		Key:      lipgloss.NewStyle().Bold(true).Foreground(p.Accent),
@@ -261,6 +271,7 @@ var Monochrome = Palette{
 	Border:    lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
 	Highlight: lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#222222"},
 	Flame:     lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
+	Smoke:     lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
 
 	CodeKeyword: lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
 	CodeString:  lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},

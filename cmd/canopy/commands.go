@@ -121,6 +121,18 @@ func runChat(resume string) error {
 	// repository there is nothing to read and the screen says so, which is the honest answer and
 	// the one this used to lie about: it was handed four invented worktrees and a timer that
 	// pretended one of them was being edited.
+	// The green gate, which is what makes runway mode more than cruise with a better prompt. Attached
+	// only where there is something to check with, and its absence is what makes runway refuse to be
+	// entered rather than quietly behaving like the mode below it.
+	//
+	// A configured test is part of "something to check with" and not a detail. A repository with no
+	// test declared has a verifier that refuses every run, so attaching the gate anyway would offer
+	// runway and then answer "the checks could not be run" after every turn, which keeps the turn.
+	// That is cruise wearing runway's name, which is the exact failure the mode is built to avoid.
+	if verification != nil && len(project.Tests) > 0 {
+		engine.WithGate(gate{verifier: verification.verifier, agent: main.Name})
+	}
+
 	var review tui.ReviewSource
 	var costs tui.CostOutcomeSource
 	monitor := newWorktrees("", nil)

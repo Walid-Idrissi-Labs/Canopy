@@ -142,9 +142,20 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 // and the more recent, and because it is the one somebody made on purpose while watching that
 // conversation. The agent's level wins over the engine's for the same reason one step up.
 func (e *Engine) trustForLocked(sessionID string) core.TrustLevel {
-	if trust, ok := e.sessionTrust[sessionID]; ok && trust != "" {
-		return trust
+	if mode, ok := e.sessionMode[sessionID]; ok && mode.Trust != "" {
+		return mode.Trust
 	}
+	return e.configuredTrustLocked(sessionID)
+}
+
+// configuredTrustLocked is the level this conversation was set up with, ignoring any mode chosen
+// afterwards.
+//
+// The ceiling a mode cannot be raised above. Separated from trustForLocked so that "what may this
+// agent do now" and "what was this agent allowed to do in the first place" are two questions with
+// two answers, which is what stops a mode from quietly promoting an agent somebody deliberately
+// confined.
+func (e *Engine) configuredTrustLocked(sessionID string) core.TrustLevel {
 	for _, agent := range e.agents {
 		if agent.SessionID == sessionID && agent.Trust != "" {
 			return agent.Trust

@@ -206,6 +206,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.screen = screenChat
 		return a, cmd
 
+	case chat.ActionMsg:
+		// A slash command that named something only the application can do. The chat says what was
+		// asked for and owns none of it, which is what keeps "which screen is showing" in one place.
+		return a.runAction(m.Action)
+
 	case tea.MouseMsg:
 		// Routed to the screen in front rather than broadcast, for the same reason keystrokes are:
 		// a wheel notch is aimed at what somebody is looking at. Broadcasting would scroll the
@@ -471,6 +476,36 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 		}
 	}
 	return false, a, nil
+}
+
+// runAction answers a slash command that named something the chat screen cannot do for itself.
+//
+// The same destinations the keys reach, deliberately. A slash command that went somewhere a key
+// could not, or landed somewhere different from the key with the same name, would be a second
+// navigation model rather than a way of discovering the first.
+func (a App) runAction(action string) (tea.Model, tea.Cmd) {
+	switch action {
+	case chat.ActionHelp:
+		a.helpFrom, a.screen = screenChat, screenHelp
+		a.helpScroll = 0
+	case chat.ActionNew:
+		return a.newConversationModel()
+	case chat.ActionAgents:
+		a.screen = screenAgents
+	case chat.ActionGreen:
+		// The worktree monitor, which is the screen that answers "is this verified, and what has
+		// gone stale". Canopy exists for that question, so it gets a word rather than a route.
+		a.screen = screenDashboard
+	case chat.ActionKeys:
+		a.cameFrom, a.screen = screenChat, screenKeys
+	}
+	return a, nil
+}
+
+// newConversationModel is newConversation in the shape Update wants back.
+func (a App) newConversationModel() (tea.Model, tea.Cmd) {
+	next, cmd := a.newConversation()
+	return next, cmd
 }
 
 // newConversation starts a fresh session and shows it.
