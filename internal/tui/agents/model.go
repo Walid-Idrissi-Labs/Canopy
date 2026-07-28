@@ -1,23 +1,25 @@
 // Package agents is the view over several agents at once.
 //
-// Three ways of looking at the same thing, because they answer different questions and no single
-// layout answers all three:
+// Four ways of looking at the same thing, because they answer different questions and no single
+// layout answers all four:
 //
-//   - **List** is "what is everyone doing", the one you come back to. One line each, ordered by
-//     what needs you.
-//   - **Split** is "watch two of them", for when two agents are working on related things and the
-//     interesting part is how their answers differ.
-//   - **Focus** is "read one properly", tabbing between them full width, for when a line of summary
-//     is not enough.
+//   - **List** is "what is everyone doing", one line each, ordered by what needs you.
+//   - **Mosaic** is everyone at once: a tiled grid of panes, up to eight, each one a window on a
+//     live conversation with the agent's own campfire on its bottom edge. This is the screen the
+//     product exists for.
+//   - **Hero** is "read one, keep an eye on the rest": the selected agent across the whole top
+//     half, the next few in slices along the bottom.
+//   - **Focus** is one agent, full frame, for when a pane is not enough.
 //
-// Switching between the three is one keystroke, because the question changes faster than anybody
-// wants to renavigate.
+// Switching is one keystroke, because the question changes faster than anybody wants to
+// renavigate, and the digits jump straight to a pane so no agent is more than two keys away.
 package agents
 
 import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -26,27 +28,49 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
-// Mode is which of the three layouts is showing.
+// Mode is which of the four layouts is showing.
 type Mode int
 
 const (
 	// ModeList is one line per agent.
 	ModeList Mode = iota
-	// ModeSplit shows two agents side by side.
-	ModeSplit
+	// ModeMosaic tiles every agent into a grid of panes.
+	ModeMosaic
+	// ModeHero is the selected agent large, the others along the bottom.
+	ModeHero
 	// ModeFocus shows one agent full width.
 	ModeFocus
+
+	// modeCount is how many layouts v cycles through.
+	modeCount
 )
 
 func (m Mode) String() string {
 	switch m {
-	case ModeSplit:
-		return "split"
+	case ModeMosaic:
+		return "mosaic"
+	case ModeHero:
+		return "hero"
 	case ModeFocus:
 		return "focus"
 	default:
 		return "list"
 	}
+}
+
+// flameTickMsg advances the pane fires, and says which start of the animation it belongs to, so a
+// tick left over from an earlier run is dropped rather than doubling the speed.
+type flameTickMsg struct{ generation int }
+
+// flameInterval matches the campfire on the chat box. The two fires are the same fire, and a pane
+// that flickered at a different rate from the conversation it opens into would read as two
+// programs.
+const flameInterval = 750 * time.Millisecond
+
+func flameTick(generation int) tea.Cmd {
+	return tea.Tick(flameInterval, func(time.Time) tea.Msg {
+		return flameTickMsg{generation: generation}
+	})
 }
 
 // Engine is what this view needs from the session engine.
@@ -93,6 +117,15 @@ type Model struct {
 
 	statuses []session.AgentStatus
 
+	// step is where the pane fires have got to, and the three fields after it are the machinery
+	// that keeps them moving only while there is something to move for. The animation runs while
+	// the screen is showing, a pane layout is up and at least one agent is working; otherwise no
+	// tick is scheduled at all, which is the same discipline the chat's own campfire keeps.
+	step       int
+	ticking    bool
+	generation int
+	visible    bool
+
 	// The new-agent flow has two explicit steps. Naming collects an identity; confirmingDirect
 	// makes the workspace consequence visible before AddAgent can run. Keeping the confirmation as
 	// state rather than a line under the name is what makes it impossible to accept accidentally
@@ -130,16 +163,33 @@ func (m *Model) SetSize(width, height int) {
 	m.height = height
 }
 
-// Update handles a keystroke.
+// Update handles a keystroke, and keeps the fires burning between them.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	if tick, ok := msg.(flameTickMsg); ok {
+		// A tick from an animation that has been restarted since is dropped and not rescheduled,
+		// which is also how the old ticker stops.
+		if tick.generation != m.generation {
+			return m, nil
+		}
+		m.refresh()
+		if !m.flickering() {
+			m.ticking = false
+			return m, nil
+		}
+		m.step++
+		return m, flameTick(m.generation)
+	}
+
 	key, ok := msg.(tea.KeyMsg)
 	if !ok {
 		m.refresh()
-		return m, nil
+		// Work may have started since the last look, and the ticker only exists while there is
+		// work, so every refresh is a chance to relight the fires.
+		return m, m.ensureFlame()
 	}
 
 	// The creation flow takes the keyboard while it is happening, or the letters of the name would
-	// be read as layout commands and typing "split" would change the layout three times.
+	// be read as layout commands and typing "vim" would change the layout twice.
 	if m.confirmingDirect {
 		return m.confirmDirect(key)
 	}
@@ -147,14 +197,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.typeName(key)
 	}
 
-	switch key.String() {
+	switch pressed := key.String(); pressed {
 	case "enter":
-		// Switching is a message to the application rather than something this view does, since
-		// which screen is showing is not this view's to decide.
-		if status, selected := m.Selected(); selected {
-			name, id := status.Agent.Name, status.Agent.SessionID
-			return m, func() tea.Msg { return SwitchMsg{SessionID: id, AgentName: name} }
-		}
+		return m, m.open()
 	case "n":
 		m.naming = true
 		m.draft = ""
@@ -162,28 +207,143 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case "j", "down":
-		m.move(1)
+		// Down a row in the mosaic, down one agent everywhere else.
+		m.move(m.stride())
 	case "k", "up":
-		m.move(-1)
+		m.move(-m.stride())
+	case "h", "left":
+		if m.mode != ModeList {
+			m.move(-1)
+		}
+	case "l", "right":
+		if m.mode != ModeList {
+			m.move(1)
+		}
 	case "tab":
-		// Tab moves between agents in focus and split, and cycles the layout in list. In list there
-		// is nothing to tab between that j and k do not already do.
+		// Tab walks the agents in every pane layout, and from the list it opens the mosaic, which
+		// is the layout the list is a summary of.
 		if m.mode == ModeList {
-			m.mode = ModeSplit
+			m.mode = ModeMosaic
 		} else {
 			m.move(1)
 		}
-	case "1":
-		m.mode = ModeList
-	case "2":
-		m.mode = ModeSplit
-	case "3":
-		m.mode = ModeFocus
+	case "shift+tab":
+		if m.mode != ModeList {
+			m.move(-1)
+		}
+	case "[":
+		m.move(-m.perPage())
+	case "]":
+		m.move(m.perPage())
+	case "1", "2", "3", "4", "5", "6", "7", "8":
+		// The digit drawn in a pane's border jumps to that pane, and the digit of the pane you
+		// are already on opens it, so any visible agent is two presses from a conversation.
+		return m.jump(int(pressed[0] - '0'))
 	case "v":
-		// One key that cycles, for people who would rather not remember three.
-		m.mode = (m.mode + 1) % 3
+		// One key that cycles, for people who would rather not remember four.
+		m.mode = (m.mode + 1) % modeCount
 	}
-	return m, nil
+	return m, m.ensureFlame()
+}
+
+// open asks the application to show the selected agent's conversation.
+//
+// A message rather than a direct act, since which screen is showing is not this view's to decide.
+func (m Model) open() tea.Cmd {
+	status, selected := m.Selected()
+	if !selected {
+		return nil
+	}
+	name, id := status.Agent.Name, status.Agent.SessionID
+	return func() tea.Msg { return SwitchMsg{SessionID: id, AgentName: name} }
+}
+
+// jump moves to the pane wearing a digit, or opens it when it is the pane you are on.
+func (m Model) jump(digit int) (Model, tea.Cmd) {
+	target, ok := m.paneAt(digit)
+	if !ok {
+		return m, nil
+	}
+	if target == m.cursor {
+		return m, m.open()
+	}
+	m.cursor = target
+	m.anchored = m.statuses[target].Agent.Name
+	return m, m.ensureFlame()
+}
+
+// paneAt is which agent the digit points to in the current layout.
+func (m Model) paneAt(digit int) (int, bool) {
+	if len(m.statuses) == 0 {
+		return 0, false
+	}
+	switch m.mode {
+	case ModeHero:
+		// One is the hero and the rest count along the bottom row, which is the order the panes
+		// are drawn in.
+		target := (m.cursor + digit - 1) % len(m.statuses)
+		return target, digit <= len(m.statuses)
+	case ModeMosaic:
+		target := m.page()*m.perPage() + digit - 1
+		return target, digit <= m.perPage() && target < len(m.statuses)
+	default:
+		// The list and focus have no grid, so the digits count from the top of the ordering.
+		return digit - 1, digit <= len(m.statuses)
+	}
+}
+
+// stride is how far j and k travel: a row of the grid in the mosaic, one agent elsewhere.
+func (m Model) stride() int {
+	if m.mode != ModeMosaic || len(m.statuses) == 0 {
+		return 1
+	}
+	_, _, height := m.mosaicPlan()
+	shape := planGrid(len(m.statuses), m.width, height)
+	if len(shape.rows) == 0 {
+		return 1
+	}
+	return shape.rows[0]
+}
+
+// flickering reports whether the fires have anything to animate: the screen is showing, a pane
+// layout is up, and at least one agent is actually working.
+func (m Model) flickering() bool {
+	if !m.visible || m.mode == ModeList {
+		return false
+	}
+	for _, status := range m.statuses {
+		if status.State == core.AgentWorking {
+			return true
+		}
+	}
+	return false
+}
+
+// ensureFlame starts the animation when it is needed and not already running.
+//
+// The generation is what makes restarting safe: a tick from before the restart no longer matches
+// and dies, so there is never more than one live ticker however many times the screen is entered
+// and left.
+func (m *Model) ensureFlame() tea.Cmd {
+	if m.ticking || !m.flickering() {
+		return nil
+	}
+	m.ticking = true
+	m.generation++
+	return flameTick(m.generation)
+}
+
+// SetVisible tells the view whether it is the screen in front.
+//
+// The view cannot know on its own, and it matters here because the pane fires animate: a ticker
+// running behind another screen would be waking the program for frames nobody can see.
+func (m *Model) SetVisible(visible bool) tea.Cmd {
+	m.visible = visible
+	if !visible {
+		return nil
+	}
+	m.refresh()
+	return m.ensureFlame()
 }
 
 // typeName handles the keys while a new agent is being named.
@@ -342,8 +502,10 @@ func (m Model) Body() string {
 		return m.empty()
 	}
 	switch m.mode {
-	case ModeSplit:
-		return m.split()
+	case ModeMosaic:
+		return m.mosaic()
+	case ModeHero:
+		return m.hero()
 	case ModeFocus:
 		return m.focus()
 	default:
@@ -488,102 +650,6 @@ func stateBadge(state core.AgentState) string {
 	}
 }
 
-// split shows two agents side by side.
-//
-// Two rather than four, because a terminal split four ways gives each pane twenty columns, and
-// twenty columns of a code discussion is not readable. Two is the most that stays useful.
-func (m Model) split() string {
-	left, right := m.pair()
-
-	// One column of gap, and the divider drawn rather than implied, because two blocks of text
-	// abutting each other read as one paragraph with strange line breaks.
-	columnWidth := (m.width - 3) / 2
-	if columnWidth < 20 {
-		// Too narrow to split. Falling back to focus rather than drawing something unreadable is
-		// the same reasoning as refusing to draw below the minimum terminal size.
-		return m.focus()
-	}
-
-	leftLines := m.pane(left, columnWidth)
-	rightLines := m.pane(right, columnWidth)
-
-	t := theme.Current()
-	height := max(len(leftLines), len(rightLines))
-
-	var b strings.Builder
-	for i := 0; i < height; i++ {
-		b.WriteString(padPlain(lineAt(leftLines, i), columnWidth))
-		b.WriteString(" " + t.Border.Render("│") + " ")
-		b.WriteString(lineAt(rightLines, i))
-		b.WriteString("\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
-// pair picks which two agents to show.
-//
-// The selected one and the next, so moving the cursor walks the pair along rather than jumping it,
-// which is what somebody comparing a list of agents actually does.
-func (m Model) pair() (session.AgentStatus, session.AgentStatus) {
-	left := m.statuses[m.cursor]
-	if len(m.statuses) == 1 {
-		return left, session.AgentStatus{}
-	}
-	return left, m.statuses[(m.cursor+1)%len(m.statuses)]
-}
-
-// focus shows one agent using the full width.
-func (m Model) focus() string {
-	status, ok := m.Selected()
-	if !ok {
-		return m.empty()
-	}
-	return strings.Join(m.pane(status, m.width), "\n")
-}
-
-// pane renders one agent: who it is, what it is doing, and the tail of its conversation.
-func (m Model) pane(status session.AgentStatus, width int) []string {
-	t := theme.Current()
-
-	if status.Agent.Name == "" {
-		return []string{t.Muted.Render("(no other agent)")}
-	}
-
-	lines := []string{
-		t.Selected.Render(status.Agent.Name) + "  " + stateBadge(status.State),
-	}
-	if status.Waiting != "" {
-		lines = append(lines, t.Warning.Render(truncate("waiting: "+status.Waiting, width)))
-	}
-	lines = append(lines, t.Muted.Render(truncate(m.summary(status), width)))
-	lines = append(lines, "")
-
-	// The tail of the conversation, because what an agent is doing now is at the bottom of it and
-	// the top is what it was asked half an hour ago.
-	if m.engine == nil {
-		return lines
-	}
-	session, ok := m.engine.Session(status.Agent.SessionID)
-	if !ok || len(session.Turns) == 0 {
-		lines = append(lines, t.Muted.Render("nothing said yet"))
-		return lines
-	}
-
-	last := session.Turns[len(session.Turns)-1]
-	lines = append(lines, t.Key.Render("> ")+t.Body.Render(truncate(last.Request.Text, width-2)))
-	lines = append(lines, "")
-
-	for _, line := range wrapPlain(tail(last.Text, 12), width) {
-		lines = append(lines, t.Body.Render(line))
-	}
-	if !last.State.Whole() && last.State.Terminal() {
-		// The same rule as the transcript: every state that is not complete leaves text that reads
-		// as an answer and is not one.
-		lines = append(lines, t.Warning.Render("["+string(last.State)+"]"))
-	}
-	return lines
-}
-
 func (m Model) summary(status session.AgentStatus) string {
 	parts := []string{fmt.Sprintf("%d turns", status.Turns)}
 	if status.Usage.TotalTokens() > 0 {
@@ -615,5 +681,9 @@ func (m Model) Context() string {
 		// Said first, because it is the reason somebody would look at this screen at all.
 		summary = fmt.Sprintf("%d need you, %d agents", needing, len(m.statuses))
 	}
-	return summary + "  " + m.mode.String()
+	summary += "  " + m.mode.String()
+	if m.mode == ModeMosaic && m.pages() > 1 {
+		summary += fmt.Sprintf(" %d/%d", m.page()+1, m.pages())
+	}
+	return summary
 }

@@ -21,9 +21,6 @@ func pad(s string, width int) string {
 	return s
 }
 
-// padPlain is pad, for the left column of a split where the gap has to be exact.
-func padPlain(s string, width int) string { return pad(s, width) }
-
 // truncate shortens styled text to a display width, marking that it did.
 //
 // The marker matters: a title cut without one reads as the whole title, and somebody comparing two
@@ -93,11 +90,4 @@ func lineAt(lines []string, i int) string {
 		return lines[i]
 	}
 	return ""
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

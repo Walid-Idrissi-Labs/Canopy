@@ -198,7 +198,7 @@ func TestTheCursorFallsBackWhenItsAgentDisappears(t *testing.T) {
 	}
 }
 
-func TestSwitchingBetweenTheThreeLayouts(t *testing.T) {
+func TestSwitchingBetweenTheFourLayouts(t *testing.T) {
 	m := model(engine(
 		status("one", core.AgentWorking, "task one"),
 		status("two", core.AgentIdle, "task two"),
@@ -208,17 +208,23 @@ func TestSwitchingBetweenTheThreeLayouts(t *testing.T) {
 		t.Errorf("mode = %v, want list to be where you land", m.Mode())
 	}
 
-	m = key(m, "2")
-	if m.Mode() != agents.ModeSplit {
-		t.Errorf("mode = %v, want split", m.Mode())
+	// One key cycles the four, for people who would rather not remember them.
+	m = key(m, "v")
+	if m.Mode() != agents.ModeMosaic {
+		t.Errorf("mode = %v, want mosaic", m.Mode())
 	}
-	// Both agents on screen at once, which is the whole point of the split.
+	// Both agents on screen at once, which is the whole point of the mosaic.
 	view := plain(m.Body())
 	if !strings.Contains(view, "one") || !strings.Contains(view, "two") {
-		t.Errorf("the split does not show both agents:\n%s", view)
+		t.Errorf("the mosaic does not show both agents:\n%s", view)
 	}
 
-	m = key(m, "3")
+	m = key(m, "v")
+	if m.Mode() != agents.ModeHero {
+		t.Errorf("mode = %v, want hero", m.Mode())
+	}
+
+	m = key(m, "v")
 	if m.Mode() != agents.ModeFocus {
 		t.Errorf("mode = %v, want focus", m.Mode())
 	}
@@ -226,22 +232,21 @@ func TestSwitchingBetweenTheThreeLayouts(t *testing.T) {
 		t.Errorf("focus does not show the conversation:\n%s", plain(m.Body()))
 	}
 
-	// And one key that cycles, for people who would rather not remember three.
 	m = key(m, "v")
 	if m.Mode() != agents.ModeList {
 		t.Errorf("v from focus went to %v, want it to wrap round to list", m.Mode())
 	}
 }
 
-// Twenty columns of a code discussion is not readable, so falling back is better than drawing
-// something torn.
-func TestASplitTooNarrowToReadFallsBackToOne(t *testing.T) {
+// A pane squeezed below readability drops a column instead, so a narrow terminal gets a single
+// column of panes rather than a torn grid.
+func TestANarrowMosaicStacksInsteadOfTearing(t *testing.T) {
 	m := agents.New(engine(
 		status("one", core.AgentWorking, "task one"),
 		status("two", core.AgentIdle, "task two"),
 	))
 	m.SetSize(40, 20)
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	m = key(m, "v")
 
 	for i, line := range strings.Split(m.Body(), "\n") {
 		if got := len([]rune(plain(line))); got > 40 {
@@ -262,15 +267,17 @@ func TestEveryLayoutFitsTheSpaceItWasGiven(t *testing.T) {
 	e.sessions["s-a-long-agent-name"] = conversation(strings.Repeat("a very long reply ", 60))
 
 	for _, size := range [][2]int{{60, 12}, {80, 24}, {200, 60}} {
-		for _, mode := range []string{"1", "2", "3"} {
+		for presses := 0; presses < 4; presses++ {
 			m := agents.New(e)
 			m.SetSize(size[0], size[1])
-			m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(mode)})
+			for i := 0; i < presses; i++ {
+				m = key(m, "v")
+			}
 
 			for i, line := range strings.Split(m.Body(), "\n") {
 				if got := len([]rune(plain(line))); got > size[0] {
-					t.Errorf("%dx%d mode %s: line %d is %d columns:\n%s",
-						size[0], size[1], mode, i, got, plain(line))
+					t.Errorf("%dx%d mode %v: line %d is %d columns:\n%s",
+						size[0], size[1], m.Mode(), i, got, plain(line))
 					break
 				}
 			}

@@ -18,7 +18,7 @@ func TestEveryKeyTheApplicationHandlesIsListed(t *testing.T) {
 	for _, key := range []string{
 		"?", "ctrl+c", "enter", "esc", "ctrl+d", "ctrl+k", "ctrl+r", "ctrl+n", "up / down",
 		"y", "a", "j / k", "n", "v", "w", "r", "tab", "c", "space", "g / G", "ctrl+s", "q",
-		"1 / 2 / 3", "m", "d / x", "K",
+		"1 to 8", "[ / ]", "h / j / k / l", "m", "d / x", "K",
 	} {
 		if !strings.Contains(listed, key) {
 			t.Errorf("the overlay does not list %q", key)
@@ -104,7 +104,7 @@ func TestEveryBindingIsReachableByScrolling(t *testing.T) {
 	for _, key := range []string{
 		"?", "ctrl+c", "enter", "esc", "ctrl+d", "ctrl+k", "ctrl+r", "ctrl+n", "up / down",
 		"y", "a", "j / k", "n", "v", "w", "r", "tab", "c", "space", "g / G", "ctrl+s", "q",
-		"1 / 2 / 3", "m", "d / x",
+		"1 to 8", "[ / ]", "h / j / k / l", "m", "d / x",
 	} {
 		if !strings.Contains(all, key) {
 			t.Errorf("scrolling the whole overlay never shows %q", key)
