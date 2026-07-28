@@ -253,9 +253,18 @@ be rediscovered by getting burned by it.
   arrives as arrow key presses, and the arrow keys walk back through what you have sent, so
   scrolling up to reread an answer would replace what you were typing.
 
-- No single pass covering resize handling, huge output, rapid state changes, and orphaned processes
-  on quit has been run as its own gate yet. Individual tasks exercise pieces of this already, but
-  nothing has verified all of it together in one sweep (A9-01, A9-02).
+- The engine half of the robustness sweep has been run and the interface half has not. Timeouts,
+  process groups, bounded output, event delivery under load, paths with spaces, externally removed
+  worktrees and orphaned processes on quit are covered by tests of their own now (A9-01). Resize
+  handling, readability at 80 columns with several agents, every state being distinguishable without
+  colour, and rapid updates not moving the selection are not: they are A9-02 and nothing has
+  verified them together.
+
+- Bounding output is done where a command produces it, which is where the memory cost is, and not
+  where a reply does. A model that streams a very long answer grows the turn in the snapshot without
+  limit and the interface renders all of it, so a runaway reply is still a way to make the screen
+  slow. Command output, tool results and diffs are capped at 32 KB with the middle marked as dropped
+  (A9-01).
 
 - Homebrew is not wired up. The cask is configured but skipped for prerelease tags, and the tap
   repository does not exist yet, so `brew install` is not available until the first non-prerelease

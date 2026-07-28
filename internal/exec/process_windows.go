@@ -13,7 +13,9 @@ import "os/exec"
 
 func setProcessGroup(*exec.Cmd) {}
 
-func killGroup(cmd *exec.Cmd) {
+// The reaped channel is accepted and ignored. It exists so the unix implementation can tell whether
+// a process group id is still safe to address, and there are no process groups here to address.
+func killGroup(cmd *exec.Cmd, _ <-chan struct{}) {
 	if cmd.Process != nil {
 		_ = cmd.Process.Kill()
 	}

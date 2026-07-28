@@ -3413,15 +3413,55 @@ fire on a real state change.
 Goal: someone who is not us installs it and gets value without being told how.
 
 ### A9-01 Robustness sweep
-`status: todo | owner: none | branch: none | depends: PG-A8`
+`status: review | owner: Claude | branch: worktree-agent-a58ce100b84defd03 | depends: PG-A8`
+`scope: internal/exec/, internal/store/broker.go, internal/git/worktree.go, tests in internal/core, internal/session, internal/tools`
 
 Acceptance: timeouts terminate the right process group, no final state transition is dropped under
 load, huge output cannot freeze the UI, paths and branch names with spaces work, externally removed
 worktrees disappear safely, and quitting leaves no child processes behind.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: carries forward P4-01 to P4-07.
+
+**Claimed against an unsigned PG-A8, on instruction rather than by the rule.** A8-05 and A8-06 are
+being built right now, so the gate this depends on is not merely unsigned, its own dependencies are
+open. Recorded rather than glossed: the engine half of this sweep does not touch the extensibility
+layer, so nothing here waits on it, but the ledger's own dependency order was not followed and
+somebody reading it later should not have to work that out from the dates.
+
+Three of the six held already and are now covered rather than merely true. Three did not.
+
+- **Timeouts and the right process group.** The escalation was addressing a process group by the
+  leader's pid a quarter of a second after that leader may already have been reaped. A group id is
+  only reserved while the group has a member in it, so the second signal could land on a job started
+  by somebody else in the meantime. It now waits for the reap and asks whether anything is left
+  before signalling. The behavioural half, a timeout taking grandchildren with it, held and now has
+  its own test rather than sharing the cancellation one.
+- **Huge output.** The bound held for what the buffer kept and not for what it allocated: a single
+  large write was copied in whole and then trimmed, so eight megabytes arriving in one call cost
+  eight megabytes. It is trimmed before the copy now. This is the engine half only. See A9-02 for
+  the rest.
+- **Externally removed worktrees.** They did not disappear. Git keeps listing a worktree whose
+  directory was deleted, marked `prunable`, and discovery read the entry as an ordinary worktree
+  that happened to be somebody else's, which is the one ownership answer that stops Canopy tidying
+  it up. Prunable entries are dropped from discovery now.
+- **Quitting.** `Runner.CancelAll` asked every run to stop and returned without waiting for any of
+  them to. The signalling and the reaping happen on each run's own goroutine, so the program exited
+  in the gap. It waits now, bounded, for the same reason `exec.Run`'s own wait is bounded.
+- **Final transitions under load** held, and did not have a test with more than one publisher in it.
+  It does now. The adjacent guarantee did not hold: sequence numbers were assigned under the
+  broker's lock and queued outside it, so two publishers could deliver 7 before 6. `core.Event` says
+  they are never reordered, and with several agents streaming that claim was only true when one
+  goroutine was publishing. Queued under the lock now.
+- **Paths with spaces** held throughout, by construction rather than by accident: nothing in the git
+  or exec paths builds a shell command. **Branch names with spaces do not work and cannot**, because
+  git has no such ref. Canopy refuses one before building a command from it, which is what the
+  acceptance line can honestly mean, and the test establishes git's own refusal rather than assuming
+  it.
+
+Not done here, deliberately: the interface half of huge output, which is A9-02, and the Now board
+row, which has one line per agent and is being edited by the A8 work at the same time.
 
 ### A9-02 Interface robustness
 `status: todo | owner: none | branch: none | depends: PG-A8`

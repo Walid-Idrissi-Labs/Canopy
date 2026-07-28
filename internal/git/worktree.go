@@ -103,6 +103,19 @@ func parseWorktreeBlock(block string) (core.WorkspaceSnapshot, bool) {
 			// A bare repository has no working tree, so there is nothing for an agent to work in
 			// and nothing to report a dirty state for.
 			return core.WorkspaceSnapshot{}, false
+		case "prunable":
+			// Git's own word for a registration whose worktree is not there any more, most often
+			// because somebody deleted the directory outside Canopy. Git keeps listing the entry
+			// until `git worktree prune` runs, which is right for git and wrong for a discovery pass
+			// that is supposed to describe what exists.
+			//
+			// Dropped rather than reported, because everything downstream of discovery would have to
+			// invent a way to say "this row is about a directory that is gone": the revision would be
+			// unknown for a reason that reads as a git failure, the dirty state would error, and
+			// ownership would come back as external, which is the one answer that makes Canopy refuse
+			// to clean it up. A worktree that has been removed simply stops appearing, which is the
+			// whole reason discovery returns the set rather than a delta.
+			return core.WorkspaceSnapshot{}, false
 		}
 	}
 
