@@ -584,13 +584,15 @@ func (a App) View() string {
 		// needs first rather than what the program does most. At eighty columns only about five
 		// survive, and the ones that have to be among them are how to get help and how to reach a
 		// credential, because everything else in the program is downstream of those two.
-		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "↑", "history",
-			"ctrl+n", "new", "ctrl+k", "keys", "ctrl+d", "agents", "ctrl+r", "compact",
-			"ctrl+c", "quit")
+		footer := Keys(a.dim.Width, "enter", "send", "esc", "stop", "shift+tab", a.chat.Mode(),
+			"↑", "history", "ctrl+n", "new", "ctrl+k", "keys", "ctrl+d", "agents",
+			"ctrl+r", "compact", "ctrl+c", "quit")
 		if a.chat.InputEmpty() {
-			footer = Keys(a.dim.Width, "enter", "send", "?", "help", "ctrl+k", "keys",
-				"ctrl+n", "new", "ctrl+d", "agents", "↑", "history", "ctrl+r", "compact",
-				"esc", "stop", "ctrl+c", "quit")
+			// The mode is named after the key rather than described, so the footer says which one
+			// you are in as well as how to change it, in the space one hint costs.
+			footer = Keys(a.dim.Width, "enter", "send", "shift+tab", a.chat.Mode(), "?", "help",
+				"ctrl+k", "keys", "ctrl+n", "new", "ctrl+d", "agents", "↑", "history",
+				"ctrl+r", "compact", "esc", "stop", "ctrl+c", "quit")
 		}
 		if a.chat.Awaiting() {
 			footer = Keys(a.dim.Width, "y", "allow once", "a", "always", "any other key", "refuse")

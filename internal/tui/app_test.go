@@ -60,6 +60,7 @@ type stubEngine struct {
 	using    [2]string
 	created  int
 	asking   bool
+	trust    core.TrustLevel
 }
 
 func (e *stubEngine) Session(id string) (core.Session, bool) {
@@ -112,6 +113,16 @@ func (e *stubEngine) UseCredential(_, keyName, model string) error {
 	e.using = [2]string{keyName, model}
 	return nil
 }
+
+// Trust is what plan mode is made of, so this holds a real level rather than answering a constant.
+func (e *stubEngine) Trust(string) core.TrustLevel {
+	if e.trust == "" {
+		return core.TrustStandard
+	}
+	return e.trust
+}
+
+func (e *stubEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
 
 // Create hands back a session that is genuinely different from the one before it, since a stub
 // returning the same ID every time would make "the screen moved to the new conversation" pass

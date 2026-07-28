@@ -56,6 +56,10 @@ type Engine struct {
 	approver agent.Approver
 	trail    *permission.Trail
 
+	// sessionTrust is a per-conversation override, set by whoever is watching that conversation.
+	// This is what plan mode is made of: a level, not an instruction in the prompt.
+	sessionTrust map[string]core.TrustLevel
+
 	// storage is optional. An engine without one still works completely and forgets everything on
 	// exit, which is what the tests want and what a first run before the config directory exists
 	// gets. Persistence being optional rather than assumed is also what stops a storage failure
@@ -125,13 +129,37 @@ type Engine struct {
 // New builds an engine that forgets everything when it exits.
 func New(resolver Resolver) *Engine {
 	return &Engine{
-		sessions: map[string]*core.Session{},
-		cancels:  map[string]context.CancelFunc{},
-		resolver: resolver,
-		events:   store.NewBroker(),
-		budgets:  newBudgets(),
-		projects: make(map[string]string),
+		sessions:     map[string]*core.Session{},
+		cancels:      map[string]context.CancelFunc{},
+		resolver:     resolver,
+		events:       store.NewBroker(),
+		budgets:      newBudgets(),
+		projects:     make(map[string]string),
+		sessionTrust: make(map[string]core.TrustLevel),
 	}
+}
+
+// Trust is how much the agent in one conversation may do without asking.
+func (e *Engine) Trust(sessionID string) core.TrustLevel {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.trustForLocked(sessionID)
+}
+
+// SetTrust changes it, for that conversation alone.
+//
+// Per conversation because the decision belongs to whoever is watching that one, and enforced rather
+// than requested: the level set here is what the permission layer decides against and what the tool
+// list handed to the model is filtered by. That is the difference between plan mode and asking a
+// model nicely to plan. An agent told to plan and choosing to edit a file anyway is stopped by the
+// permission layer, which is the only kind of instruction worth relying on.
+func (e *Engine) SetTrust(sessionID string, trust core.TrustLevel) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.sessionTrust == nil {
+		e.sessionTrust = make(map[string]core.TrustLevel)
+	}
+	e.sessionTrust[sessionID] = trust
 }
 
 // SetProjectID scopes new sessions and cost analysis to one project.

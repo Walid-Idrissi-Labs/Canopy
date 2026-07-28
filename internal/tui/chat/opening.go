@@ -58,9 +58,22 @@ type opening struct {
 }
 
 func (o opening) render() string {
-	block := o.block()
+	head := o.head()
+	// The gap between the name and the box: a blank row, and the row the status keeps whether or not
+	// it has anything to say.
+	gap := []string{"", o.status}
+	block := append(append(append([]string(nil), head...), gap...), o.box...)
 
-	top := (o.height - len(block)) / 2
+	// The middle of that gap is what lands on the middle of the screen.
+	//
+	// Not the middle of the block, which is the version this started as and is subtly wrong: the box
+	// is taller than the name, so centring the whole thing pushes the gap up by half the difference
+	// and the eye lands on the box rather than between the two. It looked right for exactly as long
+	// as the box was three rows tall and the two happened to agree.
+	top := (o.height - len(gap) - 2*len(head)) / 2
+	if bottom := o.height - len(block); top > bottom {
+		top = bottom
+	}
 	if top < 0 {
 		top = 0
 	}
@@ -80,14 +93,6 @@ func (o opening) render() string {
 		lines = lines[:o.height]
 	}
 	return strings.Join(lines, "\n")
-}
-
-// block is the part whose middle lands on the middle of the screen.
-func (o opening) block() []string {
-	block := o.head()
-	block = append(block, "")
-	block = append(block, o.status)
-	return append(block, o.box...)
 }
 
 // head is the name, drawn and written.

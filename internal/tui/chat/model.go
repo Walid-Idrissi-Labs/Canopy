@@ -48,6 +48,14 @@ type Engine interface {
 
 	// UseCredential points this conversation at a different credential and model.
 	UseCredential(sessionID, keyName, model string) error
+
+	// Trust is how much the agent in this conversation may do, and SetTrust changes it. This pair is
+	// what plan mode is made of: the permission layer decides against the level and the tool list
+	// the model is shown is filtered by it, so an agent that is planning cannot edit a file by
+	// ignoring the instruction to plan. A mode the model could talk its way out of would be worth
+	// less than no mode at all, because it would look like a guarantee.
+	Trust(sessionID string) core.TrustLevel
+	SetTrust(sessionID string, trust core.TrustLevel)
 }
 
 // Commands is the catalog resolved for this chat's project.
@@ -154,6 +162,13 @@ type Model struct {
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
 	markGeneration int
+
+	// buildTrust is the level to go back to when this conversation leaves plan mode.
+	//
+	// Remembered rather than assumed, because an agent running at broad trust that planned and then
+	// went back to building would otherwise come out at standard. That is a silent demotion, and the
+	// kind nobody notices until a command they expected to run stops to ask permission.
+	buildTrust core.TrustLevel
 }
 
 // New builds a chat model over an engine and a session.
@@ -426,6 +441,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case "shift+tab":
+		// Beside tab rather than on a letter, because every printable key belongs to the message
+		// box, and next to the key that completes a command because both are about what is going to
+		// happen rather than about what has been said.
+		m.togglePlanning()
+		return m, nil
+
 	case "esc":
 		// Stops the turn rather than leaving the screen. With a reply streaming, escape means stop,
 		// and a screen that navigated away instead would abandon a running turn out of sight.
@@ -683,6 +705,43 @@ func (m Model) transcript() []string {
 	return lines
 }
 
+// Planning reports whether this conversation is in plan mode.
+//
+// Read from the engine rather than from a flag of its own, so there is one answer to the question
+// and the box cannot say "build" over a conversation the permission layer is refusing every write
+// in. Two sources of truth for a mode is how an interface comes to lie about a guarantee.
+func (m Model) Planning() bool {
+	return m.engine.Trust(m.sessionID) == core.TrustReadOnly
+}
+
+// Mode is the word the box shows: what this conversation is doing.
+func (m Model) Mode() string {
+	if m.Planning() {
+		return "plan"
+	}
+	return "build"
+}
+
+// togglePlanning moves between planning and building.
+func (m *Model) togglePlanning() {
+	if !m.Planning() {
+		m.buildTrust = m.engine.Trust(m.sessionID)
+		m.engine.SetTrust(m.sessionID, core.TrustReadOnly)
+		m.notice = ""
+		return
+	}
+
+	if m.buildTrust == "" || m.buildTrust == core.TrustReadOnly {
+		// There is nothing to go back to, because this agent is read-only by its own profile rather
+		// than because somebody put it in plan mode. Said out loud, since a key that silently does
+		// nothing reads as a key that is broken.
+		m.notice = "this agent is read-only, so planning is all it can do"
+		return
+	}
+	m.engine.SetTrust(m.sessionID, m.buildTrust)
+	m.notice = ""
+}
+
 // contextLines are what the opening screen says along its bottom left: where the agent is working
 // and what it is talking to.
 func (m Model) contextLines() []string {
@@ -883,7 +942,7 @@ func (m Model) inputBox() string {
 	rule := strings.Repeat(horizontal, inner+2)
 
 	var b strings.Builder
-	b.WriteString(" " + t.Border.Render(topLeft+rule+topRight) + "\n")
+	b.WriteString(" " + m.boxTop(topLeft, topRight, horizontal, inner+2) + "\n")
 	for _, line := range m.input.Lines() {
 		// Padded to the full inner width so the right hand border stays in one column whatever is
 		// typed. A border that moves with the text reads as a rendering fault.
@@ -896,6 +955,49 @@ func (m Model) inputBox() string {
 	}
 	b.WriteString(" " + t.Border.Render(bottomLeft+rule+bottomRight))
 	return b.String()
+}
+
+// boxTop draws the top edge of the message box with the mode and the model written into it.
+//
+// On the edge rather than on a line of its own, which is the whole reason it is here: these two
+// facts are worth having on screen at all times and are not worth a row of the terminal each. The
+// box already draws a rule across the full width and this spends part of it.
+//
+// Both matter for the same reason. Which model is answering changes what a reply is worth and what
+// it costs, and it is set per conversation and per credential, so it is genuinely easy to lose
+// track of. The mode matters more: plan and build differ in whether the agent can change your files,
+// and a person who thinks they are planning while the agent is building finds out afterwards.
+func (m Model) boxTop(left, right, horizontal string, width int) string {
+	t := theme.Current()
+
+	label := m.Mode()
+	if model := m.session.Model; model != "" {
+		label += "  " + model
+	}
+
+	// Two for the spaces either side of the label, and two more so the rule is still visibly a rule
+	// on both sides rather than a stub. Below that the label is dropped and the plain edge is drawn,
+	// because a truncated model name is worse than no model name: it looks like a different model.
+	if lipgloss.Width(label)+4 > width {
+		return t.Border.Render(left + strings.Repeat(horizontal, width) + right)
+	}
+
+	mode := t.Info
+	if m.Planning() {
+		// Amber, and the word is what carries it. Plan is the narrower mode and the one somebody
+		// needs to notice they are in, since it is the difference between an agent that will change
+		// files and one that cannot.
+		mode = t.Warning
+	}
+
+	written := mode.Render(m.Mode())
+	if model := m.session.Model; model != "" {
+		written += t.Muted.Render("  " + model)
+	}
+
+	rest := width - lipgloss.Width(label) - 3
+	return t.Border.Render(left+horizontal) + " " + written + " " +
+		t.Border.Render(strings.Repeat(horizontal, rest)+right)
 }
 
 // Context is what the frame shows beside the title.

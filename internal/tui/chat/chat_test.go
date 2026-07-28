@@ -32,6 +32,7 @@ type fakeEngine struct {
 	applied    []session.CompactionResult
 	prompt     *session.Prompt
 	answers    [][2]bool
+	trust      core.TrustLevel
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -75,6 +76,17 @@ func (e *fakeEngine) Answer(_ string, approved, remember bool) bool {
 	e.prompt = nil
 	return true
 }
+
+// Trust is what plan mode is made of, so the fake holds a real level rather than answering a
+// constant: a stub that always said "standard" would make the mode indicator untestable.
+func (e *fakeEngine) Trust(string) core.TrustLevel {
+	if e.trust == "" {
+		return core.TrustStandard
+	}
+	return e.trust
+}
+
+func (e *fakeEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
 
 func model(engine chat.Engine) chat.Model {
 	m := chat.New(engine, "s1", "myproject", "claude")

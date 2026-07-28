@@ -41,6 +41,7 @@ func bindings() []section {
 		}},
 		{"chat", []binding{
 			{"enter", "send"},
+			{"shift+tab", "plan or build, which is what the agent may change"},
 			{"/commands", "list reusable prompts active in this project"},
 			{"//", "send a literal prompt beginning with slash"},
 			{"esc", "interrupt the turn, keeping what has arrived"},
