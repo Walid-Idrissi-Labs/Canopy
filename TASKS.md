@@ -3298,8 +3298,8 @@ A chat picker is still out of scope and comes later. The code printed on exit is
 it back and would still only work on the machine that printed it.
 
 ### M-09 The mode ladder
-`status: partial | owner: Claude | branch: feat/modes-and-commands | depends: M-08`
-`scope: internal/permission/, internal/agent/loop.go, internal/core/profile.go, internal/session/, internal/tui/chat/`
+`status: review | owner: Claude | branch: feat/modes-and-commands | depends: M-08`
+`scope: internal/core/mode.go, internal/agent/loop.go, internal/session/gate.go, internal/session/aside.go, internal/tui/chat/, cmd/canopy/gate.go`
 
 Deliverable: seven modes, four of them on `shift+tab`, each one a capability, an approval policy and
 a prompt. Switchable while a turn is running.
@@ -3309,7 +3309,7 @@ proves each one refuses what it claims to refuse. Changing mode mid turn takes e
 tool call rather than the next message. `runway` and `cruise` refuse to engage where their safety net
 is missing rather than quietly behaving like the mode below them.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-28   codex [ ]`
 
 notes: **added 2026-07-28**, at the supervisors' request, after reading what the field does.
 
@@ -3382,27 +3382,35 @@ than once at the top of the turn, so switching mid reply takes hold on the next 
 tries. A mode can lower what an agent may do and can never raise it above what its configuration
 allows, and the key skips past what it cannot reach so it still does something on a confined agent.
 
-**Left, in the order it is worth doing.**
+**The green gate landed the same day.** A turn in runway is checked after it finishes and put back
+where it did not verify, with the reason kept on the turn even though the changes are not: a rolled
+back turn that left no trace would look like nothing happened.
 
-The **green gate that makes runway what it is**. The mode is declared and carries `KeepsGreen`, and
-nothing reads that field yet, so runway is currently cruise with a better prompt. It needs the turn
-completion path to ask the verifier, and to restore the checkpoint it already took when the answer
-is no. Until it lands, runway claims something it does not do, which is the one state this task
-should not be left in for long.
+Three outcomes and deliberately not two. Green keeps it silently. Red rolls it back. An error means
+the question could not be asked, and that keeps the turn, because rolling work back because the test
+runner fell over would destroy it to punish an infrastructure problem. `RolledBack` is its own field
+rather than `Error` for the same reason: the turn did not fail, it worked and was not kept.
 
-`NeedsUndo` is declared and unread for the same reason. Both runway and cruise carry it, and neither
-refuses yet outside a git repository, so cruise with no undo is currently possible and should not be.
+Only a turn that reached `TurnComplete` is checked, and only in runway. A cancelled turn has nothing
+worth keeping, and checking in build would make every message pay for a full test run.
 
-The **capability and approval split**, which is the structural half and is not needed by any of the
-four cycle modes: all four are expressible with the existing ladder, which is why they shipped
-first. It is what `ask`, `sealed` and `fixed` need, and what makes review-every-edit sayable at all.
+`NeedsUndo` and `KeepsGreen` are both enforced at `SetMode`, so runway and cruise are refused where
+their safety net is missing rather than quietly behaving like the mode below them.
 
-**`/btw`**, asked for on 2026-07-28. A question answered from the conversation's own context without
-joining it and without disturbing a turn in flight, which is the half `/steer` does not cover:
-steering changes what the agent does, and this is for asking something while deliberately changing
-nothing. It needs a one-off provider call outside the turn machinery, which `cmd/canopy/ask.go`
-already does at the command line and the engine has no path for. The answer is printed and not
-recorded, or it is not a side channel, it is a message.
+**`/btw` landed too.** Its own request against the conversation's history, no tools, nothing
+recorded, and a turn in flight is undisturbed. The no-tools part is what makes it safe beside a
+running turn rather than merely polite: a side question that could call one would be a second agent
+on the same worktree with no checkpoint of its own, which is the situation Canopy exists to stop
+people getting into by accident.
+
+**Left: the capability and approval split.** The structural half, and not needed by any of the four
+cycle modes, which is why they shipped without it: all four are expressible with the existing trust
+ladder. It is what `ask`, `sealed` and `fixed` need, and what makes review-every-edit sayable at all.
+
+Worth knowing before starting it: `cmd/canopy/gate.go` polls the runner for terminal state because
+`exec.Runner` reports state rather than offering a channel to wait on. It is the one part of the
+gate that only runs against a real repository and so the hardest part to test, which is why the
+behaviour lives in the engine against a stub and only the waiting lives there.
 
 ### PG-M Phase M gate
 `status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`
