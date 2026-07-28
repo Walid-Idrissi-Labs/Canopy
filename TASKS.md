@@ -2705,7 +2705,7 @@ theoretical. Mouse support is additive only, since the tool has to stay usable o
 reporting may not survive.
 
 ### A5-11 Mosaic agents view
-`status: claimed | owner: Claude | branch: tui/agent-mosaic | depends: A5-10`
+`status: review | owner: Claude | branch: tui/agent-mosaic | depends: A5-10`
 `scope: internal/tui/agents/, internal/tui/app.go (agents routing and footer only), internal/tui/help.go (agents rows only)`
 
 Deliverable: the agents screen becomes the place you see every agent at once, not two of them.
@@ -2732,13 +2732,32 @@ by digit lands on the agent the pane shows. Falls back layout by layout on a nar
 rather than tearing. The animation schedules no tick while the screen is not showing or nothing is
 working.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-28   codex [ ]`
 
 notes: claimed 2026-07-28 at Walid's direction, which is why this crosses the section 2.1 TUI
 boundary: the supervisor asked for it directly and the app.go and help.go edits are confined to
 the agents screen's own rows. This supersedes the split mode from A5-06 and the pane half of
 A5-10: split-of-two becomes the two agent case of mosaic. The A5-10 acceptance line "four agents
 stream simultaneously in split mode" is inherited here as the four agent mosaic case.
+
+Built on `tui/agent-mosaic`, all in `internal/tui/agents/mosaic.go` plus the model rework. Every
+acceptance line has a test: the eight agent grid and its width invariant, the ninth agent
+declared off screen and reached by paging, the per pane ember judged from the pane's agent and
+never the cursor, digit jumping, the narrow fallbacks, and the no-tick-while-hidden rule. Full
+suite, vet, gofmt and golangci-lint are clean.
+
+Three decisions worth Codex's attention on review:
+
+1. **An uneven page tiles perfectly rather than leaving a hole.** Five agents on a two column
+   grid draw as rows of three and two, each row dividing the full width, because a grid with an
+   empty cell reads as a missing agent, which is the exact fear this screen exists to remove.
+2. **The pane fires run on one ticker with a generation guard, owned by the agents model.** The
+   application now keeps the agents view's command in its broadcast path instead of dropping it,
+   and tells the view whether it is in front. Without the first the ticker dies on the next
+   engine event; without the second it burns frames behind other screens.
+3. **The chat screen is untouched.** A single conversation looks exactly as it did, wordmark and
+   all. Pane chrome exists only inside the agents screen's body, which is what the supervisor
+   asked for out loud.
 
 ### PG-A5 Phase A5 gate
 `status: todo | depends: A5-07, A5-08, A5-09, A5-10`
