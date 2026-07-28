@@ -5,25 +5,25 @@
   "tests": [
     {
       "name": "build",
-      "command": "go build ./...",
+      "command": { "argv": ["go", "build", "./..."] },
       "required": true,
       "timeout": "5m"
     },
     {
       "name": "unit",
-      "command": "go test -race -count=1 ./...",
+      "command": { "argv": ["go", "test", "-race", "-count=1", "./..."] },
       "required": true,
       "timeout": "15m"
     },
     {
       "name": "vet",
-      "command": "go vet ./...",
+      "command": { "argv": ["go", "vet", "./..."] },
       "required": true,
       "timeout": "5m"
     },
     {
       "name": "lint",
-      "command": "golangci-lint run ./...",
+      "command": { "argv": ["golangci-lint", "run", "./..."] },
       "timeout": "5m"
     }
   ],
