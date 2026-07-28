@@ -301,7 +301,10 @@ func startVerification(
 	// which events had happened and was never asked, so every hook anybody configured was a command
 	// that validated at load and then never ran.
 	if configured := project.Runnable(); len(configured) > 0 {
-		v.runner = hooks.New(configured, dir, hooks.Shell, v.recordHook)
+		// The revision reader is what stops a committing hook from firing on its own commit. Read
+		// live from git rather than from the verifier's last poll, because the poller has not looked
+		// yet at the moment this matters. See Q-17 and hooks.Runner.ownRevision.
+		v.runner = hooks.New(configured, dir, hooks.Shell, v.recordHook, verifier.Head)
 	}
 
 	v.follow(engine)
