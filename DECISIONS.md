@@ -845,6 +845,39 @@ So the conversation's own agent gets them and the isolated ones do not. That is 
 what fan out can do, it is recorded in LIMITATIONS.md rather than left to be discovered, and Q-18
 carries the per-worktree design that would lift it.
 
+## D-39 A revision that appeared while a hook was running belongs to that hook. Decided 2026-07-28.
+
+Hooks fire once per revision for anything that is a claim about code, which is the right rule and
+does not terminate on its own. A hook that commits moves HEAD, the evidence goes stale, the tests run
+again, they pass again, and the guard is satisfied again because the revision is new. `git commit
+-am` fails harmlessly the second time round. `git commit -am --allow-empty` does not.
+
+The choice recorded in Q-17 was between recognising a hook's own revision and requiring hooks to be
+idempotent. Requiring idempotence is a rule with no enforcement and an infinite loop as its failure
+mode, and it puts the burden on the person least able to see the cycle, so this takes the first.
+
+**What makes a revision recognisable is not anything about the revision.** Every cheap test fails:
+the commit author is the user when the hook commits as the user, and remembering the one revision a
+hook produced breaks the moment it produces two. What is knowable is the interval. The runner already
+holds the revision the hook fired at, because that is what the once-per-revision guard is keyed on,
+and it can read the revision again when the hook returns. Anything that moved between those two
+points moved while the configured hook batch was running, and those hooks were the only work Canopy
+asked to do. That revision is recorded as already fired.
+
+The interval is active before the commands start, not only after they return. The poller can observe
+and verify a hook's commit while that hook continues with later commands; an observation inside the
+interval is claimed immediately instead of starting a second batch. When several hooks listen to
+one event, the interval remains active until the last of them returns.
+
+Read from git directly rather than from the poller's last answer. The poller is up to an interval
+behind, and the whole question is what happened in the last few seconds.
+
+**What this gives up.** A person who commits their own work in the seconds a hook is running has that
+revision claimed as well, and the hook does not fire for it. One missed firing, in a window as long as
+one hook, weighed against a loop that stops only when somebody quits Canopy. No rule separates the
+two cases without asking the hook to declare itself, and a hook that has to be trusted to declare
+itself is the thing being guarded against.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

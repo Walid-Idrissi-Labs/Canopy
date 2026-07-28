@@ -246,11 +246,17 @@ be rediscovered by getting burned by it.
   verification state that is current rather than stale, and a command bound to `tests-passed` is
   eligible again at the next revision, which is deliberate: tests passing over different code is a
   different event. It also means a hook that commits moves HEAD, and the pass at that new revision
-  is a second event that fires it again. `git commit -am` fails harmlessly the second time and a
-  hook using `--allow-empty` will keep going. How a revision a hook itself produced should be
-  recognised is undecided (Q-17), and until it is, treat a committing hook as firing more than once.
-  There is nowhere on screen for a hook failure yet, so one is printed on exit: a long session can
-  hide a broken hook for hours. A8-05 is back to claimed for both reasons.
+  is a second event that would fire it again, so a revision that appears between a hook batch firing
+  and its last command returning is treated as the batch's own and does not fire it a second time,
+  even if the poller verifies that revision before the first command returns (D-39). The
+  cost of that rule falls in one place: if you commit your own work during the few seconds a hook is
+  running, that revision is claimed too and the hook does not fire for it. It fires again for the
+  next thing you do.
+
+- **A hook that fails is only visible when Canopy exits.** The failure is recorded with its command,
+  its output and its error, and there is nowhere on screen to show it yet, so a long session can hide
+  a broken hook for hours. That is the exact failure automation invites, since the point of it is
+  that somebody stops watching. A8-05 stays claimed for this reason alone.
 
 - MCP servers are started when a conversation opens and stopped when it closes, and their tools are
   governed exactly as Canopy's own are: every one of them counts as running a command, whatever the

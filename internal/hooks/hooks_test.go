@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -68,15 +69,49 @@ func rev(s string) core.RevisionKey { return core.RevisionKey{HeadSHA: s} }
 
 func runnerWith(t *testing.T, exec Executor, reports *[]Report, hooks ...Hook) *Runner {
 	t.Helper()
+	return runnerReading(t, exec, reports, nil, hooks...)
+}
+
+// runnerReading is runnerWith plus a worktree whose revision the hook can move, which is what the
+// loop guard is about.
+func runnerReading(
+	t *testing.T, exec Executor, reports *[]Report, revision Revision, hooks ...Hook,
+) *Runner {
+	t.Helper()
 
 	var mu sync.Mutex
 	r := New(hooks, t.TempDir(), exec, func(report Report) {
 		mu.Lock()
 		defer mu.Unlock()
 		*reports = append(*reports, report)
-	})
+	}, revision)
 	t.Cleanup(r.Wait)
 	return r
+}
+
+// worktree stands in for a repository a hook can commit to.
+//
+// A fake rather than a real repository because what is being asserted is the runner's rule, not
+// git's behaviour: the hook moves the revision, and the question is whether the runner notices that
+// it was the one that caused it.
+type worktree struct {
+	mu  sync.Mutex
+	sha string
+}
+
+func (w *worktree) commit(sha string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.sha = sha
+}
+
+func (w *worktree) read(context.Context, string) (core.RevisionKey, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.sha == "" {
+		return core.RevisionKey{}, false
+	}
+	return rev(w.sha), true
 }
 
 // The poller reports where everything stands every couple of seconds. A hook that fired on the
@@ -136,6 +171,7 @@ func TestPassingAgainAfterGoingStaleFiresAgain(t *testing.T) {
 	ctx := context.Background()
 
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("abc"), Tests: core.TestPassing})
+	r.Wait()
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Tests: core.TestStale})
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Tests: core.TestPassing})
 	r.Wait()
@@ -356,6 +392,7 @@ func TestANewRevisionPassingFiresAgainEvenWithNoStateSeenInBetween(t *testing.T)
 	ctx := context.Background()
 
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("abc"), Green: true})
+	r.Wait()
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Green: true})
 	r.Wait()
 
@@ -379,5 +416,219 @@ func TestAnAgentEventDoesNotRefireBecauseTheCodeChanged(t *testing.T) {
 
 	if got := exec.commands(); len(got) != 1 {
 		t.Errorf("the idle hook ran %d times while the agent sat still: %v", len(got), got)
+	}
+}
+
+// The loop Q-17 is about, and the reason the once-per-revision guard is not enough on its own.
+//
+// A hook that commits moves HEAD. The results go stale, the tests run again, they pass again, and at
+// a new revision the guard is satisfied again, so the hook runs again. With `git commit -am` the
+// second attempt fails harmlessly. With `--allow-empty` it does not, and the repository fills with
+// empty commits for as long as the session is open.
+func TestACommittingHookDoesNotFireOnItsOwnCommit(t *testing.T) {
+	tree := &worktree{sha: "r1"}
+
+	var runs int
+	var mu sync.Mutex
+	exec := func(context.Context, string, string, []string) (string, error) {
+		mu.Lock()
+		runs++
+		commit := fmt.Sprintf("r%d", runs+1)
+		mu.Unlock()
+
+		// What `git commit -am ... --allow-empty` does: a new revision every single time.
+		tree.commit(commit)
+		return "", nil
+	}
+
+	var reports []Report
+	r := runnerReading(t, exec, &reports, tree.read,
+		Hook{On: TestsPassed, Run: "git commit -am wip --allow-empty"})
+
+	// The cycle: green at a revision, hook commits, tests go stale and pass again at the revision the
+	// hook produced. Ten turns of it, which under the old rule is ten commits.
+	for range 10 {
+		current, _ := tree.read(context.Background(), "a1")
+		r.Observe(context.Background(), Observation{
+			Subject: "a1", Revision: current, Tests: core.TestPassing, Green: true,
+		})
+		r.Wait()
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 1 {
+		t.Errorf("the hook ran %d times, want 1: it committed, which moved the revision, which made "+
+			"it eligible again, which is a loop that only stops when somebody quits Canopy", runs)
+	}
+}
+
+func TestARevisionObservedBeforeTheHookReturnsDoesNotRetriggerIt(t *testing.T) {
+	tree := &worktree{sha: "r1"}
+	committed := make(chan struct{})
+	release := make(chan struct{})
+
+	var runs int
+	var mu sync.Mutex
+	exec := func(context.Context, string, string, []string) (string, error) {
+		mu.Lock()
+		runs++
+		run := runs
+		mu.Unlock()
+		if run == 1 {
+			tree.commit("r2")
+			close(committed)
+			<-release
+		}
+		return "", nil
+	}
+
+	var reports []Report
+	r := runnerReading(t, exec, &reports, tree.read,
+		Hook{On: TestsPassed, Run: "git commit -am wip; make notify"})
+
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("r1"), Tests: core.TestPassing, Green: true,
+	})
+	<-committed
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("r2"), Tests: core.TestPassing, Green: true,
+	})
+	close(release)
+	r.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 1 {
+		t.Errorf("the hook ran %d times, want 1: r2 appeared while the first run still owned the interval",
+			runs)
+	}
+}
+
+func TestTheIntervalCoversEveryHookInTheBatch(t *testing.T) {
+	tree := &worktree{sha: "r1"}
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+
+	var runs int
+	var mu sync.Mutex
+	exec := func(context.Context, string, string, []string) (string, error) {
+		mu.Lock()
+		runs++
+		run := runs
+		mu.Unlock()
+		if run <= 2 {
+			tree.commit(fmt.Sprintf("hook-%d", run))
+			started <- struct{}{}
+			<-release
+		}
+		return "", nil
+	}
+
+	var reports []Report
+	r := runnerReading(t, exec, &reports, tree.read,
+		Hook{On: Verified, Run: "first"},
+		Hook{On: Verified, Run: "second"})
+
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("r1"), Tests: core.TestPassing, Green: true,
+	})
+	<-started
+	<-started
+	current, _ := tree.read(context.Background(), "a1")
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: current, Tests: core.TestPassing, Green: true,
+	})
+	close(release)
+	r.Wait()
+
+	tree.commit("person-work")
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("person-work"), Tests: core.TestPassing, Green: true,
+	})
+	r.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 4 {
+		t.Errorf("hooks ran %d times, want two for r1, none inside their interval, and two for person-work",
+			runs)
+	}
+}
+
+// The other half, and the reason this cannot be fixed by firing only once per session. Work somebody
+// actually did is a new event and the hook has to run for it, or the second piece of work silently
+// never gets committed.
+func TestAHookStillFiresForWorkTheHookDidNotDo(t *testing.T) {
+	tree := &worktree{sha: "r1"}
+
+	var runs int
+	var mu sync.Mutex
+	exec := func(context.Context, string, string, []string) (string, error) {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		tree.commit("hook-" + fmt.Sprint(runs))
+		return "", nil
+	}
+
+	var reports []Report
+	r := runnerReading(t, exec, &reports, tree.read,
+		Hook{On: TestsPassed, Run: "git commit -am wip"})
+
+	green := func() {
+		current, _ := tree.read(context.Background(), "a1")
+		r.Observe(context.Background(), Observation{
+			Subject: "a1", Revision: current, Tests: core.TestPassing, Green: true,
+		})
+		r.Wait()
+	}
+
+	green() // fires, and commits hook-1
+	green() // suppressed: this is the hook's own revision
+	tree.commit("person-wrote-this")
+	green() // fires again, because somebody did something
+
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 2 {
+		t.Errorf("the hook ran %d times, want 2: suppressing a revision the hook produced must not "+
+			"also suppress the next piece of real work", runs)
+	}
+}
+
+// A hook that changes nothing is not a special case and must not become one. Nothing moved, so there
+// is nothing to claim, and the ordinary once-per-revision rule is the whole of it.
+func TestAHookThatCommitsNothingClaimsNothing(t *testing.T) {
+	tree := &worktree{sha: "r1"}
+
+	var runs int
+	var mu sync.Mutex
+	exec := func(context.Context, string, string, []string) (string, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		runs++
+		return "nothing to commit, working tree clean", nil
+	}
+
+	var reports []Report
+	r := runnerReading(t, exec, &reports, tree.read, Hook{On: TestsPassed, Run: "make notify"})
+
+	for range 3 {
+		r.Observe(context.Background(), Observation{
+			Subject: "a1", Revision: rev("r1"), Tests: core.TestPassing,
+		})
+		r.Wait()
+	}
+	tree.commit("r2")
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("r2"), Tests: core.TestPassing,
+	})
+	r.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 2 {
+		t.Errorf("the hook ran %d times, want 2: once for r1 and once for r2", runs)
 	}
 }

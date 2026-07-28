@@ -405,6 +405,29 @@ func (v *Verifier) Rollup(agent string) (core.Rollup, bool) {
 	return core.RollUp(snapshot), true
 }
 
+// Head reads an agent's revision from git now, rather than from the last poll.
+//
+// The poller's answer is up to an interval old, which is fine for everything that displays it and
+// wrong for the one caller that needs to know what just happened: a hook that commits has to be
+// recognised before the poller next looks, or the hook fires again on its own commit. See Q-17.
+func (v *Verifier) Head(ctx context.Context, agent string) (core.RevisionKey, bool) {
+	v.mu.Lock()
+	subject, ok := v.subjects[agent]
+	v.mu.Unlock()
+
+	if !ok {
+		return core.RevisionKey{}, false
+	}
+
+	revision, reason := v.repo.Revision(ctx, subject.Dir)
+	if reason != "" || !revision.Known() {
+		// Not knowing is not evidence that nothing changed, so the caller is told nothing rather than
+		// told the revision is the same.
+		return core.RevisionKey{}, false
+	}
+	return revision, true
+}
+
 // Diff returns the size of an agent's work as last measured.
 func (v *Verifier) Diff(agent string) core.DiffStat {
 	v.mu.Lock()
