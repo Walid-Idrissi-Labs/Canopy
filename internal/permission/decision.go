@@ -72,6 +72,17 @@ type Request struct {
 
 	// Command is the shell command, for execute calls. Empty otherwise.
 	Command string
+
+	// Arguments is a fingerprint of the whole call, used to scope an approval for a tool that has
+	// neither a path nor a command to be pinned to.
+	//
+	// A tool on an MCP server is what this exists for. Those are remote, so there is no local path
+	// to name, and they take structured arguments rather than a command line. Without this the
+	// approval scope for one falls back to the tool alone, and "allow for the session" on a single
+	// call silently covers every later call to that tool with any arguments at all. That is a much
+	// broader promise than the one on the screen, and it is broadest for exactly the tools Canopy
+	// knows least about.
+	Arguments string
 }
 
 // Decision is the answer, and why.
@@ -102,6 +113,9 @@ type Scope struct {
 	Command string
 	// Kind the approval covers, set only for approvals that cover a whole class of tool.
 	Kind core.ToolKind
+	// Arguments the approval covers, as a fingerprint. Set only when there was no path and no
+	// command to scope by, which is the case for a tool on an MCP server.
+	Arguments string
 }
 
 func (s Scope) String() string {
@@ -112,6 +126,11 @@ func (s Scope) String() string {
 		return fmt.Sprintf("%s on %s", s.Tool, s.Path)
 	case s.Kind != "":
 		return fmt.Sprintf("any %s tool", s.Kind)
+	case s.Arguments != "":
+		// The fingerprint itself is not shown. It is a hash, it means nothing to a reader, and the
+		// sentence has to be one somebody can act on: what they are agreeing to is this call again,
+		// not this tool again.
+		return fmt.Sprintf("%s with exactly these arguments", s.Tool)
 	default:
 		return s.Tool
 	}
@@ -123,7 +142,7 @@ func (s Scope) String() string {
 // was not shown. If the key were coarser than the prompt, somebody would approve one file and grant
 // a directory.
 func (s Scope) key() string {
-	return strings.Join([]string{s.Tool, s.Path, s.Command, string(s.Kind)}, "\x00")
+	return strings.Join([]string{s.Tool, s.Path, s.Command, string(s.Kind), s.Arguments}, "\x00")
 }
 
 // Decide answers whether a call may run, given a trust level and what has already been approved.
@@ -316,6 +335,11 @@ func scopeFor(req Request) Scope {
 		sorted := append([]string(nil), req.Paths...)
 		sort.Strings(sorted)
 		scope.Path = sorted[0]
+	case req.Arguments != "":
+		// Last, because a path or a command says something a person can read and a fingerprint does
+		// not. Reached only by tools that offer neither, and the alternative for those is a scope of
+		// the tool alone, which is an approval far wider than the one being displayed.
+		scope.Arguments = req.Arguments
 	}
 	return scope
 }

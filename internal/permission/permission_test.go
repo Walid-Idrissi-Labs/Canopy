@@ -391,3 +391,48 @@ func TestFlagCaseIsNotFlattened(t *testing.T) {
 			"nothing")
 	}
 }
+
+// A tool reached over MCP has no local path and no command line, so before it had a fingerprint its
+// approval scope was the tool and nothing else. Saying yes once then covered every later call to
+// that tool whatever it asked for, which is a far broader promise than the sentence on the screen,
+// and it was broadest for exactly the tools Canopy knows least about.
+func TestApprovingOneRemoteCallDoesNotApproveTheNext(t *testing.T) {
+	grants := NewGrants()
+
+	approved := request(core.ToolExecute, "jira_transition_issue")
+	approved.Arguments = "6ca13d…issue-41-to-done"
+	first := Decide(approved, core.TrustStandard, grants)
+	if first.Outcome != Ask {
+		t.Fatalf("outcome = %s, want a question first", first.Outcome)
+	}
+	grants.Grant(first.Scope)
+
+	if got := Decide(approved, core.TrustStandard, grants).Outcome; got != Allow {
+		t.Errorf("outcome = %s for the same call again, want allow: the approval was not remembered",
+			got)
+	}
+
+	different := request(core.ToolExecute, "jira_transition_issue")
+	different.Arguments = "9f2e04…every-issue-to-closed"
+	if got := Decide(different, core.TrustStandard, grants).Outcome; got != Ask {
+		t.Errorf("approving one call to %s also approved a different one", approved.Tool)
+	}
+}
+
+// And the fingerprint is the last thing a scope falls back to, never the first. A path or a command
+// is something a person can read on the prompt, and a hash is not, so a call that has one keeps it.
+func TestAFingerprintNeverDisplacesAPathOrACommand(t *testing.T) {
+	withCommand := request(core.ToolExecute, "run_command")
+	withCommand.Command = "make test"
+	withCommand.Arguments = "6ca13d"
+	if got := scopeFor(withCommand); got.Command != "make test" || got.Arguments != "" {
+		t.Errorf("scope = %+v, want it scoped by the command", got)
+	}
+
+	withPath := request(core.ToolWrite, "edit_file")
+	withPath.Paths = []string{"internal/core/mode.go"}
+	withPath.Arguments = "6ca13d"
+	if got := scopeFor(withPath); got.Path != "internal/core/mode.go" || got.Arguments != "" {
+		t.Errorf("scope = %+v, want it scoped by the path", got)
+	}
+}

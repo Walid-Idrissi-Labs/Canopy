@@ -9,6 +9,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -356,6 +358,7 @@ func (l *Loop) invoke(
 		Kind:      tool.Kind(),
 		Paths:     pathsIn(call.Input),
 		Command:   commandIn(call.Input),
+		Arguments: fingerprintOf(call.Input),
 	}
 
 	decision := permission.Decide(req, l.TrustNow(), l.Grants)
@@ -445,6 +448,34 @@ func commandIn(input json.RawMessage) string {
 		return value
 	}
 	return ""
+}
+
+// fingerprintOf identifies one exact set of arguments, so an approval can be pinned to it.
+//
+// For tools that name neither a path nor a command, which in practice means anything reached over
+// MCP. Those are the tools Canopy knows least about, and without a fingerprint their approvals are
+// scoped to the tool alone, so saying yes once says yes to every later call whatever it asks for.
+//
+// Re-encoded through a map rather than hashed as it arrived, because two calls that are the same
+// call can differ in key order or spacing, and a fingerprint that changed with the whitespace would
+// re-ask for something already approved. Arguments that do not parse are hashed as they came, which
+// is the honest answer: two byte-identical inputs are the same call, and nothing more is claimed.
+func fingerprintOf(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+
+	canonical := []byte(input)
+	var args map[string]any
+	if err := json.Unmarshal(input, &args); err == nil {
+		// Marshal sorts map keys, so this is stable across calls.
+		if encoded, err := json.Marshal(args); err == nil {
+			canonical = encoded
+		}
+	}
+
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
 }
 
 // accumulate adds a step's usage to a running total.
