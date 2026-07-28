@@ -3313,8 +3313,8 @@ box and never reach the model. Both files are strict, and a broken global file d
 layer with a warning. D-34, README and limitations record the contract.
 
 ### A8-05 Hooks and automations
-`status: todo | owner: none | branch: none | depends: A8-03, PG-A6`
-`scope: internal/agent/`
+`status: review | owner: Claude | branch: feat/hooks | depends: A8-03, PG-A6`
+`scope: internal/hooks/, internal/config/hooks.go`
 
 Deliverable: run something on an event. Tests green, auto commit. Tests red, notify. Agent idle,
 nudge.
@@ -3322,10 +3322,50 @@ nudge.
 Acceptance: a hook fires only on a real state transition, never on a stale or unknown one. A
 failing hook is visible and never silently swallowed.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: where verification and orchestration compound. The truth engine is what makes the triggers
 trustworthy, so hooks firing on unverified state would poison both.
+
+Its own package, `internal/hooks`, rather than a file under `internal/agent`. The scope line said
+otherwise and the scope line was wrong: hooks fire on verification state, which is the poller's
+output rather than the agent loop's, and `internal/session` was being edited on another branch at
+the time. Deciding what fires is split from running it, so the rules are testable without a shell.
+
+Three rules carry the acceptance criterion, and each is a way this goes quietly wrong.
+
+**A hook fires once per revision, not once per state.** The poller says where every workspace stands
+every couple of seconds, so firing on the state would be an auto-commit every two seconds for as long
+as the build stayed green. It also ends the loop that the first hook anybody writes creates: commit on
+green moves HEAD, which moves the revision, which makes the results stale, which makes them run and
+pass again.
+
+**Nothing fires on stale or unknown evidence.** A green that no longer describes the code is the
+failure this project exists to refuse, and a hook that commits on the strength of one writes that
+failure permanently into history. Stale is still recorded so the edge is tracked, which means passing,
+stale, passing fires twice. That is correct: the second pass is evidence about different code.
+
+**Agent events keep the edge rule instead**, because they are not claims about code. Keying `agent-idle`
+on the revision would fire it again because somebody edited a file, which the agent had nothing to do
+with.
+
+That last distinction was found by mutation testing rather than by design. Removing the edge check
+changed no test, which meant either the check was redundant or the tests were not covering it. It was
+worse than redundant: an agent whose tests pass, then works, then passes again would have had the
+second event suppressed if the poller never caught an intermediate state, silently skipping the commit
+for the second piece of work. Five mutations now, all caught.
+
+A hook learns why it ran from the environment rather than from substitution into its command, so the
+command in `canopy.json` is the command that runs. A reviewer should not have to simulate an expansion
+to know what will execute, and an agent name containing a quote should not be able to change the shape
+of a shell command.
+
+Unknown event names are refused at config load with the vocabulary listed, because a hook that
+silently never fires cannot be told apart from one that fires and does nothing.
+
+Not wired yet. The package is complete and tested and nothing calls `Observe`, which needs the poller
+in `internal/verify` or `cmd/canopy`, both of which had another branch open in them. That wiring is
+what PG-A8 will actually be demonstrating, so it is not optional.
 
 ### A8-06 MCP client
 `status: todo | owner: none | branch: none | depends: A4-04`
