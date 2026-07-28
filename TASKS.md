@@ -2731,7 +2731,7 @@ does not change when a git ignored file changes. Symlinks hash their target, sub
 their HEAD SHA, and an oversized untracked file forces the revision to unknown with a readable
 reason.
 
-`verify: claude [x] 2026-07-27 (predates corrective diff)   codex [x] 2026-07-28`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: was P2-03, unchanged. D-09 and D-16 apply.
 
@@ -2771,7 +2771,7 @@ Deliverable: poll each worktree and emit a revision change event.
 Acceptance: an edit produces the event within one poll interval, and polling many worktrees does
 not saturate a core.
 
-`verify: claude [x] 2026-07-27 (predates corrective diff)   codex [x] 2026-07-28`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: was P2-04, unchanged. D-07 applies.
 
@@ -2838,7 +2838,7 @@ Deliverable: every agent carries its verification state, using the existing roll
 Acceptance: an agent that edits its worktree turns stale, and re-running clears it. Wording and
 glyphs are the ones fixed in D-10.
 
-`verify: claude [x] 2026-07-27 (predates corrective diff)   codex [x] 2026-07-28`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: the old P2-09 to P2-14 demo, per agent instead of per worktree.
 
@@ -2905,7 +2905,7 @@ ordered so the easiest review comes first.
 Acceptance: an agent whose result went stale leaves the queue immediately. An agent with a green
 result and an empty diff never enters it.
 
-`verify: claude [x] 2026-07-27 (predates corrective diff)   codex [x] 2026-07-28`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: **added 2026-07-26.** Nearly free, since the truth engine already knows all of this.
 
@@ -2926,6 +2926,53 @@ tests pass. Claude's earlier check must be rerun on the corrective diff before d
 Both supervisors give three agents the same task and watch Canopy pick the winner on evidence.
 
 `signed: walid [ ]   classmate [ ]`
+
+### A6 verification at 8f3e5f9
+
+`recorded: Claude 2026-07-28`
+
+The four A6 tasks above carried a `claude [x]` from 2026-07-27 that predated the corrective work on
+`verify/freshness-and-ranking`, which Codex marked honestly rather than letting the old signature
+stand for code it never saw. This is the rerun at the current head, so the signatures mean what they
+say again.
+
+Reviewed rather than only rerun. The corrections that carry the branch, each confirmed by reading
+the code rather than by trusting the commit message:
+
+- **`strings.TrimSpace` was being applied to `git status --porcelain=v1 -z`.** The leading character
+  of that format is the first status column and it is a space for an unstaged modification, so
+  trimming turned ` M file` into `M file` and reported it as staged. Split into `runRaw` for every
+  machine-readable caller.
+- **The content hash cache could be fooled by restoring an mtime.** Change time is compared as well
+  now, with `os.SameFile` and a re-stat after the read, and cache hits are disabled outright on a
+  platform where change time is unavailable rather than weakened.
+- **Two races.** A poll in flight while `Watch` changed could resurrect a removed workspace or
+  overwrite the first observation of its replacement; an older test run finishing after a newer one
+  started could overwrite the newer result.
+- **Evidence is cleared when the workspace behind an agent name is replaced.** A replacement worktree
+  can legitimately have the same revision key, so the old run would have made it green before it ran
+  anything.
+- **`countLines` no longer follows symlinks or reads whole files into memory.** Git records the link
+  target as the content, so following it let a size measurement read outside the worktree.
+
+Two follow-ups were added on the same branch after review, both mutation checked:
+
+- `Observe` compared a subject's directory to a change's path as raw strings while `sharedWorkspaces`
+  cleaned both. A trailing separator on either side made `Observe` match nothing, which reads as a
+  worktree where nothing ever changes rather than as anything going wrong.
+- `ReadyToReview` did not check whether a workspace was shared while `placementFor` did. Unreachable
+  today and recorded as such in the code, because it is held up by two other mechanisms rather than
+  by its own rule.
+
+Reran at 8f3e5f9 on darwin: `go build ./...`, `go test -count=1 ./...`, `go test -race` on
+`internal/git`, `internal/verify` and `internal/exec`, `go vet ./...`, `golangci-lint run` (0 issues),
+`gofmt -l .` (clean).
+
+**A6-03 stays blocked and this note does not clear it.** Q-16 is a genuine contract violation found
+by this pass: `canopy.json` accepts only a shell string while D-05 requires an argument array by
+default, so a missing executable is observed as shell exit 127 and reported as a failing test rather
+than a command-start error. That needs both supervisors to either implement D-05 as written or
+supersede it, and no agent should clear it by matching shell output or redefining exit 126 and 127.
 
 ---
 
