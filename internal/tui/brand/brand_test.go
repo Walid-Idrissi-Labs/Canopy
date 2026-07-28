@@ -140,6 +140,23 @@ func TestEveryAnimationFrameIsTheSameSizeAsTheMark(t *testing.T) {
 	}
 }
 
+// The still mark and the first frame are the same picture.
+//
+// The corner starts its ticker at step zero, so anything else means the logo shifts the instant the
+// animation begins, which is exactly what it did: the fire was overlaid one column left of where the
+// mark draws it, so the campfire slid sideways under a tent that stayed where it was. Nothing caught
+// it, because the test below pins the columns left of the fire and the fire is not one of them.
+//
+// Keeping the two identical is also what stops a drawn mark and an animated mark drifting into two
+// different logos, since there is now only one of them to maintain.
+func TestTheFirstFrameIsTheStillMark(t *testing.T) {
+	still := strings.Join(brand.Lines(), "\n")
+	if first := strings.Join(brand.Frame(0), "\n"); first != still {
+		t.Errorf("frame 0 is not the mark, so the logo moves on the first tick:\nmark\n%s\n\nframe 0\n%s",
+			still, first)
+	}
+}
+
 // The tent is the fixed part. If the animation moved it, the logo would jitter in the corner of a
 // screen somebody is trying to think on, which is the opposite of what it is there for.
 //

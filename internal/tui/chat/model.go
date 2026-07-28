@@ -74,6 +74,28 @@ type compactedMsg struct {
 // screen and should never be what wakes the program up more often than the work does.
 const spinnerInterval = 120 * time.Millisecond
 
+// markInterval is how often the mark on the opening screen redraws.
+//
+// Six times slower than the spinner, and deliberately. A spinner is telling you something is
+// happening and has to keep up with it; the campfire is telling you nothing at all, and the thing
+// that makes a fire across a clearing restful rather than distracting is that it moves at about this
+// rate. Three frames at this interval is a cycle of a little over two seconds.
+const markInterval = 750 * time.Millisecond
+
+// markTickMsg advances the mark, and says which conversation's ticker sent it.
+//
+// The generation is what stops two tickers running at once. Starting a new conversation schedules a
+// tick, and with no way to tell it from the one already in flight the animation would run at double
+// speed after the first new chat and faster after every one after that. A tick from a conversation
+// that has been left is dropped and not rescheduled, which is also how the old ticker stops.
+type markTickMsg struct{ generation int }
+
+func markTick(generation int) tea.Cmd {
+	return tea.Tick(markInterval, func(time.Time) tea.Msg {
+		return markTickMsg{generation: generation}
+	})
+}
+
 // spinnerFrames are braille dots rather than the rotating slash.
 //
 // The slash spends a quarter of its time as a vertical bar, which sits directly above the message
@@ -127,6 +149,11 @@ type Model struct {
 	// input boundary, so the engine receives an ordinary prompt and no model or tool path gains a
 	// second command language.
 	commands config.CommandSet
+
+	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
+	// says which conversation its ticker belongs to. See markTickMsg.
+	markStep       int
+	markGeneration int
 }
 
 // New builds a chat model over an engine and a session.
@@ -158,9 +185,9 @@ func promptsOf(s core.Session) []string {
 	return out
 }
 
-// Init subscribes to engine events and starts the spinner.
+// Init subscribes to engine events and starts the spinner and the mark.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.subscribe(), tick())
+	return tea.Batch(m.subscribe(), tick(), markTick(m.markGeneration))
 }
 
 // SubscribeCmd returns the event subscription on its own.
@@ -213,6 +240,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// guarantees the screen catches up regardless.
 		m.refresh()
 		return m, tick()
+
+	case markTickMsg:
+		if msg.generation != m.markGeneration {
+			// A ticker left behind by a conversation that has been closed. Dropped and not
+			// rescheduled, which is what ends it.
+			return m, nil
+		}
+		if !m.blank() {
+			// The moment there is a conversation there is no opening screen to animate, and the
+			// ticker is not scheduled again, so the mark stops costing anything at all rather than
+			// going on redrawing something nobody can see. A new conversation starts a new one.
+			return m, nil
+		}
+		m.markStep++
+		return m, markTick(m.markGeneration)
 
 	case compactedMsg:
 		m.compacting = false
@@ -544,9 +586,13 @@ func (m Model) Working() bool { return m.working }
 // The scroll position and the half typed message are cleared with it. Carrying either across would
 // mean arriving in one agent's conversation scrolled to a position from another's, and finding text
 // in the box that was meant for somebody else.
-func (m *Model) SetSession(sessionID, label string) {
+// Returns the command that restarts the mark, since the conversation being arrived in may well be
+// an empty one. A method that changed what is on screen and left the caller to work out that
+// something now needs driving is how the animation would be live in some new conversations and not
+// in others, depending on which key got you there.
+func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	if sessionID == m.sessionID {
-		return
+		return nil
 	}
 	m.sessionID = sessionID
 	m.agentName = label
@@ -558,6 +604,10 @@ func (m *Model) SetSession(sessionID, label string) {
 	// History belongs to the conversation, not to the box. Carrying it across would offer you, on
 	// the first press of up, the message you sent to a different agent.
 	m.input.LoadHistory(promptsOf(m.session))
+
+	m.markStep = 0
+	m.markGeneration++
+	return markTick(m.markGeneration)
 }
 
 // SetNotice puts a line above the message box.
@@ -606,18 +656,49 @@ func (m Model) InputEmpty() bool { return m.input.Empty() }
 
 func (m Model) spinnerFrame() string { return spinnerFrames[m.spinner] }
 
-func (m Model) transcript() []string {
-	if !m.loaded || len(m.session.Turns) == 0 {
-		return Welcome(m.width, m.dir, m.keyName)
-	}
+// blank reports whether this conversation still has nothing in it, and so opens on the composed
+// screen rather than on a transcript.
+//
+// A waiting tool call disqualifies it. In practice a conversation with no turns cannot have one, and
+// the opening screen has nowhere to put a question, so relying on that rather than checking it is
+// how a permission prompt would one day be drawn on a screen that has no room for it.
+func (m Model) blank() bool {
+	return (!m.loaded || len(m.session.Turns) == 0) && !m.awaiting
+}
 
-	lines := Transcript(m.session, m.width, m.spinnerFrame())
+func (m Model) transcript() []string {
+	var lines []string
+	if len(m.session.Turns) > 0 {
+		lines = Transcript(m.session, m.width, m.spinnerFrame())
+	}
 	if m.awaiting {
 		// At the bottom of the transcript rather than in a dialogue over it, so the command being
 		// approved sits directly under the reasoning that led to it. A modal that covers the
 		// conversation asks somebody to decide with the context hidden.
-		lines = append(lines, "")
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
 		lines = append(lines, m.promptLines()...)
+	}
+	return lines
+}
+
+// contextLines are what the opening screen says along its bottom left: where the agent is working
+// and what it is talking to.
+func (m Model) contextLines() []string {
+	t := theme.Current()
+
+	var lines []string
+	if m.dir != "" {
+		lines = append(lines, t.Muted.Render("working in ")+t.Body.Render(m.dir))
+	}
+	if m.keyName != "" {
+		lines = append(lines, t.Muted.Render("using ")+t.Body.Render(m.keyName))
+	} else {
+		// The one thing that makes the rest of the program work, said plainly rather than left to be
+		// discovered when the first message fails.
+		lines = append(lines, t.Warning.Render("no credential yet")+
+			t.Muted.Render(", press ")+t.Key.Render("ctrl+k")+t.Muted.Render(" to add one"))
 	}
 	return lines
 }
@@ -641,6 +722,17 @@ func (m Model) transcriptHeight() int {
 
 // Body renders the screen.
 func (m Model) Body() string {
+	if m.blank() {
+		return opening{
+			width:   m.width,
+			height:  m.height,
+			box:     strings.Split(m.inputBox(), "\n"),
+			status:  m.statusRow(0),
+			context: m.contextLines(),
+			step:    m.markStep,
+		}.render()
+	}
+
 	lines := m.transcript()
 	visible := m.transcriptHeight()
 

@@ -214,9 +214,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentsui.SwitchMsg:
 		// The agents view asks and the application decides, which is what keeps "which screen is
 		// showing" in one place.
-		a.chat.SetSession(m.SessionID, m.AgentName)
+		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
 		a.screen = screenChat
-		return a, nil
+		return a, cmd
 
 	case tea.MouseMsg:
 		// Routed to the screen in front rather than broadcast, for the same reason keystrokes are:
@@ -395,7 +395,8 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 					"a reply is still arriving, ctrl+n again for a new conversation and this one keeps going")
 				return true, a, nil
 			}
-			return true, a.newConversation(), nil
+			next, cmd := a.newConversation()
+			return true, next, cmd
 
 		case "ctrl+k", "ctrl+d":
 			// Navigation is disabled while a question is open, for the same reason: leaving the
@@ -506,13 +507,16 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, tea.Model, tea.Cmd) {
 // Nothing is deleted. The previous conversation is still in the session list with its history and
 // its running turn, which is what makes this safe to press without thinking. A key that silently
 // destroyed an hour of work is one nobody presses twice.
-func (a App) newConversation() App {
+func (a App) newConversation() (App, tea.Cmd) {
 	created := a.engine.Create(a.usingKey, a.keys.ModelFor(a.usingKey))
-	a.chat.SetSession(created.ID, "")
+	// The command returned is what restarts the mark on the opening screen. A new conversation is
+	// the one place it always has something to animate, so dropping it here would mean the corner
+	// was alive on the conversation Canopy launched into and still on every one after it.
+	cmd := a.chat.SetSession(created.ID, "")
 	a.chat.SetNotice("")
 	a.confirmingNew = false
 	a.screen = screenChat
-	return a
+	return a, cmd
 }
 
 // typing reports whether a keystroke currently belongs to a text field.

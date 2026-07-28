@@ -188,7 +188,10 @@ func TestWithKeysOpensOnChat(t *testing.T) {
 		t.Errorf("opened on %q, want chat", app.Screen())
 	}
 	view := plain(app.View())
-	if !strings.Contains(view, "Canopy") || !strings.Contains(view, "Type a message") {
+	// The name, and what to do next. The second used to be a line of its own on the welcome block
+	// and is the frame's footer now, which was already saying the same thing one row lower: two
+	// lists of the keys is one list that goes stale the first time the other is edited.
+	if !strings.Contains(view, "Canopy") || !strings.Contains(view, "enter send") {
 		t.Errorf("the chat screen should introduce itself:\n%s", view)
 	}
 }

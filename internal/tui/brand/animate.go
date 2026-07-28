@@ -36,12 +36,19 @@ var fire = [Frames][]string{
 // A wisp that returns to where it was two frames ago reads as a loop rather than as smoke, which is
 // the one thing that would make this look cheap.
 var smoke = [Frames][]string{
-	{"  ▄▀", " ▀▄ ", "  ▄ ", " ▀  "},
+	{"  ▄▀", " ▀▄ ", "  ▄▀", " ▀  "},
 	{" ▄▀ ", "▀▄  ", " ▄  ", "  ▀ "},
 	{"▄▀  ", " ▀▄ ", "  ▄ ", " ▀  "},
 }
 
 // Frame returns the mark drawn at a given step of the animation.
+//
+// **Frame(0) is the still mark, exactly.** That is a property worth keeping rather than a
+// coincidence: the corner draws Frame(step) from a step of zero, so anything else would mean the
+// logo visibly shifted on the first tick, and it means there is one picture to maintain instead of
+// a drawn one and an animated one that drift apart. It is checked, and it did not hold when these
+// frames were written: the fire was overlaid a column left of where the mark draws it, so starting
+// the animation slid the campfire sideways while the tent stayed put.
 //
 // Out of range steps wrap rather than failing, because the caller is a ticker whose count only ever
 // goes up and making every call site remember to take a modulus is how one of them forgets.
@@ -61,8 +68,12 @@ func Frame(step int) []string {
 }
 
 // fireColumn and smokeColumn are where the moving parts sit, measured from the left of the mark.
+//
+// These are not free numbers. They have to land the fire and the smoke on the columns the mark
+// already draws them in, or the first tick moves them, and the test that Frame(0) is the still mark
+// is what holds them there.
 const (
-	fireColumn  = 24
+	fireColumn  = 25
 	smokeColumn = 27
 )
 
