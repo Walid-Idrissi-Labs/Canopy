@@ -79,8 +79,14 @@ func runReport(ctx context.Context, out io.Writer) error {
 	poller.Watch([]core.WorkspaceSnapshot{{ID: snapshot.ID, Name: reportAgent, Path: dir}})
 	poller.Poll(ctx)
 
+	// Whatever happens, nothing this command started outlives it. A suite that hangs, a settle that
+	// times out and an error on the way past all leave test processes running otherwise, and a
+	// command that exits while its own `go test` keeps going is the orphan problem the runner exists
+	// to prevent, reintroduced one level up.
+	defer verifier.Runner().CancelAll()
+
 	run := reportpkg.Run{Agent: reportAgent, Branch: snapshot.Branch, Base: base}
-	if err := gather(ctx, verifier, len(tests) > 0, &run); err != nil {
+	if err := gather(ctx, verifier, poller, len(tests) > 0, &run); err != nil {
 		return err
 	}
 	addSpend(dir, &run)
@@ -108,7 +114,10 @@ func testsFor(project config.Project) []execpkg.Test {
 // rendering already reports as "nothing is configured to check this project", and that sentence is
 // the one honest answer: it is neither a pass nor a failure, and it is the state most easily
 // mistaken for a clean run.
-func gather(ctx context.Context, verifier *verify.Verifier, checked bool, run *reportpkg.Run) error {
+func gather(
+	ctx context.Context, verifier *verify.Verifier, poller *gitpkg.Poller,
+	checked bool, run *reportpkg.Run,
+) error {
 	if checked {
 		if err := verifier.Verify(ctx, run.Agent); err != nil {
 			// Said out loud rather than left to surface as an absence of evidence, which would read
@@ -120,6 +129,19 @@ func gather(ctx context.Context, verifier *verify.Verifier, checked bool, run *r
 			return err
 		}
 	}
+
+	// Looked at again after the suite finishes, so every part of the report describes the same
+	// worktree. Without this the whole thing is built from the scan taken before the tests ran, and a
+	// file edited while they were running produces a report that is confidently wrong in both
+	// directions at once: the results are still attributed to the revision they were started
+	// against, so nothing looks stale and the verdict reads **Verified**, while the cached diff still
+	// says nothing changed. A reader is told the work is finished and verified and that there is no
+	// work.
+	//
+	// Nothing is papered over here. If the revision moved, the runs no longer describe the worktree
+	// and the roll-up says so on its own, which is the honest answer and the one the acceptance
+	// criterion asks for.
+	poller.Poll(ctx)
 
 	if rollup, ok := verifier.Rollup(run.Agent); ok {
 		run.Rollup = rollup
