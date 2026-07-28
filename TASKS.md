@@ -2869,7 +2869,7 @@ current revision, with diff size as a tiebreak.
 Acceptance: the ranking refuses to rank anything whose evidence is stale or unknown rather than
 guessing. The reason for each placement is visible.
 
-`verify: claude [x] 2026-07-27   codex [x] 2026-07-27`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-27`
 
 notes: **the strategic argument for the entire project.** Orca fans out across agents. Nobody
 appears to use test truth to rank the results.
@@ -2893,7 +2893,9 @@ ranked slice; unranked entries retain their visible refusal reason.
 **Corrective extension 2026-07-28.** A diff measurement failure previously became an empty diff,
 which made missing tiebreak evidence look like the smallest change. Ranking now refuses that agent
 with the Git reason. Because Codex wrote this extension, Claude must rerun the ranking suite against
-this branch even though both older identity checks are already dated above.
+this branch even though both older identity checks are already dated above. **Rerun 2026-07-28 at
+8f3e5f9**: the ranking and review-queue tests pass, including the refusal of an unmeasurable diff and
+the refusal of a shared workspace, and the signature above is dated to that run.
 
 ### A6-06 Ready to review queue
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-04`
@@ -2955,14 +2957,20 @@ the code rather than by trusting the commit message:
 - **`countLines` no longer follows symlinks or reads whole files into memory.** Git records the link
   target as the content, so following it let a size measurement read outside the worktree.
 
-Two follow-ups were added on the same branch after review, both mutation checked:
+Two follow-ups were added on the same branch after review:
 
 - `Observe` compared a subject's directory to a change's path as raw strings while `sharedWorkspaces`
   cleaned both. A trailing separator on either side made `Observe` match nothing, which reads as a
   worktree where nothing ever changes rather than as anything going wrong.
-- `ReadyToReview` did not check whether a workspace was shared while `placementFor` did. Unreachable
-  today and recorded as such in the code, because it is held up by two other mechanisms rather than
-  by its own rule.
+- `ReadyToReview` did not check whether a workspace was shared while `placementFor` did. The first
+  version of this was recorded as mutation checked and was not: the test drove the public flow, where
+  sharing clears the evidence before the queue is read, so deleting the guard changed nothing and the
+  test passed anyway. Codex caught the false claim by deleting the guard. The test now constructs a
+  green-but-shared state directly, which is the only way to make the guard the thing under test, and
+  deleting it fails.
+
+The path normalisation was mutation checked from the start, in both directions: a trailing separator
+hiding a workspace, and the same directory written two ways escaping the sharing check.
 
 Reran at 8f3e5f9 on darwin: `go build ./...`, `go test -count=1 ./...`, `go test -race` on
 `internal/git`, `internal/verify` and `internal/exec`, `go vet ./...`, `golangci-lint run` (0 issues),

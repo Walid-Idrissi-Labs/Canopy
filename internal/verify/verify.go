@@ -133,8 +133,16 @@ func (v *Verifier) Watch(subjects []Subject) {
 
 // cleanPath is the one definition of what makes two workspace directories the same.
 //
-// One function rather than filepath.Clean at each site, so that every comparison in this file agrees
-// and an empty path stays empty rather than becoming ".", which Clean does and which would make a
+// Used by the two comparisons that decide attribution: matching a change to the agents it belongs
+// to, and deciding whether a workspace is shared. Those are the ones where a difference in spelling
+// changes the answer in a direction nobody would notice.
+//
+// The other directory comparisons in this file, in Watch and in the guard that attaches a diff after
+// Git has measured it, still compare raw strings. They are deliberately left alone: both fail by
+// clearing or withholding evidence, so a spelling difference there costs a rerun rather than
+// producing a claim that is wrong.
+//
+// An empty path stays empty rather than becoming ".", which Clean does and which would make a
 // subject with no directory match a change with no directory.
 func cleanPath(dir string) string {
 	if dir == "" {

@@ -718,9 +718,14 @@ func TestSharingIsDetectedThroughAnUncleanPath(t *testing.T) {
 // Refusing to rank an agent and then offering it for review are two answers to one question.
 //
 // A queue entry is a claim that this agent's work is finished and verified, which is exactly the
-// claim a shared workspace makes unattributable. Unreachable today, because evidence is cleared when
-// a workspace becomes shared and none is recorded while it stays that way, so the roll-up is never
-// green. Asserted anyway: it holds for a reason that lives in two other functions.
+// claim a shared workspace makes unattributable.
+//
+// The state is built directly rather than driven through Observe and record, and that is the whole
+// point of the test. Through the public flow the guard cannot be reached: sharing clears the
+// evidence and no run is recorded while it lasts, so the roll-up is never green and an earlier check
+// drops the agent first. A test that went through the front door would pass with the guard deleted,
+// which is what happened to the first version of this and what the ledger wrongly claimed it proved.
+// Constructing green-but-shared is the only way to make the guard the thing under test.
 func TestTheReviewQueueExcludesSharedWorkspaces(t *testing.T) {
 	dir := repository(t)
 	repo, err := git.OpenRepo(dir)
@@ -737,10 +742,21 @@ func TestTheReviewQueueExcludesSharedWorkspaces(t *testing.T) {
 		{Agent: "two", WorkspaceID: workspaceID, Dir: dir, Branch: "main"},
 	})
 
-	key, reason := repo.Revision(context.Background(), dir)
-	verifier.Observe(context.Background(), git.Change{
-		WorkspaceID: workspaceID, Path: dir, To: key, Reason: reason,
-	})
+	revision := core.RevisionKey{HeadSHA: "aaa111"}
+	verifier.mu.Lock()
+	for _, name := range []string{"one", "two"} {
+		verifier.revision[name] = revision
+		verifier.latest[name] = map[string]core.TestRun{
+			"unit": {ID: "run-1", TestName: "unit", State: core.TestPassing, Revision: revision},
+		}
+		verifier.diffs[name] = core.DiffStat{FilesChanged: 1, Insertions: 5}
+	}
+	verifier.mu.Unlock()
+
+	// Green by every other measure, so the only thing that can keep it out of the queue is the guard.
+	if snapshot, ok := verifier.Snapshot("one"); !ok || !core.RollUp(snapshot).Green {
+		t.Fatal("the constructed state is not green, so this proves nothing about the guard")
+	}
 
 	if queue := verifier.ReadyToReview(); len(queue) != 0 {
 		t.Errorf("a shared workspace was offered for review: %+v", queue)
