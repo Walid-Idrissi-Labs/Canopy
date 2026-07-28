@@ -178,6 +178,21 @@ func TestARunCanBeFoundAgainAndStopped(t *testing.T) {
 	if first.State != core.TestQueued {
 		t.Errorf("the first update is %q, want queued", first.State)
 	}
+	var running core.TestRun
+	select {
+	case running = <-updates:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run never published its running state")
+	}
+	if running.State != core.TestRunning {
+		t.Fatalf("the second update is %q, want running", running.State)
+	}
+	if !running.Revision.Known() {
+		t.Error("the running update has no revision, so the truth layer displays UNKNOWN instead of RUN")
+	}
+	if visible := core.VisibleTestState(&running, running.Revision); visible != core.TestRunning {
+		t.Errorf("the running update displays as %q, want running", visible)
+	}
 	if run, ok := runner.Run(runID); !ok || run.ID != runID {
 		t.Errorf("the run could not be found again: %+v %v", run, ok)
 	}

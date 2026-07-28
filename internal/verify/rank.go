@@ -71,10 +71,15 @@ func (v *Verifier) placementFor(agent string) (core.Placement, bool) {
 	v.mu.Lock()
 	snapshot, known := v.snapshotLocked(agent)
 	stat := v.diffs[agent]
+	diffErr := v.diffErr[agent]
+	shared := v.shared[agent]
 	v.mu.Unlock()
 
 	if !known {
 		return core.Placement{Agent: agent, Reason: "this agent is no longer being verified"}, false
+	}
+	if shared != "" {
+		return core.Placement{Agent: agent, Reason: "not ranked: " + shared}, false
 	}
 
 	placement := core.Placement{
@@ -90,6 +95,10 @@ func (v *Verifier) placementFor(agent string) (core.Placement, bool) {
 		if snapshot.RevisionError != "" {
 			placement.Reason = "not ranked: " + snapshot.RevisionError
 		}
+		return placement, false
+	}
+	if diffErr != "" {
+		placement.Reason = "not ranked: " + diffErr
 		return placement, false
 	}
 
@@ -164,9 +173,10 @@ func (v *Verifier) ReadyToReview() []core.ReadyForReview {
 		v.mu.Lock()
 		snapshot, known := v.snapshotLocked(name)
 		stat := v.diffs[name]
+		diffErr := v.diffErr[name]
 		v.mu.Unlock()
 
-		if !known {
+		if !known || diffErr != "" {
 			continue
 		}
 		rollup := core.RollUp(snapshot)

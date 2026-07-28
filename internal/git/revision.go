@@ -40,11 +40,10 @@ const DefaultHashLimit int64 = 25 << 20
 // Revisions computes revision keys, remembering content hashes between calls.
 //
 // The cache exists because A6-02 polls this every couple of seconds across every worktree, and
-// re-reading a 20 MB fixture at that rate would saturate a core on its own. A file whose size and
-// modification time are both unchanged is taken to be unchanged, which is the same bet every build
-// system makes. It is worth naming as a bet: two writes to one path, same length, within the same
-// nanosecond, would be missed. Editors and agents write through a tool call at a time, and the
-// poll interval is seconds, so the window does not realistically exist.
+// re-reading a 20 MB fixture at that rate would saturate a core on its own. A cache hit requires
+// the same file identity, size, modification time and filesystem change time. Change time matters:
+// unlike mtime it advances when a tool edits content and then restores the timestamp. On a platform
+// where change time is unavailable, cache hits are disabled rather than made less trustworthy.
 //
 // The zero value is not usable. Use NewRevisions.
 type Revisions struct {
@@ -61,6 +60,8 @@ type Revisions struct {
 type cachedHash struct {
 	size    int64
 	modTime time.Time
+	change  time.Time
+	info    os.FileInfo
 	digest  string
 }
 
@@ -86,7 +87,7 @@ func (v *Revisions) Key(ctx context.Context, path string) (core.RevisionKey, str
 		return core.RevisionKey{}, headFailure(ctx, err)
 	}
 
-	status, err := worktree.run(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	status, err := worktree.runRaw(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		if errors.Is(err, ErrOutputTruncated) {
 			// Unknown, deliberately, and this is the case worth being careful about. A truncated
@@ -113,7 +114,7 @@ func (v *Revisions) Key(ctx context.Context, path string) (core.RevisionKey, str
 	// exists nowhere in the working tree: stage a file, edit it again, and the staged version is
 	// only recoverable through the object it points at. The raw format carries both blob hashes and
 	// the mode, so a chmod and a rename both move the digest.
-	staged, err := worktree.run(ctx, "diff", "--cached", "--raw", "-z", "--abbrev=40")
+	staged, err := worktree.runRaw(ctx, "diff", "--cached", "--raw", "-z", "--abbrev=40")
 	if err != nil {
 		return core.RevisionKey{}, fmt.Sprintf("the staged changes here could not be read: %v", err)
 	}
@@ -206,12 +207,17 @@ func (v *Revisions) fingerprint(ctx context.Context, digest hash.Hash, root, nam
 	return ""
 }
 
-// content returns the hash of a regular file, reusing the last one if size and mtime are unchanged.
+// content returns the hash of a regular file, reusing it only when the full cache identity matches.
 func (v *Revisions) content(full string, info os.FileInfo) (string, string) {
 	v.mu.Lock()
 	hit, ok := v.cached[full]
 	v.mu.Unlock()
-	if ok && hit.size == info.Size() && hit.modTime.Equal(info.ModTime()) {
+	change, hasChangeTime := metadataChangeTime(info)
+	if ok && hasChangeTime &&
+		hit.size == info.Size() &&
+		hit.modTime.Equal(info.ModTime()) &&
+		hit.change.Equal(change) &&
+		os.SameFile(hit.info, info) {
 		return hit.digest, ""
 	}
 
@@ -225,12 +231,41 @@ func (v *Revisions) content(full string, info os.FileInfo) (string, string) {
 	if _, err := io.Copy(sum, io.LimitReader(file, v.limit+1)); err != nil {
 		return "", fmt.Sprintf("%s could not be read, so the revision here cannot be trusted: %v", full, err)
 	}
+	after, err := os.Lstat(full)
+	if err != nil {
+		return "", fmt.Sprintf("%s changed while its revision was being read, so the result cannot be trusted: %v",
+			full, err)
+	}
+	if !sameFileVersion(info, after) {
+		return "", fmt.Sprintf("%s changed while its revision was being read, so the result cannot be trusted",
+			full)
+	}
 	digest := hex.EncodeToString(sum.Sum(nil))
 
 	v.mu.Lock()
-	v.cached[full] = cachedHash{size: info.Size(), modTime: info.ModTime(), digest: digest}
+	v.cached[full] = cachedHash{
+		size: info.Size(), modTime: info.ModTime(), change: change, info: info, digest: digest,
+	}
 	v.mu.Unlock()
 	return digest, ""
+}
+
+// sameFileVersion is the stability check around a content read.
+//
+// os.SameFile catches atomic replacement, while change time catches an in-place write whose size
+// and mtime were restored. On the two supported platforms metadataChangeTime is always available.
+// The fallback deliberately disables the change-time part rather than making every revision
+// unknown on an unsupported platform.
+func sameFileVersion(before, after os.FileInfo) bool {
+	if !os.SameFile(before, after) ||
+		before.Size() != after.Size() ||
+		before.Mode() != after.Mode() ||
+		!before.ModTime().Equal(after.ModTime()) {
+		return false
+	}
+	beforeChange, beforeOK := metadataChangeTime(before)
+	afterChange, afterOK := metadataChangeTime(after)
+	return !beforeOK || !afterOK || beforeChange.Equal(afterChange)
 }
 
 // Forget drops cached hashes for a worktree that has gone away.

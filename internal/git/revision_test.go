@@ -69,6 +69,44 @@ func TestWhatMovesTheRevisionKey(t *testing.T) {
 	})
 }
 
+// Porcelain v1 uses a leading space to say that a tracked file is modified only in the worktree.
+// That byte is protocol, not padding. Trimming machine-readable output before parsing it shifts
+// both status columns and drops the first byte of the path, which makes every later edit to the
+// same dirty file invisible.
+func TestEveryUnstagedEditMovesTheRevisionKey(t *testing.T) {
+	dir := repo_(t)
+	revisions := NewRevisions(0)
+	ctx := context.Background()
+
+	write(t, dir, "tracked.go", "package main\n// first\n")
+	first, reason := revisions.Key(ctx, dir)
+	if reason != "" {
+		t.Fatalf("first revision: %s", reason)
+	}
+
+	write(t, dir, "tracked.go", "package main\n// other\n")
+	other, reason := revisions.Key(ctx, dir)
+	if reason != "" {
+		t.Fatalf("second revision: %s", reason)
+	}
+	if first.Equal(other) {
+		t.Fatal("changing an already-dirty tracked file left its revision current, so a passing " +
+			"result could survive the edit that broke it")
+	}
+
+	repo, err := OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	dirty, err := repo.DirtyState(ctx, dir)
+	if err != nil {
+		t.Fatalf("DirtyState: %v", err)
+	}
+	if dirty.Staged != 0 || dirty.Unstaged != 1 || dirty.Untracked != 0 {
+		t.Errorf("an unstaged edit was classified as %+v, want exactly one unstaged change", dirty)
+	}
+}
+
 // A round trip through the same content has to land on the same key. Without this the digest is a
 // change counter rather than a content fingerprint, and undoing an edit would leave a green result
 // permanently stale against code identical to the code it was measured on.
@@ -250,6 +288,38 @@ func TestTheHashCacheStillSeesASameLengthEdit(t *testing.T) {
 
 	if before.Equal(after) {
 		t.Error("an edit of the same length was hidden by the content hash cache")
+	}
+}
+
+// Size and modification time are not a sufficient cache identity. Tools can preserve mtime while
+// replacing content, and an in-place write still advances the filesystem change time. The cache is
+// allowed to save work; it is never allowed to preserve green evidence across a changed file.
+func TestTheHashCacheSeesAnEditThatPreservesSizeAndModificationTime(t *testing.T) {
+	dir := repo_(t)
+	revisions := NewRevisions(0)
+	ctx := context.Background()
+	path := filepath.Join(dir, "tracked.go")
+
+	write(t, dir, "tracked.go", "package main\n// first\n")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat before edit: %v", err)
+	}
+	before, reason := revisions.Key(ctx, dir)
+	if reason != "" {
+		t.Fatalf("revision before edit: %s", reason)
+	}
+
+	write(t, dir, "tracked.go", "package main\n// other\n")
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatalf("restore modification time: %v", err)
+	}
+	after, reason := revisions.Key(ctx, dir)
+	if reason != "" {
+		t.Fatalf("revision after edit: %s", reason)
+	}
+	if before.Equal(after) {
+		t.Fatal("an edit with the same size and restored mtime was hidden by the hash cache")
 	}
 }
 

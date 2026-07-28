@@ -94,7 +94,14 @@ func RunTest(ctx context.Context, test Test, target Target, runID string) Outcom
 	if target.Revision != nil {
 		run.Revision, _ = target.Revision(ctx)
 	}
+	return runPreparedTest(ctx, test, target, run)
+}
 
+// runPreparedTest executes a run whose start revision has already been captured.
+//
+// Runner uses this split so its RUNNING update and its terminal result carry the same revision.
+// Calling RunTest from synchronous code still takes the revision itself immediately above.
+func runPreparedTest(ctx context.Context, test Test, target Target, run core.TestRun) Outcome {
 	switch {
 	case test.Command == "":
 		return finishTest(run, "", core.TestError, nil,
@@ -265,6 +272,9 @@ func (r *Runner) Start(ctx context.Context, test Test, target Target) (string, e
 
 		running := queued
 		running.State = core.TestRunning
+		if target.Revision != nil {
+			running.Revision, _ = target.Revision(runCtx)
+		}
 		r.mu.Lock()
 		if entry, ok := r.live[runID]; ok {
 			entry.run = running
@@ -272,7 +282,7 @@ func (r *Runner) Start(ctx context.Context, test Test, target Target) (string, e
 		r.mu.Unlock()
 		r.onUpdate(running)
 
-		outcome := RunTest(runCtx, test, target, runID)
+		outcome := runPreparedTest(runCtx, test, target, running)
 
 		r.mu.Lock()
 		delete(r.live, runID)

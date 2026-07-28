@@ -74,7 +74,7 @@ func TestTruncatedGitOutputIsAnErrorRatherThanAFragment(t *testing.T) {
 	floodWithUntrackedFiles(t, dir)
 
 	small := &Repo{dir: dir, outputLimit: 4096}
-	out, err := small.run(context.Background(), "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	out, err := small.runRaw(context.Background(), "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err == nil {
 		t.Fatalf("a truncated status came back as %d bytes of usable output", len(out))
 	}
