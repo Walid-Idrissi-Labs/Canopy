@@ -227,6 +227,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// wheel there is what they already did, since before this the wheel was arriving as arrow
 		// keys that none of them bound.
 		if a.screen == screenChat {
+			// Translated into the body's own coordinates before it is forwarded, because the chat
+			// draws below the header and knows nothing about how tall the header is. Without this a
+			// drag would select the row a header's height above the pointer, and a press on the
+			// header itself would read as a press on the first line of the conversation.
+			m.Y -= a.dim.HeaderHeight()
 			var cmd tea.Cmd
 			a.chat, cmd = a.chat.Update(m)
 			return a, cmd

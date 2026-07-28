@@ -41,50 +41,6 @@ func truncate(s string, width int) string {
 	return string(runes) + "..."
 }
 
-// wrapPlain breaks unstyled text into lines of at most width.
-func wrapPlain(s string, width int) []string {
-	if width < 4 {
-		width = 4
-	}
-
-	var out []string
-	for _, paragraph := range strings.Split(s, "\n") {
-		if paragraph == "" {
-			out = append(out, "")
-			continue
-		}
-		var line strings.Builder
-		for _, word := range strings.Fields(paragraph) {
-			switch {
-			case line.Len() == 0:
-				line.WriteString(word)
-			case lipgloss.Width(line.String())+1+lipgloss.Width(word) <= width:
-				line.WriteString(" " + word)
-			default:
-				out = append(out, line.String())
-				line.Reset()
-				line.WriteString(word)
-			}
-		}
-		if line.Len() > 0 {
-			out = append(out, line.String())
-		}
-	}
-	return out
-}
-
-// tail returns the last n lines of a string.
-//
-// The end rather than the beginning, because what an agent is doing now is at the bottom of its
-// reply and the top is what it was saying half a minute ago.
-func tail(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) <= n {
-		return strings.Join(lines, "\n")
-	}
-	return strings.Join(lines[len(lines)-n:], "\n")
-}
-
 func lineAt(lines []string, i int) string {
 	if i < len(lines) {
 		return lines[i]

@@ -15,8 +15,8 @@ func TestAWholeFileLoads(t *testing.T) {
 	  "setup_timeout": "5m",
 	  "copy": [".env", "config/local.json"],
 	  "tests": [
-	    {"name": "unit", "command": "go test ./...", "required": true, "timeout": "15m"},
-	    {"name": "lint", "command": "golangci-lint run ./..."}
+	    {"name": "unit", "command": {"argv": ["go", "test", "./..."]}, "required": true, "timeout": "15m"},
+	    {"name": "lint", "command": {"shell": "golangci-lint run ./... | tee lint.log", "allow_shell": true}}
 	  ],
 	  "instructions": "match the surrounding code",
 	  "trust": "confined"
@@ -46,7 +46,7 @@ func TestAWholeFileLoads(t *testing.T) {
 // The acceptance criterion, and the reason this file is strict at all. A misspelled field that
 // loads cleanly means the test somebody believed was gating their work never ran.
 func TestAnUnknownFieldIsRefused(t *testing.T) {
-	_, err := Parse([]byte(`{"test": [{"name": "unit", "command": "go test ./..."}]}`))
+	_, err := Parse([]byte(`{"test": [{"name": "unit", "command": {"argv": ["go", "test"]}}]}`))
 	if err == nil {
 		t.Fatal("a file with the field misspelled loaded without complaint")
 	}
@@ -62,13 +62,13 @@ func TestTheThingsThatMakeAConfigUseless(t *testing.T) {
 		says  string
 	}{
 		{"a test with no command", `{"tests":[{"name":"unit"}]}`, "no command"},
-		{"a test with no name", `{"tests":[{"command":"go test ./..."}]}`, "no name"},
+		{"a test with no name", `{"tests":[{"command":{"argv":["go","test"]}}]}`, "no name"},
 		{
 			"two tests with one name",
-			`{"tests":[{"name":"unit","command":"a"},{"name":"unit","command":"b"}]}`,
+			`{"tests":[{"name":"unit","command":{"argv":["a"]}},{"name":"unit","command":{"argv":["b"]}}]}`,
 			"two tests",
 		},
-		{"a timeout that is not one", `{"tests":[{"name":"u","command":"a","timeout":"15 minutes"}]}`, "not a duration"},
+		{"a timeout that is not one", `{"tests":[{"name":"u","command":{"argv":["a"]},"timeout":"15 minutes"}]}`, "not a duration"},
 		{"a trust level that does not exist", `{"trust":"total"}`, "not a trust level"},
 		{"an absolute path in the copy list", `{"copy":["/etc/passwd"]}`, "absolute path"},
 		{"a copy path that escapes", `{"copy":["../../.ssh/id_rsa"]}`, "outside the project"},

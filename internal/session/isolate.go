@@ -132,8 +132,28 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 			}, trust, nil)
 			return decision.Outcome != permission.Deny
 		})
+
+		// A dispatched agent shares the engine's registry when it is not isolated, and that registry
+		// is where the dispatch tools were attached for the orchestrating conversation. Removed here
+		// rather than trusted to the description, because an agent that can spawn agents that can
+		// spawn agents would let one confirmation multiply, and nested dispatch is A8-01's design.
+		if e.dispatchedLocked(sessionID) {
+			tools = tools.Filter(func(tool core.Tool) bool {
+				return tool.Name() != spawnToolName && tool.Name() != profilesToolName
+			})
+		}
 	}
 	return tools, trust
+}
+
+// dispatchedLocked reports whether this session belongs to an agent created by spawn_agents.
+func (e *Engine) dispatchedLocked(sessionID string) bool {
+	for _, agent := range e.agents {
+		if agent.SessionID == sessionID {
+			return agent.Dispatched
+		}
+	}
+	return false
 }
 
 // trustForLocked is how much one conversation may do, most specific decision first.
@@ -141,11 +161,35 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 // The per conversation override wins over the agent's own level because it is both the more specific
 // and the more recent, and because it is the one somebody made on purpose while watching that
 // conversation. The agent's level wins over the engine's for the same reason one step up.
+//
+// **The configured level is a ceiling and not merely a default.** A mode may lower what an agent can
+// do and may never raise it, which is the rule SetMode's own documentation states, and which this
+// function did not enforce. It returned the mode's level outright, so anything that put a session
+// into a mode above its configuration handed it permissions its profile said it could never have.
+//
+// That was reachable without anybody choosing it. The old ladder had no confined mode, so a
+// confined agent resolved through ModeForTrust to build, whose level is standard, and ran with the
+// shell and every other execute tool. Confinement is not a preference: it is the property that
+// keeps command execution out of this profile.
 func (e *Engine) trustForLocked(sessionID string) core.TrustLevel {
-	if mode := e.modeLocked(sessionID); mode.Trust != "" {
+	configured := e.configuredTrustLocked(sessionID)
+
+	mode := e.modeLocked(sessionID)
+	if mode.Trust == "" {
+		return configured
+	}
+	if !configured.Valid() {
+		// Nothing is configured, so there is no ceiling to apply. An unset level is the absence of a
+		// limit rather than a limit of zero, and reading it as zero would leave every conversation
+		// with no configured trust unable to do anything, which is how this first went wrong.
 		return mode.Trust
 	}
-	return e.configuredTrustLocked(sessionID)
+	if configured.AtLeast(mode.Trust) {
+		// The mode is at or below what this agent is allowed, so it is the more specific answer.
+		return mode.Trust
+	}
+	// The mode asks for more than the agent has. The agent's configuration wins, always.
+	return configured
 }
 
 // configuredTrustLocked is the level this conversation was set up with, ignoring any mode chosen

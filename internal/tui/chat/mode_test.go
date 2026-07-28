@@ -13,7 +13,7 @@ import (
 // The mode ladder, written into the top edge of the message box along with the model.
 //
 // Both are worth having on screen at all times and neither is worth a row of the terminal. The mode
-// is the one that matters: the four differ in what the agent can do to your files, and somebody who
+// is the one that matters: the modes differ in what the agent can do to your files, and somebody who
 // believes they are planning while the agent is building finds out afterwards.
 
 func boxed(engine chat.Engine) chat.Model {
@@ -41,7 +41,9 @@ func TestTheKeyWalksTheLadderInOrder(t *testing.T) {
 	engine := &fakeEngine{session: core.Session{ID: "s1"}}
 	m := boxed(engine)
 
-	want := []string{core.ModeRunway, core.ModeCruise, core.ModePlan, core.ModeBuild}
+	want := []string{
+		core.ModeRunway, core.ModeCruise, core.ModePlan, core.ModeConfined, core.ModeBuild,
+	}
 	for i, expected := range want {
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 		if got := m.Mode(); got != expected {
@@ -92,7 +94,9 @@ func TestPlanModeIsReadOnlyAndNotAnInstruction(t *testing.T) {
 // that has not been told it is planning tries to edit, is refused, tries again, and burns the turn
 // thrashing against a boundary nobody mentioned.
 func TestTheRestrictiveModesTellTheModelWhatTheyAre(t *testing.T) {
-	for _, name := range []string{core.ModePlan, core.ModeRunway, core.ModeCruise} {
+	for _, name := range []string{
+		core.ModePlan, core.ModeConfined, core.ModeRunway, core.ModeCruise,
+	} {
 		mode, _ := core.ModeByName(name)
 		if strings.TrimSpace(mode.Prompt) == "" {
 			t.Errorf("%s has no prompt, so the model finds out by being refused", name)
@@ -199,9 +203,9 @@ func TestALongModelNameIsDroppedRatherThanTruncated(t *testing.T) {
 
 // The key skips what it cannot reach rather than stopping on it.
 //
-// An agent capped at standard can plan and can build, and cannot do either of the bottom two. The
-// key still has to do something: stopping would read as a jammed key, and refusing outright would
-// mean it could not reach plan either, which it certainly can.
+// An agent capped at standard can plan, use confined, and build, and cannot do either broad mode.
+// The key still has to do something: stopping would read as a jammed key, and refusing outright
+// would mean it could not reach the narrower modes either, which it certainly can.
 func TestTheKeySkipsModesThisAgentCannotEnter(t *testing.T) {
 	engine := &fakeEngine{session: core.Session{ID: "s1"}, trust: core.TrustStandard}
 	m := boxed(engine)
@@ -216,8 +220,12 @@ func TestTheKeySkipsModesThisAgentCannotEnter(t *testing.T) {
 		t.Errorf("the key landed on %q, want it to skip past what it cannot enter", got)
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := m.Mode(); got != core.ModeConfined {
+		t.Errorf("the key landed on %q, want the confined posture between plan and build", got)
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	if got := m.Mode(); got != core.ModeBuild {
-		t.Errorf("the key landed on %q coming back round", got)
+		t.Errorf("the key landed on %q after confined, want build", got)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/clipboard"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -224,6 +225,17 @@ type Model struct {
 	// btwScroll is how many lines up from the bottom of the panel the view is held, zero when
 	// following the latest answer.
 	btwScroll int
+
+	// sel is the mouse selection over the conversation, and clip is what puts its text on the
+	// clipboard. A function rather than a call, so tests can catch the text instead of writing to
+	// the machine's actual clipboard from a test run.
+	sel  selection
+	clip func(string) error
+
+	// copied is whether the "copied" confirmation is up, and copiedGeneration is which copy it
+	// belongs to, so the timer from an old copy cannot take down a newer one's message.
+	copied           bool
+	copiedGeneration int
 }
 
 // asideExchange is one btw question and the answer it got.
@@ -246,6 +258,7 @@ func New(engine Engine, sessionID, dir, keyName string) Model {
 		height:    20,
 		dir:       dir,
 		keyName:   keyName,
+		clip:      clipboard.Write,
 	}
 	m.refresh()
 	m.markRunning = m.markVisible()
@@ -375,6 +388,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.refresh()
 		return m, nil
 
+	case copiedClearMsg:
+		// Only the timer that belongs to the message on screen takes it down. See finishSelection.
+		if msg.generation == m.copiedGeneration {
+			m.copied = false
+		}
+		return m, nil
+
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
@@ -391,22 +411,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // ignoring most of the gesture.
 const wheelStep = 3
 
-// handleMouse scrolls the conversation.
+// handleMouse scrolls the conversation with the wheel, and selects it with a drag.
 //
 // The wheel is the conversation's, and only the conversation's. It used to be the message box's by
 // accident: in the alternate screen most terminals translate the wheel into arrow key sequences, so
 // once up and down recalled what you had sent, scrolling back to reread something replaced what you
 // were typing with an old message. Asking for mouse events is what stops the translation happening,
-// which is the whole reason this exists.
+// which is the whole reason this exists — and it is also what takes the terminal's own
+// drag-to-select away, which the drag handling below gives back. See select.go.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress {
+	switch msg.Action {
+	case tea.MouseActionPress:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.scrollBy(wheelStep)
+		case tea.MouseButtonWheelDown:
+			m.scrollBy(-wheelStep)
+		case tea.MouseButtonLeft:
+			m.beginSelection(msg.X, msg.Y)
+		}
 		return m, nil
-	}
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		m.scrollBy(wheelStep)
-	case tea.MouseButtonWheelDown:
-		m.scrollBy(-wheelStep)
+
+	case tea.MouseActionMotion:
+		m.extendSelection(msg.X, msg.Y)
+		return m, nil
+
+	case tea.MouseActionRelease:
+		if m.sel.dragging {
+			return m.finishSelection()
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -827,10 +861,13 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	m.err = ""
 	m.notice = ""
 	// The asides go with the conversation they were asked about. Carrying them across would show
-	// answers about one agent's work over another agent's conversation.
+	// answers about one agent's work over another agent's conversation. The selection goes too,
+	// since it is a place in a transcript that is no longer on screen.
 	m.asides = nil
 	m.btwOpen = false
 	m.btwScroll = 0
+	m.sel = selection{}
+	m.copied = false
 	m.input.Clear()
 	m.refresh()
 	// History belongs to the conversation, not to the box. Carrying it across would offer you, on
@@ -896,6 +933,10 @@ func (m Model) Awaiting() bool { return m.awaiting }
 
 // Input exposes the message box. For tests.
 func (m Model) InputValue() string { return m.input.Value() }
+
+// SetClipboard replaces what a finished selection writes to. For tests, which want to catch the
+// text rather than write to the machine's actual clipboard from a test run.
+func (m *Model) SetClipboard(write func(string) error) { m.clip = write }
 
 // InputEmpty reports whether there is nothing in the box.
 //
@@ -1064,25 +1105,18 @@ func (m Model) Body() string {
 		}.render()
 	}
 
-	lines := m.transcript()
-	visible := m.transcriptHeight()
-
 	// The tail is what matters, unless the user has deliberately scrolled away from it. A view that
 	// jumped to the top on every token would be unusable, and one that always pinned the bottom
-	// would make it impossible to read anything while an agent was talking.
-	end := len(lines) - m.scroll
-	if end > len(lines) {
-		end = len(lines)
-	}
-	if end < 1 {
-		end = 1
-	}
-	start := end - visible
-	if start < 0 {
-		start = 0
-	}
+	// would make it impossible to read anything while an agent was talking. The windowing itself
+	// lives in window(), which the mouse selection shares: the two have to agree exactly or the
+	// highlight lands one row off the pointer.
+	lines, start, end := m.window()
+	visible := m.transcriptHeight()
 
-	rows := append([]string(nil), lines[start:end]...)
+	rows := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		rows = append(rows, m.highlighted(lines[i], i))
+	}
 
 	// Pad so the input box stays at the bottom rather than floating under however much has been
 	// said so far.
@@ -1424,6 +1458,11 @@ func (m Model) statusHeight() int { return 1 + strings.Count(m.statusRow(0), "\n
 func (m Model) statusRow(below int) string {
 	t := theme.Current()
 
+	// The copy confirmation outranks everything, because it is the acknowledgement of the thing
+	// that happened most recently and it takes itself away in a moment either way.
+	if m.copied {
+		return t.Success.Render("  ✓ copied to clipboard")
+	}
 	if m.err != "" {
 		return t.Danger.Render("  " + m.err)
 	}

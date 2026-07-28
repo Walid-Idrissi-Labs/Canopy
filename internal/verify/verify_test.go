@@ -84,7 +84,7 @@ func harness(t *testing.T, agents ...string) (*Verifier, *git.Repo, map[string]S
 	}
 
 	verifier := New(repo, "main", []canopyexec.Test{
-		{Name: "unit", Command: "test -f pass", Required: true},
+		{Name: "unit", Command: canopyexec.ShellLine("test -f pass"), Required: true},
 	}, nil)
 
 	subjects := make(map[string]Subject)
@@ -442,7 +442,7 @@ func TestAgentsSharingAWorkspaceAreRefusedVerificationAttribution(t *testing.T) 
 		t.Fatalf("OpenRepo: %v", err)
 	}
 	verifier := New(repo, "main", []canopyexec.Test{
-		{Name: "unit", Command: "exit 0", Required: true},
+		{Name: "unit", Command: canopyexec.ShellLine("exit 0"), Required: true},
 	}, nil)
 	workspaceID := git.WorkspaceID(dir)
 	subjects := []Subject{
@@ -553,8 +553,8 @@ func TestAFailingOptionalTestIsCarriedIntoTheQueueEntry(t *testing.T) {
 		t.Fatalf("OpenRepo: %v", err)
 	}
 	verifier := New(repo, "main", []canopyexec.Test{
-		{Name: "unit", Command: "exit 0", Required: true},
-		{Name: "lint", Command: "exit 1"},
+		{Name: "unit", Command: canopyexec.ShellLine("exit 0"), Required: true},
+		{Name: "lint", Command: canopyexec.ShellLine("exit 1")},
 	}, nil)
 
 	workspace, err := repo.Create(context.Background(), "one", "")
@@ -622,7 +622,7 @@ func TestAnUnmeasurableDiffIsRefusedRatherThanRankedAsEmpty(t *testing.T) {
 		t.Fatalf("OpenRepo: %v", err)
 	}
 	verifier := New(repo, "branch-that-does-not-exist", []canopyexec.Test{
-		{Name: "unit", Command: "exit 0", Required: true},
+		{Name: "unit", Command: canopyexec.ShellLine("exit 0"), Required: true},
 	}, nil)
 
 	workspace, err := repo.Create(context.Background(), "one", "")
@@ -668,7 +668,7 @@ func TestATrailingSeparatorDoesNotHideAWorkspace(t *testing.T) {
 		t.Fatalf("OpenRepo: %v", err)
 	}
 	verifier := New(repo, "main", []canopyexec.Test{
-		{Name: "unit", Command: "exit 0", Required: true},
+		{Name: "unit", Command: canopyexec.ShellLine("exit 0"), Required: true},
 	}, nil)
 
 	workspaceID := git.WorkspaceID(dir)
@@ -698,7 +698,7 @@ func TestSharingIsDetectedThroughAnUncleanPath(t *testing.T) {
 		t.Fatalf("OpenRepo: %v", err)
 	}
 	verifier := New(repo, "main", []canopyexec.Test{
-		{Name: "unit", Command: "exit 0", Required: true},
+		{Name: "unit", Command: canopyexec.ShellLine("exit 0"), Required: true},
 	}, nil)
 
 	// Different WorkspaceIDs deliberately, so the only thing that can catch this is the path.
@@ -733,7 +733,7 @@ func TestTheReviewQueueExcludesSharedWorkspaces(t *testing.T) {
 		t.Fatalf("OpenRepo: %v", err)
 	}
 	verifier := New(repo, "main", []canopyexec.Test{
-		{Name: "unit", Command: "exit 0", Required: true},
+		{Name: "unit", Command: canopyexec.ShellLine("exit 0"), Required: true},
 	}, nil)
 
 	workspaceID := git.WorkspaceID(dir)

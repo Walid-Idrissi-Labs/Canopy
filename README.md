@@ -63,9 +63,10 @@ about them.
 > use 2 claude sonnet agents for the auth refactor, and a kimi agent to write the tests
 ```
 
-Canopy resolves the names and hands each agent the task. Agents work in your repository by
-default. When they would collide, or when you want to compare their results, they are isolated
-into their own worktree and branch.
+Canopy resolves the names and hands each agent the task. Name no model at all, "use 3 agents for
+this", and the new agents run on the profile your conversation is already using. Agents work in
+your repository by default. When they would collide, or when you want to compare their results,
+they are isolated into their own worktree and branch.
 
 It confirms the plan before spawning anything, because spawning agents spends real money against
 real keys, and a misread number should be a question rather than an invoice.
@@ -133,6 +134,21 @@ Canopy runs the test commands you configure in `canopy.json` and has no idea wha
 until you tell it. On a repository it has never seen, the honest answer is "nothing is configured",
 not a green tick.
 
+```json
+{
+  "tests": [
+    { "name": "unit", "command": { "argv": ["go", "test", "./..."] }, "required": true },
+    { "name": "lint", "command": { "shell": "eslint . | tee lint.log", "allow_shell": true } }
+  ]
+}
+```
+
+The argument form is the default and the shell form has to be asked for, because a shell always
+starts successfully. Run `go test ./...` through one and you get exit 127, which looks exactly like a
+failing test suite, and you go looking for the bug in your code. Run it as an argument list and
+Canopy says the program does not exist, which is what actually happened. Reach for `shell` when you
+need a pipe or a redirect, and know that you are giving that distinction up.
+
 The review screen also compares model cost with verified outcomes from this repository's own
 history. It records a sample only when the evidence describes the current revision, excludes
 unknown provider costs, names the sample size, and refuses a conclusion until at least two models
@@ -168,11 +184,13 @@ absent, arguments are appended under an `Arguments:` heading.
 
 ## Modes, on shift+tab
 
-Four postures, and each one is a trust level the permission layer enforces rather than a paragraph
+Five postures, and each one is a trust level the permission layer enforces rather than a paragraph
 asking the model to behave. An agent told it is planning and choosing to edit a file anyway is
 stopped, which is the only kind of instruction worth relying on.
 
 - **plan** reads and thinks and changes nothing.
+- **confined** edits through structured tools in the assigned workspace and cannot use shell.
+  Network calls still ask. This is a capability profile, not an operating-system sandbox.
 - **build** edits freely and asks before running anything. The ordinary way to work.
 - **runway** edits and runs freely, and the turn is put back if the workspace does not verify
   afterwards. Needs a git repository and a configured test, and refuses to engage without them.

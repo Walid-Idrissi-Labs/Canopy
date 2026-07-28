@@ -328,7 +328,7 @@ independent rerun.
 
 ---
 
-## Q-16 Test commands do not implement D-05
+## ~~Q-16 Test commands do not implement D-05~~ resolved 2026-07-28
 
 **Added 2026-07-28 by the independent A6 pass.**
 
@@ -343,21 +343,27 @@ Canopy records FAIL even though no test ran. The existing test notices this exac
 not fail on it. Guessing from stderr is locale- and shell-dependent, while treating every 126 or
 127 as ERROR would misclassify a valid shell test that deliberately exits with that code.
 
-**Supervisor decision required, with one recommended path:**
+**Resolved by implementing D-05 as written**, which both supervisors recommended independently and
+which D-22 says the agent-runtime pivot left untouched. This was drift from a settled decision, not a
+choice that was still open, so option 2 was never really on the table.
 
-1. **Recommended: implement D-05 as written.** Make the committed shape
-   `"command": {"argv": ["go", "test", "./..."]}` by default, accept
-   `"command": {"shell": "...", "allow_shell": true}` only deliberately, migrate Canopy's own
-   config, and let the argv runner distinguish start failure from a non-zero test exit.
-2. Explicitly supersede D-05 with a shell-only decision and revise A6-03 to admit that an inner
-   command-start failure cannot be distinguished reliably from a test returning the same status.
+`command` is now an object. `{"argv": [...]}` is the default, `{"shell": "...", "allow_shell": true}`
+is available for the pipes and prefixes that genuinely need one, and setting both is a validation
+error. Canopy's own `canopy.json` is migrated, and a bare string is refused with a message showing
+both forms rather than with Go's unmarshalling error.
 
-Until both supervisors choose, A6-03 is blocked. A later agent must not clear it by matching English
-shell output or by silently redefining exit 126/127.
+The acceptance contract for A6-03 is met rather than approximated: with an argument vector the
+executable either exists or `Start` fails, so a command that could not start and a test that failed
+are different objects instead of the same integer. Neither prohibited shortcut was used. Nothing
+reads shell stderr and nothing reinterprets 126 or 127.
+
+What the shell form costs is now asserted in the test file rather than described in a comment. The
+same missing program run through a shell is pinned as `failing`, so the trade someone accepts by
+writing `allow_shell` is visible next to the case it contrasts with. A6-03 is unblocked.
 
 ---
 
-## Q-17 How should a revision a hook itself produced be recognised?
+## ~~Q-17 How should a revision a hook itself produced be recognised?~~ resolved 2026-07-28
 
 **Added 2026-07-28 by the review of PR #29, which made the hook path reachable.**
 
@@ -373,16 +379,59 @@ producing revisions for as long as the session runs.
 TASKS previously claimed once-per-revision ended this loop. It does not, and that claim has been
 removed rather than left to be discovered by somebody whose repository filled with empty commits.
 
-**Supervisor decision required.** Neither option is obviously right and neither should be chosen by
-an agent:
+**Resolved by option 1, recorded as D-39.** Option 2 puts an unenforceable rule on the person least
+able to see the cycle, and its failure mode is a loop that stops only when somebody quits Canopy.
 
-1. **Recognise and suppress a hook-originated revision.** Needs a rule for what counts as one, and
-   every cheap version of it is wrong in a way that matters: comparing the commit author catches
-   nothing when the hook commits as the user, and remembering the revision the hook produced fails
-   the moment the hook makes more than one.
-2. **Accept that a committing hook fires more than once**, record it as a decision, and say plainly
-   in the documentation that a hook must be written to be safe to run twice. This is the smaller
-   change and it puts the burden on whoever writes the hook.
+The objection to option 1 was that every cheap way of recognising a hook's own revision is wrong, and
+that objection stands: the commit author is the user when the hook commits as the user, and
+remembering one revision breaks the moment a hook makes two. The way through is that the recognisable
+thing is not the revision, it is **the interval**. The runner already holds the revision the hook
+fired at, because that is what the once-per-revision guard is keyed on. It reads the revision again
+when the hook returns. Anything that moved between those two points moved while the hook was running,
+and the hook was the only thing that had been asked to do anything. Neither of the failing cheap
+tests is used, and a hook that commits five times is covered by one read.
 
-Until this is settled A8-05 stays claimed rather than in review, because "a hook fires only on a real
-state transition" cannot be signed off while the transition a hook caused itself counts as one.
+Read from git directly rather than from the poller, which is up to an interval behind at exactly the
+moment this matters.
+
+What it costs is in D-39 and in LIMITATIONS: a person committing their own work during the seconds a
+hook runs has that revision claimed too, so the hook does not fire for it. One missed firing against
+a non-terminating loop.
+
+A8-05's acceptance sentence, that a hook fires only on a real state transition, is now true: a
+transition the hook caused itself is no longer counted as one.
+
+## Q-18 Should MCP servers be started per worktree?
+
+**Added 2026-07-28 by the work that made the MCP client reachable.**
+
+D-38 starts servers once, in the project directory, and consequently withholds their tools from
+isolated agents. An isolated agent is confined by having its tools rooted at its own worktree, and a
+server started at the project root is not, so handing those tools across would be a route around the
+boundary D-33 defines, through a capability Canopy cannot inspect.
+
+That keeps the confinement honest and costs real capability: the fan out at A6-05 is the product's
+central argument, and under D-38 the agents being fanned out are exactly the ones that cannot use a
+third party tool. An agent asked to do the work in parallel has strictly less available to it than
+the one being talked to.
+
+The alternative is a set of servers per worktree, rooted where the agent actually works. It is more
+correct and it is not free:
+
+- Three fanned out agents times four configured servers is twelve processes, several of which are
+  commonly a package manager fetching something before answering at all.
+- `Tools func(dir string) (*core.ToolRegistry, error)` builds a registry and has no teardown hook, so
+  there is nowhere for those servers to be stopped. Without one they leak for the life of the
+  session, which is the failure A8-06 has just finished fixing at the level below.
+- A server with expensive startup would make starting an agent slow enough to change how the fan out
+  feels, which is the feature it would be serving.
+
+**Supervisor decision required**, because it trades a headline capability against process cost and
+needs a lifecycle change to the isolation contract either way:
+
+1. **Per worktree servers.** Needs `Isolation.Tools` to return something closable, and a bound on how
+   many servers a fan out may start.
+2. **Keep D-38** and document that MCP is for the conversation rather than for the fan out.
+3. **Per worktree, opt in per server**, with a flag in `canopy.json` for the servers that are cheap
+   enough and safe enough to duplicate. More configuration, and it puts the choice with the person
+   who knows what the server actually does.

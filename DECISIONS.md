@@ -778,6 +778,156 @@ Canopy's own tools are not checked this way. The same map backs the prompt, the 
 so there is no second reader to disagree with, and the schema check already answers for malformed
 input with a better message.
 
+## D-37 A process group is never signalled after its leader has been reaped. Decided 2026-07-28.
+
+A process group is named by its leader's pid. The kernel holds that number back only while the leader
+is still there, so once it has been waited on the number returns to circulation and can be handed to
+somebody else's job within milliseconds. A group signal sent after that point does not miss. It lands
+on whatever holds the number by then, and a group signal reaches every process in it.
+
+Canopy previously narrowed this window rather than closing it: after the reap it asked, with signal
+zero, whether a group with that id still existed, and took yes to mean the group was still its own.
+That cannot distinguish "still ours" from "reissued", so the one answer that permitted a signal was
+also the one that could not be trusted. The comment on it said as much and kept it anyway, on the
+grounds that declining to signal after the reap would leave every orphaned child of every cancelled
+test run alive.
+
+**That justification was measured and is wrong.** `Wait` does not return until the output pipes
+close, and a child inherits them. So for the case the justification names, a test runner whose
+workers are still running, `Wait` has not returned, the leader is unreaped, and the ordinary unreaped
+path already reaches the whole group safely. Both cases, checked on darwin:
+
+| The command leaves behind | `Wait` returns | Leader | Signalling the group |
+|---|---|---|---|
+| a child holding stdout | no, it blocks | unreaped | safe, and this is the common case |
+| a child that redirected stdout | yes, at once | reaped | unsafe, and the id may already be reissued |
+
+The post-reap probe therefore bought exactly one case, a child that detaches its own output, and paid
+for it with a signal that can land on an unrelated process group. So the rule is now absolute: no
+group is signalled once its leader has been waited on.
+
+The check and the signal are one indivisible step, under the same lock as the actual reap. That
+requires observing exit without reaping first: Linux uses `waitid(..., WNOWAIT)` and macOS uses
+`EVFILT_PROC/NOTE_EXIT`. The unreaped leader still reserves its pid. After that observation,
+`cmd.Wait`, the `reaped` transition and every group signal are serialized by one lock, so a signal
+is wholly before the reap or is refused wholly after it. Setting a boolean after `cmd.Wait` returns
+does not establish this ordering and was explicitly regression-tested.
+
+That is why `exec.Child` is a type rather than a boolean, and why the two supported kernels have
+separate exit observers.
+
+**What this gives up**, stated plainly: a child that closes or redirects the standard streams it
+inherited and outlives its parent is no longer killed. It is left running. That is the daemon case,
+it is rarer than the orphaned worker case by a wide margin, and the failure it produces is a stray
+process rather than a signal delivered to somebody else's work.
+
+This supersedes the narrowing recorded against A9-01, which is closed by it rather than accepted.
+
+## D-38 MCP servers are started once for the project, and isolated agents do not get their tools. Decided 2026-07-28.
+
+Wiring MCP up forced a question the package could avoid while nothing called it: which agents get the
+tools, and where does the server run.
+
+Servers start once, in the project directory, when the conversation opens, and stop when it closes.
+The alternative is a set of servers per worktree, which is the more obviously correct answer and is
+the one this rejects for now, because a fan out of three agents would then start three of everything
+and MCP servers are frequently a package manager fetching something before they answer at all.
+
+The consequence is that a server is rooted at the project and not at any agent's worktree, and that
+decides the second half. **An isolated agent does not get MCP tools.** Its confinement is enforced by
+having its file and shell tools rooted at its own worktree, and a tool that reaches a program started
+somewhere else is a way around that, through a capability Canopy cannot see inside. Giving those
+tools to a broad isolated agent would hand it an unaudited write outside the boundary D-33 defines.
+It is not a hypothetical: a filesystem MCP server is one of the most commonly configured ones there
+is.
+
+So the conversation's own agent gets them and the isolated ones do not. That is a real reduction in
+what fan out can do, it is recorded in LIMITATIONS.md rather than left to be discovered, and Q-18
+carries the per-worktree design that would lift it.
+
+## D-39 A revision that appeared while a hook was running belongs to that hook. Decided 2026-07-28.
+
+Hooks fire once per revision for anything that is a claim about code, which is the right rule and
+does not terminate on its own. A hook that commits moves HEAD, the evidence goes stale, the tests run
+again, they pass again, and the guard is satisfied again because the revision is new. `git commit
+-am` fails harmlessly the second time round. `git commit -am --allow-empty` does not.
+
+The choice recorded in Q-17 was between recognising a hook's own revision and requiring hooks to be
+idempotent. Requiring idempotence is a rule with no enforcement and an infinite loop as its failure
+mode, and it puts the burden on the person least able to see the cycle, so this takes the first.
+
+**What makes a revision recognisable is not anything about the revision.** Every cheap test fails:
+the commit author is the user when the hook commits as the user, and remembering the one revision a
+hook produced breaks the moment it produces two. What is knowable is the interval. The runner already
+holds the revision the hook fired at, because that is what the once-per-revision guard is keyed on,
+and it can read the revision again when the hook returns. Anything that moved between those two
+points moved while the configured hook batch was running, and those hooks were the only work Canopy
+asked to do. That revision is recorded as already fired.
+
+The interval is active before the commands start, not only after they return. The poller can observe
+and verify a hook's commit while that hook continues with later commands; an observation inside the
+interval is claimed immediately instead of starting a second batch. When several hooks listen to
+one event, the interval remains active until the last of them returns.
+
+Read from git directly rather than from the poller's last answer. The poller is up to an interval
+behind, and the whole question is what happened in the last few seconds.
+
+**What this gives up.** A person who commits their own work in the seconds a hook is running has that
+revision claimed as well, and the hook does not fire for it. One missed firing, in a window as long as
+one hook, weighed against a loop that stops only when somebody quits Canopy. No rule separates the
+two cases without asking the hook to declare itself, and a hook that has to be trusted to declare
+itself is the thing being guarded against.
+
+## D-40 What 0.1 does not include. Decided 2026-07-28.
+
+Six features were built partially or not at all, and leaving them in an ambiguous state costs more
+than cutting them. A half-built feature with no decision against it reads to a reader of the ledger
+as work in progress, and to a user of the release as something that should be there and is broken.
+
+Each is either finished or explicitly out. There is no third option, and the ones below are out.
+
+| Task | State | Out of 0.1 because |
+|---|---|---|
+| A4-07 web **search** | not built | Needs a search provider and an account, which is Q-11 and unanswered. `fetch_url` is built, registered and ships. |
+| A4-09 plan first mode | engine built, unreachable | `Loop.Plan` and `Loop.Execute` work and are tested, and nothing calls them. Reaching them needs a screen and a profile setting, and the screen is the other pair's side of the boundary. |
+| A4-10 todo tracking | tool built, no pane | An agent can keep a list and nothing shows it live. The visible half went to M-03 and the rest is not worth a screen of its own for 0.1. |
+| A8-01 sub agents | not built | Needs its own depth and fan-out limits and its own cost attribution. Getting those wrong turns one confirmation into an unbounded fan out. |
+| A8-02 handoff and escalation | not built | Depends on A8-01. |
+| A8-09 shareable skills | not built | A distribution format is a compatibility promise, and making one before there are users to make it to is the wrong order. |
+
+**The reason for cutting rather than finishing** is the same in every case: none of them is what makes
+Canopy worth using. The argument is that several agents work in parallel and are ranked on evidence
+rather than on confidence, and that argument is carried by A6 and A7, which are built. Adding a sixth
+half-feature does not strengthen it and does delay the point where somebody can try the first one.
+
+**What "deferred" means here**, and it is not "abandoned": the code that exists stays, the tests that
+exist keep running, and each task keeps its acceptance criteria for whoever picks it up. What changes
+is that nothing is waiting on them and LIMITATIONS says plainly that they are not there.
+
+## D-41 Confined is an explicit mode, not an invisible ceiling. Decided 2026-07-28.
+
+The mode name shown in the interface, the prompt sent to the model and the trust level enforced on
+each tool call must describe the same capability. A hidden clamp is not enough: showing `build`
+while silently enforcing confined trust makes allowed structured edits look broken and invites the
+model to keep requesting a shell it can never receive.
+
+**Confined is therefore the fifth posture in the `shift+tab` cycle**, between plan and build. It may
+read and edit through structured tools in the assigned workspace and may use ordinary path-scoped
+Git tools. It cannot invoke shell. Network calls retain the existing approval requirement. Its
+prompt states those limits and also states that this is capability confinement, not an
+operating-system sandbox.
+
+This explicitly supersedes M-09's four-mode cycle and its statement that all four cycle modes could
+be represented without adding a confined posture. It does not change D-33: direct and isolated
+workspaces remain different contracts, structured path tools remain rooted at the assigned
+workspace, and shell remains opaque and uncontained wherever a higher trust level enables it.
+
+The configured trust level remains an absolute ceiling. A mode may lower the effective level and
+may never raise it. Bare read-only, confined and standard configurations resolve to plan, confined
+and build respectively. Broad resolves to cruise only where the undo safety net exists; otherwise
+it falls back to build, just as an explicit cruise selection does. The displayed default and the
+enforced default therefore agree without bypassing a mode's prerequisites.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

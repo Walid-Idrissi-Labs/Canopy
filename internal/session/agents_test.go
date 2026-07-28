@@ -481,7 +481,9 @@ func TestRunwayKeepsTheTurnWhenTheCheckItselfFails(t *testing.T) {
 
 // Every other mode leaves the gate alone, or build would pay for a full test run after every message.
 func TestOnlyRunwayRunsTheGate(t *testing.T) {
-	for _, name := range []string{core.ModePlan, core.ModeBuild, core.ModeCruise} {
+	for _, name := range []string{
+		core.ModePlan, core.ModeConfined, core.ModeBuild, core.ModeCruise,
+	} {
 		gate := &stubGate{green: false, reason: "red"}
 		e, _ := runwayEngine(t, gate)
 

@@ -48,12 +48,18 @@ be rediscovered by getting burned by it.
   command did not finish, not evidence the tests failed, but the default itself is still flagged as
   unconfirmed rather than settled (D-18).
 
-- Test command configuration currently contradicts D-05. The settled decision requires an argument
-  array by default and an explicit opt-in for a shell string, but `canopy.json` currently accepts
-  only a string and runs it through `/bin/sh -c`. That means a missing executable is observed as
-  shell exit 127 and reported as a failing test instead of a command-start error. A6-03 is blocked
-  until both supervisors either implement the decided structured form or explicitly supersede
-  D-05 and define the shell-only semantics (Q-16).
+- A test command is an argument array by default, and a shell string only when you write
+  `"allow_shell": true` next to it (D-05). The difference is not cosmetic. With an argument array a
+  program that is not installed fails to start, which Canopy reports as an error rather than as a
+  failing test. Through a shell it exits 127, which is indistinguishable from a suite that failed, so
+  opting in costs you that distinction. Canopy will not guess it back for you by reading stderr,
+  because that answer is locale and shell dependent, and it will not treat every 126 and 127 as an
+  error, because a suite can legitimately exit with one.
+
+- **Test commands written as a plain string no longer load.** `"command": "go test ./..."` becomes
+  `"command": {"argv": ["go", "test", "./..."]}`. The error says so and shows both forms. This is a
+  breaking change to a pre-release file format, made now because it is the cheapest moment there
+  will ever be.
 
 - Whether tests ever re-run automatically when a file changes is still an open question. The current
   plan is manual triggering only: a green result still goes stale by itself the moment the revision
@@ -142,7 +148,17 @@ be rediscovered by getting burned by it.
 
 - Sub agents, one agent spawning helper agents for a subtask, and agent handoff with model
   escalation, handing a worktree and a summary from a cheap model to a stronger one, are both
-  unbuilt (A8-01, A8-02).
+  **cut from 0.1** rather than merely unbuilt (A8-01, A8-02, D-40). Sub agents need their own depth
+  and fan-out limits and their own cost attribution before they can exist safely, since inheriting
+  dispatch by accident turns one confirmation into an unbounded fan out. Handoff depends on them.
+
+- Plan first mode is **cut from 0.1** (A4-09, D-40). The engine is built and tested and nothing
+  reaches it: turning it on needs a profile setting and a screen that shows a plan and takes an
+  approval, and neither exists. The four modes on `shift+tab` are a different feature and they do
+  work.
+
+- An agent keeps a todo list and there is no pane showing it live (A4-10, D-40). The list appears in
+  what the agent says it is doing rather than in a panel of its own.
 
 ## Providers and cost
 
@@ -185,15 +201,19 @@ be rediscovered by getting burned by it.
 
 ## Tools and permissions
 
-- Web search is not built. `fetch_url` works, so an agent can read a page it already knows the
-  address of, which covers checking a library version or similar, but it cannot discover a page it
-  has never heard of, because no search provider or account has been chosen yet (A4-07).
+- Web search is **cut from 0.1** (A4-07, D-40). `fetch_url` works and ships, so an agent can read a
+  page it already knows the address of, which covers checking a library version or similar. It cannot
+  discover a page it has never heard of, because no search provider or account has been chosen and
+  that choice is Q-11.
 
-- There are four modes on `shift+tab`, and each is a trust level the permission layer enforces
-  rather than an instruction the model is asked to follow (M-09). Plan reads and thinks, build edits
-  and asks before running anything, runway edits and runs freely and reverts a turn that ends red,
-  cruise runs everything without asking. Runway and cruise refuse to engage where their safety net
-  is missing rather than quietly behaving like the mode below. What is not built is the second axis:
+- There are five modes on `shift+tab`, and each is a trust level the permission layer enforces
+  rather than an instruction the model is asked to follow (M-09, D-41). Plan reads and thinks;
+  confined edits through structured tools in its assigned workspace but cannot use shell; build
+  edits and asks before running anything; runway edits and runs freely and reverts a turn that ends
+  red; cruise runs everything without asking. Network calls still ask at confined trust. Confined
+  is a capability profile, not an operating-system sandbox. Runway and cruise refuse to engage
+  where their safety net is missing rather than quietly behaving like the mode below. What is not
+  built is the second axis:
   capability and approval are one setting, so "edit freely but review every edit" cannot be
   expressed, and there is no screen for reviewing a plan before approving it (A4-09). The separate
   plan-and-execute approval mechanism in `internal/agent/plan.go` is still called from nowhere and
@@ -232,24 +252,42 @@ be rediscovered by getting burned by it.
   commitment; it would take a measurable drop in output quality on a large codebase to revisit
   (D-27).
 
-- Part of the extensibility layer is unbuilt: no shareable skills format (A8-09). Custom slash
-  commands are prompts only: they do not register tools, execute shell, or provide a general
-  template language.
+- There is no shareable skills format, and it is **cut from 0.1** rather than pending (A8-09, D-40):
+  a distribution format is a compatibility promise, and making one before there is anybody to make it
+  to is the wrong order. Custom slash commands are prompts only: they do not register tools, execute
+  shell, or provide a general template language.
 
 - Hooks run, and a failing one is only reported when Canopy exits (A8-05). A hook fires on a
   verification state that is current rather than stale, and a command bound to `tests-passed` is
   eligible again at the next revision, which is deliberate: tests passing over different code is a
   different event. It also means a hook that commits moves HEAD, and the pass at that new revision
-  is a second event that fires it again. `git commit -am` fails harmlessly the second time and a
-  hook using `--allow-empty` will keep going. How a revision a hook itself produced should be
-  recognised is undecided (Q-17), and until it is, treat a committing hook as firing more than once.
-  There is nowhere on screen for a hook failure yet, so one is printed on exit: a long session can
-  hide a broken hook for hours. A8-05 is back to claimed for both reasons.
+  is a second event that would fire it again, so a revision that appears between a hook batch firing
+  and its last command returning is treated as the batch's own and does not fire it a second time,
+  even if the poller verifies that revision before the first command returns (D-39). The
+  cost of that rule falls in one place: if you commit your own work during the few seconds a hook is
+  running, that revision is claimed too and the hook does not fire for it. It fires again for the
+  next thing you do.
 
-- MCP servers are reachable and three gaps in that client are open (A8-06): a server-initiated
-  request whose id collides with an outstanding call can satisfy the wrong one, a tool list that hits
-  the 50-page bound is returned as though it were complete, and closing a session kills the server
-  process without taking its children with it.
+- **A hook that fails is only visible when Canopy exits.** The failure is recorded with its command,
+  its output and its error, and there is nowhere on screen to show it yet, so a long session can hide
+  a broken hook for hours. That is the exact failure automation invites, since the point of it is
+  that somebody stops watching. A8-05 stays claimed for this reason alone.
+
+- MCP servers are started when a conversation opens and stopped when it closes, and their tools are
+  governed exactly as Canopy's own are: every one of them counts as running a command, whatever the
+  server says about itself, so read-only and confined agents get none of them and standard trust sees
+  each call before it runs.
+
+- **Isolated agents do not get MCP tools** (D-38). Servers start once, in the project directory,
+  rather than once per worktree, so a server is not rooted where an isolated agent works. An isolated
+  agent is confined by having its tools rooted at its worktree, and a tool reaching a program started
+  elsewhere would be a way around that. The cost is real and lands on the feature that matters most:
+  the agents in a fan out have strictly less available to them than the one you are talking to.
+  Q-18 carries the per worktree design that would lift it.
+
+- A server's tool list is bounded at 50 pages and 500 tools. Hitting either is reported rather than
+  absorbed, on stderr at startup and in the server's own description, because a tool missing because
+  of a bound Canopy imposed is otherwise indistinguishable from one the server never offered.
 
 ## Storage
 
@@ -279,20 +317,22 @@ be rediscovered by getting burned by it.
   arrives as arrow key presses, and the arrow keys walk back through what you have sent, so
   scrolling up to reread an answer would replace what you were typing.
 
-- Terminating a cancelled command can, in a narrow race, signal a process group that is no longer
-  ours. Canopy puts every command it starts in its own group and kills the group, which is what takes
-  a test runner's workers with it. Once the group leader has been waited on, the number that names
-  the group can be reissued by the kernel, and `kill(-pid, 0)` proves only that some group holds it
-  rather than that it is still the one Canopy started. The check narrows the window and cannot close
-  it: the last member can also exit between the check and the signal. Closing it needs an identifier
-  the kernel will not recycle, which means a pidfd on Linux and nothing that exists on macOS. The
-  alternative, not signalling at all once the leader is reaped, leaves every orphaned child of every
-  cancelled run alive holding its ports. A9-01 is back to claimed while this is decided.
+- A process that detaches its own output and outlives the command that started it is left running
+  (D-37). Canopy puts every command in its own process group and kills the group, which is what takes
+  a test runner's workers with it, and it will not signal a group once that group's leader has been
+  waited on, because the number naming the group can be reissued by the kernel at that point and the
+  signal would land on somebody else's work. In practice the common case is still covered: waiting on
+  a command does not return while a child holds its output open, so an orphaned worker keeps the
+  leader unreaped and the group is signalled safely. What escapes is the child that closes or
+  redirects the streams it inherited, which is to say a daemon. On Windows nothing beyond the process
+  itself is killed at all, because there are no process groups in the POSIX sense there.
+  On supported Unix platforms, exit is observed without reaping before the actual reap and group
+  signals are serialized; this is what closes the pid-reuse window rather than a flag written after
+  `Wait` returns.
 
 - The engine half of the robustness sweep has been run and the interface half has not. Timeouts,
   bounded output, event delivery under load, paths with spaces, externally removed worktrees and
-  orphaned processes on quit are covered by tests of their own now (A9-01), subject to the process
-  group caveat above. Resize
+  orphaned processes on quit are covered by tests of their own now (A9-01). Resize
   handling, readability at 80 columns with several agents, every state being distinguishable without
   colour, and rapid updates not moving the selection are not: they are A9-02 and nothing has
   verified them together.
