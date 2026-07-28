@@ -67,6 +67,20 @@ func runChat(resume string) error {
 	// project" means. A workspace that could not be opened is a directory the agent cannot work in,
 	// and a conversation with no tools is still a useful thing, so it is a warning rather than a
 	// failure.
+	// A conversation belongs to the project it was started in, and picking it up somewhere else is
+	// refused rather than allowed quietly.
+	//
+	// The code is a small number a person reads off a terminal, so `canopy pickup 7` is a thing
+	// somebody will type in the wrong window sooner or later. Nothing downstream would notice: the
+	// agent gets this directory's files and that conversation's history, so the model is told it was
+	// halfway through editing files that are not here, under a plan for a repository it cannot see.
+	// It would then act on the difference, in a workspace nobody meant it to touch.
+	if resume != "" {
+		if err := belongsHere(engine, resume, projectID); err != nil {
+			return err
+		}
+	}
+
 	project := loadProject(dir)
 	commands := loadCommands(project.Commands)
 
@@ -168,6 +182,24 @@ func runChat(resume string) error {
 			"\npick this conversation up again with:\n  canopy pickup %s\n", session.Code(last))
 	}
 	return nil
+}
+
+// belongsHere reports whether a conversation may be picked up in this project.
+//
+// Both unknowns are allowed through, and deliberately. A conversation recorded before history was
+// scoped by project has no association at all, and a directory that is not a repository produces no
+// project to compare against; refusing either would break resuming for people who have done nothing
+// wrong, to guard a case where there is nothing to tell apart. What is refused is the case where
+// both are known and they disagree, which is the only one where Canopy can actually say it is wrong.
+func belongsHere(engine *session.Engine, resume, projectID string) error {
+	owner := engine.ProjectOf(resume)
+	if owner == "" || projectID == "" || owner == projectID {
+		return nil
+	}
+	return fmt.Errorf(
+		"conversation %s belongs to a different project, so it will not open here. "+
+			"Run `canopy pickup %s` from that project instead, or press ctrl+n for a new one",
+		session.Code(resume), session.Code(resume))
 }
 
 // attachTools gives the agent something to do besides talk.

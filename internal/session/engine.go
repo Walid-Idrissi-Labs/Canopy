@@ -284,6 +284,17 @@ func (e *Engine) SetMode(sessionID string, mode core.Mode) error {
 	return nil
 }
 
+// ProjectOf is the project a conversation belongs to, or empty if it was recorded without one.
+//
+// Empty is a real answer and not a missing one. Conversations from before history was scoped by
+// project have no association, and so do any started outside a repository, and neither should be
+// treated as belonging to whichever directory happens to be asking.
+func (e *Engine) ProjectOf(sessionID string) string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.projects[sessionID]
+}
+
 // SetProjectID scopes new sessions and cost analysis to one project.
 func (e *Engine) SetProjectID(projectID string) {
 	e.mu.Lock()
