@@ -44,10 +44,11 @@ type fakeEngine struct {
 
 	// mode is what has been chosen, and trust is the ceiling it cannot be raised above. Empty trust
 	// means no ceiling, which is what most of these tests want.
-	mode     core.Mode
-	steered  []string
-	asked    []string
-	asideErr error
+	mode           core.Mode
+	steered        []string
+	queuedSteering []string
+	asked          []string
+	asideErr       error
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -886,8 +887,14 @@ func (e *fakeEngine) UseCredential(_, keyName, model string) error {
 
 func (e *fakeEngine) Steer(_, guidance string) error {
 	e.steered = append(e.steered, guidance)
+	// The real engine only queues while a turn is running; steering an idle session is a send.
+	if _, running := e.session.Active(); running {
+		e.queuedSteering = append(e.queuedSteering, guidance)
+	}
 	return nil
 }
+
+func (e *fakeEngine) Steering(string) []string { return e.queuedSteering }
 
 func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error) {
 	e.asked = append(e.asked, question)

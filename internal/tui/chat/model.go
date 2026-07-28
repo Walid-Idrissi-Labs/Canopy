@@ -92,6 +92,11 @@ type Engine interface {
 	// which usually means throwing away the reasoning that led to it.
 	Steer(sessionID, guidance string) error
 
+	// Steering is the guidance waiting for a session, oldest first. The screen shows it until it is
+	// delivered, because a correction that vanishes the moment it is typed reads as one that was
+	// swallowed, and somebody who thinks that types it again.
+	Steering(sessionID string) []string
+
 	// Aside answers a question from this conversation's context without joining it. Nothing is
 	// recorded, no turn is created, and a turn in flight is undisturbed, which is what separates
 	// asking something from saying something.
@@ -971,8 +976,10 @@ func (m Model) transcriptHeight() int {
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
 
-	// The btw panel takes its rows from the conversation too, for the same reason.
+	// The btw panel and the queued steering take their rows from the conversation too, for the
+	// same reason.
 	h -= len(m.btwPanel())
+	h -= len(m.steeringPane())
 
 	// The jump pill takes its rows from the conversation too, and only while it is on screen. It is
 	// keyed on the scroll position rather than on the rendered pill because the pill's height is
@@ -1036,6 +1043,8 @@ func (m Model) Body() string {
 	if tasks := m.taskPane(); tasks != "" {
 		rows = append(rows, strings.Split(tasks, "\n")...)
 	}
+	// Guidance waiting for the agent stays on screen until it is delivered.
+	rows = append(rows, m.steeringPane()...)
 	// The btw panel sits above the box, where the answers to questions about the conversation are
 	// close to the conversation they are about without being in it.
 	rows = append(rows, m.btwPanel()...)
@@ -1270,6 +1279,51 @@ func (m Model) btwPanel() []string {
 			" "+t.Border.Render("│"))
 	}
 	out = append(out, " "+t.Border.Render("╰"+strings.Repeat("─", inner+2)+"╯"))
+	return out
+}
+
+// steeringChip is the label a queued correction sits behind, sized once so continuation lines can
+// line their text up under the first.
+const steeringChip = "  steering  "
+
+// steeringPane is the guidance waiting for the agent, shown from the keystroke that queued it until
+// the moment it is delivered.
+//
+// It shows the correction itself rather than a sentence about it, which is the difference between
+// feedback and reassurance: "queued" tells you something happened, the text tells you the right
+// thing happened, and it staying on screen tells you it has not been forgotten. It disappears on
+// its own when the turn finishes, because that is when the guidance becomes an ordinary message in
+// the transcript and there is nothing left to wait for.
+func (m Model) steeringPane() []string {
+	if m.blank() {
+		return nil
+	}
+	queued := m.engine.Steering(m.sessionID)
+	if len(queued) == 0 {
+		return nil
+	}
+	t := theme.Current()
+
+	// The arrival note rides the first line, and is dropped whole on a terminal too narrow to give
+	// the guidance most of the row: the guidance is the content, the note is a caption.
+	const note = "  · delivered when this turn finishes"
+	suffix := note
+	room := m.width - len(steeringChip) - len(note) - 2
+	if room < 16 {
+		suffix = ""
+		room = m.width - len(steeringChip) - 2
+	}
+
+	out := make([]string, 0, len(queued))
+	for i, guidance := range queued {
+		if i == 0 {
+			out = append(out, t.Info.Render(steeringChip)+
+				t.Body.Render(truncate(guidance, room))+t.Muted.Render(suffix))
+			continue
+		}
+		out = append(out, strings.Repeat(" ", len(steeringChip))+
+			t.Body.Render(truncate(guidance, m.width-len(steeringChip)-2)))
+	}
 	return out
 }
 
