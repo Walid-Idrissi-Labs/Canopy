@@ -8,10 +8,14 @@ package tui
 // how full is the context: all of it was either in a footer that changes, on a screen you have to
 // leave the conversation to reach, or nowhere.
 //
-// It is exactly three lines, which is what the title, the rule and the blank line under them used to
-// cost together. That is not a coincidence and it is load bearing: Dimensions.BodyHeight subtracts a
-// fixed amount of chrome, and a header that grew by a line would push the footer off the bottom of
-// every screen at once.
+// Its height is not fixed and it is not free to choose either: it draws exactly what
+// Dimensions.HeaderHeight declares, because BodyHeight is computed from the same number. A header
+// that drew one line more than it declared would push every screen's footer off the bottom at once,
+// which is why the height lives in layout.go with the arithmetic that depends on it rather than here
+// with the drawing.
+//
+// Three lines ordinarily, which is what the title, the rule and the blank line under them used to
+// cost together, and five where there is room for the drawn name in the corner.
 
 import (
 	"strings"

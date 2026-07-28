@@ -111,7 +111,9 @@ func TestLiveToolsReachTheProviderAndBack(t *testing.T) {
 
 	// And the other half of M-01: that a person watching could follow it. Rendered from the same
 	// session the engine produced, so this is the real transcript rather than a constructed one.
-	rendered := strings.Join(chat.Transcript(final, 100, "."), "\n")
+	// No kind lookup, which is the honest thing here: this drives the engine directly rather than
+	// through a chat model, so there is no registry to ask and the labels degrade to blanks.
+	rendered := strings.Join(chat.Transcript(final, 100, ".", nil), "\n")
 	for _, want := range []string{"read_file", "notes.txt"} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the transcript does not mention %q:\n%s", want, rendered)

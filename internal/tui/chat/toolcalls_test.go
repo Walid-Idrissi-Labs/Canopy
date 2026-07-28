@@ -42,7 +42,10 @@ func TestAToolCallSaysWhatItTouched(t *testing.T) {
 	if !strings.Contains(body, "12ms") {
 		t.Errorf("the call does not say how long it took:\n%s", body)
 	}
-	if !strings.Contains(body, "ok") {
+	// A tick rather than the word, which is what the renderer draws now. Asserted on the mark
+	// itself because a call that succeeded and one that failed have to be tellable apart at a
+	// glance, and the glance is the whole reason the outcome is a symbol.
+	if !strings.Contains(body, "✓") {
 		t.Errorf("the call does not say whether it worked:\n%s", body)
 	}
 }

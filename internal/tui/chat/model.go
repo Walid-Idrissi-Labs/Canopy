@@ -15,6 +15,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -417,9 +418,9 @@ func (m Model) promptLines() []string {
 	t := theme.Current()
 	req := m.prompt.Request
 
-	var lines []string
-	lines = append(lines, t.Warning.Render("This agent wants to "+describeRequest(req)))
-	lines = append(lines, "")
+	var body []string
+	body = append(body, t.Warning.Render("This agent wants to "+describeRequest(req)))
+	body = append(body, "")
 
 	// The thing being approved, shown verbatim and in full. A command summarised or truncated is a
 	// command somebody approved without having seen it.
@@ -429,30 +430,66 @@ func (m Model) promptLines() []string {
 	// remote server, and what an approval covers there is the exact call. Offering "always, this tool
 	// with exactly these arguments" while showing none of them asks somebody to agree to something
 	// they cannot see.
+	inner := m.width - promptChrome
 	switch {
 	case req.Opaque && req.Arguments != "":
-		for _, line := range wrap(req.Arguments, m.width-4) {
-			lines = append(lines, "  "+t.Body.Render(line))
+		for _, line := range wrap(req.Arguments, inner) {
+			body = append(body, t.Body.Render(line))
 		}
 	default:
 		if req.Command != "" {
-			for _, line := range wrap(req.Command, m.width-4) {
-				lines = append(lines, "  "+t.Body.Render(line))
+			for _, line := range wrap(req.Command, inner) {
+				body = append(body, t.Body.Render(line))
 			}
 		}
 		for _, path := range req.Paths {
-			lines = append(lines, "  "+t.Body.Render(path))
+			body = append(body, t.Body.Render(path))
 		}
 	}
 
-	lines = append(lines, "")
-	lines = append(lines, t.Muted.Render("  "+m.prompt.Decision.Reason))
-	lines = append(lines, "")
-	lines = append(lines,
-		"  "+t.Key.Render("y")+t.Muted.Render(" once   ")+
+	body = append(body, "")
+	body = append(body, t.Muted.Render(m.prompt.Decision.Reason))
+	body = append(body, "")
+	body = append(body,
+		t.Key.Render("y")+t.Muted.Render(" once   ")+
 			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
-	return lines
+
+	return promptPanel(body, inner)
+}
+
+// promptChrome is the columns the question's frame spends on itself: an indent, two walls and a
+// space of padding inside each.
+const promptChrome = 8
+
+// promptPanel puts the question in a box of its own.
+//
+// It used to be plain lines at the bottom of the transcript, which put the most consequential thing
+// on the screen in the same shape as everything the agent had been saying up to it. A person
+// answering this is about to let something run on their machine, and the moment they are asked
+// should not look like more conversation.
+//
+// The frame is drawn in the warning colour rather than the border colour, so the box itself carries
+// the signal and the answer does not depend on somebody reading the first line. It sits inside the
+// transcript rather than over it, which is the existing decision and the right one: a modal covering
+// the conversation asks somebody to decide with the context hidden.
+func promptPanel(body []string, inner int) []string {
+	t := theme.Current()
+
+	const indent = "  "
+	rule := strings.Repeat("─", inner+2)
+
+	out := make([]string, 0, len(body)+2)
+	out = append(out, indent+t.Warning.Render("╭"+rule+"╮"))
+	for _, line := range body {
+		pad := inner - lipgloss.Width(ansi.Strip(line))
+		if pad < 0 {
+			pad = 0
+		}
+		out = append(out, indent+t.Warning.Render("│")+" "+line+strings.Repeat(" ", pad)+
+			" "+t.Warning.Render("│"))
+	}
+	return append(out, indent+t.Warning.Render("╰"+rule+"╯"))
 }
 
 // describeRequest says what is being asked for in words rather than in tool names.
@@ -776,7 +813,7 @@ func (m Model) blank() bool {
 func (m Model) transcript() []string {
 	var lines []string
 	if len(m.session.Turns) > 0 {
-		lines = Transcript(m.session, m.width, m.spinnerFrame())
+		lines = Transcript(m.session, m.width, m.spinnerFrame(), m.toolKind)
 	}
 	if m.awaiting {
 		// At the bottom of the transcript rather than in a dialogue over it, so the command being
@@ -1218,4 +1255,22 @@ func (m Model) contextMeter() string {
 	default:
 		return t.Muted.Render(text)
 	}
+}
+
+// toolKind answers what kind of thing a tool is, for the transcript's labels.
+//
+// Asked of the registry this conversation was actually given rather than of a list of known names,
+// so a tool from an MCP server is labelled by the same rule as a built in one. That matters more for
+// the remote ones: every MCP tool is an execute tool whatever its server calls it, and "run" against
+// a name somebody has never seen is the most useful thing the label says all day.
+func (m Model) toolKind(name string) (core.ToolKind, bool) {
+	registry, ok := m.engine.Tools()
+	if !ok || registry == nil {
+		return "", false
+	}
+	tool, found := registry.Get(name)
+	if !found {
+		return "", false
+	}
+	return tool.Kind(), true
 }

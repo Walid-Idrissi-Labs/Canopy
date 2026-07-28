@@ -72,9 +72,8 @@ func (d Dimensions) BodyHeight() int {
 
 // Frame composes a screen: header bar, body, and a footer pinned to the bottom.
 //
-// The header is three lines and used to be a title, a rule and a blank. The count has to stay the
-// same, because BodyHeight subtracts a fixed amount of chrome and a header one line taller would
-// push every screen's footer off the bottom at once.
+// The header used to be a title, a rule and a blank line. It is now a box whose height varies with
+// the terminal, and BodyHeight is computed from that same height, so the two cannot drift apart.
 func Frame(d Dimensions, s Status, body, footer string) string {
 	t := theme.Current()
 
