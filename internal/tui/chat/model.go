@@ -575,7 +575,7 @@ func commandListing(commands config.CommandSet) string {
 
 	var lines []string
 	for _, command := range all {
-		lines = append(lines, fmt.Sprintf("/%s — %s (%s)",
+		lines = append(lines, fmt.Sprintf("/%s  %s (%s)",
 			command.Name, command.Description, command.Scope))
 	}
 	return strings.Join(lines, "\n")
