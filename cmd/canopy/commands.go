@@ -177,6 +177,14 @@ func runChat(resume string) error {
 	//
 	// Dropped rather than reported if it cannot be written: the program has finished doing its job
 	// and there is nowhere useful left to complain to.
+	// Hooks that did not work, said now because there was nowhere to say them while the interface
+	// owned the screen. Late, and a great deal better than never: the point of a hook is that
+	// somebody has stopped watching, so one that quietly stopped working is one they would go on not
+	// watching indefinitely.
+	for _, failure := range verification.HookFailures() {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", failure)
+	}
+
 	if last != "" {
 		_, _ = fmt.Fprintf(os.Stdout,
 			"\npick this conversation up again with:\n  canopy pickup %s\n", session.Code(last))
