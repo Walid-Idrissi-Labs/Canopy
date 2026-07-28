@@ -163,6 +163,10 @@ asking is worse than a large file, and the file is text so it compresses well an
 see it before it surprises them. Given Walid is storage aware this probably wants deciding rather
 than deferring.
 
+**Grew teeth on 2026-07-28:** the engine now loads every session and every turn of every project
+into memory at startup, where the session list was deliberately written not to. So the file's
+growth is felt at boot, not only on disk, and the answer to this question sets how soon.
+
 ---
 
 ## Q-08 Commit 2a83944 has a misleading message
@@ -435,3 +439,50 @@ needs a lifecycle change to the isolation contract either way:
 3. **Per worktree, opt in per server**, with a flag in `canopy.json` for the servers that are cheap
    enough and safe enough to duplicate. More configuration, and it puts the choice with the person
    who knows what the server actually does.
+
+## Q-19 May compaction run on a cheaper key than the conversation's?
+
+**Added 2026-07-28 by the phase E planning.**
+
+The named-key architecture makes it one field: summarising a long conversation is exactly the
+kind of work a cheap model does adequately, and compaction is a pure cost with no product upside,
+so paying the strong model's rate for it is the worst tokens in the bill.
+
+The catch is not technical. The summary call sends the whole conversation, so a cheap-key option
+sends everything the user said to a provider they chose for something else, on a credential with
+its own terms. That is a data-flow decision, not an engineering one, which is why E-03 refuses to
+build the option until this is answered.
+
+**Supervisor decision required:** no, always the session's own key; or yes, opt in per profile,
+with the transcript naming which key summarised.
+
+## Q-20 Should the context window table gate requests?
+
+**Added 2026-07-28 by the phase E planning.**
+
+`internal/core` holds a static table of context windows by model prefix, used only to colour the
+meter. Nothing refuses a request that cannot fit; the provider does, and today that error is
+terminal (E-02 will make it compact and retry once).
+
+The alternative is a pre-flight check: estimate, compare against the table, compact before
+sending. It saves one failed round trip per overflow. It also promotes a display table into an
+enforcement table, and a stale entry then refuses requests the provider would have accepted,
+which is a confident wrong answer in exactly the sense D-32 forbids. The provider knows its own
+limits; our table is a rumour about them.
+
+**Who decides:** both supervisors, after E-02 exists and the cost of the round trip can be seen
+rather than argued about.
+
+## Q-21 Do ctrl+r, ctrl+k and ctrl+d keep their meanings?
+
+**Added 2026-07-28 by the phase U planning.**
+
+Three chat bindings sit on keys with forty years of shell muscle memory attached: ctrl+r is
+compact where fingers expect history search, ctrl+k is credentials where fingers expect kill to
+end of line, ctrl+d is agents where fingers expect EOF. U-09 removes the expensive consequence,
+ctrl+r will no longer spend money without a confirmation, but the bindings themselves are taste,
+and rebinding after release costs every existing user their habits, which is why this wants
+answering before 0.1 has many of them.
+
+**Who decides:** both supervisors, ideally by watching one person with strong shell habits use
+the product for ten minutes.

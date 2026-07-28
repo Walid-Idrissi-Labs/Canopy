@@ -1244,7 +1244,7 @@ The acceptance line's "Ollama and one hosted third party both work" needs a pers
 so it belongs to PG-A2 alongside A2-04's live check, not to this box.
 
 ### A2-07 Prompt caching
-`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-05`
+`status: partial | owner: Claude | branch: feat/providers (merged) | depends: A2-05`
 `scope: internal/provider/anthropic/, internal/pricing/, cmd/canopy/ask.go`
 
 Deliverable: cache long stable prefixes such as system prompts and file context where the provider
@@ -1283,8 +1283,14 @@ saving against. `pricing.Saving` stays silent rather than printing a zero.
 Worth noticing later: caching is the thing that degrades silently. If a breakpoint stops matching,
 nothing breaks, the bill just goes up. That is why the saving is on screen rather than in a log.
 
+**Set back to partial on 2026-07-28.** The paragraph above describes a screen that does not exist.
+`pricing.Saving` has one caller and it is headless `canopy ask`; nothing under `internal/tui`
+reads the cache counters, so in the product, the place people actually sit, the saving is
+invisible and so is the degradation the previous paragraph warns about. The breakpoints and the
+arithmetic are done and tested. The visible half is E-05.
+
 ### A2-08 Provider fallback chains
-`status: review | owner: Claude | branch: feat/providers (merged) | depends: A2-03`
+`status: partial | owner: Claude | branch: feat/providers (merged) | depends: A2-03`
 `scope: internal/provider/chain.go, internal/core/provider.go, cmd/canopy/ask.go`
 
 Deliverable: a profile may list ordered fallbacks. On overload or rate limit, try the next key or
@@ -1325,6 +1331,11 @@ The notice names both ends: what could not take the turn, why, and what did.
 
 Not yet wired to profiles. `AgentProfile` gains its fallback list in A3, where there is somewhere
 for a user to configure one; the mechanism exists and is tested ahead of it.
+
+**Set back to partial on 2026-07-28.** The sentence above said A3 would wire it and A3 came and
+went. `NewChain` has no caller outside its tests: the resolver always returns a single client, so
+no fallback has ever been possible in the shipped product and the acceptance above has only ever
+passed inside the package. LIMITATIONS.md already admits this. The wiring is E-09.
 
 ### PG-A2 Phase A2 gate
 `status: todo | depends: A2-03, A2-04, A2-05, A2-06`
@@ -1645,7 +1656,7 @@ still reading an abandoned response body holds a connection open, and eight agen
 program that slowly stops working for reasons nobody can see.
 
 ### A3-06 Context meter and compaction
-`status: review | owner: Claude | branch: feat/agent-runtime (merged) | depends: A3-02`
+`status: partial | owner: Claude | branch: feat/agent-runtime (merged) | depends: A3-02`
 `scope: internal/agent/, internal/tui/chat/`
 
 Deliverable: a visible context meter, automatic compaction near the limit, and manual compaction on
@@ -1660,6 +1671,16 @@ still searchable. Manual compaction is available before the limit.
 notes: silently dropping context so an agent quietly gets dumber is the same class of lie as a
 false green. Compaction is always visible, and it never destroys history, it only shortens what
 gets sent.
+
+**Set back to partial on 2026-07-28, by an audit of the send path rather than of this block.**
+Which half is which: the meter, manual compaction on ctrl+r and /compact, the transcript marker
+and the storage guarantee are built and real. The word "automatic" in the deliverable is not:
+`Engine.Compact` has exactly one caller and it is the keybinding, so nothing compacts by itself
+and nothing consumes `ErrContextLength`, which both adapters classify and nobody reads. And the
+word "accurate" is not: the estimator in `internal/core/context.go` counts request text, reply
+and thinking only, so tool call inputs, tool results, tool schemas and the system prompt are all
+invisible to it, which means it under-reports exactly when the window is filling fastest. The
+remaining halves are E-01 and E-02, which depend on this block staying honest about what it is.
 
 ### A3-07 Session forking
 `status: review | owner: Claude | branch: feat/agent-runtime | depends: A3-02`
@@ -2757,6 +2778,12 @@ The estimate is crude and says so: a median cost per turn from this project's tu
 significant task words overlap, times a range of four to twenty five turns per agent. Below three
 similar priced turns it shows no number at all rather than pretending one expensive turn is a rate.
 
+**Noted 2026-07-28, without reopening the status:** everything verified below is true of the
+engine and none of it is reachable by a person. Nothing under `internal/tui` or `cmd/canopy`
+references the budget package, so no cap can be set, seen or raised from inside the product; the
+verified path has only ever been driven by tests. The interface is U-07. The verification below
+stands for what it checked.
+
 **Independent Codex verification 2026-07-27.** The cap path passed focused race tests: it refuses
 before registering the next turn, preserves the prior transcript, and resumes after a raised cap.
 The estimate did not meet its own prose: it ignored the task and sampled every loaded session from
@@ -3788,7 +3815,7 @@ large codebase is mostly reading, which a cheap model does adequately, while the
 strongest model available. Doing that by hand today means copying context between tools.
 
 ### A8-03 Project configuration file
-`status: review | owner: Claude | branch: feat/verification-and-release | depends: PG-A7`
+`status: partial | owner: Claude | branch: feat/verification-and-release | depends: PG-A7`
 `scope: internal/config/`
 
 Deliverable: a committed per project file defining profiles, test commands, permission posture and
@@ -3814,6 +3841,13 @@ nothing, and every agent would go green on a suite nobody executed.
 Only three template names resolve. A general template language here would be a way to build a
 command at execution time out of values Canopy does not control, and the point of the file being
 committed is that a reviewer can read it and know what it will do.
+
+**Set back to partial on 2026-07-28.** The deliverable lists project instructions and the field
+exists in name only: `config.Instructions` carries a doc comment promising it is prepended to
+every agent's system prompt, and the system prompt is built from the mode alone, so the field
+parses, validates and reaches nothing. Which half is which: profiles, test commands and posture
+are real and validated; instructions are the fifth complete mechanism shipped with no caller.
+The injection is E-07.
 
 ### A8-04 Custom slash commands
 `status: review | owner: Codex | branch: feat/commands-and-cost | depends: A8-03`
@@ -4201,6 +4235,14 @@ from a fresh snapshot, and every error says what to do next.
 
 notes: carries forward P4-08 to P4-12. P1-07 already meets the 80 column and selection criteria.
 
+For whoever claims this, measured on 2026-07-28 so it does not have to be rediscovered: the
+footer drops hints from the right at width minus three, and at 80 columns that arithmetic
+removes `ctrl+d agents`, the history hint, the compact hint and the quit hint from the chat
+footer, and everything after `? help` from the agents footer, so the keys that reach the rest of
+the product are exactly the ones that vanish on the default terminal width. The help overlay is
+unreachable while anything is typed, which at 80 columns leaves a mid-draft user no visible route
+to help at all. "Readable at 80 columns" should be read as including "navigable at 80 columns".
+
 ### A9-03 Themes and help
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A9-02`
 
@@ -4276,6 +4318,552 @@ Both supervisors watch someone outside the team install it and use it.
 
 ---
 
+# Phase E: what the window holds and what the tokens cost
+
+Goal: Canopy spends fewer tokens than any competitor for the same work, can prove the saving on
+screen, and never gets quietly dumber doing it.
+
+**Nothing in this phase blocks 0.1.** The tag waits on PG-M and on nothing here. E is engine work
+and U below is interface work, so once the supervisors set a 2.1 style boundary the two phases can
+run as parallel lanes, with strict order applying inside each lane.
+
+Planned 2026-07-28 from an audit of the send path rather than of the ledger, which is why it reads
+like a list of gaps: history is rebuilt in full on every step of every turn with no elision
+anywhere; tool results are re-sent verbatim forever, so three reads of the same file sit in the
+window three times; the token estimator counts request text, reply and thinking only, so the tool
+traffic that actually fills the window is invisible to the meter; compaction is manual despite
+D-28 saying automatic; `ErrContextLength` is classified by both adapters and read by nobody; cache
+savings are computed and shown only in headless `ask`; and `config.Instructions`,
+`AgentProfile.SystemPrompt`, `AgentProfile.MaxTokens`, `Loop.MaxTokens` and the fallback chain are
+all declared and unreachable. The principles these tasks implement are D-42. The unreachable
+inventory is D-44.
+
+### E-01 One honest token estimator
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/core/context.go, internal/session/compaction.go, internal/session/engine.go`
+
+Deliverable: context accounting that counts what is actually sent. Tool call inputs, tool result
+contents, tool schemas and the system prompt join the count; the two duplicated bytes-per-token
+constants become one estimator; the provider's reported figure is preferred the moment one
+exists. Usage incurred on a failed turn is recorded rather than discarded, because the provider
+billed for it whether or not the turn ended well.
+
+Acceptance: on a recorded tool-heavy session, the pre-response estimate lands within fifteen
+percent of the provider's next reported input count, where today it misses by the whole size of
+the tool traffic. The meter and the compaction split read the same estimator. `Estimated` still
+renders as "about". A turn that fails after consuming tokens shows those tokens in the session
+totals.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: every saving in this phase is measured by this meter, so it comes first. `internal/core`
+is frozen under the P1-01 rule; the estimator lives there, so this task starts with the joint
+discussion rather than discovering the freeze at review. Worth checking while in there: whether
+the provider's count-tokens endpoint is worth a pre-flight call on Anthropic, recorded either way.
+
+### E-02 Compaction happens by itself, and says so
+`status: todo | owner: none | branch: none | depends: E-01`
+`scope: internal/session/, internal/tui/chat/`
+
+Deliverable: the unbuilt half of D-28 and A3-06. Automatic compaction near the limit, and
+compact-and-retry when a request comes back `ErrContextLength`, which today is classified twice
+and consumed nowhere.
+
+Acceptance: crossing the threshold compacts at the next turn boundary, never mid-turn, and
+announces itself in the transcript before the next request is sent. A turn refused for length is
+compacted and retried once, visibly. Stored history stays complete and searchable. A failed
+summary call fails the turn with the provider's own words rather than silently shrinking
+anything. Auto can be turned off in config; ctrl+r and /compact stay.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: D-28 decided this in 2026 July and A3-06's deliverable claimed it; the honest ledger now
+says partial. The announcement is not politeness, it is the contract: an agent that got a
+summary where its memory was is an agent whose next answer needs reading differently.
+
+### E-03 The compaction bill is bounded
+`status: todo | owner: none | branch: none | depends: E-02`
+`scope: internal/session/compaction.go`
+
+Deliverable: the summary call gets an output bound, where today it inherits the provider default
+of 32k output tokens, and its cost stays on screen like any other turn. If Q-19 is answered yes,
+the summary may run on a cheaper named key; if not, the option does not exist.
+
+Acceptance: a compaction can never spend more output than its bound, and the bound is visible in
+the transcript marker next to the before and after figures. The cheap-key option appears only
+behind a yes on Q-19, and when used the transcript names which key summarised.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: compaction exists to save money and currently has no ceiling on what it may spend doing
+so. The named-key architecture makes the cheap-summariser lever one field, which is exactly why
+it needs a supervisor answer first: the whole conversation transits whichever provider the key
+names.
+
+### E-04 Superseded reads leave the outgoing window
+`status: todo | owner: none | branch: none | depends: E-01`
+`scope: internal/session/ (a transform on the outgoing request; internal/core stays frozen)`
+
+Deliverable: when the same deterministic read, same tool and same canonical arguments, has a
+newer result later in the conversation, or a file read has been invalidated by a later edit to
+the same path, the older result in the outgoing request is replaced by a one line stub naming
+what superseded it. Stored history is untouched and the transcript still shows everything.
+
+Two lines hold it honest and profitable. Only Canopy's own deterministic reads are elidable:
+read_file, glob, grep. Shell output and MCP results ride along verbatim forever, because nothing
+can re-derive them and shortening them is destroying evidence. And an elision rewrites the
+prefix, which forfeits the provider cache, so elisions take effect only when the prefix is being
+rewritten anyway, at a compaction, after the cache has gone cold, or when the pricing table says
+the saving beats the rewrite premium. Computed, not assumed, and stated in the transcript.
+
+Acceptance: reading the same large file three times costs its size once from the next rewrite
+onward. An edited file's stale read is stubbed. Shell and MCP output is never elided. The meter
+counts the rewritten request. Disabling elision in config restores verbatim history. The
+storage diff before and after is empty.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: this is where the token bill actually lives for a coding agent, and it is D-42's second
+principle made mechanical. It is a per-request policy, not history, which is why it belongs in
+`internal/session` rather than in the frozen core. The read ledger the edit tools already keep
+for freshness is the natural supersession index.
+
+### E-05 Cache health on screen
+`status: todo | owner: none | branch: none | depends: A2-07, E-01`
+`scope: internal/tui/, internal/pricing (read only)`
+
+Deliverable: the visible half of A2-07, in the product rather than only in headless `ask`.
+Cached against fresh input per turn, the net saving including the negative filling turn, and a
+plain warning when a long Anthropic conversation's cache reads collapse to zero, which is the
+silent degradation A2-07's notes predicted and nothing currently watches for.
+
+Acceptance: the numbers come from `pricing.Saving` and recorded usage, not a second calculation.
+A session whose cache has stopped being read says so in words. Unpriced endpoints say nothing
+rather than zero, per D-32.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: caching is the saving that degrades silently, so its absence must be as visible as its
+presence. This is also the screen that makes E-04's rewrite arithmetic auditable by eye.
+
+### E-06 Reading less at the source
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/tools/files.go`
+
+Deliverable: `read_file` takes an optional line range and always reports the total line count so
+the model knows the file continues; `grep` returns context lines around matches so a match stops
+forcing a whole-file read.
+
+Acceptance: a ranged read costs the range. Line numbers agree between ranged and full reads. The
+1 MiB refusal stands for unranged reads and now names the range syntax as the way in. The read
+ledger still catches an edit after a ranged read.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the cheapest token is the one never fetched. This is deliberately the only task in the
+phase that changes what the model can do rather than what Canopy sends, and it is additive: the
+old call shape keeps working.
+
+### E-07 Project instructions reach the model
+`status: todo | owner: none | branch: none | depends: A8-03`
+`scope: internal/session/, internal/config (read only)`
+
+Deliverable: the injection half of A8-03. Project instructions prepended to the system prompt for
+every agent in the project, dispatched agents included, size-bounded, and placed under the system
+cache breakpoint so they are cached rather than re-billed each turn.
+
+Acceptance: an instruction visibly changes behaviour for a direct and an isolated agent alike.
+Oversized instructions are refused with a named error, never truncated silently. The E-08
+inspector lists them as their own line with their own size.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: every competitor treats a project instructions file as table stakes and Canopy parses one
+into a field nothing reads. The bound exists because instructions sit in every request of every
+agent in the project; an unbounded file is a standing tax nobody sees.
+
+### E-08 The window inspector
+`status: todo | owner: none | branch: none | depends: E-01, E-04`
+`scope: internal/tui/chat/`
+
+Deliverable: `/context` grows from a percentage into an inventory of the next request: which
+mode's system prompt, project instructions, how many tool schemas and their size, the compaction
+summary, elided stubs, verbatim turns, per-item token estimates, and where the cache breakpoints
+sit with the last turn's cache read share.
+
+Acceptance: a test builds the real request and asserts the inspector's list agrees with the
+wire. Same parts, same order, sizes within the estimator's stated error. Every mechanism in this
+phase is auditable from this one screen.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the transparency flagship. Competitors make you guess what is in the window; Canopy builds
+the request, so Canopy can show the request. It is also the tool that keeps E-02 and E-04 honest,
+which is why it shares their dependencies rather than trailing the phase.
+
+### E-09 Dead levers wired or cut
+`status: todo | owner: none | branch: none | depends: E-01`
+`scope: internal/session/, internal/provider/chain.go, internal/agent/, internal/core (joint discussion required)`
+
+Deliverable: each declared-and-unreachable efficiency lever either works or is removed with a
+D-40 style note: `AgentProfile.SystemPrompt`, `AgentProfile.MaxTokens`,
+`AgentProfile.Temperature`, `Loop.MaxTokens` which the engine never sets, and the fallback chain
+that `NewChain` builds and no resolver ever returns.
+
+Acceptance: nothing in the tree is declared, documented and unreachable. Whatever is wired has a
+test proving the setting changes the request; whatever is cut is recorded in DECISIONS with what
+existed. A2-08 leaves partial in the same commit that wires or cuts the chain.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: D-44 names the pattern; this task clears the efficiency third of the inventory. The
+interface levers are U's problem and listed there.
+
+### E-10 Thinking blocks in the tool loop, checked against the live contract
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/agent/loop.go, internal/provider/anthropic/, DECISIONS.md (D-31 companion)`
+
+Deliverable: an answer from the current API reference and a live test, not from memory, to
+whether the tool loop must return thinking blocks with the preceding assistant turn. Today
+thinking is captured, stored, displayed and never sent back, on models where D-31 records that
+thinking is on by default. If replay is required, the fix.
+
+Acceptance: the contract is recorded next to D-31's other checked rules with the date checked.
+If replay is required, the loop carries thinking within a turn and a live test in the M-01 style
+proves a multi-step tool turn survives it. The token cost of whichever answer is measured and
+written in these notes, not estimated.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: filed in the efficiency phase because both answers move the bill: replay costs tokens,
+and a contract violation costs retries. A plausible wrong value here is worse than an obvious
+one, which is the same sentence D-31 opens with.
+
+### PG-E Phase E gate
+`status: todo | depends: E-02, E-04, E-05, E-08`
+
+Both supervisors watch the same task run twice on a mid-sized repository, once on the 0.1 build
+and once on this phase, and see the second run cost measurably fewer tokens with nothing lost
+that the inspector cannot explain.
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
+# Phase U: the interface at its best
+
+Goal: the person running several agents is never trapped, never deaf, and never guessing. Every
+affordance the engine already has reaches their hands.
+
+**Nothing in this phase blocks 0.1** and the lane note at the top of Phase E applies here too.
+
+Planned 2026-07-28 from a screen-by-screen audit. The pattern it found is the mirror of Phase E's:
+the engine has hands the interface never grew. Budgets pause agents and nothing can set a cap.
+Steering can be cleared and nothing offers it. Grants can be listed and revoked and nothing shows
+them. Retryability is classified and nothing retries. An agent can be removed and no key does it.
+And two genuine traps: every keystroke answers a pending permission prompt, so scrolling up to
+read what you are approving refuses it; and the screens that would tell you another agent is
+blocked are locked exactly when your own agent is blocked.
+
+### U-01 Reading the prompt is not answering it
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/tui/chat/`
+
+Deliverable: while a permission prompt is pending, navigation navigates. Scroll keys, arrows,
+page keys and the wheel move the transcript so the person can reread the reasoning above the
+prompt; only an explicit answer answers.
+
+Acceptance: pgup, pgdown, arrows, ctrl+home and ctrl+end scroll the transcript while a prompt is
+pending, and none of them decides anything. `y` and `a` still decide. Enter, esc and every other
+non-navigation key still refuse, because the reflex key on an unread prompt meaning no is the
+safety property, and it is kept. A test enumerates the navigation set so a new binding cannot
+silently join the refusal path.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: D-43's first rule. Today `pgup` on a prompt is a refusal indistinguishable from a
+deliberate one, which punishes exactly the person who wanted to read before deciding.
+
+### U-02 The always that grants nothing
+`status: todo | owner: none | branch: none | depends: A5-08`
+`scope: cmd/canopy/verification.go, internal/session/dispatch.go, internal/permission/`
+
+Deliverable: the `spawn_agents` confirmation gets a real scope. Today it is built with an empty
+`Decision.Scope`, so the prompt renders "a always," with nothing after the comma, and pressing
+`a` records a grant that can never match anything. On the one prompt that spends real money on
+several agents, the always affordance is a visible blank and a silent no-op.
+
+Acceptance: the prompt names the scope in words, the same way run and edit prompts do. Pressing
+`a` grants something `Grants.Covers` actually matches, scoped to dispatch and to the session. A
+test fails on any prompt whose scope renders empty, so the next confirmation added cannot ship
+the same blank.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: found by reading the render path, not by a report from a user, which is the cheap time to
+find it.
+
+### U-03 Attention crosses screens
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/tui/, internal/tui/chat/, internal/tui/agents/`
+
+Deliverable: an agent needing a person is visible from every screen, and no screen is ever
+locked. The header carries "N need you" everywhere, not only inside the agents screen's own
+context line. Navigation away from a chat with a pending prompt is allowed; leaving is not
+answering, and the prompt is still there on return. An optional terminal bell on the transition
+into needing attention, off by default, configurable.
+
+Acceptance: with the chat focused and a background agent hitting a permission prompt, the header
+says so within a second, in a word and a glyph that survive NO_COLOR. ctrl+d, ctrl+k and ctrl+n
+work while the current chat has a pending prompt. The pending prompt is unchanged on return. The
+bell fires once per transition, never per frame, and can be turned off.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: D-43's second rule, and the one the product's premise depends on. The current behaviour
+is the worst combination: the only screen that shows who needs you is unreachable exactly when
+someone needs you.
+
+### U-04 A way back to every conversation
+`status: todo | owner: none | branch: none | depends: A3-02`
+`scope: internal/tui/, internal/tui/chat/, internal/session (read interfaces only)`
+
+Deliverable: the session picker whose absence the code already apologises for in two comments. A
+screen listing this project's conversations with title, code, last activity, cost and fork
+lineage, opened from chat, searchable with the full-text index that already exists. Enter
+resumes in place; `canopy pickup` stays for the terminal.
+
+Acceptance: a conversation from yesterday is reachable in under five seconds without quitting.
+ctrl+n no longer strands the conversation it left. A forked session shows where it came from.
+Search narrows by content, not only title. Another project's sessions do not appear, matching
+the pickup rule.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: sessions persist, survive quit, and are unreachable from inside the product; the only
+handle is a code printed on exit. The picker is also where A3-07's fork-point display finally
+gets its screen, which that task's notes deferred to exactly here.
+
+### U-05 A failed turn can be retried
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/tui/chat/, internal/session/`
+
+Deliverable: recovery affordances for the failure taxonomy A2 built and nothing consumes. A
+failed turn offers retry without retyping. A rate limit shows the Retry-After the provider
+already sent, counting down. A network failure says plainly that the network failed. Retryable
+kinds retry; the kinds that deliberately do not fall through, authentication above all, say what
+to fix instead.
+
+Acceptance: a rate-limited turn shows a countdown and a retry key, and retrying does not
+duplicate the failed turn in history. An auth failure never offers retry and names the
+credential. Killing the network mid-turn produces words about the network, not a bare red line.
+When E-09 wires the fallback chain, a fallback taken is announced with both ends named, per
+A2-08; until then this task does not wait on it.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: `Retryable()` has no non-test caller today, so every classified error ends the same way,
+with the user retyping. The taxonomy was built for this task; it just took a year of subjective
+time to arrive.
+
+### U-06 The first run holds your hand
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
+
+Deliverable: the add-key wizard ends with a selected, tested credential. Storing a key selects
+it. The wizard offers the same live check `canopy keys test` already performs, so a typo is
+found before the first message rather than by it. Rate entry for OpenAI-compatible endpoints
+exists in the interface, not only as a CLI nobody is told about. Startup warnings, history not
+saving, tools unavailable, verification not running, appear inside the interface instead of on a
+stderr the alt screen erases.
+
+Acceptance: on a machine with no key, a person adds one and sends a message without touching the
+CLI or being coached, and the key they added is the key that answers. A wrong key is named
+before chat. An unpriced endpoint can be given a rate in the interface and the header prices the
+next turn with it, labelled as the user's rate per D-32. A startup warning is readable after the
+alt screen opens.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: M-06 got the screens to explain themselves; this closes the two holes the audit found
+past explanation: a stored-but-unselected key that works with one credential by coincidence and
+breaks with two, and warnings printed into a void.
+
+### U-07 Budgets reach the user
+`status: todo | owner: none | branch: none | depends: A5-09`
+`scope: internal/tui/chat/, internal/tui/agents/`
+
+Deliverable: the interface for the caps A5-09 built and verified. Set a per-agent or per-session
+cap from the conversation, see proximity to it in the header, and when an agent pauses at its
+cap, be told where and offered the raise, exactly the resume path the engine already supports.
+
+Acceptance: a cap set in the interface pauses the agent before the request that would cross it,
+the pause names the cap and the spend, raising resumes without losing anything, and the
+`Budget.Status` honesty about uncosted requests reaches the screen verbatim. No cap is ever
+enforced that the screen does not show.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the engine half was verified by Codex in July and has never once been driven by a person,
+which the A5-09 note now records. This is the smallest task in the phase relative to how often
+its absence will be noticed.
+
+### U-08 Steering you can take back
+`status: todo | owner: none | branch: none | depends: A5-07`
+`scope: internal/tui/chat/, internal/session/steer.go (caller only)`
+
+Deliverable: queued guidance can be cancelled before delivery. The steering pane that already
+shows the queue verbatim gains a cancel affordance wired to `Engine.ClearSteering`, which exists
+and is called by nothing. Delivered guidance stays marked in the transcript so what the agent
+was told remains readable afterwards.
+
+Acceptance: queue a correction, cancel it, and the agent's next turn shows no trace of it.
+Cancel with nothing queued is a no-op that says so. Delivery still happens only at the turn
+boundary, per A5-07; this task adds no new interruption path.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: steering without interrupting is the feature; steering without take-backs is a trap for
+anyone who typed the wrong correction. The engine grew the take-back and forgot to tell the
+interface.
+
+### U-09 No reflex spends money
+`status: todo | owner: none | branch: none | depends: E-03`
+`scope: internal/tui/chat/`
+
+Deliverable: no single unconfirmed keystroke starts a paid model call. ctrl+r, which half the
+world's fingers press expecting history search, currently fires a compaction, a real request on
+a real key, locking the input while it runs. It gains a one-line confirmation naming what it
+will summarise, on which key, within which bound, and what it roughly costs. The resolver's
+stale "press k" message becomes "press ctrl+k" in the same commit, since it is two lines away.
+
+Acceptance: ctrl+r alone spends nothing. The confirmation states turns, key and bound before
+anything is sent. /compact goes through the same confirmation. A test walks every binding in the
+help table and asserts none reaches a provider call without a confirmation or an explicit send.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: D-43's third rule. Whether ctrl+r, ctrl+k and ctrl+d should keep their current meanings
+at all is taste, so it is Q-21 for the supervisors rather than decided here; making the paid one
+free to press by accident is not taste.
+
+### U-10 The input box under your fingers
+`status: todo | owner: none | branch: none | depends: M-02`
+`scope: internal/tui/chat/input.go`
+
+Deliverable: the editing keys a multiline box implies. Vertical caret movement inside a draft,
+with history recall only from the boundary rows so up on line three moves the caret instead of
+destroying the draft. Word left and right. Kill to end of line to pair with the existing kill to
+start. A large paste collapses to one line naming its size, "pasted 214 lines", expandable,
+instead of silently showing the last six lines of a box that scrolls.
+
+Acceptance: a four line draft is fully navigable by keyboard. Up from the top row recalls
+history exactly as M-02 defined; up from any other row moves the caret; the draft-preservation
+rule from M-02 is unchanged. A 200 line paste shows its count before send and sends its full
+content. No existing binding changes meaning.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: M-02 built recall correctly and left the caret one-dimensional. The paste collapse is
+honesty as much as ergonomics: a box showing six lines of a 200 line paste is a screen
+under-reporting what is about to be sent, to a model, at a price.
+
+### U-11 Copy and find without the mouse
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/tui/chat/, internal/tui/clipboard/`
+
+Deliverable: the transcript's contents reachable by keyboard. Copy the last reply. Copy the last
+code block, which is the thing actually wanted nine times in ten. Find within this conversation
+with match navigation, using the search machinery that already indexes every turn, so the only
+in-product search stops being the CLI.
+
+Acceptance: both copies work over ssh, which means the OSC 52 path, with the same visible
+confirmation the mouse path shows. Find highlights matches, n and N walk them, and the scroll
+position survives closing the find. Neither affordance requires mouse reporting to be on.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: drag-to-copy exists and costs native terminal selection while mouse reporting is on,
+which LIMITATIONS already documents. Keyboard copy is the version that works everywhere the
+product claims to work, ssh included.
+
+### U-12 The agents screen grows hands
+`status: todo | owner: none | branch: none | depends: A5-11`
+`scope: internal/tui/agents/`
+
+Deliverable: acting on an agent from where you see it. Stop a running agent's turn. Remove a
+stopped agent, wired to `Engine.RemoveAgent`, confirmed, since it discards a conversation.
+Per-agent cost and tokens on the list rows and pane borders, which `summary()` already computes
+and only a placeholder currently shows. Tool calls in panes get their kind labels by threading
+the registry through, so the same call reads the same in a pane as in the chat.
+
+Acceptance: a runaway agent is stopped from the mosaic in two keystrokes without switching
+screens. Remove asks, names the agent, and refuses while a turn is in flight. Every pane border
+shows what its agent has cost, degrading gracefully at narrow widths. The stop key appears in
+the footer and the help overlay, per M-06's rule that nothing is reachable only by an unlisted
+key.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the screen for watching several agents currently cannot act on any of them; every action
+is a screen switch away, which at six agents is the difference between a glance and a tour.
+
+### U-13 Grants on the table
+`status: todo | owner: none | branch: none | depends: PG-M`
+`scope: internal/tui/chat/, internal/permission (callers only)`
+
+Deliverable: what has been allowed this session, visible and revocable. A `/grants` view backed
+by `Grants.Granted()`, whose doc comment has promised an interface since the day it was written,
+with revocation through `Grants.Revoke`. Scope rendered in the same words the prompt used when
+it was granted.
+
+Acceptance: press `a` on a prompt, and the grant appears with its scope. Revoke it, and the next
+matching call prompts again. An empty list says no standing permissions exist rather than
+showing nothing. The audit trail keeps recording either way; this shows standing permissions,
+`/trail` stays the record of what happened.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: `a` is one keystroke and currently irreversible for the life of the session, invisible
+five minutes later. A standing permission nobody can enumerate is a small lie of omission about
+who can do what, which is the exact class of thing this product exists to refuse.
+
+### U-14 Dispatch comes back with an answer
+`status: todo | owner: none | branch: none | depends: A5-08, A6-04`
+`scope: internal/session/, internal/tui/chat/`
+
+Deliverable: the fan-out gets a join. When a dispatched agent reaches a terminal state, the
+orchestrating conversation receives a bounded result at its next turn boundary, steering style:
+the agent's final text capped to a fixed budget, and its verification standing taken from the
+roll-up, never from the agent's own claim. The orchestrator can then compare and synthesise
+instead of the human relaying between screens.
+
+Acceptance: dispatch two agents at the same task and the orchestrator learns of both completions
+without the user switching screens, each summary within its token budget, each carrying the
+verifier's verdict for that agent's current revision, stale marked stale per A6. The injection
+is visible in the transcript as what it is. A child that produced nothing says so rather than
+being omitted. No summary is injected mid-turn.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: today the tool result says the agents are working and the parent never hears another
+word, so the comparison the product exists for is done by a person with a memory. Turn-boundary
+delivery reuses A5-07's queue semantics on purpose: one mechanism for things that arrive while
+the model is thinking. The cap plus the roll-up keeps this from becoming the context leak
+sub-agents were deferred for in D-40, and it deliberately does not resurrect A8-01; the children
+here are the flat dispatch A5-08 already ships, not nested agents.
+
+### PG-U Phase U gate
+`status: todo | depends: U-01, U-03, U-04, U-05, U-06`
+
+Both supervisors watch a person who has used Canopy once before run three agents at the same
+task, get rate limited, retry, answer a prompt from another screen, return to yesterday's
+conversation, and stop a runaway agent, all without touching the CLI or asking a question.
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
 # Retired tasks
 
 Replaced by the 2026-07-26 re-plan. Kept so the reasoning is not lost.
@@ -4314,3 +4902,4 @@ status or verification updates.
 | 2026-07-27 | Claude | Added phase M between A7 and A8, from Walid using the built program rather than its tests. Six tasks: system tools proven from the chat, input history, a detailed task list on screen, a new conversation key, a better logo, and the first ten minutes. Runs before A8. A4-10 hands its remaining half to M-03 and stays partial. Nothing renumbered. |
 | 2026-07-27 | Claude | Phase M built. Added `internal/tui/brand` for the mark, `internal/core/task.go` for the shared task shape, `cmd/canopy/worktrees.go` for a real worktree store, and `cmd/canopy/live_test.go` for the opt-in provider test. Storage schema went to version 5 for the task column. |
 | 2026-07-28 | Claude | Follow-ups from Codex's review of PRs #20 to #25, on `fix/review-followups`. Six defects fixed and two unreachable features wired. Storage schema went to version 7 for the mode column. The severe one was found on the way: the green gate never waited for the tests, so runway reverted every turn it was given. A8-05 and A8-08 were built and never called from anywhere, which is now the fourth time a complete package has shipped with nothing reaching it. |
+| 2026-07-28 | Claude | Added phases E and U after PG-A9, from an audit of the send path and of every screen rather than of this ledger: ten efficiency tasks and fourteen interface tasks, none of which blocks 0.1. Four blocks set back to partial where their prose outran the code: A3-06 (no auto compaction, meter blind to tool traffic), A2-07 (saving visible only in headless ask), A2-08 (chain has no caller), A8-03 (instructions parse and reach nothing). Notes added to A5-09 and A9-02. Principles recorded as D-42 to D-44, new questions Q-19 to Q-21. |
