@@ -49,10 +49,14 @@ func (e *Engine) WithGate(gate Gate) {
 func (e *Engine) keepGreen(ctx context.Context, sessionID, turnID string) {
 	e.mu.Lock()
 	gate := e.gate
-	mode := core.Mode{}
-	if stored, ok := e.sessionMode[sessionID]; ok {
-		mode = stored
-	}
+	// Through the resolver, not straight out of the map. A conversation reopened in runway has its
+	// mode waiting to be restored from history rather than sitting in sessionMode, and reading the
+	// map alone would find nothing, decide the mode does not keep the workspace green, and skip the
+	// check entirely. Runway would then look exactly like runway and revert nothing, which is the
+	// failure this whole file exists to prevent. It happens to work today only because a turn always
+	// resolves the mode on its way past for the system prompt, and depending on the order two
+	// unrelated things run in is not a safety property.
+	mode := e.modeLocked(sessionID)
 	e.mu.Unlock()
 
 	if gate == nil || !mode.KeepsGreen {

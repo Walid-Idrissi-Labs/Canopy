@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
 )
 
 // Modes are a safety setting, so every way out of one is a way past the permission layer.
@@ -179,4 +180,55 @@ func reopen(t *testing.T, path string, client *scriptedClient) *Engine {
 		t.Fatalf("WithStorage: %v", err)
 	}
 	return e
+}
+
+// A conversation reopened in runway is still checked after every turn.
+//
+// End to end, because nothing else covered the restored path reaching the gate at all. It does not
+// discriminate on how keepGreen reads the mode, and that is worth saying rather than leaving somebody
+// to discover it by mutating: a turn resolves the mode twice on its way past, once for the tool list
+// and once for the system prompt, so reading the map directly and reading it through the resolver
+// give the same answer by the time the gate is asked. The resolver is used there anyway, because
+// two unrelated pieces of code happening to run in the right order is not a safety property.
+func TestARestoredRunwayStillRunsTheGate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	client := &scriptedClient{name: "claude", events: reply("done")}
+
+	created := storedWithMode(t, path, client, core.ModeRunway)
+
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+	gate := &stubGate{green: false, reason: "2 of 14 tests failed"}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	e.WithGate(gate)
+	// Runway needs somewhere to put the workspace back to as well as something to check it with, or
+	// it is refused and this test would pass by never restoring runway at all. The taker is pointed
+	// at an empty directory: what is under test is whether the gate is asked, and the existing
+	// runway tests already tolerate a restore that cannot succeed.
+	e.WithCheckpoints(git.NewTaker(t.TempDir()))
+	// Errors are ignored rather than failed on, because the same callback carries the checkpoint
+	// failure this test deliberately arranges by pointing the taker at a directory that is not a
+	// repository.
+	if err := e.WithStorage(storage, func(error) {}); err != nil {
+		t.Fatalf("WithStorage: %v", err)
+	}
+
+	// Asserted before anything else touches the conversation, because what made this work by
+	// accident was a turn resolving the mode on its way past for the system prompt.
+	if got := e.Mode(created).Name; got != core.ModeRunway {
+		t.Fatalf("the conversation came back in %q, so this is not testing what it means to", got)
+	}
+
+	turnID, err := e.Send(created, "refactor the parser")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForTurn(t, e, created, turnID)
+
+	if gate.checks == 0 {
+		t.Error("the gate was never asked, so a restored runway kept a turn it should have reverted")
+	}
 }
