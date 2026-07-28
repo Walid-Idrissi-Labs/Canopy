@@ -3410,18 +3410,49 @@ samples each and labels a positive result as association rather than causation. 
 adds explicit project scoping and the outcome table; `internal/core` remains unchanged.
 
 ### A8-08 Run report export
-`status: todo | owner: none | branch: none | depends: PG-A6`
-`scope: cmd/canopy/`
+`status: review | owner: Claude | branch: feat/run-report | depends: PG-A6`
+`scope: internal/report/, cmd/canopy/report.go`
 
 Deliverable: one command producing a markdown summary of an agent's changes, test results and
 cost, suitable for a pull request body.
 
 Acceptance: the report never claims a verification state the evidence does not support.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: cheap, and it is the artefact that makes agent work reviewable by someone who was not
 watching.
+
+The rendering lives in `internal/report` rather than in `cmd/canopy`, so the honesty rules are
+testable without standing up a verifier and a repository.
+
+The acceptance criterion is one sentence about honesty and says nothing about formatting, which is
+right, because a pull request body is read by somebody deciding whether to merge, usually quickly,
+usually trusting it, and always without the screen it came from. Everywhere else in Canopy an
+unverified state is a colour that gets refreshed. Here it is a paragraph that outlives the run and
+gets pasted somewhere else.
+
+Five things it refuses to do, each with a test and each mutation checked:
+
+1. **Stale is never a pass, and never quietly omitted.** Dropping the tests because they had gone
+   stale reads as a change with no test story, which is a more flattering lie than saying the
+   evidence expired.
+2. **Nothing configured says so.** Rendering the zeroes would produce "0 of 0 required passing",
+   which looks like a suite that ran and found nothing wrong.
+3. **A green carries its caveat**, or this becomes the one place the failing optional test that
+   `Rollup.Caveat` exists to surface disappears again.
+4. **An unranked agent says it is unranked and why.** One omitted from a report looks like one
+   nobody compared, when it was compared and its evidence was not good enough to place.
+5. **Cost has three states**: a figure, a floor when some turns could not be priced, and not known.
+   Zero is a claim and would read as free.
+
+Nothing here computes a verdict of its own. Every state comes from the roll-up and the ranking,
+which already have tests proving they refuse to guess, and a second opinion assembled in a
+formatting package is how the two would come to disagree.
+
+Not wired to a command yet. Gathering a run means reading the verifier and the session store, which
+lives in `cmd/canopy/verification.go`, and that file had another branch open in it. The wiring is
+mechanical and the honesty rules are the part worth reviewing.
 
 ### A8-09 Shareable skills
 `status: todo | owner: none | branch: none | depends: A8-04`
