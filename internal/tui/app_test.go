@@ -50,15 +50,25 @@ func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 // not about conversations, so it answers with an empty session and records nothing.
 type stubEngine struct {
 	session core.Session
-	sent    []string
-	agents  []session.AgentStatus
-	added   []session.Agent
-	using   [2]string
-	created int
-	asking  bool
+	// sessions is for the few tests that need more than one, and so need the stub to be able to
+	// tell them apart. Everything else uses the single session above and does not care which ID it
+	// is asked for.
+	sessions map[string]core.Session
+	sent     []string
+	agents   []session.AgentStatus
+	added    []session.Agent
+	using    [2]string
+	created  int
+	asking   bool
 }
 
-func (e *stubEngine) Session(string) (core.Session, bool) { return e.session, true }
+func (e *stubEngine) Session(id string) (core.Session, bool) {
+	if e.sessions != nil {
+		s, ok := e.sessions[id]
+		return s, ok
+	}
+	return e.session, true
+}
 
 func (e *stubEngine) Send(_, prompt string) (string, error) {
 	e.sent = append(e.sent, prompt)
@@ -126,7 +136,17 @@ func launch(store core.SnapshotStore, keyStore keysui.Store) tea.Model {
 }
 
 func launchWith(store core.SnapshotStore, keyStore keysui.Store, engine tui.Engine) tea.Model {
-	app := tui.NewApp(store, keyStore, engine, "myproject", "claude").DismissSplash()
+	// The conversation is named, so these tests count only the conversations they start themselves.
+	// Left empty the application would open a new one, which is right in the product and would put
+	// every "how many were created" assertion below one out.
+	return launchSession(store, keyStore, engine, "session-1")
+}
+
+func launchSession(
+	store core.SnapshotStore, keyStore keysui.Store, engine tui.Engine, sessionID string,
+) tea.Model {
+	app := tui.NewAppConfigured(store, keyStore, engine, "myproject", "claude",
+		tui.AppOptions{Session: sessionID}).DismissSplash()
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	return next
 }

@@ -120,8 +120,11 @@ func runChat() error {
 	}
 	defer monitor.Close()
 
+	// The conversation the interface opens is the one the main agent was given, which is made fresh
+	// on every run. Leaving this out is what made `canopy` reopen the oldest chat in the history
+	// database while the agent it had just started talked to nobody.
 	return tui.RunAppConfigured(monitor, keyStore, engine, filepath.Base(dir), keyName, tui.AppOptions{
-		Review: review, Commands: commands, Costs: costs,
+		Review: review, Commands: commands, Costs: costs, Session: main.SessionID,
 	})
 }
 

@@ -109,6 +109,16 @@ type AppOptions struct {
 	Review   ReviewSource
 	Commands chat.Commands
 	Costs    CostOutcomeSource
+
+	// Session is the conversation to open. Empty starts a new one.
+	//
+	// Which conversation you land in is a decision for whoever ran Canopy, not for the interface, so
+	// it arrives here rather than being worked out here. This field replaces a hardcoded "session-1",
+	// which was correct on a machine with no history and wrong on every machine after that: the
+	// engine loads saved conversations at startup and numbers new ones from the highest it found, so
+	// "session-1" is the oldest chat in the database. Every launch opened it, while the agent that
+	// had just been created sat in a conversation nobody could see.
+	Session string
 }
 
 // NewApp builds the application.
@@ -141,15 +151,27 @@ func NewAppConfigured(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	options AppOptions,
 ) App {
+	credentials := keysui.New(keyStore)
+	model := credentials.ModelFor(keyName)
+
+	// Nothing named means a fresh conversation, made here because there is nothing to show
+	// otherwise. Starting a new one is the safe direction to be wrong in: an unwanted new
+	// conversation costs a keystroke to leave, and landing in the wrong old one is how somebody
+	// appends tonight's question to last week's context without noticing.
+	sessionID := options.Session
+	if sessionID == "" {
+		sessionID = engine.Create(keyName, model).ID
+	}
+
 	app := App{
 		screen:      screenSplash,
 		engine:      engine,
 		afterSplash: screenChat,
-		chat:        chat.New(engine, "session-1", dir, keyName),
+		chat:        chat.New(engine, sessionID, dir, keyName),
 		agents:      agentsui.New(engine),
 		dashboard:   New(store),
 		review:      NewReview(options.Review),
-		keys:        keysui.New(keyStore),
+		keys:        credentials,
 		cameFrom:    screenChat,
 		usingKey:    keyName,
 		dir:         dir,
@@ -159,7 +181,7 @@ func NewAppConfigured(
 	app.review.SetCostOutcomes(options.Costs)
 	// What a new agent inherits. Without it every agent created from that screen was built with an
 	// empty credential and an empty working directory, which fails on its first message.
-	app.agents.SetDefaults(keyName, keysui.New(keyStore).ModelFor(keyName), dir)
+	app.agents.SetDefaults(keyName, model, dir)
 	// The credential screen comes first when there is no credential to run on, which is not the same
 	// as having none stored. With several stored and none chosen there is no obvious default, and
 	// landing on the chat means typing a message and watching it fail, which is a worse introduction
