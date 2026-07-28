@@ -120,7 +120,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A4-04, A4-06 and A5-11 rerun and back in review. Next is A8-06, then A8-05 | `verify/permission-rerun`, then `feat/hooks-and-mcp` | none |
+| Claude | A8-06 then A8-05. A9-01 and the A3-06 and A5-06 acceptance run alongside | `feat/hooks-and-mcp` | none |
 | Codex | A8-04 and A8-07, plus independent verification of A6-05 and A5-09 | `feat/commands-and-cost` | none |
 
 ### 2.1 File boundary for this round
@@ -2654,7 +2654,7 @@ Acceptance: the estimate names what it is based on and how confident it is, and 
 when there is not enough history to estimate. A cap pauses before the next request rather than
 reporting the overspend afterwards. A paused agent can be resumed with a raised cap.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [x] 2026-07-27`
 
 notes: **added 2026-07-26.** Enforcement before the request rather than after is the difference
 between a guardrail and a receipt.
@@ -2667,9 +2667,17 @@ A request on a profile with no known rate is counted as uncosted rather than cou
 that has silently not been counting half the requests is worse than no cap, because it reads as
 reassurance, and Budget.Status says so.
 
-The estimate is crude and says so: a median cost per turn from turns that actually happened here,
-times a range of four to twenty five turns per agent. Below three priced turns it shows no number at
-all rather than pretending one expensive turn is a rate.
+The estimate is crude and says so: a median cost per turn from this project's turns whose
+significant task words overlap, times a range of four to twenty five turns per agent. Below three
+similar priced turns it shows no number at all rather than pretending one expensive turn is a rate.
+
+**Independent Codex verification 2026-07-27.** The cap path passed focused race tests: it refuses
+before registering the next turn, preserves the prior transcript, and resumes after a raised cap.
+The estimate did not meet its own prose: it ignored the task and sampled every loaded session from
+the shared history database. Fixed on `feat/commands-and-cost` by assigning new sessions a project
+identity, filtering to that project, matching significant task words, naming confidence, and
+refusing below three similar priced turns. Cross-project, unrelated-task and undersized-history
+tests cover the correction.
 
 ### A5-10 Agents view
 `status: review | owner: Claude | branch: feat/agent-runtime (merged) | depends: A5-06`
@@ -2822,7 +2830,7 @@ current revision, with diff size as a tiebreak.
 Acceptance: the ranking refuses to rank anything whose evidence is stale or unknown rather than
 guessing. The reason for each placement is visible.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [x] 2026-07-27`
 
 notes: **the strategic argument for the entire project.** Orca fans out across agents. Nobody
 appears to use test truth to rank the results.
@@ -2837,6 +2845,11 @@ changes that both pass, the shorter one has less to review and less to be wrong.
 Mutation tested. Turning the refusal into an ordinary "did not pass" makes two tests fail, and the
 mutant produced exactly the failure mode the design exists to prevent: a stale agent ranked second
 with "no required test passes", which reads as a verdict about its code.
+
+**Independent Codex verification 2026-07-27.** Focused race-enabled tests independently exercised
+passing-before-failing order, diff-size tiebreaks, stale refusal, never-run refusal and unknown
+revision refusal. Source tracing confirmed that only current required-test verdicts enter the
+ranked slice; unranked entries retain their visible refusal reason.
 
 ### A6-06 Ready to review queue
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-04`
@@ -3353,20 +3366,34 @@ command at execution time out of values Canopy does not control, and the point o
 committed is that a reviewer can read it and know what it will do.
 
 ### A8-04 Custom slash commands
-`status: todo | owner: none | branch: none | depends: A8-03`
-`scope: internal/agent/, internal/tui/`
+`status: review | owner: Codex | branch: feat/commands-and-cost | depends: A8-03`
+`scope: internal/config/commands.go, internal/tui/, internal/agent/ only if expansion cannot stay at the input boundary`
 
 Deliverable: user defined reusable prompts as `/commands`, per project and globally.
 
 Acceptance: a project command is available in that project only. Arguments are substituted safely.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [ ]   codex [x] 2026-07-27`
 
 notes: cheap once chat exists, and the first thing power users ask for.
 
+**Claimed 2026-07-27 by Codex.** The round file boundary is collision control, not permission to
+ship half a feature. Command discovery, completion, argument expansion and visible invocation belong
+at the chat input boundary. Project/global precedence and substitution rules belong beside the
+`config.Command` type. If the expanded prompt can enter the existing send path without changing
+`internal/agent`, that package stays untouched; otherwise the smallest explicit seam will be
+coordinated and documented.
+
+**Built 2026-07-27 by Codex.** Project commands in `canopy.json` shadow the optional global
+`commands.json` definition only for that run. `/commands` lists the active name, description and
+scope; `//` escapes a literal slash. `$ARGUMENTS` is copied literally in one non-recursive pass, and
+arguments are appended visibly when no placeholder exists. Unknown commands remain in the input
+box and never reach the model. Both files are strict, and a broken global file degrades only that
+layer with a warning. D-34, README and limitations record the contract.
+
 ### A8-05 Hooks and automations
-`status: todo | owner: none | branch: none | depends: A8-03, PG-A6`
-`scope: internal/agent/`
+`status: review | owner: Claude | branch: feat/hooks | depends: A8-03, PG-A6`
+`scope: internal/hooks/, internal/config/hooks.go`
 
 Deliverable: run something on an event. Tests green, auto commit. Tests red, notify. Agent idle,
 nudge.
@@ -3374,14 +3401,54 @@ nudge.
 Acceptance: a hook fires only on a real state transition, never on a stale or unknown one. A
 failing hook is visible and never silently swallowed.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: where verification and orchestration compound. The truth engine is what makes the triggers
 trustworthy, so hooks firing on unverified state would poison both.
 
+Its own package, `internal/hooks`, rather than a file under `internal/agent`. The scope line said
+otherwise and the scope line was wrong: hooks fire on verification state, which is the poller's
+output rather than the agent loop's, and `internal/session` was being edited on another branch at
+the time. Deciding what fires is split from running it, so the rules are testable without a shell.
+
+Three rules carry the acceptance criterion, and each is a way this goes quietly wrong.
+
+**A hook fires once per revision, not once per state.** The poller says where every workspace stands
+every couple of seconds, so firing on the state would be an auto-commit every two seconds for as long
+as the build stayed green. It also ends the loop that the first hook anybody writes creates: commit on
+green moves HEAD, which moves the revision, which makes the results stale, which makes them run and
+pass again.
+
+**Nothing fires on stale or unknown evidence.** A green that no longer describes the code is the
+failure this project exists to refuse, and a hook that commits on the strength of one writes that
+failure permanently into history. Stale is still recorded so the edge is tracked, which means passing,
+stale, passing fires twice. That is correct: the second pass is evidence about different code.
+
+**Agent events keep the edge rule instead**, because they are not claims about code. Keying `agent-idle`
+on the revision would fire it again because somebody edited a file, which the agent had nothing to do
+with.
+
+That last distinction was found by mutation testing rather than by design. Removing the edge check
+changed no test, which meant either the check was redundant or the tests were not covering it. It was
+worse than redundant: an agent whose tests pass, then works, then passes again would have had the
+second event suppressed if the poller never caught an intermediate state, silently skipping the commit
+for the second piece of work. Five mutations now, all caught.
+
+A hook learns why it ran from the environment rather than from substitution into its command, so the
+command in `canopy.json` is the command that runs. A reviewer should not have to simulate an expansion
+to know what will execute, and an agent name containing a quote should not be able to change the shape
+of a shell command.
+
+Unknown event names are refused at config load with the vocabulary listed, because a hook that
+silently never fires cannot be told apart from one that fires and does nothing.
+
+Not wired yet. The package is complete and tested and nothing calls `Observe`, which needs the poller
+in `internal/verify` or `cmd/canopy`, both of which had another branch open in them. That wiring is
+what PG-A8 will actually be demonstrating, so it is not optional.
+
 ### A8-06 MCP client
-`status: todo | owner: none | branch: none | depends: A4-04`
-`scope: internal/tools/mcp/`
+`status: claimed | owner: Claude | branch: feat/hooks-and-mcp | depends: A4-04`
+`scope: internal/tools/mcp/, internal/config/mcp.go, internal/config/config.go`
 
 Deliverable: connect to MCP servers and expose their tools to agents.
 
@@ -3395,32 +3462,76 @@ so the multi agent core is built on tools we control. The permission point is no
 third party tool is exactly the thing that most needs the same scrutiny as our own.
 
 ### A8-07 Cost versus outcome
-`status: todo | owner: none | branch: none | depends: PG-A6`
-`scope: internal/tui/`
+`status: review | owner: Codex | branch: feat/commands-and-cost | depends: PG-A6`
+`scope: internal/tui/, read-only session and verification interfaces; internal/core remains frozen`
 
 Deliverable: did the more expensive model actually pass more tests, on this project's own history.
 
 Acceptance: the comparison names its sample size and refuses to draw a conclusion from too little
 data.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [ ]   codex [x] 2026-07-27`
 
 notes: only meaningful because A2 makes cost exact and A6 makes outcome exact. Almost nothing else
 can answer this honestly.
 
+**Claimed 2026-07-27 by Codex.** This view will consume the existing exact-cost and current-evidence
+contracts rather than add a second scoring model. Unknown cost, stale evidence and undersized
+samples remain named states, not zeroes. Any missing read interface will be added at the narrowest
+existing owner rather than widening `internal/core`.
+
+**Built 2026-07-27 by Codex.** The review cycle now includes a project-only cost-versus-outcome
+pane. It persists one idempotent observation per session and verified revision, groups exact samples
+by model, shows median cost, required-test pass share and green count, and names unknown-cost and
+currently unrankable exclusions. Sessions that switched models are excluded rather than charged to
+their current model. It refuses a conclusion until at least two models have three exact
+samples each and labels a positive result as association rather than causation. SQLite schema 6
+adds explicit project scoping and the outcome table; `internal/core` remains unchanged.
+
 ### A8-08 Run report export
-`status: todo | owner: none | branch: none | depends: PG-A6`
-`scope: cmd/canopy/`
+`status: review | owner: Claude | branch: feat/run-report | depends: PG-A6`
+`scope: internal/report/, cmd/canopy/report.go`
 
 Deliverable: one command producing a markdown summary of an agent's changes, test results and
 cost, suitable for a pull request body.
 
 Acceptance: the report never claims a verification state the evidence does not support.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: cheap, and it is the artefact that makes agent work reviewable by someone who was not
 watching.
+
+The rendering lives in `internal/report` rather than in `cmd/canopy`, so the honesty rules are
+testable without standing up a verifier and a repository.
+
+The acceptance criterion is one sentence about honesty and says nothing about formatting, which is
+right, because a pull request body is read by somebody deciding whether to merge, usually quickly,
+usually trusting it, and always without the screen it came from. Everywhere else in Canopy an
+unverified state is a colour that gets refreshed. Here it is a paragraph that outlives the run and
+gets pasted somewhere else.
+
+Five things it refuses to do, each with a test and each mutation checked:
+
+1. **Stale is never a pass, and never quietly omitted.** Dropping the tests because they had gone
+   stale reads as a change with no test story, which is a more flattering lie than saying the
+   evidence expired.
+2. **Nothing configured says so.** Rendering the zeroes would produce "0 of 0 required passing",
+   which looks like a suite that ran and found nothing wrong.
+3. **A green carries its caveat**, or this becomes the one place the failing optional test that
+   `Rollup.Caveat` exists to surface disappears again.
+4. **An unranked agent says it is unranked and why.** One omitted from a report looks like one
+   nobody compared, when it was compared and its evidence was not good enough to place.
+5. **Cost has three states**: a figure, a floor when some turns could not be priced, and not known.
+   Zero is a claim and would read as free.
+
+Nothing here computes a verdict of its own. Every state comes from the roll-up and the ranking,
+which already have tests proving they refuse to guess, and a second opinion assembled in a
+formatting package is how the two would come to disagree.
+
+Not wired to a command yet. Gathering a run means reading the verifier and the session store, which
+lives in `cmd/canopy/verification.go`, and that file had another branch open in it. The wiring is
+mechanical and the honesty rules are the part worth reviewing.
 
 ### A8-09 Shareable skills
 `status: todo | owner: none | branch: none | depends: A8-04`
@@ -3452,15 +3563,55 @@ fire on a real state change.
 Goal: someone who is not us installs it and gets value without being told how.
 
 ### A9-01 Robustness sweep
-`status: todo | owner: none | branch: none | depends: PG-A8`
+`status: review | owner: Claude | branch: worktree-agent-a58ce100b84defd03 | depends: PG-A8`
+`scope: internal/exec/, internal/store/broker.go, internal/git/worktree.go, tests in internal/core, internal/session, internal/tools`
 
 Acceptance: timeouts terminate the right process group, no final state transition is dropped under
 load, huge output cannot freeze the UI, paths and branch names with spaces work, externally removed
 worktrees disappear safely, and quitting leaves no child processes behind.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-27   codex [ ]`
 
 notes: carries forward P4-01 to P4-07.
+
+**Claimed against an unsigned PG-A8, on instruction rather than by the rule.** A8-05 and A8-06 are
+being built right now, so the gate this depends on is not merely unsigned, its own dependencies are
+open. Recorded rather than glossed: the engine half of this sweep does not touch the extensibility
+layer, so nothing here waits on it, but the ledger's own dependency order was not followed and
+somebody reading it later should not have to work that out from the dates.
+
+Three of the six held already and are now covered rather than merely true. Three did not.
+
+- **Timeouts and the right process group.** The escalation was addressing a process group by the
+  leader's pid a quarter of a second after that leader may already have been reaped. A group id is
+  only reserved while the group has a member in it, so the second signal could land on a job started
+  by somebody else in the meantime. It now waits for the reap and asks whether anything is left
+  before signalling. The behavioural half, a timeout taking grandchildren with it, held and now has
+  its own test rather than sharing the cancellation one.
+- **Huge output.** The bound held for what the buffer kept and not for what it allocated: a single
+  large write was copied in whole and then trimmed, so eight megabytes arriving in one call cost
+  eight megabytes. It is trimmed before the copy now. This is the engine half only. See A9-02 for
+  the rest.
+- **Externally removed worktrees.** They did not disappear. Git keeps listing a worktree whose
+  directory was deleted, marked `prunable`, and discovery read the entry as an ordinary worktree
+  that happened to be somebody else's, which is the one ownership answer that stops Canopy tidying
+  it up. Prunable entries are dropped from discovery now.
+- **Quitting.** `Runner.CancelAll` asked every run to stop and returned without waiting for any of
+  them to. The signalling and the reaping happen on each run's own goroutine, so the program exited
+  in the gap. It waits now, bounded, for the same reason `exec.Run`'s own wait is bounded.
+- **Final transitions under load** held, and did not have a test with more than one publisher in it.
+  It does now. The adjacent guarantee did not hold: sequence numbers were assigned under the
+  broker's lock and queued outside it, so two publishers could deliver 7 before 6. `core.Event` says
+  they are never reordered, and with several agents streaming that claim was only true when one
+  goroutine was publishing. Queued under the lock now.
+- **Paths with spaces** held throughout, by construction rather than by accident: nothing in the git
+  or exec paths builds a shell command. **Branch names with spaces do not work and cannot**, because
+  git has no such ref. Canopy refuses one before building a command from it, which is what the
+  acceptance line can honestly mean, and the test establishes git's own refusal rather than assuming
+  it.
+
+Not done here, deliberately: the interface half of huge output, which is A9-02, and the Now board
+row, which has one line per agent and is being edited by the A8 work at the same time.
 
 ### A9-02 Interface robustness
 `status: todo | owner: none | branch: none | depends: PG-A8`

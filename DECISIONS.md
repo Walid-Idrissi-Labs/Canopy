@@ -690,6 +690,41 @@ supervisors decide; an agent must not silently choose whichever sentence matches
 
 ---
 
+## D-34 Commands expand at input; cost evidence is project and revision scoped. Decided 2026-07-27.
+
+Reusable slash commands are prompt aliases, not executable configuration. They resolve at the chat
+input boundary and the existing engine receives an ordinary prompt. The only substitution is the
+literal, one-pass `$ARGUMENTS` placeholder; argument text is never evaluated, recursively expanded,
+or passed to a shell by the command mechanism. A project command shadows a global command of the
+same name only in that project. `/commands` is reserved for the visible active catalog, and `//`
+escapes a literal leading slash.
+
+The global file is `commands.json` in Canopy's user config directory and has the same
+`{"commands": [...]}` shape as the project field. Both sources are strict: malformed definitions,
+unknown fields, unreachable names and duplicates are errors. A broken global file disables that
+optional layer with a warning; it does not disable valid project commands or the chat.
+
+Cost history is not machine-wide. Every new session is associated with the stable identity of the
+repository where Canopy started, because the SQLite file is shared across repositories and mixing
+them would make "this project's history" false. Pre-dispatch estimates use only priced turns from
+that project whose significant task words overlap, name a low, medium or high confidence band, and
+refuse a number below three matching turns.
+
+Cost versus outcome records one idempotent observation per project, session and verified revision.
+The sample joins the session's exact accumulated provider cost to the verifier's current required
+test counts. Unranked evidence is not converted into failure, and unknown cost is not converted into
+zero. A session that used more than one model is excluded rather than attributed to whichever model
+it happens to use now. The comparison names all exclusions and its exact sample size, requires two
+models with at least three exact samples each, and describes any result as association rather than
+causation.
+
+Any future command expansion, global configuration, session storage, cost estimate, ranking or
+review-screen change must preserve these scopes or explicitly supersede this decision. In
+particular, adding a general template evaluator or silently falling back to history from another
+project is a product-contract change, not a refactor.
+
+---
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

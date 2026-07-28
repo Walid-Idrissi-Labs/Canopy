@@ -67,6 +67,9 @@ type Project struct {
 	Commands []Command `json:"commands"`
 	Hooks    []Hook    `json:"hooks"`
 
+	// MCP lists Model Context Protocol servers to connect to. Their types and checks are in mcp.go.
+	MCP []MCPServer `json:"mcp"`
+
 	// Trust is the default trust level for agents here: read-only, confined, standard or broad.
 	// Empty means Canopy's own default rather than the most permissive one.
 	Trust string `json:"trust"`
@@ -157,7 +160,10 @@ func (p Project) Validate() error {
 	if err := p.validateCommands(); err != nil {
 		return err
 	}
-	return p.validateHooks()
+	if err := p.validateHooks(); err != nil {
+		return err
+	}
+	return p.validateMCP()
 }
 
 // insideWorktree refuses a path that would reach outside the project.

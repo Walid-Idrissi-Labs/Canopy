@@ -189,11 +189,22 @@ type Runner struct {
 
 	ids atomic.Uint64
 
+	// running counts the runs in flight, so shutting down can wait for their processes to have
+	// actually gone rather than only for the request to have been made. See CancelAll.
+	running sync.WaitGroup
+
 	mu     sync.Mutex
 	live   map[string]*liveRun
 	done   map[string]core.TestRun
 	output map[string]string
 }
+
+// shutdownGrace bounds how long CancelAll waits for the runs it stopped.
+//
+// Comfortably longer than the time a single run needs to die: Run gives a group a quarter of a
+// second to honour SIGTERM and then two more to respond to SIGKILL before it gives up on it. The
+// bound exists for the same reason that one does, which is that quitting must not be able to hang.
+const shutdownGrace = 5 * time.Second
 
 type liveRun struct {
 	cancel context.CancelFunc
@@ -245,7 +256,11 @@ func (r *Runner) Start(ctx context.Context, test Test, target Target) (string, e
 
 	r.onUpdate(queued)
 
+	r.running.Add(1)
 	go func() {
+		// Counted down last, after the context has been released, so that a shutdown waiting on this
+		// waits for the whole run to have unwound rather than for its last observable step.
+		defer r.running.Done()
 		defer cancel()
 
 		running := queued
@@ -331,10 +346,21 @@ func (r *Runner) Latest(workspaceID, testName string) (core.TestRun, bool) {
 	return best, found
 }
 
-// CancelAll stops every run in flight, which is what shutting down has to do.
+// CancelAll stops every run in flight and waits for them to have stopped, which is what shutting
+// down has to do.
 //
 // Without it, killing Canopy leaves a test suite and everything it spawned running, holding the
 // ports and the file handles that the next run will need.
+//
+// The waiting half is not a refinement of the cancelling half, it is the half that does the work.
+// Cancelling only asks: the signalling and the reaping happen on each run's own goroutine, inside
+// Run, and a caller that returned as soon as the requests were delivered would let the program exit
+// a moment before any of it happened. Every orphan this is supposed to prevent lives in that
+// moment.
+//
+// Bounded, because a process that ignores a kill is not going to start obeying and hanging on quit
+// would be a worse failure than an orphan. Somebody who cannot quit reaches for the thing that
+// leaves the orphans behind anyway.
 func (r *Runner) CancelAll() {
 	r.mu.Lock()
 	cancels := make([]context.CancelFunc, 0, len(r.live))
@@ -345,5 +371,16 @@ func (r *Runner) CancelAll() {
 
 	for _, cancel := range cancels {
 		cancel()
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		r.running.Wait()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(shutdownGrace):
 	}
 }

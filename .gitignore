@@ -19,3 +19,6 @@ canopy.local.yaml
 
 # macOS
 .DS_Store
+
+# Agent scratch worktrees. Never part of the repository they are cut from.
+.claude/

@@ -36,6 +36,14 @@ type Repo struct {
 	// package builds to run git inside a particular worktree, and a nil one simply means every hash
 	// is recomputed, which is correct and only slower.
 	revisions *Revisions
+
+	// outputLimit overrides maxGitOutputBytes. Zero means the constant.
+	//
+	// It exists so the truncation path can be tested at four kilobytes rather than by generating
+	// sixty four megabytes of git output, which would make the one test guarding the product's
+	// central claim too slow to keep running. That is a real reason to add a field, unlike testing
+	// convenience on its own.
+	outputLimit int
 }
 
 // OpenRepo returns a repository handle for a directory inside a working tree.
@@ -102,6 +110,19 @@ func parseWorktreeBlock(block string) (core.WorkspaceSnapshot, bool) {
 		case "bare":
 			// A bare repository has no working tree, so there is nothing for an agent to work in
 			// and nothing to report a dirty state for.
+			return core.WorkspaceSnapshot{}, false
+		case "prunable":
+			// Git's own word for a registration whose worktree is not there any more, most often
+			// because somebody deleted the directory outside Canopy. Git keeps listing the entry
+			// until `git worktree prune` runs, which is right for git and wrong for a discovery pass
+			// that is supposed to describe what exists.
+			//
+			// Dropped rather than reported, because everything downstream of discovery would have to
+			// invent a way to say "this row is about a directory that is gone": the revision would be
+			// unknown for a reason that reads as a git failure, the dirty state would error, and
+			// ownership would come back as external, which is the one answer that makes Canopy refuse
+			// to clean it up. A worktree that has been removed simply stops appearing, which is the
+			// whole reason discovery returns the set rather than a delta.
 			return core.WorkspaceSnapshot{}, false
 		}
 	}
@@ -393,11 +414,32 @@ func validateWorktreeName(name string) error {
 	return nil
 }
 
+// ErrOutputTruncated means git said more than Canopy read, so what came back is a fragment.
+//
+// It exists so callers can tell "git answered and here it is" from "git answered and you have some
+// of it". Those are different facts and only one of them can be parsed.
+var ErrOutputTruncated = errors.New("git produced more output than Canopy read in one pass")
+
+// maxGitOutputBytes is what git may return to us.
+//
+// Far above the general command bound, because everything here is machine-readable output that gets
+// parsed rather than shown: a status listing, a raw diff, a tree hash. Half a status listing is not
+// a smaller status listing, it is a wrong one. Still bounded rather than unlimited, because reading
+// an unbounded amount into memory on the strength of another program's behaviour is how a worktree
+// with a large generated directory takes the whole process down.
+const maxGitOutputBytes = 64 * 1024 * 1024
+
 func (r *Repo) run(ctx context.Context, args ...string) (string, error) {
+	limit := r.outputLimit
+	if limit <= 0 {
+		limit = maxGitOutputBytes
+	}
+
 	result, err := exec.Run(ctx, "git", args, exec.Options{
-		Dir:     r.dir,
-		Env:     environ(),
-		Timeout: 60 * time.Second,
+		Dir:       r.dir,
+		Env:       environ(),
+		Timeout:   60 * time.Second,
+		MaxOutput: limit,
 	})
 	if err != nil {
 		return "", err
@@ -408,6 +450,16 @@ func (r *Repo) run(ctx context.Context, args ...string) (string, error) {
 	if result.ExitCode != 0 {
 		return "", fmt.Errorf("git %s exited %s: %s",
 			args[0], strconv.Itoa(result.ExitCode), strings.TrimSpace(result.Output))
+	}
+	// The general output bound keeps the first half and the last half and drops the middle, which is
+	// right for a test log somebody reads and catastrophic for anything parsed. A status listing with
+	// its middle removed still parses, still produces a digest, and that digest is stable against
+	// every edit inside the part that was dropped. That is a passing result surviving the change
+	// that broke it, which is the one thing this project exists to refuse. So truncation is an error
+	// here, at the boundary, rather than a caveat every one of the thirty three callers has to
+	// remember.
+	if result.Truncated > 0 {
+		return "", fmt.Errorf("git %s: %w (%d bytes dropped)", args[0], ErrOutputTruncated, result.Truncated)
 	}
 	return strings.TrimSpace(result.Output), nil
 }

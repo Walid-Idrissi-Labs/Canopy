@@ -107,8 +107,9 @@ func (b *Broker) Subscribe(afterSequence uint64) <-chan core.Event {
 // counters is two chances to disagree.
 func (b *Broker) Publish(ev core.Event) uint64 {
 	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	if b.closed {
-		b.mu.Unlock()
 		return 0
 	}
 	b.seq++
@@ -116,17 +117,20 @@ func (b *Broker) Publish(ev core.Event) uint64 {
 	if ev.At.IsZero() {
 		ev.At = b.now()
 	}
-	subs := make([]*subscriber, 0, len(b.subs))
-	for sub := range b.subs {
-		subs = append(subs, sub)
-	}
-	seq := b.seq
-	b.mu.Unlock()
 
-	for _, sub := range subs {
+	// Queued under the same lock that assigned the sequence, and this is load bearing rather than
+	// convenient. Assigning the number and then queueing outside the lock lets two publishers
+	// interleave: one takes 6, the other takes 7, and whichever the scheduler runs first is the one
+	// the subscriber sees first. Sequence numbers that only arrive in order when a single goroutine
+	// is publishing are not the guarantee core.Event describes, and with several agents streaming at
+	// once a single goroutine is exactly what is not happening.
+	//
+	// Cheap, because enqueue never blocks. It appends to the subscriber's own queue and pokes its
+	// pump without waiting for anybody to read, so a slow consumer still cannot hold a publisher up.
+	for sub := range b.subs {
 		sub.enqueue(ev)
 	}
-	return seq
+	return b.seq
 }
 
 // Sequence returns the current event sequence number.

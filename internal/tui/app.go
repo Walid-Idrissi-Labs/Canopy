@@ -104,6 +104,13 @@ type App struct {
 	dim Dimensions
 }
 
+// AppOptions are the capabilities resolved for the project this application is opening.
+type AppOptions struct {
+	Review   ReviewSource
+	Commands chat.Commands
+	Costs    CostOutcomeSource
+}
+
 // NewApp builds the application.
 //
 // A run with no credentials still opens on the credential screen, and leaving it lands on chat. The
@@ -126,6 +133,14 @@ func NewAppWithReview(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	review ReviewSource,
 ) App {
+	return NewAppConfigured(store, keyStore, engine, dir, keyName, AppOptions{Review: review})
+}
+
+// NewAppConfigured builds the application with project-specific capabilities.
+func NewAppConfigured(
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
+	options AppOptions,
+) App {
 	app := App{
 		screen:      screenSplash,
 		engine:      engine,
@@ -133,13 +148,15 @@ func NewAppWithReview(
 		chat:        chat.New(engine, "session-1", dir, keyName),
 		agents:      agentsui.New(engine),
 		dashboard:   New(store),
-		review:      NewReview(review),
+		review:      NewReview(options.Review),
 		keys:        keysui.New(keyStore),
 		cameFrom:    screenChat,
 		usingKey:    keyName,
 		dir:         dir,
 		dim:         Dimensions{Width: 80, Height: 24},
 	}
+	app.chat.SetCommands(options.Commands)
+	app.review.SetCostOutcomes(options.Costs)
 	// What a new agent inherits. Without it every agent created from that screen was built with an
 	// empty credential and an empty working directory, which fails on its first message.
 	app.agents.SetDefaults(keyName, keysui.New(keyStore).ModelFor(keyName), dir)
@@ -615,6 +632,14 @@ func RunAppWithReview(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	review ReviewSource,
 ) error {
+	return RunAppConfigured(store, keyStore, engine, dir, keyName, AppOptions{Review: review})
+}
+
+// RunAppConfigured starts the application with project-specific capabilities.
+func RunAppConfigured(
+	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
+	options AppOptions,
+) error {
 	// Mouse reporting is asked for so the wheel arrives as a wheel.
 	//
 	// Without it, a terminal in the alternate screen translates the wheel into arrow key sequences,
@@ -629,7 +654,7 @@ func RunAppWithReview(
 	// full screen program pays for the wheel, and the trade is worth making in the direction that
 	// does not silently eat what somebody was typing.
 	program := tea.NewProgram(
-		NewAppWithReview(store, keyStore, engine, dir, keyName, review),
+		NewAppConfigured(store, keyStore, engine, dir, keyName, options),
 		tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := program.Run()
 	return err
