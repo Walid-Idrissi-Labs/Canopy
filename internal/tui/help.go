@@ -54,6 +54,7 @@ func bindings() []section {
 			{"ctrl+k", "credentials"},
 			{"ctrl+r", "compact the conversation"},
 			{"pgup / pgdown", "scroll the conversation, or the btw panel while it is up"},
+			{"mouse drag", "select conversation text, copied when you let go"},
 			{"ctrl+home / ctrl+end", "the top, and back to following"},
 			{"alt+enter", "a line break instead of sending"},
 			{"y", "allow a tool call once, while a question is up"},
