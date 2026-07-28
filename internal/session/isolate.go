@@ -141,11 +141,35 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 // The per conversation override wins over the agent's own level because it is both the more specific
 // and the more recent, and because it is the one somebody made on purpose while watching that
 // conversation. The agent's level wins over the engine's for the same reason one step up.
+//
+// **The configured level is a ceiling and not merely a default.** A mode may lower what an agent can
+// do and may never raise it, which is the rule SetMode's own documentation states, and which this
+// function did not enforce. It returned the mode's level outright, so anything that put a session
+// into a mode above its configuration handed it permissions its profile said it could never have.
+//
+// That was reachable without anybody choosing it. There is no mode at confined, so the default for a
+// confined agent resolved through ModeForTrust to build, whose level is standard, and a confined
+// agent ran with the shell and every other execute tool. Confinement is not a preference: it is the
+// property that makes an isolated agent's worktree a boundary rather than a suggestion.
 func (e *Engine) trustForLocked(sessionID string) core.TrustLevel {
-	if mode := e.modeLocked(sessionID); mode.Trust != "" {
+	configured := e.configuredTrustLocked(sessionID)
+
+	mode := e.modeLocked(sessionID)
+	if mode.Trust == "" {
+		return configured
+	}
+	if !configured.Valid() {
+		// Nothing is configured, so there is no ceiling to apply. An unset level is the absence of a
+		// limit rather than a limit of zero, and reading it as zero would leave every conversation
+		// with no configured trust unable to do anything, which is how this first went wrong.
 		return mode.Trust
 	}
-	return e.configuredTrustLocked(sessionID)
+	if configured.AtLeast(mode.Trust) {
+		// The mode is at or below what this agent is allowed, so it is the more specific answer.
+		return mode.Trust
+	}
+	// The mode asks for more than the agent has. The agent's configuration wins, always.
+	return configured
 }
 
 // configuredTrustLocked is the level this conversation was set up with, ignoring any mode chosen
