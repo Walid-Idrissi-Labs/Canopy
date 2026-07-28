@@ -3653,8 +3653,8 @@ box and never reach the model. Both files are strict, and a broken global file d
 layer with a warning. D-34, README and limitations record the contract.
 
 ### A8-05 Hooks and automations
-`status: claimed | owner: Claude | branch: feat/hooks | depends: A8-03, PG-A6, Q-17`
-`scope: internal/hooks/, internal/config/hooks.go`
+`status: claimed | owner: Claude | branch: hooks/loop-guard | depends: A8-03, PG-A6`
+`scope: internal/hooks/, internal/config/hooks.go, internal/verify/verify.go`
 
 Deliverable: run something on an event. Tests green, auto commit. Tests red, notify. Agent idle,
 nudge.
@@ -3664,10 +3664,28 @@ failing hook is visible and never silently swallowed.
 
 `verify: claude [ ]   codex [ ]`
 
-notes: **back to claimed on 2026-07-28.** Two parts of the acceptance are unmet now that the wiring
-makes the package reachable: a failing hook is only visible when Canopy exits, and a committing hook
-fires again at the revision its own commit produced. Neither can be signed off as done, and the
-earlier signature was given when nothing called any of this.
+notes: **still claimed on 2026-07-28, with one of the two open clauses closed and one open.** The
+earlier signature was given when nothing called any of this, which is why it came off.
+
+**Closed: the self-retrigger loop.** Q-17 is resolved and recorded as D-39. A revision that appeared
+between a hook firing and that hook returning is claimed as the hook's own, so a committing hook no
+longer fires on its own commit. What made this tractable is that the recognisable thing is the
+interval rather than the revision: every property of a revision fails to identify who made it, but
+the runner already holds the revision the hook fired at and can read it again when the hook returns.
+Mutation checked, and without the guard the loop test runs the hook ten times out of ten instead of
+once. A companion test pins that work somebody actually did still fires, because over-suppressing here
+would silently skip the commit for the next piece of real work.
+
+**Open: a failing hook is only visible when Canopy exits.** The report exists, carries the command,
+the output and the error, and reaches `recordHook`, and there is nowhere on screen for it to go. A
+long session can therefore hide a broken hook for hours, which is the exact failure the second
+acceptance clause names, since the point of automation is that somebody stops watching.
+
+That half needs a surface in `internal/tui`, which is Codex and Ali's side of the file boundary for
+this round. Per the boundary rule this is asked for rather than reached across: **a place to show hook
+failures, fed by `verification.HookFailures()`, which already exists and already returns them.** Until
+that lands this task cannot go to review, because half of its acceptance sentence is about being
+visible.
 
 where verification and orchestration compound. The truth engine is what makes the triggers
 trustworthy, so hooks firing on unverified state would poison both.

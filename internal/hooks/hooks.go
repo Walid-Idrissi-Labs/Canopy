@@ -304,12 +304,12 @@ func (r *Runner) run(parent context.Context, obs Observation, event Event, hook 
 
 // ownRevision claims whatever the hook just produced, so the hook does not fire on its own work.
 //
-// This is the answer to Q-17 and it is the only rule available that does not depend on trusting the
-// hook. A committing hook otherwise re-triggers itself forever: it commits, HEAD moves, the results
-// go stale, the tests run again, they pass again, and at a new revision the once-per-revision guard
-// is satisfied again. `git commit -am` fails harmlessly the second time around and
-// `git commit -am --allow-empty` does not, so a repository fills with empty commits for as long as
-// the session runs.
+// This is the answer to Q-17, recorded as D-39. It is the only rule available that does not depend
+// on trusting the hook. A committing hook otherwise re-triggers itself forever: it commits, HEAD
+// moves, the results go stale, the tests run again, they pass again, and at a new revision the
+// once-per-revision guard is satisfied again. `git commit -am` fails harmlessly the second time
+// around and `git commit -am --allow-empty` does not, so a repository fills with empty commits for
+// as long as the session runs.
 //
 // What makes a revision recognisable is not anything about the revision itself. Comparing the commit
 // author catches nothing when the hook commits as the user, and remembering one revision fails when
