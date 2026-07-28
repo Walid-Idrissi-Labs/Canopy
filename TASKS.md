@@ -132,8 +132,10 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 ### 2.0 Where this actually stands
 
-Counts on `main` at the time of writing: 80 review, 16 todo, three claimed, three partial, one
-blocked, **zero done**.
+Counts in this branch after the six D-40 deferrals: 80 review, 13 todo, three claimed, zero partial,
+one blocked, six deferred, **zero done**. The pre-change `main` snapshot was 80 review, 16 todo,
+three claimed, three partial and one blocked; quoting that snapshot here after changing six states
+would make the rewritten board stale inside its own commit.
 
 The number that matters is a different one. **76 task lines carry `claude [x]` and nine carry
 `codex [x]`.** By the definition in section 1.2 that means one pair has built nine phases and the
@@ -189,18 +191,24 @@ which is not what the rule is for.
 
 ### 2.2 What is left before 0.1
 
-1. **Q-18** needs both supervisors. Servers start once for the project, so isolated agents get no
-   MCP tools (D-38). That lands the cost on the fan out, which is the product's central argument.
-2. **The independent verification pass**, which is the whole of Codex's column above and the only
+1. **The four tasks that are still claimed or blocked must be resolved and their ledger states
+   updated:** A6-03 (test command contract), A8-05 (hook loop and visible failures), A8-06 (reachable
+   MCP), and A9-01 (process robustness). Their corrective branches are open; an open branch is not
+   release evidence.
+2. **The MCP workspace decision introduced by `mcp/hardening`** needs both supervisors if that
+   branch lands. It is Q-18/D-38 on that branch: servers start once for the project, so isolated
+   agents get no MCP tools. Until the branch merges, those identifiers are proposed context rather
+   than authority in `main`.
+3. **The independent verification pass**, which is the whole of Codex's column above and the only
    route to a signed phase gate.
-3. **A9-02**, interface robustness: 80 columns, resize, rapid updates, no colour, large output, and
+4. **A9-02**, interface robustness: 80 columns, resize, rapid updates, no colour, large output, and
    quit with several agents live.
-4. **PG-M**, which is the release blocker. No tag until M-01, M-03 and M-06 are signed, and only the
+5. **PG-M**, which is the release blocker. No tag until M-01, M-03 and M-06 are signed, and only the
    pair that did not build them can sign them.
-5. **A clean-machine install**, and a first run with nobody coaching.
+6. **A clean-machine install**, and a first run with nobody coaching.
 
-Everything else for 0.1 is either done and waiting to be checked, or cut on purpose and recorded in
-D-40.
+Outside the unfinished tasks named above, the remaining 0.1 scope is either implemented and waiting
+for independent verification, or cut on purpose and recorded in D-40.
 
 ### 2.3 How the project got here
 
