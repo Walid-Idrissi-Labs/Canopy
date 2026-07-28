@@ -817,6 +817,28 @@ process rather than a signal delivered to somebody else's work.
 
 This supersedes the narrowing recorded against A9-01, which is closed by it rather than accepted.
 
+## D-38 MCP servers are started once for the project, and isolated agents do not get their tools. Decided 2026-07-28.
+
+Wiring MCP up forced a question the package could avoid while nothing called it: which agents get the
+tools, and where does the server run.
+
+Servers start once, in the project directory, when the conversation opens, and stop when it closes.
+The alternative is a set of servers per worktree, which is the more obviously correct answer and is
+the one this rejects for now, because a fan out of three agents would then start three of everything
+and MCP servers are frequently a package manager fetching something before they answer at all.
+
+The consequence is that a server is rooted at the project and not at any agent's worktree, and that
+decides the second half. **An isolated agent does not get MCP tools.** Its confinement is enforced by
+having its file and shell tools rooted at its own worktree, and a tool that reaches a program started
+somewhere else is a way around that, through a capability Canopy cannot see inside. Giving those
+tools to a broad isolated agent would hand it an unaudited write outside the boundary D-33 defines.
+It is not a hypothetical: a filesystem MCP server is one of the most commonly configured ones there
+is.
+
+So the conversation's own agent gets them and the isolated ones do not. That is a real reduction in
+what fan out can do, it is recorded in LIMITATIONS.md rather than left to be discovered, and Q-18
+carries the per-worktree design that would lift it.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
