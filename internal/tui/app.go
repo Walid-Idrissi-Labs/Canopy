@@ -610,6 +610,8 @@ func (a App) View() string {
 			Screen: "chat",
 			Parts:  a.chat.ContextParts(),
 			Mode:   a.chat.Mode(),
+			// Only once the opening screen has gone, which is drawing the name itself.
+			Wordmark: !a.chat.Blank(),
 		}, a.chat.Body(), footer)
 	case screenKeys:
 		return Frame(a.dim, Status{Screen: "credentials"}, a.keys.Body(), a.keys.Footer())

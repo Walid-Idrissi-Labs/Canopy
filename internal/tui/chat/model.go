@@ -21,6 +21,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/brand"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -297,12 +298,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			// rescheduled, which is what ends it.
 			return m, nil
 		}
-		if !m.blank() {
-			// The moment there is a conversation there is no opening screen to animate, and the
-			// ticker is not scheduled again, so the mark stops costing anything at all rather than
-			// going on redrawing something nobody can see. A new conversation starts a new one.
-			return m, nil
-		}
+		// It used to stop the moment a conversation started, because the opening screen was the
+		// only thing drawing it. The box corner now carries the same fire once the opening screen
+		// has gone, so it keeps going: there is something to animate in both states and exactly one
+		// ticker driving it either way.
 		m.markStep++
 		return m, markTick(m.markGeneration)
 
@@ -810,6 +809,12 @@ func (m Model) blank() bool {
 	return (!m.loaded || len(m.session.Turns) == 0) && !m.awaiting
 }
 
+// Blank reports whether this conversation is still on its opening screen.
+//
+// Exported for the shell, which draws the name in the header only once the opening screen has gone.
+// Two copies of the name on one screen, one in the middle and one in the corner, is one too many.
+func (m Model) Blank() bool { return m.blank() }
+
 func (m Model) transcript() []string {
 	var lines []string
 	if len(m.session.Turns) > 0 {
@@ -1194,8 +1199,30 @@ func (m Model) boxTop(left, right, horizontal string, width int) string {
 	}
 
 	rest := width - lipgloss.Width(label) - 3
+
+	// The campfire rides on the right hand end of the rule, once the opening screen has gone.
+	//
+	// The mark in the corner of the opening screen is the same fire, and it disappears with that
+	// screen. Losing it entirely the moment somebody says something makes the program feel like two
+	// programs, so it moves here: five cells at the far end of a rule that was empty anyway.
+	//
+	// **It is lit while the agent is working and out when it is not**, which is the part that earns
+	// it the space. A spinner already says something is happening and says it in the status row,
+	// where somebody has to look. This says the same thing in the corner of the box they are already
+	// looking at, and it says the opposite just as clearly: a fire that has gone out is a turn that
+	// has finished. The shape changes as well as the colour, so it still reads under NO_COLOR.
+	fire := ""
+	if !m.blank() && rest >= brand.EmberWidth+2 {
+		if m.working || m.compacting {
+			fire = " " + t.Flame.Render(brand.Ember(m.markStep)) + " "
+		} else {
+			fire = " " + t.Smoke.Render(brand.EmberOut) + " "
+		}
+		rest -= brand.EmberWidth + 2
+	}
+
 	return t.Border.Render(left+horizontal) + " " + written + " " +
-		t.Border.Render(strings.Repeat(horizontal, rest)+right)
+		t.Border.Render(strings.Repeat(horizontal, rest)) + fire + t.Border.Render(right)
 }
 
 // Context is what the frame shows beside the title.

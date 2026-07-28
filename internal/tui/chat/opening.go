@@ -117,11 +117,15 @@ func (o opening) head() []string {
 		framed := framedWordmark(brand.Large(), brand.LargeWidth)
 		indent := o.indentFor(brand.LargeWidth + 4)
 
-		head := make([]string, 0, len(framed)+1)
+		// No written name under it, which is a departure from the rule below and was asked for
+		// directly. The rule is not abandoned: the header above this draws "canopy" in text on every
+		// screen, so the written name is still on screen for anything that cannot read block letters,
+		// it is simply not repeated twice in the same eyeful.
+		head := make([]string, 0, len(framed))
 		for _, line := range framed {
 			head = append(head, indent+line)
 		}
-		return append(head, o.centre(o.fits("Canopy, "+brand.Tagline, "Canopy"), t.Muted))
+		return head
 	}
 
 	if drawn := brand.Wordmark(o.width); drawn != nil {

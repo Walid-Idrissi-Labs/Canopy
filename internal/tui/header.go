@@ -61,6 +61,13 @@ type Status struct {
 
 	// Mode is the trust level this conversation is running at, empty on screens that have none.
 	Mode string
+
+	// Wordmark asks for the drawn name in the corner.
+	//
+	// False on a conversation that has not started yet, because the opening screen draws the name in
+	// the middle of the screen at four times this size. Two copies of it at once is one too many, and
+	// the one in the corner is the one that is redundant there.
+	Wordmark bool
 }
 
 // modeStyle colours a mode by how much it is allowed to do without asking.
@@ -170,8 +177,11 @@ func shortHeader(inner int, s Status) string {
 func tallHeader(inner int, s Status) string {
 	t := theme.Current()
 
-	drawn := brand.Wordmark(brand.WordmarkWidth)
-	markWidth := brand.WordmarkWidth
+	var drawn []string
+	markWidth := 0
+	if s.Wordmark {
+		drawn, markWidth = brand.Wordmark(brand.WordmarkWidth), brand.WordmarkWidth
+	}
 	if inner < markWidth+headerGap+minimumFactsWidth {
 		// No room for both, and the facts win. A header that is mostly logo is an advertisement.
 		drawn, markWidth = nil, 0
