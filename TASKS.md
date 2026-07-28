@@ -120,7 +120,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A8-06 then A8-05. A9-01 and the A3-06 and A5-06 acceptance run alongside | `feat/hooks-and-mcp` | none |
+| Claude | A5-11, the mosaic agents view, at Walid's direction. A8-06 and A8-05 resume after | `tui/agent-mosaic` | none |
 | Codex | A6 freshness, runner and review-queue hardening | `verify/freshness-and-ranking` | A6-03 contradicts D-05; Q-16 needs both supervisors |
 
 ### 2.1 File boundary for this round
@@ -2703,6 +2703,42 @@ Reached from the chat, which is the home screen. This is where the P1-07 dashboa
 Four live streams into one terminal is also where the coalescing rules from P1-01 stop being
 theoretical. Mouse support is additive only, since the tool has to stay usable over ssh where mouse
 reporting may not survive.
+
+### A5-11 Mosaic agents view
+`status: claimed | owner: Claude | branch: tui/agent-mosaic | depends: A5-10`
+`scope: internal/tui/agents/, internal/tui/app.go (agents routing and footer only), internal/tui/help.go (agents rows only)`
+
+Deliverable: the agents screen becomes the place you see every agent at once, not two of them.
+Four layouts:
+
+- **mosaic**, a tiled grid of all agents, up to eight panes, sized by count and terminal width,
+  with paging when there are more agents than tiles
+- **hero**, the selected agent across the whole top half, everyone else sharing the bottom half in
+  vertical slices
+- **list** and **focus**, unchanged in spirit from A5-10
+
+Every pane carries its own chrome: the agent's name, state and model in its top border, and the
+ember from the chat box riding its bottom border, lit with a dancing tip while that agent works,
+grey coals when it is not. The wordmark stays on the application header and appears in no pane.
+
+Digits 1 to 8 jump to a pane. The digit of the pane you are already on opens its conversation, as
+does enter, so reaching an agent to say something is two keystrokes from anywhere. h/j/k/l and the
+arrows move spatially in the grid. Layouts cycle on v.
+
+Acceptance: eight agents render as a full grid with no line wider than the terminal and no pane
+narrower than readable. A ninth agent is reachable by paging and the screen says it is off screen
+rather than hiding it. Each pane's ember reflects its own agent's state, not the cursor's. Jumping
+by digit lands on the agent the pane shows. Falls back layout by layout on a narrow terminal
+rather than tearing. The animation schedules no tick while the screen is not showing or nothing is
+working.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: claimed 2026-07-28 at Walid's direction, which is why this crosses the section 2.1 TUI
+boundary: the supervisor asked for it directly and the app.go and help.go edits are confined to
+the agents screen's own rows. This supersedes the split mode from A5-06 and the pane half of
+A5-10: split-of-two becomes the two agent case of mosaic. The A5-10 acceptance line "four agents
+stream simultaneously in split mode" is inherited here as the four agent mosaic case.
 
 ### PG-A5 Phase A5 gate
 `status: todo | depends: A5-07, A5-08, A5-09, A5-10`
