@@ -314,3 +314,25 @@ func longestRun(value string) int {
 	}
 	return longest
 }
+
+// Three numbers, and the line used to print the first against the third. A project with four tests
+// and three of them required, all passing, came out as "4 of 3 required passing", which reads as a
+// ratio and is not one.
+func TestThePassingCountIsAgainstTheTotalNotTheRequiredCount(t *testing.T) {
+	run := green()
+	run.Rollup = core.Rollup{
+		Green: true, Reason: "every required test passed",
+		Tests: core.TestPassing, TestsPassing: 4, TestsTotal: 4, RequiredTests: 3,
+	}
+
+	out := Markdown(run)
+	if strings.Contains(out, "4 of 3") {
+		t.Errorf("the passing count was printed against the required count:\n%s", out)
+	}
+	if !strings.Contains(out, "4 of 4 passing") {
+		t.Errorf("the passing count is not against the total:\n%s", out)
+	}
+	if !strings.Contains(out, "3 required") {
+		t.Errorf("the required count was dropped:\n%s", out)
+	}
+}

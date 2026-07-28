@@ -7,6 +7,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ usage:
   canopy keys          manage provider credentials
   canopy ask           send one message to a provider and stream the reply
   canopy search        find a message across every saved conversation
+  canopy report        run this repository's checks and print a markdown summary
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
   canopy demo          drive the stale flip and show it happening
@@ -75,6 +77,11 @@ func run(args []string) error {
 	// the moment somebody searched for something beginning with a dash.
 	if command == "search" || command == "find" {
 		return runSearch(args[1:], os.Stdout)
+	}
+	// report reads the repository it is run in and takes no options, so it is dispatched before the
+	// shared flag set, whose only flag is about the fake project this has nothing to do with.
+	if command == "report" {
+		return runReport(context.Background(), os.Stdout)
 	}
 
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)

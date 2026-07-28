@@ -91,8 +91,14 @@ func verdict(run Run) string {
 	}
 
 	if r.TestsTotal > 0 {
-		fmt.Fprintf(&b, "\n- Tests: %s, %d of %d required passing\n",
-			r.Tests, r.TestsPassing, r.RequiredTests)
+		// Passing out of the total, and the required count said separately.
+		//
+		// These are three numbers and the line used to print the first against the third, which reads
+		// as one ratio and is not one: a project with four tests and three of them required, all
+		// passing, came out as "4 of 3 required passing". Beyond looking wrong, it is the pairing that
+		// hides the case this section exists for, where a passing count is carried by optional tests.
+		fmt.Fprintf(&b, "\n- Tests: %s, %d of %d passing, %d required\n",
+			r.Tests, r.TestsPassing, r.TestsTotal, r.RequiredTests)
 	}
 	if r.ServicesTotal > 0 {
 		fmt.Fprintf(&b, "- Services: %s, %d of %d up\n", r.Services, r.ServicesUp, r.ServicesTotal)

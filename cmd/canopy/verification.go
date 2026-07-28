@@ -18,7 +18,6 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
-	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
@@ -200,17 +199,7 @@ func startVerification(
 		base = defaultBranch(ctx, repo)
 	}
 
-	tests := make([]execpkg.Test, 0, len(project.Tests))
-	for _, test := range project.Tests {
-		tests = append(tests, execpkg.Test{
-			Name:     test.Name,
-			Command:  test.Command,
-			Required: test.Required,
-			Timeout:  test.TestTimeout(),
-		})
-	}
-
-	verifier := verify.New(repo, base, tests, nil)
+	verifier := verify.New(repo, base, testsFor(project), nil)
 
 	// The poller feeds the verifier and nothing else, so the two are wired directly rather than
 	// through the event bus. Going through the bus would mean the verifier learning a revision
