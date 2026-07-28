@@ -495,12 +495,12 @@ func TestScrollingAwayFromTheTailSaysSo(t *testing.T) {
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
-	if !strings.Contains(plain(m.Body()), "more lines below") {
+	if !strings.Contains(plain(m.Body()), "more below") {
 		t.Errorf("scrolling up should say the view is no longer following:\n%s", plain(m.Body()))
 	}
 
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlEnd})
-	if strings.Contains(plain(m.Body()), "more lines below") {
+	if strings.Contains(plain(m.Body()), "more below") {
 		t.Error("ctrl+end should return to following the tail")
 	}
 }
@@ -518,7 +518,7 @@ func TestSendingReturnsToTheTail(t *testing.T) {
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 
 	m = press(typeText(m, "next question"), tea.KeyEnter)
-	if strings.Contains(plain(m.Body()), "more lines below") {
+	if strings.Contains(plain(m.Body()), "more below") {
 		t.Error("sending a message should return to the tail")
 	}
 }

@@ -223,7 +223,7 @@ func TestTheArrowKeysDoNotScrollTheConversation(t *testing.T) {
 	engine := &fakeEngine{session: longConversation(30)}
 	m := model(engine)
 
-	if strings.Contains(plain(m.Body()), "more lines below") {
+	if strings.Contains(plain(m.Body()), "more below") {
 		t.Fatal("the view does not start at the tail, so this test proves nothing")
 	}
 
@@ -231,7 +231,7 @@ func TestTheArrowKeysDoNotScrollTheConversation(t *testing.T) {
 	if got := m.InputValue(); got != "question 29" {
 		t.Fatalf("up recalled %q, so the keys are not doing what this test assumes", got)
 	}
-	if strings.Contains(plain(m.Body()), "more lines below") {
+	if strings.Contains(plain(m.Body()), "more below") {
 		t.Errorf("recalling a message scrolled the conversation away from the tail:\n%s",
 			plain(m.Body()))
 	}
@@ -246,7 +246,7 @@ func TestTheWheelScrollsTheConversation(t *testing.T) {
 	if plain(scrolled.Body()) == atTail {
 		t.Error("a notch of the wheel did not move the conversation")
 	}
-	if !strings.Contains(plain(scrolled.Body()), "more lines below") {
+	if !strings.Contains(plain(scrolled.Body()), "more below") {
 		t.Errorf("scrolling away from the tail is not reported:\n%s", plain(scrolled.Body()))
 	}
 }
@@ -264,7 +264,7 @@ func TestScrollingPastTheTopComesStraightBack(t *testing.T) {
 		m = wheel(m, tea.MouseButtonWheelDown)
 	}
 
-	if strings.Contains(plain(m.Body()), "more lines below") {
+	if strings.Contains(plain(m.Body()), "more below") {
 		t.Errorf("the view is still held above the tail after scrolling back down:\n%s", plain(m.Body()))
 	}
 }

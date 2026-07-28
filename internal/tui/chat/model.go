@@ -565,7 +565,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.scroll = len(m.transcript())
 		return m, nil
 
-	case "ctrl+end":
+	case "ctrl+end", "ctrl+down":
+		// Two keys for one thing, because ctrl+end is the one a terminal veteran reaches for and
+		// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
+		// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
 		m.scroll = 0
 		return m, nil
 	}
@@ -861,11 +864,21 @@ func (m Model) transcriptHeight() int {
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+
+	// The jump pill takes its rows from the conversation too, and only while it is on screen. It is
+	// keyed on the scroll position rather than on the rendered pill because the pill's height is
+	// needed here to decide how much transcript to render, and asking the renderer would be a loop.
+	if m.scroll > 0 {
+		h -= pillHeight
+	}
 	if h < 1 {
 		return 1
 	}
 	return h
 }
+
+// pillHeight is how many rows the jump marker costs: two borders and its label.
+const pillHeight = 3
 
 // Body renders the screen.
 func (m Model) Body() string {
@@ -919,6 +932,12 @@ func (m Model) Body() string {
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	for _, line := range m.menu.lines(m.width) {
+		b.WriteString("\n")
+		b.WriteString(line)
+	}
+	// Last before the status row and the box, which puts it directly on top of the thing somebody
+	// is about to type into. See jumpPill.
+	for _, line := range m.jumpPill(len(lines) - end) {
 		b.WriteString("\n")
 		b.WriteString(line)
 	}
@@ -981,6 +1000,46 @@ func (m Model) taskPane() string {
 	return b.String()
 }
 
+// jumpPill is the marker that appears when the view has stopped following the tail.
+//
+// It exists because scrolling up to reread something and an agent having gone quiet look identical
+// from the outside: in both cases the bottom of the transcript stops moving. Somebody who has
+// forgotten they scrolled will sit and wait for a reply that arrived four screens ago.
+//
+// A bordered marker rather than the line of text this used to be, and it sits directly on top of the
+// message box rather than in the status row. That position is the whole idea: it is between the
+// conversation and the place your eyes already are when you go back to typing, so it is in the way
+// in the one sense that helps and no other. The status row it vacated is now free for the thing that
+// belongs there, which is what the agent is doing.
+//
+// Returns nothing when the view is at the tail, which is most of the time.
+func (m Model) jumpPill(below int) []string {
+	if below <= 0 {
+		return nil
+	}
+	t := theme.Current()
+
+	label := fmt.Sprintf(" ↓ %d more below   ctrl+↓ to jump ", below)
+	if lipgloss.Width(label) > m.width-4 {
+		// Narrow terminals lose the count rather than the key. The number is interesting and the
+		// way out is the part somebody actually needs.
+		label = " ↓ ctrl+↓ "
+	}
+
+	inner := lipgloss.Width(label)
+	top := "╭" + strings.Repeat("─", inner) + "╮"
+	bottom := "╰" + strings.Repeat("─", inner) + "╯"
+
+	// Indented to sit above the message box rather than flush against the edge, so it reads as
+	// belonging to the box it is pointing at.
+	const indent = "  "
+	return []string{
+		indent + t.Warning.Render(top),
+		indent + t.Warning.Render("│") + t.Warning.Render(label) + t.Warning.Render("│"),
+		indent + t.Warning.Render(bottom),
+	}
+}
+
 // statusRow is the line between the conversation and the box.
 func (m Model) statusRow(below int) string {
 	t := theme.Current()
@@ -992,11 +1051,6 @@ func (m Model) statusRow(below int) string {
 	// keystroke, and a spinner saying "working" is not the thing to answer.
 	if m.notice != "" {
 		return t.Warning.Render("  " + m.notice)
-	}
-	if below > 0 {
-		// Said explicitly, because a view that has silently stopped following the tail looks
-		// identical to one where nothing is happening.
-		return t.Warning.Render(fmt.Sprintf("  %d more lines below, ctrl+end to follow", below))
 	}
 	if m.awaiting {
 		return t.Warning.Render("  waiting for you")
