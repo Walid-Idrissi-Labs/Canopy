@@ -112,7 +112,7 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 
 	// Its own process group, so children can be killed with it. Without this, killing the shell
 	// leaves whatever it started running.
-	setProcessGroup(cmd)
+	Contain(cmd)
 
 	started := time.Now()
 	if err := cmd.Start(); err != nil {
@@ -124,20 +124,14 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 
 	// Waiting in a goroutine so the kill path is not blocked behind it. Wait does not return until
 	// the output pipes close, which for a process that has left children behind does not happen
-	// until those children exit too, which is the case being handled here.
+	// until those children exit too, which is the case being handled here and the reason the group
+	// is still safe to signal at the point where it matters.
 	//
-	// reaped is closed the moment Wait returns, and it is closed before the result is handed over so
-	// that anything watching it sees the reap before the caller does. The kill path needs to know
-	// this and cannot get it from done: a process id stops being safe to address as a process group
-	// the moment its leader has been waited on, and killGroup is the only thing in a position to
-	// care.
+	// Child owns the reap rather than this function, because the kill path needs to know whether it
+	// has happened and needs to know it without a gap between asking and acting.
+	child := Started(cmd)
 	done := make(chan error, 1)
-	reaped := make(chan struct{})
-	go func() {
-		err := cmd.Wait()
-		close(reaped)
-		done <- err
-	}()
+	go func() { done <- child.Wait() }()
 
 	var timedOut, cancelled bool
 	select {
@@ -148,7 +142,7 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 		timedOut = errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 		cancelled = !timedOut
 
-		killGroup(cmd, reaped)
+		child.Stop()
 
 		// Give the group a moment to die before giving up on it. The wait is bounded because a
 		// process that ignores a kill is not going to start obeying, and blocking forever here

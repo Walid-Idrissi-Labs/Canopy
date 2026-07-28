@@ -27,7 +27,7 @@ func TestTheThreeOutcomesStayThree(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("exit zero is passing", func(t *testing.T) {
-		outcome := RunTest(ctx, Test{Name: "unit", Command: "exit 0"}, target(t, "abc"), "run-1")
+		outcome := RunTest(ctx, Test{Name: "unit", Command: ShellLine("exit 0")}, target(t, "abc"), "run-1")
 		if outcome.Run.State != core.TestPassing {
 			t.Errorf("state is %q, want passing", outcome.Run.State)
 		}
@@ -40,7 +40,7 @@ func TestTheThreeOutcomesStayThree(t *testing.T) {
 	})
 
 	t.Run("exit non zero is failing", func(t *testing.T) {
-		outcome := RunTest(ctx, Test{Name: "unit", Command: "exit 3"}, target(t, "abc"), "run-2")
+		outcome := RunTest(ctx, Test{Name: "unit", Command: ShellLine("exit 3")}, target(t, "abc"), "run-2")
 		if outcome.Run.State != core.TestFailing {
 			t.Errorf("state is %q, want failing", outcome.Run.State)
 		}
@@ -49,16 +49,41 @@ func TestTheThreeOutcomesStayThree(t *testing.T) {
 		}
 	})
 
+	// The third outcome, and the reason D-05 makes the argument form the default.
+	//
+	// A missing program says nothing about the code. Reporting it as a failing test tells somebody
+	// their work is broken when what is broken is their configuration, and they will go looking in
+	// the wrong place. This is the case that used to be logged rather than asserted.
 	t.Run("a command that cannot start is an error, not a failure", func(t *testing.T) {
 		outcome := RunTest(ctx,
-			Test{Name: "unit", Command: "canopy-definitely-not-a-real-binary"}, target(t, "abc"), "run-3")
+			Test{Name: "unit", Command: Argv("canopy-definitely-not-a-real-binary")},
+			target(t, "abc"), "run-3")
+
+		if outcome.Run.State != core.TestError {
+			t.Errorf("state is %q, want %q: a program that is not installed is a broken "+
+				"configuration, and calling it a failing test sends somebody to read their own code",
+				outcome.Run.State, core.TestError)
+		}
+		if outcome.Run.ExitCode != nil {
+			t.Errorf("exit code is %v, want none: nothing ran, so there is no status to report",
+				*outcome.Run.ExitCode)
+		}
+		if !strings.Contains(outcome.Run.ErrorMessage, "could not be started") {
+			t.Errorf("the message does not say it never started: %q", outcome.Run.ErrorMessage)
+		}
+	})
+
+	// The cost of opting into a shell, asserted rather than left implicit. A shell starts perfectly
+	// well and exits 127, so the distinction above is genuinely unavailable here. Anyone reading this
+	// should see that the choice in canopy.json is what decides it.
+	t.Run("through a shell the same mistake is indistinguishable from a failure", func(t *testing.T) {
+		outcome := RunTest(ctx,
+			Test{Name: "unit", Command: ShellLine("canopy-definitely-not-a-real-binary")},
+			target(t, "abc"), "run-3b")
 
 		if outcome.Run.State != core.TestFailing {
-			// A shell reports a missing binary as exit 127, so this case has to be read from the
-			// shell's own output rather than from the exit code. Recorded here as the shape the
-			// runner actually produces, so a future change that starts reporting it as an error is a
-			// deliberate change rather than a surprise.
-			t.Logf("a missing binary through a shell surfaced as %q", outcome.Run.State)
+			t.Errorf("state is %q, want %q: the shell ran and exited non zero, which is all the "+
+				"runner can see", outcome.Run.State, core.TestFailing)
 		}
 		if !strings.Contains(outcome.Output, "not found") &&
 			!strings.Contains(outcome.Output, "No such file") {
@@ -81,6 +106,17 @@ func TestTheThreeOutcomesStayThree(t *testing.T) {
 	})
 }
 
+func TestAnArgumentCommandDisplayPreservesBoundaries(t *testing.T) {
+	one := Argv("printf", "a b").Display()
+	two := Argv("printf", "a", "b").Display()
+	if one == two {
+		t.Fatalf("different argv collapsed to the same display %q", one)
+	}
+	if one != `["printf","a b"]` {
+		t.Errorf("display = %q, want exact JSON argv", one)
+	}
+}
+
 // The point of the whole file: the result belongs to the code that was on disk when the command
 // started reading it.
 func TestTheRevisionIsCapturedBeforeTheCommandRuns(t *testing.T) {
@@ -89,7 +125,7 @@ func TestTheRevisionIsCapturedBeforeTheCommandRuns(t *testing.T) {
 	dir := t.TempDir()
 
 	outcome := RunTest(context.Background(),
-		Test{Name: "unit", Command: "exit 0"},
+		Test{Name: "unit", Command: ShellLine("exit 0")},
 		Target{
 			WorkspaceID: "ws-1",
 			Dir:         dir,
@@ -114,7 +150,7 @@ func TestTheRevisionIsCapturedBeforeTheCommandRuns(t *testing.T) {
 // into unknown, which is what stops evidence gathered during an outage from ever going green.
 func TestARunWithNoRevisionCannotGoGreen(t *testing.T) {
 	outcome := RunTest(context.Background(),
-		Test{Name: "unit", Command: "exit 0"},
+		Test{Name: "unit", Command: ShellLine("exit 0")},
 		Target{WorkspaceID: "ws-1", Dir: t.TempDir()}, "run-1")
 
 	if outcome.Run.State != core.TestPassing {
@@ -132,7 +168,7 @@ func TestARunWithNoRevisionCannotGoGreen(t *testing.T) {
 // A run that never finishes is an error rather than a failure, because it produced no verdict.
 func TestATestThatHangsIsAnErrorRatherThanAFailure(t *testing.T) {
 	outcome := RunTest(context.Background(),
-		Test{Name: "unit", Command: "sleep 30", Timeout: 100 * time.Millisecond},
+		Test{Name: "unit", Command: ShellLine("sleep 30"), Timeout: 100 * time.Millisecond},
 		target(t, "abc"), "run-1")
 
 	if outcome.Run.State != core.TestError {
@@ -148,7 +184,7 @@ func TestATestThatHangsIsAnErrorRatherThanAFailure(t *testing.T) {
 
 func TestADurationIsRecorded(t *testing.T) {
 	outcome := RunTest(context.Background(),
-		Test{Name: "unit", Command: "exit 0"}, target(t, "abc"), "run-1")
+		Test{Name: "unit", Command: ShellLine("exit 0")}, target(t, "abc"), "run-1")
 
 	duration, finished := outcome.Run.Duration()
 	if !finished {
@@ -167,7 +203,7 @@ func TestARunCanBeFoundAgainAndStopped(t *testing.T) {
 	runner := NewRunner(func(run core.TestRun) { updates <- run })
 
 	ctx := context.Background()
-	runID, err := runner.Start(ctx, Test{Name: "slow", Command: "sleep 30"}, target(t, "abc"))
+	runID, err := runner.Start(ctx, Test{Name: "slow", Command: ShellLine("sleep 30")}, target(t, "abc"))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -231,7 +267,7 @@ func TestCancellingAFinishedRunIsNotAnError(t *testing.T) {
 		}
 	})
 
-	runID, err := runner.Start(context.Background(), Test{Name: "quick", Command: "exit 0"}, target(t, "abc"))
+	runID, err := runner.Start(context.Background(), Test{Name: "quick", Command: ShellLine("exit 0")}, target(t, "abc"))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -260,7 +296,7 @@ func TestTheLatestRunOfATestIsTheOneReported(t *testing.T) {
 	ctx := context.Background()
 
 	for _, command := range []string{"exit 1", "exit 0"} {
-		if _, err := runner.Start(ctx, Test{Name: "unit", Command: command}, where); err != nil {
+		if _, err := runner.Start(ctx, Test{Name: "unit", Command: ShellLine(command)}, where); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 		select {
@@ -291,7 +327,7 @@ func TestShuttingDownStopsEveryRun(t *testing.T) {
 
 	ctx := context.Background()
 	for range 3 {
-		if _, err := runner.Start(ctx, Test{Name: "slow", Command: "sleep 30"}, target(t, "abc")); err != nil {
+		if _, err := runner.Start(ctx, Test{Name: "slow", Command: ShellLine("sleep 30")}, target(t, "abc")); err != nil {
 			t.Fatalf("Start: %v", err)
 		}
 	}

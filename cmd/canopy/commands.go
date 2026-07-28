@@ -88,6 +88,12 @@ func runChat(resume string) error {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
 	}
 
+	// Third party tools, after the built in ones so that Canopy's own are registered first and the
+	// model reaches for them before somebody else's. Started here rather than inside attachTools
+	// because these are processes with a lifetime, and the deferred stop is what ends them.
+	stopServers := attachMCP(engine, dir, project)
+	defer stopServers()
+
 	// The session you land in is an agent like any other, registered so it appears in the agents
 	// view rather than being a special case the list has to know about. Called "main" because that
 	// is what somebody would call the one they are talking to.

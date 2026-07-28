@@ -328,7 +328,7 @@ independent rerun.
 
 ---
 
-## Q-16 Test commands do not implement D-05
+## ~~Q-16 Test commands do not implement D-05~~ resolved 2026-07-28
 
 **Added 2026-07-28 by the independent A6 pass.**
 
@@ -343,17 +343,23 @@ Canopy records FAIL even though no test ran. The existing test notices this exac
 not fail on it. Guessing from stderr is locale- and shell-dependent, while treating every 126 or
 127 as ERROR would misclassify a valid shell test that deliberately exits with that code.
 
-**Supervisor decision required, with one recommended path:**
+**Resolved by implementing D-05 as written**, which both supervisors recommended independently and
+which D-22 says the agent-runtime pivot left untouched. This was drift from a settled decision, not a
+choice that was still open, so option 2 was never really on the table.
 
-1. **Recommended: implement D-05 as written.** Make the committed shape
-   `"command": {"argv": ["go", "test", "./..."]}` by default, accept
-   `"command": {"shell": "...", "allow_shell": true}` only deliberately, migrate Canopy's own
-   config, and let the argv runner distinguish start failure from a non-zero test exit.
-2. Explicitly supersede D-05 with a shell-only decision and revise A6-03 to admit that an inner
-   command-start failure cannot be distinguished reliably from a test returning the same status.
+`command` is now an object. `{"argv": [...]}` is the default, `{"shell": "...", "allow_shell": true}`
+is available for the pipes and prefixes that genuinely need one, and setting both is a validation
+error. Canopy's own `canopy.json` is migrated, and a bare string is refused with a message showing
+both forms rather than with Go's unmarshalling error.
 
-Until both supervisors choose, A6-03 is blocked. A later agent must not clear it by matching English
-shell output or by silently redefining exit 126/127.
+The acceptance contract for A6-03 is met rather than approximated: with an argument vector the
+executable either exists or `Start` fails, so a command that could not start and a test that failed
+are different objects instead of the same integer. Neither prohibited shortcut was used. Nothing
+reads shell stderr and nothing reinterprets 126 or 127.
+
+What the shell form costs is now asserted in the test file rather than described in a comment. The
+same missing program run through a shell is pinned as `failing`, so the trade someone accepts by
+writing `allow_shell` is visible next to the case it contrasts with. A6-03 is unblocked.
 
 ---
 
@@ -394,3 +400,38 @@ a non-terminating loop.
 
 A8-05's acceptance sentence, that a hook fires only on a real state transition, is now true: a
 transition the hook caused itself is no longer counted as one.
+
+## Q-18 Should MCP servers be started per worktree?
+
+**Added 2026-07-28 by the work that made the MCP client reachable.**
+
+D-38 starts servers once, in the project directory, and consequently withholds their tools from
+isolated agents. An isolated agent is confined by having its tools rooted at its own worktree, and a
+server started at the project root is not, so handing those tools across would be a route around the
+boundary D-33 defines, through a capability Canopy cannot inspect.
+
+That keeps the confinement honest and costs real capability: the fan out at A6-05 is the product's
+central argument, and under D-38 the agents being fanned out are exactly the ones that cannot use a
+third party tool. An agent asked to do the work in parallel has strictly less available to it than
+the one being talked to.
+
+The alternative is a set of servers per worktree, rooted where the agent actually works. It is more
+correct and it is not free:
+
+- Three fanned out agents times four configured servers is twelve processes, several of which are
+  commonly a package manager fetching something before answering at all.
+- `Tools func(dir string) (*core.ToolRegistry, error)` builds a registry and has no teardown hook, so
+  there is nowhere for those servers to be stopped. Without one they leak for the life of the
+  session, which is the failure A8-06 has just finished fixing at the level below.
+- A server with expensive startup would make starting an agent slow enough to change how the fan out
+  feels, which is the feature it would be serving.
+
+**Supervisor decision required**, because it trades a headline capability against process cost and
+needs a lifecycle change to the isolation contract either way:
+
+1. **Per worktree servers.** Needs `Isolation.Tools` to return something closable, and a bound on how
+   many servers a fan out may start.
+2. **Keep D-38** and document that MCP is for the conversation rather than for the fan out.
+3. **Per worktree, opt in per server**, with a flag in `canopy.json` for the servers that are cheap
+   enough and safe enough to duplicate. More configuration, and it puts the choice with the person
+   who knows what the server actually does.

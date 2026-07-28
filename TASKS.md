@@ -2795,8 +2795,8 @@ reads at the semaphore rather than measuring the already-serial callback. Race-e
 tests pass. Claude's earlier check predates this diff and must be rerun before done.
 
 ### A6-03 Test runner
-`status: blocked | owner: Claude | branch: feat/verification-and-release | depends: A6-01, A5-04`
-`scope: internal/exec/`
+`status: review | owner: Claude | branch: contract/test-commands | depends: A6-01, A5-04`
+`scope: internal/exec/, internal/config/testcommand.go, canopy.json`
 
 Deliverable: run a configured test command per agent worktree, capturing exit code, duration and
 the revision at start.
@@ -2816,18 +2816,34 @@ code is broken when what is broken is their configuration.
 Logs stay out of run state per D-08, so RunTest returns the run and the output separately rather
 than putting a log buffer inside a state record.
 
-**Blocked by independent Codex review 2026-07-28.** D-05 still requires `command.argv` as the
-default and an explicitly opted-in `command.shell`. The committed `canopy.json` schema instead
-accepts only a string and always runs `/bin/sh -c`. A missing executable therefore exits 127 and is
-recorded as FAIL, contradicting this task's acceptance sentence that a command which cannot start
-is ERROR. The existing test observes that mismatch but deliberately does not fail. Q-16 records the
-two supervisor choices. Do not clear this block by matching shell stderr or treating every 126/127
-as infrastructure failure; a valid shell test can deliberately return either code.
+**Was blocked by independent Codex review 2026-07-28, and is unblocked by implementing D-05 as
+written.** The schema accepted only a string and the runner always ran `/bin/sh -c`, so a missing
+executable exited 127 and was recorded as FAIL, contradicting this task's own acceptance sentence.
+The test that covered it observed the mismatch and logged rather than failed.
 
-The corrective branch did fix an adjacent truth-path defect: a RUNNING update now carries the same
-start revision as its terminal result, so the interface can render RUN instead of UNKNOWN for the
-duration. That does not settle the command-format contradiction, and Codex verification stays
-unchecked.
+Both supervisors recommended the same path independently, and D-22 says the pivot left D-05
+untouched, so this was drift from a settled decision rather than a choice still open. `command` is
+now an object: `{"argv": [...]}` by default, `{"shell": "...", "allow_shell": true}` when a pipeline
+is genuinely needed, both set is a validation error. Canopy's own `canopy.json` is migrated.
+
+The acceptance sentence is now true rather than aspirational, because with argv there is no
+ambiguity to recover from: the executable exists or `Start` fails, which are different objects
+instead of one integer. Mutation checked, and reverting the argv dispatch fails the named subtest
+with exactly the old symptom, exit 127 and state `failing`.
+
+What the shell form still costs is asserted rather than left to a comment. A second subtest runs the
+same missing program through a shell and pins that it comes back as `failing`, so the difference
+between the two forms is visible in the test file and a reader can see what opting in buys and loses.
+
+The bare string is refused with a message that shows both forms, because Go's own "cannot unmarshal
+string into Go value of type config.TestCommand" says nothing about what to write instead, and this
+is the one error most people will meet exactly once.
+
+An earlier corrective branch fixed an adjacent truth-path defect: a RUNNING update carries the same
+start revision as its terminal result, so the interface renders RUN instead of UNKNOWN for the
+duration.
+
+Codex verification stays unchecked, as does every other task's.
 
 ### A6-04 Verification per agent
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-03, A5-06`
@@ -3754,15 +3770,55 @@ snapshot, and a hook failure has no snapshot to re-read. Giving it a place on sc
 piece of work.
 
 ### A8-06 MCP client
-`status: claimed | owner: Claude | branch: feat/hooks-and-mcp | depends: A4-04`
-`scope: internal/tools/mcp/, internal/config/mcp.go, internal/config/config.go`
+`status: review | owner: Claude | branch: mcp/hardening | depends: A4-04`
+`scope: internal/tools/mcp/, internal/config/mcp.go, internal/config/config.go, cmd/canopy/mcp.go`
 
 Deliverable: connect to MCP servers and expose their tools to agents.
 
 Acceptance: third party tools pass through the same permission model as built in ones, with no
 exemption. A failing server degrades that server only.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
+
+notes on 2026-07-28: **the deliverable was not met at all until this branch, and the reason is worth
+recording because it is the fifth instance of the same pattern.** Nothing imported
+`internal/tools/mcp`. The package was complete and well tested, `internal/config` parsed and
+validated an `mcp` block, and no line of code ever read it. Every agent ran with exactly the tools it
+would have had with no server configured, so "expose their tools to agents" was not partially done,
+it was undone, and the acceptance criteria were being checked against a package rather than against
+the program. The other four are `internal/agent/plan.go`, the theme work at M-07, `internal/hooks`
+and `internal/report`. A test that exercises a package proves the package.
+
+The three transport findings from the independent A8-06 pass are also fixed here:
+
+- **Server request id collisions.** MCP is bidirectional and both sides number from one, so matching
+  a frame to a waiter by id alone hands a server's request to whoever waits on that number, and the
+  real reply then arrives to find nobody there. The discriminator is now the presence of `method`.
+  Ids are also kept as raw bytes, because the protocol permits a string id and decoding into an
+  int64 dropped such a frame whole, which from the server's side is a client that never answers.
+  Server requests get a method-not-found reply rather than silence.
+- **Silent truncation past fifty pages.** The bound was right and the silence was not. A session now
+  carries a note saying what was left out and `Describe` repeats it, and there is a tool count bound
+  as well, because a server that paginates honestly and offers thousands of tools is not a loop but
+  is those definitions in every request thereafter.
+- **Server children surviving shutdown.** A server is often a launcher, and waiting on the process
+  Canopy started said nothing about the process it started. The group is signalled before the reap
+  rather than after a failed wait, which is the only ordering that works here: stdout is a pipe this
+  package owns rather than something Go copies, so nothing holds `Wait` open and it returns as soon
+  as the leader exits. See D-37.
+
+While fixing the third: `stillRunning` in the tests called `os.Process.Signal(nil)`, which Go rejects
+as an unsupported signal type before it reaches the kernel, so it returned false for every pid.
+`TestClosingASessionStopsTheServer` had been passing vacuously since it was written. Fixed, and both
+teardown tests now fail if the fix is reverted.
+
+**What is verified and what is read.** The four new tests in `cmd/canopy/mcp_test.go` call
+`attachMCP` directly and are mutation checked. That `runChat` calls it is established by reading the
+call site, not by a test, because `runChat` opens the interface and there is no seam to drive it
+from. That gap is exactly how this defect survived, so it is written down rather than implied.
+
+D-38 records that servers start once for the project and that isolated agents therefore do not get
+their tools. Q-18 carries the per worktree design that would lift it.
 
 notes: one protocol gets an entire ecosystem of tools other people maintain. Deliberately after A5,
 so the multi agent core is built on tools we control. The permission point is not negotiable: a
@@ -3887,23 +3943,31 @@ fire on a real state change.
 Goal: someone who is not us installs it and gets value without being told how.
 
 ### A9-01 Robustness sweep
-`status: claimed | owner: Claude | branch: worktree-agent-a58ce100b84defd03 | depends: PG-A8`
+`status: review | owner: Claude | branch: mcp/hardening | depends: PG-A8`
 `scope: internal/exec/, internal/store/broker.go, internal/git/worktree.go, tests in internal/core, internal/session, internal/tools`
 
 Acceptance: timeouts terminate the process group Canopy started, no final state transition is
 dropped under load, huge output cannot freeze the UI, paths and branch names with spaces work,
 externally removed worktrees disappear safely, and quitting leaves no child processes behind.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x]   codex [ ]`
 
-notes: **back to claimed on 2026-07-28, and the first acceptance clause is narrowed.** It said the
-right process group is terminated. After the group leader has been reaped that cannot be established:
-`kill(-pid, 0)` proves only that some group holds the number, not that it is still ours, and the
-answer can go stale between the check and the signal. Closing it needs an identifier the kernel will
-not recycle, which means a pidfd on Linux and nothing that exists on darwin. The residual risk is
-real and small, and a comment in the source cannot make a stronger acceptance clause true. Which way
-to go is a supervisor decision: redesign termination around an owned identity, or accept the risk
-explicitly and leave the clause narrowed as it now is.
+notes: **the first acceptance clause is closed rather than narrowed, as of 2026-07-28. See D-37.** It
+had been narrowed on the grounds that after the leader is reaped there is no way to prove a group id
+is still ours, which is true, and the conclusion drawn from it was wrong. The premise that made the
+post-reap signal look necessary was that declining it would leave orphaned test workers alive. That
+was measured and it does not hold: `Wait` does not return until the output pipes close and a child
+inherits them, so for the case in question the leader is unreaped and the ordinary path already
+reaches the whole group safely. The post-reap probe bought only the case of a child that redirects
+its own output, and paid for it with a signal that can land on an unrelated group.
+
+So no group is signalled once its leader has been waited on. Exit is first observed without reaping
+(`waitid` with `WNOWAIT` on Linux, kqueue `NOTE_EXIT` on macOS), then the actual reap and every signal
+are serialized under the same lock. This closes the gap between `cmd.Wait` returning and a Go flag
+being updated; `exec.Child` exists to hold that invariant. What it gives up is stated in D-37 and in
+LIMITATIONS: a detached daemon that
+outlives its parent is left running. Both halves are mutation checked, the reaped guard and the
+atomicity of the guard, and removing either fails a named test.
 
 carries forward P4-01 to P4-07.
 
@@ -3918,9 +3982,11 @@ Three of the six held already and are now covered rather than merely true. Three
 - **Timeouts and the right process group.** The escalation was addressing a process group by the
   leader's pid a quarter of a second after that leader may already have been reaped. A group id is
   only reserved while the group has a member in it, so the second signal could land on a job started
-  by somebody else in the meantime. It now waits for the reap and asks whether anything is left
-  before signalling. The behavioural half, a timeout taking grandchildren with it, held and now has
-  its own test rather than sharing the cancellation one.
+  by somebody else in the meantime. **Closed on 2026-07-28 by D-37**: no group is signalled after its
+  leader has been reaped. Supported platforms first observe exit without reaping, then serialize
+  the actual reap and every signal under one lock.
+  The behavioural half, a timeout taking grandchildren with it, held and now has its own test rather
+  than sharing the cancellation one.
 - **Huge output.** The bound held for what the buffer kept and not for what it allocated: a single
   large write was copied in whole and then trimmed, so eight megabytes arriving in one call cost
   eight megabytes. It is trimmed before the copy now. This is the engine half only. See A9-02 for

@@ -29,8 +29,11 @@ const FileName = "canopy.json"
 
 // Test is one configured command that produces evidence.
 type Test struct {
-	Name    string `json:"name"`
-	Command string `json:"command"`
+	Name string `json:"name"`
+
+	// Command is an argument vector by default and a shell string only by explicit opt-in. See D-05
+	// and the reasoning in testcommand.go: a shell turns a missing program into a failing test.
+	Command TestCommand `json:"command"`
 
 	// Required decides whether this test can block a green roll-up. It defaults to false, which is
 	// the safe direction: a test somebody forgot to mark required shows its result and cannot
@@ -127,8 +130,6 @@ func (p Project) Validate() error {
 		switch {
 		case test.Name == "":
 			return fmt.Errorf("the test at position %d has no name", i+1)
-		case test.Command == "":
-			return fmt.Errorf("the test %q has no command, so there is nothing for it to run", test.Name)
 		case seen[test.Name]:
 			// Two tests with one name means the second silently replaces the first everywhere results
 			// are keyed by name, which is how a required test disappears without anybody noticing.
@@ -136,6 +137,9 @@ func (p Project) Validate() error {
 		}
 		seen[test.Name] = true
 
+		if err := test.Command.Validate(); err != nil {
+			return fmt.Errorf("the command for the test %q is not usable: %w", test.Name, err)
+		}
 		if _, err := parseDuration(test.Timeout); err != nil {
 			return fmt.Errorf("the timeout on the test %q: %w", test.Name, err)
 		}
