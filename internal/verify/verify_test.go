@@ -653,3 +653,64 @@ func TestAnUnmeasurableDiffIsRefusedRatherThanRankedAsEmpty(t *testing.T) {
 		t.Errorf("an agent with an unmeasurable diff entered the review queue: %+v", queue)
 	}
 }
+
+// A trailing separator on either side of a path comparison must not make a workspace invisible.
+//
+// The two paths reach Observe by different routes: a subject's directory is configured, and a
+// change's path comes back through the poller's watch list. If one of them gains a separator the
+// match fails, no revision is ever recorded, and every agent stays unknown. That reads as a
+// workspace where nothing has changed rather than as anything going wrong, which is the worst
+// direction for this to fail in.
+func TestATrailingSeparatorDoesNotHideAWorkspace(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "main", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+
+	workspaceID := git.WorkspaceID(dir)
+	verifier.Watch([]Subject{
+		{Agent: "one", WorkspaceID: workspaceID, Dir: dir + string(filepath.Separator), Branch: "main"},
+	})
+
+	key, reason := repo.Revision(context.Background(), dir)
+	verifier.Observe(context.Background(), git.Change{
+		WorkspaceID: workspaceID, Path: dir, To: key, Reason: reason,
+	})
+
+	snapshot, ok := verifier.Snapshot("one")
+	if !ok {
+		t.Fatal("the agent is not being watched")
+	}
+	if !snapshot.Revision.Known() {
+		t.Errorf("the revision was never recorded, so the worktree reads as unchanged forever")
+	}
+}
+
+// And the same path written two ways is still one workspace, so two agents in it are still sharing.
+func TestSharingIsDetectedThroughAnUncleanPath(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "main", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+
+	// Different WorkspaceIDs deliberately, so the only thing that can catch this is the path.
+	verifier.Watch([]Subject{
+		{Agent: "one", WorkspaceID: "a", Dir: dir, Branch: "main"},
+		{Agent: "two", WorkspaceID: "b", Dir: dir + string(filepath.Separator) + ".", Branch: "main"},
+	})
+
+	for _, name := range []string{"one", "two"} {
+		if err := verifier.Verify(context.Background(), name); err == nil ||
+			!strings.Contains(err.Error(), "shared") {
+			t.Errorf("Verify(%q) = %v, want a shared-workspace refusal", name, err)
+		}
+	}
+}

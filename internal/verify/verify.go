@@ -131,6 +131,18 @@ func (v *Verifier) Watch(subjects []Subject) {
 	v.subjects, v.order, v.shared = fresh, order, shared
 }
 
+// cleanPath is the one definition of what makes two workspace directories the same.
+//
+// One function rather than filepath.Clean at each site, so that every comparison in this file agrees
+// and an empty path stays empty rather than becoming ".", which Clean does and which would make a
+// subject with no directory match a change with no directory.
+func cleanPath(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
+}
+
 func sharedWorkspaces(subjects []Subject) map[string]string {
 	byID := make(map[string][]string)
 	byPath := make(map[string][]string)
@@ -138,8 +150,7 @@ func sharedWorkspaces(subjects []Subject) map[string]string {
 		if subject.WorkspaceID != "" {
 			byID[subject.WorkspaceID] = append(byID[subject.WorkspaceID], subject.Agent)
 		}
-		if subject.Dir != "" {
-			path := filepath.Clean(subject.Dir)
+		if path := cleanPath(subject.Dir); path != "" {
 			byPath[path] = append(byPath[path], subject.Agent)
 		}
 	}
@@ -180,9 +191,17 @@ func (v *Verifier) Observe(ctx context.Context, change git.Change) {
 	v.mu.Lock()
 	var names []string
 	var subject Subject
+	// Cleaned on both sides, because this compares two paths that reach here by different routes and
+	// the failure is silent in the worst direction. A subject's directory is configured and a
+	// change's path comes back through the poller's watch list, so one gaining a trailing separator
+	// makes this match nothing: no revision is ever recorded, every agent stays unknown, and it
+	// reads as a workspace where nothing has changed rather than as anything going wrong.
+	// sharedWorkspaces already cleans before comparing, and two places deciding what makes two paths
+	// equal by different rules is how the third one gets it wrong.
+	wanted := cleanPath(change.Path)
 	for agent, candidate := range v.subjects {
 		if candidate.WorkspaceID == change.WorkspaceID &&
-			(change.Path == "" || candidate.Dir == change.Path) {
+			(wanted == "" || cleanPath(candidate.Dir) == wanted) {
 			names = append(names, agent)
 			if len(names) == 1 {
 				subject = candidate
