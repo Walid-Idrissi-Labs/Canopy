@@ -12,10 +12,16 @@ package brand
 // Five rows out against the small wordmark's three, so it is most of twice the size while being the
 // same drawing at heart.
 //
-// There is no per letter outline. A halo one cell out was drawn, looked at and thrown away: with
-// strokes this thick it fills the mouth of the C and the bowl of the P and the word reads as a
-// smudge, and a drop shadow has the same problem one diagonal over. The contour that does help is a
-// frame around the word, which the interface draws because it is the side that knows about colour.
+// The edge of the drawing is not computed and does not need to be. In a half block drawing the cells
+// holding a half block are exactly the sloped and curved parts of the letterform, and the cells
+// holding a full block are its solid interior. Colouring those two classes differently traces every
+// curve in a line one cell wide, which the interface does because it is the side that knows about
+// colour.
+//
+// Two computed outlines were written before that was noticed and both were thrown away. A halo one
+// cell out fills the mouth of the C and the bowl of the P. Flooding from outside first fixes the
+// counters and still closes the gaps between letters, because at this size the air between two
+// letters is thinner than two outlines. Neither survived being looked at.
 
 import "strings"
 
@@ -174,19 +180,22 @@ func pack(top, bottom string) string {
 // The base holds still and the flame moves above it, which is the rule the full animation follows and
 // the reason a fire across a clearing is restful rather than distracting. Three frames, because two
 // reads as a blink.
-var emberFrames = [Frames]string{" ▄█▄ ", "▄▄█▄▄", " ▄▀▄ "}
+var emberFrames = [Frames]string{" ▄▄█▄▄ ", "▄▄███▄▄", " ▄███▄ "}
 
-// EmberOut is the fire once it has gone out: coals, and no flame above them.
+// EmberOut is the fire once it has gone out: a few coals, and no flame above them.
 //
 // A different shape rather than the same one in a duller colour, so the state survives a terminal
-// with no colour in it. Drawn at the same width as every lit frame, because a mark that changes width
-// when it goes out would shift the rule it sits on.
-const EmberOut = " ▄▄▄ "
+// with no colour in it. It is deliberately the smallest picture here, because a fire that has gone
+// out should read as less than one that is burning even before the colour is taken in.
+//
+// Drawn at the same width as every lit frame, because a mark that changed width when it went out
+// would shift the rule it sits on.
+const EmberOut = "  ▄▄▄  "
 
 // EmberWidth is how many columns an ember occupies, lit or out.
-const EmberWidth = 5
+const EmberWidth = 7
 
-// Ember is the campfire at five cells wide, for the message box corner.
+// Ember is the campfire at seven cells wide, for the message box corner.
 //
 // Out of range steps wrap, for the reason Frame's do: the caller is a ticker whose count only goes
 // up, and making every call site remember a modulus is how one of them forgets.

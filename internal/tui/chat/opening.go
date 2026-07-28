@@ -114,16 +114,15 @@ func (o opening) head() []string {
 	// The large name inside a frame, which is the version worth looking at, and the packed one
 	// behind it for a terminal that cannot afford eight rows on a logo.
 	if brand.FitsLarge(o.width) && o.height >= largeHeadHeight {
-		framed := framedWordmark(brand.Large(), brand.LargeWidth)
-		indent := o.indentFor(brand.LargeWidth + 4)
+		indent := o.indentFor(brand.LargeWidth)
 
 		// No written name under it, which is a departure from the rule below and was asked for
 		// directly. The rule is not abandoned: the header above this draws "canopy" in text on every
 		// screen, so the written name is still on screen for anything that cannot read block letters,
 		// it is simply not repeated twice in the same eyeful.
-		head := make([]string, 0, len(framed))
-		for _, line := range framed {
-			head = append(head, indent+line)
+		head := make([]string, 0, len(brand.Large()))
+		for _, line := range brand.Large() {
+			head = append(head, indent+edged(line))
 		}
 		return head
 	}
@@ -296,34 +295,58 @@ func (o opening) fits(long, short string) string {
 // screen is a screen somebody is about to type into rather than a poster.
 const largeHeadHeight = 26
 
-// framedWordmark draws the name inside a rounded frame.
+// edged renders one row of the drawn name with its edges picked out.
 //
-// The frame is the contour. A halo one cell out from each letter was tried and thrown away: with two
-// cell strokes it fills the mouth of the C and the bowl of the P, and the word reads as a smudge. A
-// frame does the job the outline was for, which is to stop the letters floating on the background,
-// and it does it without touching the letterform.
+// The letterform is drawn in half blocks, and that carries a fact worth using: a cell holding a half
+// block is a sloped or curved part of the outline, and a cell holding a full block is solid interior.
+// Colouring the two classes differently traces every curve in a line one cell wide, at no cost in
+// space and with no second drawing to maintain.
 //
-// The letters take the logo colour and the frame takes the border colour, so the frame recedes and
-// the name is what the eye lands on. One colour for both would make the box compete with the word
-// inside it.
-func framedWordmark(lines []string, width int) []string {
+// The edge takes the text colour rather than a literal white, so it is near white on a dark terminal
+// and near black on a light one. A hardcoded white would vanish on half the terminals it ran on.
+//
+// Two computed outlines were tried first and thrown away. Both filled the gaps between the letters,
+// because at this size the air between two letters is thinner than two outlines meeting in it.
+func edged(line string) string {
 	t := theme.Current()
 
-	// Double ruled, where every other box in the program is single ruled. Two reasons and both are
-	// real. It gives the name more weight than the message box without making it larger, which is
-	// what a frame around a logo is for. And it means nothing else on screen is drawn with these
-	// characters, so a test looking for the message box by its corner cannot find this instead,
-	// which is exactly what happened the first time this was drawn with the ordinary corners.
-	rule := strings.Repeat("═", width+2)
-	out := make([]string, 0, len(lines)+2)
-	out = append(out, t.Border.Render("╔"+rule+"╗"))
+	var b strings.Builder
+	var run []rune
+	solid := false
 
-	for _, line := range lines {
-		// Padded to the declared width rather than to the length of the row. Rows are trimmed of
-		// trailing spaces, so padding to their own length would draw a ragged right wall.
-		padded := line + strings.Repeat(" ", width-lipgloss.Width(line))
-		out = append(out, t.Border.Render("║")+" "+t.Logo.Render(padded)+" "+t.Border.Render("║"))
+	flush := func() {
+		if len(run) == 0 {
+			return
+		}
+		if solid {
+			b.WriteString(t.Logo.Render(string(run)))
+		} else {
+			b.WriteString(t.Body.Render(string(run)))
+		}
+		run = run[:0]
 	}
 
-	return append(out, t.Border.Render("╚"+rule+"╝"))
+	for _, r := range line {
+		switch r {
+		case '█':
+			if !solid {
+				flush()
+				solid = true
+			}
+		case '▀', '▄':
+			if solid {
+				flush()
+				solid = false
+			}
+		default:
+			// Air. Written as is, so a run of spaces does not carry an escape sequence.
+			flush()
+			solid = false
+			b.WriteRune(r)
+			continue
+		}
+		run = append(run, r)
+	}
+	flush()
+	return b.String()
 }

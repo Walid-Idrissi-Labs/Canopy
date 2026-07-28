@@ -41,10 +41,11 @@ func TestTheSpaceBetweenTheNameAndTheBoxIsAtTheMiddleOfTheScreen(t *testing.T) {
 	const height = 30
 	lines := openingAt(100, height)
 
-	// The bottom of the logo's frame, which is the last row of the name block. It used to be the
-	// written name under it, and that line is gone: the header draws "canopy" in text on every
-	// screen, so repeating it here was saying the same thing twice in one eyeful.
-	name := rowContaining(lines, "╚")
+	// The bottom of the C, which is the last row of the drawn name. It used to be the written name
+	// underneath, then the bottom of a frame around it, and both of those are gone: the header draws
+	// "canopy" in text on every screen, so the line under it was saying the same thing twice, and the
+	// frame was competing with the letters it was meant to set off.
+	name := rowContaining(lines, "▀█▄▄▄█▀")
 	box := rowContaining(lines, "╭")
 	if name < 0 || box < 0 {
 		t.Fatalf("the name is on row %d and the box on row %d:\n%s", name, box, strings.Join(lines, "\n"))
