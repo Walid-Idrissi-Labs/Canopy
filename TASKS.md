@@ -120,7 +120,7 @@ doing right now".
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A4-04, A4-06 and A5-11 rerun and back in review. Next is A8-06, then A8-05 | `verify/permission-rerun`, then `feat/hooks-and-mcp` | none |
+| Claude | A8-06 then A8-05. A9-01 and the A3-06 and A5-06 acceptance run alongside | `feat/hooks-and-mcp` | none |
 | Codex | A8-04 and A8-07, plus independent verification of A6-05 and A5-09 | `feat/commands-and-cost` | none |
 
 ### 2.1 File boundary for this round
@@ -3368,8 +3368,8 @@ in `internal/verify` or `cmd/canopy`, both of which had another branch open in t
 what PG-A8 will actually be demonstrating, so it is not optional.
 
 ### A8-06 MCP client
-`status: todo | owner: none | branch: none | depends: A4-04`
-`scope: internal/tools/mcp/`
+`status: claimed | owner: Claude | branch: feat/hooks-and-mcp | depends: A4-04`
+`scope: internal/tools/mcp/, internal/config/mcp.go, internal/config/config.go`
 
 Deliverable: connect to MCP servers and expose their tools to agents.
 
