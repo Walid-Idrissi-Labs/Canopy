@@ -386,3 +386,38 @@ an agent:
 
 Until this is settled A8-05 stays claimed rather than in review, because "a hook fires only on a real
 state transition" cannot be signed off while the transition a hook caused itself counts as one.
+
+## Q-18 Should MCP servers be started per worktree?
+
+**Added 2026-07-28 by the work that made the MCP client reachable.**
+
+D-38 starts servers once, in the project directory, and consequently withholds their tools from
+isolated agents. An isolated agent is confined by having its tools rooted at its own worktree, and a
+server started at the project root is not, so handing those tools across would be a route around the
+boundary D-33 defines, through a capability Canopy cannot inspect.
+
+That keeps the confinement honest and costs real capability: the fan out at A6-05 is the product's
+central argument, and under D-38 the agents being fanned out are exactly the ones that cannot use a
+third party tool. An agent asked to do the work in parallel has strictly less available to it than
+the one being talked to.
+
+The alternative is a set of servers per worktree, rooted where the agent actually works. It is more
+correct and it is not free:
+
+- Three fanned out agents times four configured servers is twelve processes, several of which are
+  commonly a package manager fetching something before answering at all.
+- `Tools func(dir string) (*core.ToolRegistry, error)` builds a registry and has no teardown hook, so
+  there is nowhere for those servers to be stopped. Without one they leak for the life of the
+  session, which is the failure A8-06 has just finished fixing at the level below.
+- A server with expensive startup would make starting an agent slow enough to change how the fan out
+  feels, which is the feature it would be serving.
+
+**Supervisor decision required**, because it trades a headline capability against process cost and
+needs a lifecycle change to the isolation contract either way:
+
+1. **Per worktree servers.** Needs `Isolation.Tools` to return something closable, and a bound on how
+   many servers a fan out may start.
+2. **Keep D-38** and document that MCP is for the conversation rather than for the fan out.
+3. **Per worktree, opt in per server**, with a flag in `canopy.json` for the servers that are cheap
+   enough and safe enough to duplicate. More configuration, and it puts the choice with the person
+   who knows what the server actually does.

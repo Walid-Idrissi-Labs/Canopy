@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"sync/atomic"
 )
@@ -37,12 +38,44 @@ var errClosed = errors.New("the server connection closed")
 // genuinely is one shape with optional fields, and three types would mean deciding which one an
 // incoming line is before it has been parsed.
 type message struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      *int64          `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+
+	// ID is kept as raw bytes rather than a number.
+	//
+	// The protocol allows a string or a number, and the ids Canopy generates are its own business
+	// but the ids a server generates are not. Decoding into an int64 meant a server request carrying
+	// a string id failed to parse as a whole and was dropped, which looks from the server's side like
+	// a client that never answers. Raw bytes correlate by comparison and echo back byte for byte.
+	ID json.RawMessage `json:"id,omitempty"`
+
+	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
+}
+
+// methodNotFound is the protocol's code for a method the receiver does not implement.
+const methodNotFound = -32601
+
+// encodeID renders one of our own request ids.
+func encodeID(id int64) json.RawMessage {
+	return json.RawMessage(strconv.FormatInt(id, 10))
+}
+
+// ourID reads an id back, and reports whether it is one this client could have issued.
+//
+// Anything that is not a plain integer was not generated here, so it belongs to no waiter. That is a
+// correlation answer rather than a validation one: a server is free to use string ids for its own
+// requests, and this only ever asks whether a given id is ours.
+func ourID(raw json.RawMessage) (int64, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var id int64
+	if err := json.Unmarshal(raw, &id); err != nil {
+		return 0, false
+	}
+	return id, true
 }
 
 // rpcError is the protocol's own error shape.
@@ -109,15 +142,29 @@ func (c *client) read() {
 			// which is against the specification and common anyway.
 			continue
 		}
-		if msg.ID == nil {
-			// A notification. Nothing here acts on any of them, per the package boundary, and
-			// tools/list_changed in particular is deliberately ignored rather than followed.
+
+		// What makes a frame a reply is that it carries no method, not that it carries an id.
+		//
+		// MCP is bidirectional, so a server may send requests of its own, and it numbers them from
+		// its own counter starting at one, exactly as this client does. Matching on the id alone
+		// therefore hands a server's request to whoever is waiting on the same number, which is a
+		// caller receiving a frame with no result in it while its real reply arrives later, finds
+		// nobody waiting, and is dropped. Two calls corrupted by one collision.
+		if msg.Method != "" {
+			c.serve(msg)
+			continue
+		}
+
+		id, mine := ourID(msg.ID)
+		if !mine {
+			// A response to a request this client did not issue, or one with an id no waiter can be
+			// holding. Nothing to deliver it to.
 			continue
 		}
 
 		c.mu.Lock()
-		ch, ok := c.waiting[*msg.ID]
-		delete(c.waiting, *msg.ID)
+		ch, ok := c.waiting[id]
+		delete(c.waiting, id)
 		c.mu.Unlock()
 
 		if ok {
@@ -136,6 +183,32 @@ func (c *client) read() {
 	c.fail(err)
 }
 
+// serve answers a request the server sent us.
+//
+// Canopy advertises no capabilities in the handshake, deliberately, so every request arriving from a
+// server is for something that was never offered: sampling, roots, elicitation. The protocol's answer
+// for that is method not found, and sending it matters more than it looks. A server that asked and is
+// never answered waits, and a server waiting on a client is a server that has stopped serving tools.
+//
+// A notification carries no id and expects nothing back. tools/list_changed in particular is
+// deliberately ignored rather than followed, per the package boundary.
+func (c *client) serve(msg message) {
+	if len(msg.ID) == 0 {
+		return
+	}
+
+	// The id goes back exactly as it arrived. It is the server's, in the server's own format, and
+	// re-encoding it is how a correlation identifier stops matching.
+	_ = c.send(message{
+		JSONRPC: "2.0",
+		ID:      msg.ID,
+		Error: &rpcError{
+			Code:    methodNotFound,
+			Message: "canopy advertises no capabilities, so it does not implement " + msg.Method,
+		},
+	}, nil)
+}
+
 // fail wakes everyone still waiting, so a dead server produces errors rather than a hung turn.
 func (c *client) fail(err error) {
 	c.mu.Lock()
@@ -147,8 +220,8 @@ func (c *client) fail(err error) {
 	c.waiting = map[int64]chan message{}
 	c.mu.Unlock()
 
-	for id, ch := range waiting {
-		ch <- message{ID: &id, Error: &rpcError{Message: err.Error()}}
+	for _, ch := range waiting {
+		ch <- message{Error: &rpcError{Message: err.Error()}}
 	}
 }
 
@@ -169,7 +242,7 @@ func (c *client) call(ctx context.Context, method string, params any) (json.RawM
 	c.waiting[id] = reply
 	c.mu.Unlock()
 
-	if err := c.send(message{JSONRPC: "2.0", ID: &id, Method: method}, params); err != nil {
+	if err := c.send(message{JSONRPC: "2.0", ID: encodeID(id), Method: method}, params); err != nil {
 		c.mu.Lock()
 		delete(c.waiting, id)
 		c.mu.Unlock()

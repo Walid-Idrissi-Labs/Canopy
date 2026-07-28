@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	osexec "os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -44,11 +46,31 @@ func serverSpec(name, mode string) Spec {
 	}
 }
 
+// pidFileEnv tells the fake server where to record the pid of the child it starts.
+//
+// A file rather than the protocol, because the point of the test that uses it is what survives after
+// the protocol connection has gone.
+const pidFileEnv = "CANOPY_MCP_PID_FILE"
+
 // runFakeServer speaks just enough MCP to exercise this package, and misbehaves on request.
 func runFakeServer(mode string) {
 	if mode == "refuses-to-start" {
 		fmt.Fprintln(os.Stderr, "the widget backend is not configured")
 		os.Exit(3)
+	}
+
+	if mode == "spawns-a-child" {
+		// What `npx` in front of node looks like from here: the process Canopy started is a launcher,
+		// and the thing doing the work is one level down. The child inherits stdout, which is what
+		// makes it hold the pipe open after its parent has gone.
+		child := osexec.Command("sleep", "30")
+		if err := child.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "could not start the child:", err)
+			os.Exit(4)
+		}
+		if path := os.Getenv(pidFileEnv); path != "" {
+			_ = os.WriteFile(path, []byte(strconv.Itoa(child.Process.Pid)), 0o600)
+		}
 	}
 
 	out := bufio.NewWriter(os.Stdout)
@@ -59,6 +81,15 @@ func runFakeServer(mode string) {
 		_, _ = fmt.Fprintf(out, `{"jsonrpc":"2.0","id":%s,"result":%s}`+"\n", id, encoded)
 		_ = out.Flush()
 	}
+	// ask sends a request the other way, which MCP allows and which this package has to survive.
+	ask := func(id json.RawMessage, method string) {
+		_, _ = fmt.Fprintf(out, `{"jsonrpc":"2.0","id":%s,"method":%q,"params":{}}`+"\n", id, method)
+		_ = out.Flush()
+	}
+
+	// answer is whatever the client sent back to a request of ours, reported through a tool result
+	// because that is the only channel a test on the other side can read.
+	answer := "nothing came back"
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
@@ -68,12 +99,24 @@ func runFakeServer(mode string) {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
 			Params json.RawMessage `json:"params"`
+			Error  *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
 			continue
 		}
 
 		switch msg.Method {
+		case "":
+			// A response to something this server asked for. Recorded rather than acted on.
+			if msg.Error != nil {
+				answer = fmt.Sprintf("id=%s code=%d", msg.ID, msg.Error.Code)
+			} else {
+				answer = fmt.Sprintf("id=%s with no error", msg.ID)
+			}
+
 		case "initialize":
 			if mode == "silent-handshake" {
 				time.Sleep(2 * time.Minute)
@@ -88,10 +131,35 @@ func runFakeServer(mode string) {
 			// A notification carries no id and expects no reply.
 
 		case "tools/list":
+			if mode == "asks-for-sampling" {
+				// A string id, which the protocol permits and which a client that decodes ids as
+				// numbers cannot even parse. Sent before the list is answered so that the reply to
+				// it has arrived by the time a tool is called.
+				ask(json.RawMessage(`"srv-a"`), "sampling/createMessage")
+			}
+			if mode == "endless-pages" {
+				reply(msg.ID, map[string]any{
+					"tools":      fakeTools(mode),
+					"nextCursor": fmt.Sprintf("page-%d", time.Now().UnixNano()),
+				})
+				continue
+			}
+			if mode == "repeated-cursor" {
+				reply(msg.ID, map[string]any{
+					"tools":      fakeTools(mode),
+					"nextCursor": "same-page",
+				})
+				continue
+			}
 			reply(msg.ID, map[string]any{"tools": fakeTools(mode)})
 
 		case "tools/call":
-			handleCall(mode, msg.ID, msg.Params, reply)
+			if mode == "collides-on-ids" {
+				// The same id as the call that is in flight right now. A client correlating on the
+				// id alone hands this to the caller as though it were the reply.
+				ask(msg.ID, "sampling/createMessage")
+			}
+			handleCall(mode, msg.ID, msg.Params, reply, answer)
 		}
 	}
 	os.Exit(0)
@@ -104,6 +172,21 @@ func fakeTools(mode string) []map[string]any {
 	}
 
 	switch mode {
+	case "exactly-500", "over-500":
+		count := maxTools
+		if mode == "over-500" {
+			count++
+		}
+		tools := make([]map[string]any, 0, count)
+		for i := 0; i < count; i++ {
+			tools = append(tools, map[string]any{
+				"name":        fmt.Sprintf("tool_%03d", i),
+				"description": "A generated tool.",
+				"inputSchema": schema,
+			})
+		}
+		return tools
+
 	case "claims-read-only":
 		return []map[string]any{{
 			"name":        "search",
@@ -136,8 +219,20 @@ func fakeTools(mode string) []map[string]any {
 	}
 }
 
-func handleCall(mode string, id, params json.RawMessage, reply func(json.RawMessage, any)) {
+func handleCall(mode string, id, params json.RawMessage, reply func(json.RawMessage, any), answer string) {
 	switch mode {
+	case "asks-for-sampling":
+		// What the client sent back to the request this server made, which is the only way a test on
+		// the other side can see that it was answered at all.
+		reply(id, map[string]any{
+			"content": []map[string]any{{"type": "text", "text": answer}},
+		})
+
+	case "collides-on-ids":
+		reply(id, map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "the real reply"}},
+		})
+
 	case "dies-on-call":
 		os.Exit(1)
 
@@ -172,12 +267,4 @@ func handleCall(mode string, id, params json.RawMessage, reply func(json.RawMess
 	}
 }
 
-// stillRunning reports whether a process is alive, for the teardown tests.
-func stillRunning(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 asks the kernel whether the process exists without disturbing it.
-	return process.Signal(nil) == nil
-}
+// stillRunning is per platform, in liveness_unix_test.go and liveness_windows_test.go.
