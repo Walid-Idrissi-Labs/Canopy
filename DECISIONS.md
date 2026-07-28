@@ -778,6 +778,45 @@ Canopy's own tools are not checked this way. The same map backs the prompt, the 
 so there is no second reader to disagree with, and the schema check already answers for malformed
 input with a better message.
 
+## D-37 A process group is never signalled after its leader has been reaped. Decided 2026-07-28.
+
+A process group is named by its leader's pid. The kernel holds that number back only while the leader
+is still there, so once it has been waited on the number returns to circulation and can be handed to
+somebody else's job within milliseconds. A group signal sent after that point does not miss. It lands
+on whatever holds the number by then, and a group signal reaches every process in it.
+
+Canopy previously narrowed this window rather than closing it: after the reap it asked, with signal
+zero, whether a group with that id still existed, and took yes to mean the group was still its own.
+That cannot distinguish "still ours" from "reissued", so the one answer that permitted a signal was
+also the one that could not be trusted. The comment on it said as much and kept it anyway, on the
+grounds that declining to signal after the reap would leave every orphaned child of every cancelled
+test run alive.
+
+**That justification was measured and is wrong.** `Wait` does not return until the output pipes
+close, and a child inherits them. So for the case the justification names, a test runner whose
+workers are still running, `Wait` has not returned, the leader is unreaped, and the ordinary unreaped
+path already reaches the whole group safely. Both cases, checked on darwin:
+
+| The command leaves behind | `Wait` returns | Leader | Signalling the group |
+|---|---|---|---|
+| a child holding stdout | no, it blocks | unreaped | safe, and this is the common case |
+| a child that redirected stdout | yes, at once | reaped | unsafe, and the id may already be reissued |
+
+The post-reap probe therefore bought exactly one case, a child that detaches its own output, and paid
+for it with a signal that can land on an unrelated process group. So the rule is now absolute: no
+group is signalled once its leader has been waited on.
+
+The check and the signal are one indivisible step, under the same lock the reap takes. Asking and
+then signalling would leave a window between the two, and a window of microseconds is still a window.
+That is why `exec.Child` is a type rather than a boolean.
+
+**What this gives up**, stated plainly: a child that closes or redirects the standard streams it
+inherited and outlives its parent is no longer killed. It is left running. That is the daemon case,
+it is rarer than the orphaned worker case by a wide margin, and the failure it produces is a stray
+process rather than a signal delivered to somebody else's work.
+
+This supersedes the narrowing recorded against A9-01, which is closed by it rather than accepted.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
