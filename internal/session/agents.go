@@ -53,6 +53,12 @@ type Agent struct {
 	// because a user could legitimately point an agent at a directory that happens to be a worktree
 	// somebody else made, and that is not the same thing at all.
 	Isolated bool
+
+	// Dispatched says this agent was created by spawn_agents from another conversation. A
+	// dispatched agent never sees the dispatch tools itself: an agent that can spawn agents that
+	// can spawn agents would let one confirmation multiply, and nested dispatch is A8-01's design,
+	// not something to inherit by accident from a shared registry.
+	Dispatched bool
 	// WorkspaceID is the worktree, for an isolated agent.
 	WorkspaceID string
 	// Branch is the branch that worktree is on. Empty on creation means the agent's own name, which

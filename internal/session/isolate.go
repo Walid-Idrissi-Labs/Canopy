@@ -132,8 +132,28 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 			}, trust, nil)
 			return decision.Outcome != permission.Deny
 		})
+
+		// A dispatched agent shares the engine's registry when it is not isolated, and that registry
+		// is where the dispatch tools were attached for the orchestrating conversation. Removed here
+		// rather than trusted to the description, because an agent that can spawn agents that can
+		// spawn agents would let one confirmation multiply, and nested dispatch is A8-01's design.
+		if e.dispatchedLocked(sessionID) {
+			tools = tools.Filter(func(tool core.Tool) bool {
+				return tool.Name() != spawnToolName && tool.Name() != profilesToolName
+			})
+		}
 	}
 	return tools, trust
+}
+
+// dispatchedLocked reports whether this session belongs to an agent created by spawn_agents.
+func (e *Engine) dispatchedLocked(sessionID string) bool {
+	for _, agent := range e.agents {
+		if agent.SessionID == sessionID {
+			return agent.Dispatched
+		}
+	}
+	return false
 }
 
 // trustForLocked is how much one conversation may do, most specific decision first.

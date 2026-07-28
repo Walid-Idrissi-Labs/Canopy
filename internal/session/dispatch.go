@@ -68,6 +68,12 @@ type Dispatch struct {
 	Profile string
 	Task    string
 
+	// Model is the profile's default model, resolved by the spawn tool from the profile listing.
+	// It travels with the request because the engine has never known what a credential is, and the
+	// alternative it used to have, copying the model from whichever agent happened to exist, could
+	// pair one provider's key with another provider's model name and fail on the first request.
+	Model string
+
 	// Isolated gives each agent its own worktree and branch. Default for a fan out, since ranking
 	// three attempts is meaningless if all three are writing to one tree, and off for a single agent
 	// unless it was asked for, because an agent is not a branch.
@@ -139,17 +145,32 @@ func (c Confirmation) Question() string {
 // bool on a result is a thing that gets ignored.
 var ErrNeedsConfirmation = fmt.Errorf("this needs to be confirmed before anything is created")
 
+// The tool names live in constants because the engine has to recognise them again in
+// toolsForLocked, where spawned agents have them structurally removed. A string repeated in two
+// files is a rename away from a fan out that can multiply.
+const (
+	spawnToolName    = "spawn_agents"
+	profilesToolName = "list_profiles"
+)
+
 // DispatchTools returns the tools an orchestrating agent uses to create other agents.
-func DispatchTools(dispatcher Dispatcher, confirm func(Confirmation) bool) []core.Tool {
+//
+// current names the profile the orchestrating conversation itself runs on, and may return "". It is
+// what makes "use 3 agents for this" work without a profile being named: the deterministic default
+// is the credential already in use, which is also the one the person watching would guess.
+func DispatchTools(dispatcher Dispatcher, current func() string, confirm func(Confirmation) bool) []core.Tool {
 	return []core.Tool{
-		&profilesTool{dispatcher: dispatcher},
-		&spawnTool{dispatcher: dispatcher, confirm: confirm},
+		&profilesTool{dispatcher: dispatcher, current: current},
+		&spawnTool{dispatcher: dispatcher, current: current, confirm: confirm},
 	}
 }
 
-type profilesTool struct{ dispatcher Dispatcher }
+type profilesTool struct {
+	dispatcher Dispatcher
+	current    func() string
+}
 
-func (t *profilesTool) Name() string        { return "list_profiles" }
+func (t *profilesTool) Name() string        { return profilesToolName }
 func (t *profilesTool) Kind() core.ToolKind { return core.ToolRead }
 
 func (t *profilesTool) Description() string {
@@ -174,6 +195,11 @@ func (t *profilesTool) Run(context.Context, json.RawMessage) (core.ToolResult, e
 
 	running, limit := t.dispatcher.Concurrency()
 
+	own := ""
+	if t.current != nil {
+		own = t.current()
+	}
+
 	var out strings.Builder
 	fmt.Fprintf(&out, "%d profiles. %d of %d agent slots are in use.\n\n", len(profiles), running, limit)
 	for _, profile := range profiles {
@@ -183,6 +209,11 @@ func (t *profilesTool) Run(context.Context, json.RawMessage) (core.ToolResult, e
 			// prefer one whose cost is knowable.
 			out.WriteString(", cost unknown for this endpoint")
 		}
+		if profile.Name == own {
+			// Marked so the model knows which profile "the same as this" means, which is the
+			// default when the user did not name one.
+			out.WriteString(", the profile this conversation runs on")
+		}
 		out.WriteString("\n")
 	}
 	return core.ToolResult{Content: out.String()}, nil
@@ -190,10 +221,11 @@ func (t *profilesTool) Run(context.Context, json.RawMessage) (core.ToolResult, e
 
 type spawnTool struct {
 	dispatcher Dispatcher
+	current    func() string
 	confirm    func(Confirmation) bool
 }
 
-func (t *spawnTool) Name() string { return "spawn_agents" }
+func (t *spawnTool) Name() string { return spawnToolName }
 
 // Kind is execute, which is the broadest thing the permission model has.
 //
@@ -206,9 +238,11 @@ func (t *spawnTool) Description() string {
 	return "Start one or more agents working on a task, each in its own worktree and branch if " +
 		"asked for. Use this when the user asks for agents to be run on something, for example " +
 		"\"use 2 sonnet agents for the auth refactor\". Extract the count, the profile and the " +
-		"task from what they said. If any of the three is unclear, ask them rather than guessing: " +
-		"spawning the wrong number or the wrong profile costs real money and real time. Call " +
-		"list_profiles first if you are not certain the profile exists."
+		"task from what they said, translating words to numbers: \"a couple\" is 2, \"a few\" is 3. " +
+		"If the user named no profile or model, omit the profile and the one this conversation " +
+		"runs on is used. If the count or the task is unclear, ask them rather than guessing: " +
+		"spawning the wrong number costs real money and real time. Call " +
+		"list_profiles first if you are not certain a named profile exists."
 }
 
 func (t *spawnTool) Schema() json.RawMessage {
@@ -221,7 +255,7 @@ func (t *spawnTool) Schema() json.RawMessage {
 			},
 			"profile": {
 				"type": "string",
-				"description": "The profile name to run them on, from list_profiles."
+				"description": "The profile name to run them on, from list_profiles. Omit it when the user named no profile or model, and the profile this conversation runs on is used."
 			},
 			"task": {
 				"type": "string",
@@ -232,7 +266,7 @@ func (t *spawnTool) Schema() json.RawMessage {
 				"description": "Give each agent its own worktree and branch. Default true for more than one agent, since several agents editing one checkout overwrite each other."
 			}
 		},
-		"required": ["count", "profile", "task"]
+		"required": ["count", "task"]
 	}`)
 }
 
@@ -258,7 +292,7 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		request.Isolated = *args.Isolated
 	}
 
-	if refusal := t.check(request); refusal != "" {
+	if refusal := t.resolve(&request); refusal != "" {
 		return core.ToolResult{Content: refusal, IsError: true}, nil
 	}
 
@@ -297,11 +331,14 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	return core.ToolResult{Content: out.String()}, nil
 }
 
-// check refuses a request against reality, and says what reality is.
+// resolve refuses a request against reality, and says what reality is.
 //
 // Every refusal names the correct answer. A model told "unknown profile" guesses again; a model
-// told which profiles exist picks one.
-func (t *spawnTool) check(request Dispatch) string {
+// told which profiles exist picks one. Resolution also canonicalises the request: an empty profile
+// becomes the conversation's own, a profile named in the wrong case becomes the real name, and the
+// profile's default model is attached, so everything downstream and everything on the confirmation
+// is the name and model that will actually run.
+func (t *spawnTool) resolve(request *Dispatch) string {
 	switch {
 	case request.Task == "":
 		return "No task was given, so there is nothing for the agents to do. Ask the user what " +
@@ -321,17 +358,45 @@ func (t *spawnTool) check(request Dispatch) string {
 		return "No profiles are configured, so no agent can be started. The user needs to add a " +
 			"credential with `canopy keys add`."
 	}
-	for _, profile := range profiles {
-		if profile.Name == request.Profile {
-			return ""
-		}
-	}
 
 	names := make([]string, 0, len(profiles))
 	for _, profile := range profiles {
 		names = append(names, profile.Name)
 	}
 	sort.Strings(names)
+
+	if request.Profile == "" {
+		if t.current != nil {
+			request.Profile = t.current()
+		}
+		if request.Profile == "" {
+			return fmt.Sprintf("No profile was named and this conversation does not have one to "+
+				"fall back on. The profiles that exist are: %s. Ask the user which they meant.",
+				strings.Join(names, ", "))
+		}
+	}
+
+	for _, profile := range profiles {
+		// Exact first, so that two profiles differing only in case both stay reachable.
+		if profile.Name == request.Profile {
+			request.Model = profile.Model
+			return ""
+		}
+	}
+	matched := 0
+	var found Profile
+	for _, profile := range profiles {
+		if strings.EqualFold(profile.Name, request.Profile) {
+			matched++
+			found = profile
+		}
+	}
+	if matched == 1 {
+		request.Profile = found.Name
+		request.Model = found.Model
+		return ""
+	}
+
 	return fmt.Sprintf("There is no profile called %q. The profiles that exist are: %s. "+
 		"Use one of those, or ask the user which they meant.",
 		request.Profile, strings.Join(names, ", "))
@@ -485,7 +550,7 @@ func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
 		return nil, fmt.Errorf("%d agents are already running and the limit is %d", running, limit)
 	}
 
-	template, err := e.dispatchTemplate(request.Profile)
+	template, err := e.dispatchTemplate(request)
 	if err != nil {
 		return nil, err
 	}
@@ -495,6 +560,7 @@ func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
 		agent := template
 		agent.Name = dispatchName(request.Task, i, request.Count)
 		agent.Isolated = request.Isolated
+		agent.Dispatched = true
 
 		started, err := e.AddAgent(ctx, agent)
 		if err != nil {
@@ -513,22 +579,33 @@ func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
 }
 
 // dispatchTemplate is the credential, model and trust a spawned agent starts from.
-func (e *Engine) dispatchTemplate(profile string) (Agent, error) {
+func (e *Engine) dispatchTemplate(request Dispatch) (Agent, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	// The trust level comes from an existing agent on the same profile where there is one, so a fan
-	// out inherits the posture somebody already chose rather than resetting to a default they would
-	// have to notice and change six times.
-	for _, agent := range e.agents {
-		if agent.KeyName == profile {
-			return Agent{KeyName: profile, Model: agent.Model, Trust: agent.Trust, Dir: agent.Dir}, nil
+	// The model and trust come from an existing agent on the same profile where there is one, so a
+	// fan out inherits the posture somebody already chose rather than resetting to a default they
+	// would have to notice and change six times. Walked in creation order rather than over the map,
+	// so two agents on one profile with different settings always yield the same template.
+	for _, name := range e.agentOrder {
+		if agent := e.agents[name]; agent.KeyName == request.Profile {
+			return Agent{KeyName: request.Profile, Model: agent.Model, Trust: agent.Trust, Dir: agent.Dir}, nil
 		}
 	}
-	for _, agent := range e.agents {
-		return Agent{KeyName: profile, Model: agent.Model, Trust: agent.Trust, Dir: agent.Dir}, nil
+	if len(e.agentOrder) == 0 {
+		return Agent{}, fmt.Errorf("there is no agent to copy a working directory from yet")
 	}
-	return Agent{}, fmt.Errorf("there is no agent to copy a working directory from yet")
+
+	// Nobody has run this profile here before, so the model is the profile's own default rather
+	// than an existing agent's. A model copied across profiles can pair one provider's key with
+	// another provider's model name, and every spawned agent then fails on its first request.
+	if request.Model == "" {
+		return Agent{}, fmt.Errorf(
+			"profile %q has no default model, so a new agent on it would not know what to run; "+
+				"set one with `canopy keys model %s <model>`", request.Profile, request.Profile)
+	}
+	first := e.agents[e.agentOrder[0]]
+	return Agent{KeyName: request.Profile, Model: request.Model, Trust: first.Trust, Dir: first.Dir}, nil
 }
 
 // dispatchName turns a task into something readable in a list of six.
