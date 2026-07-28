@@ -1,6 +1,6 @@
 # Canopy limitations
 
-Last reviewed: 2026-07-27
+Last reviewed: 2026-07-28
 
 Canopy is pre-alpha, version 0.1, and under active development by two people. Keys, providers, chat
 and persistence, tools and permissions, multi-agent dispatch and the verification engine are built.
@@ -47,6 +47,13 @@ be rediscovered by getting burned by it.
 - A command that times out resolves to error, not failing. That is because a hang is evidence the
   command did not finish, not evidence the tests failed, but the default itself is still flagged as
   unconfirmed rather than settled (D-18).
+
+- Test command configuration currently contradicts D-05. The settled decision requires an argument
+  array by default and an explicit opt-in for a shell string, but `canopy.json` currently accepts
+  only a string and runs it through `/bin/sh -c`. That means a missing executable is observed as
+  shell exit 127 and reported as a failing test instead of a command-start error. A6-03 is blocked
+  until both supervisors either implement the decided structured form or explicitly supersede
+  D-05 and define the shell-only semantics (Q-16).
 
 - Whether tests ever re-run automatically when a file changes is still an open question. The current
   plan is manual triggering only: a green result still goes stale by itself the moment the revision

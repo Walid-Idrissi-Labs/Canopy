@@ -2,6 +2,8 @@ package git
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -67,6 +69,43 @@ func TestANewFileCountsEvenBeforeItIsAdded(t *testing.T) {
 	if !found {
 		t.Error("an untracked new file is missing from the change list, so a fresh implementation " +
 			"in its own file would look like no work")
+	}
+}
+
+func TestAnUntrackedFilenameKeepsItsWhitespace(t *testing.T) {
+	r, work := branched(t)
+	name := " leading and trailing.go "
+	write(t, work, name, "package main\n")
+
+	changes, err := r.Changes(context.Background(), work, "main")
+	if err != nil {
+		t.Fatalf("Changes: %v", err)
+	}
+	if len(changes) != 1 || changes[0].Path != name {
+		t.Errorf("the changed path is %+v, want the exact filename %q", changes, name)
+	}
+}
+
+func TestAnUntrackedSymlinkIsMeasuredWithoutFollowingIt(t *testing.T) {
+	r, work := branched(t)
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte(strings.Repeat("outside\n", 1000)), 0o644); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(work, "link.txt")); err != nil {
+		t.Skipf("symlinks are not available here: %v", err)
+	}
+
+	changes, err := r.Changes(context.Background(), work, "main")
+	if err != nil {
+		t.Fatalf("Changes: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("%d changes, want the symlink: %+v", len(changes), changes)
+	}
+	if changes[0].Insertions != 1 {
+		t.Errorf("the symlink measured as %d lines, want its one-line target string; following it "+
+			"would read outside the worktree", changes[0].Insertions)
 	}
 }
 

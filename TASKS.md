@@ -121,7 +121,7 @@ doing right now".
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
 | Claude | A8-06 then A8-05. A9-01 and the A3-06 and A5-06 acceptance run alongside | `feat/hooks-and-mcp` | none |
-| Codex | A8-04 and A8-07, plus independent verification of A6-05 and A5-09 | `feat/commands-and-cost` | none |
+| Codex | A6 freshness, runner and review-queue hardening | `verify/freshness-and-ranking` | A6-03 contradicts D-05; Q-16 needs both supervisors |
 
 ### 2.1 File boundary for this round
 
@@ -2308,10 +2308,9 @@ Acceptance: correct for clean, dirty, untracked only, and detached HEAD.
 
 notes: was P2-02, unchanged.
 
-The dirty digest is built from the status output **and the modification times of what it names**, so
-an edit that reverts a file to its committed content still changes it. That is deliberate: the
-question the digest answers is "has anything happened here since we last looked", and a round trip
-edit is something happening.
+The original A5 placeholder built the dirty digest from status plus modification times. A6-01
+superseded that implementation with content hashing: a round-trip edit now restores the original
+key, because the question is "is this the same code" rather than "did something happen here".
 
 A clean tree gets an empty digest rather than a hash of nothing, so a clean tree at the same commit
 compares equal to itself across runs, which is what `RevisionKey.Equal` needs to not report a
@@ -2732,7 +2731,7 @@ does not change when a git ignored file changes. Symlinks hash their target, sub
 their HEAD SHA, and an oversized untracked file forces the revision to unknown with a readable
 reason.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: was P2-03, unchanged. D-09 and D-16 apply.
 
@@ -2741,9 +2740,10 @@ and size, which answers "did something happen here" and not "is this the same co
 edit left a green result permanently stale. Staged content comes from `git diff --cached --raw`
 rather than from disk, because the index holds content that exists nowhere in the working tree.
 
-Hashes are cached by size and modification time, since A6-02 asks for this every two seconds per
-worktree. That is a bet and it is named in the code: two writes to one path, same length, within the
-same nanosecond would be missed. Editors and agents write a tool call at a time.
+Hashes are cached because A6-02 asks for this every two seconds per worktree. Since the 2026-07-28
+corrective pass, a cache hit requires the same file identity, size, modification time and filesystem
+change time. On a platform where change time is unavailable, the cache misses rather than weakening
+the key.
 
 The size limit is applied to any content read from the worktree rather than to untracked files
 alone, which extends D-09 slightly. A modified tracked binary of the same size poses the identical
@@ -2752,6 +2752,15 @@ problem and deserves the identical answer.
 Uncovered a quiet bug on the way: with -z, `git status` emits a rename's old path as its own field,
 and the old loop read it as a second entry, so every rename counted as one staged and one unstaged
 change too many. Both readings now share one parser.
+
+**Codex corrective pass 2026-07-28.** A new dirty-to-dirty regression test proved that the shared
+Git runner trimmed the leading space from porcelain v1. That byte is the index status column, so an
+ordinary unstaged ` M path` became staged `M  ath`; later edits to the already-dirty file produced
+the same key and could preserve a false green. Every NUL-delimited Git caller now uses a byte-exact
+path. A second regression proved that size plus mtime could preserve a cached hash after an edit;
+cache identity now also uses file identity and filesystem change time, and a file changing during
+its own read makes the revision unknown. Race-enabled package tests pass. Codex wrote the corrective
+diff, so Claude must rerun these tests and refresh its dated check before this task becomes done.
 
 ### A6-02 Revision poller
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-01`
@@ -2762,7 +2771,7 @@ Deliverable: poll each worktree and emit a revision change event.
 Acceptance: an edit produces the event within one poll interval, and polling many worktrees does
 not saturate a core.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: was P2-04, unchanged. D-07 applies.
 
@@ -2778,8 +2787,15 @@ because a select between an available slot and a cancelled context picks at rand
 `rev-parse` was being reported as "this branch has no commits yet", which is a small lie a cancelled
 poll produced every single time.
 
+**Codex corrective pass 2026-07-28.** The production follow loop replaces the watched set while a
+poll may still be reading. A slow observation could land afterwards and resurrect a removed
+workspace or overwrite its replacement. Polls now carry the watched-set version and discard an
+observation whose source changed in flight. The many-worktree test now measures concurrent revision
+reads at the semaphore rather than measuring the already-serial callback. Race-enabled package
+tests pass. Claude's earlier check predates this diff and must be rerun before done.
+
 ### A6-03 Test runner
-`status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-01, A5-04`
+`status: blocked | owner: Claude | branch: feat/verification-and-release | depends: A6-01, A5-04`
 `scope: internal/exec/`
 
 Deliverable: run a configured test command per agent worktree, capturing exit code, duration and
@@ -2800,6 +2816,19 @@ code is broken when what is broken is their configuration.
 Logs stay out of run state per D-08, so RunTest returns the run and the output separately rather
 than putting a log buffer inside a state record.
 
+**Blocked by independent Codex review 2026-07-28.** D-05 still requires `command.argv` as the
+default and an explicitly opted-in `command.shell`. The committed `canopy.json` schema instead
+accepts only a string and always runs `/bin/sh -c`. A missing executable therefore exits 127 and is
+recorded as FAIL, contradicting this task's acceptance sentence that a command which cannot start
+is ERROR. The existing test observes that mismatch but deliberately does not fail. Q-16 records the
+two supervisor choices. Do not clear this block by matching shell stderr or treating every 126/127
+as infrastructure failure; a valid shell test can deliberately return either code.
+
+The corrective branch did fix an adjacent truth-path defect: a RUNNING update now carries the same
+start revision as its terminal result, so the interface can render RUN instead of UNKNOWN for the
+duration. That does not settle the command-format contradiction, and Codex verification stays
+unchecked.
+
 ### A6-04 Verification per agent
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-03, A5-06`
 `scope: internal/tui/`
@@ -2809,7 +2838,7 @@ Deliverable: every agent carries its verification state, using the existing roll
 Acceptance: an agent that edits its worktree turns stale, and re-running clears it. Wording and
 glyphs are the ones fixed in D-10.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: the old P2-09 to P2-14 demo, per agent instead of per worktree.
 
@@ -2819,6 +2848,16 @@ a result stale without anything going around marking it.
 
 The snapshot is assembled on each call rather than kept, so there is no second copy of the truth to
 fall out of date.
+
+**Codex corrective pass 2026-07-28.** Reusing an agent name for another workspace kept the first
+workspace's revision and test map. When both worktrees had the same RevisionKey, the replacement
+inherited green evidence for a test it never ran. Evidence is now cleared whenever the workspace
+identity or path changes. A second race let an older slow run finish after a newer rerun started and
+overwrite the current RUNNING state; only updates from the authoritative run may now advance it.
+Two direct agents sharing one checkout were also attributed by map iteration; verification and
+ranking now refuse that shared workspace and tell the user to isolate the agents, as D-33 requires
+for concurrent work. Race-enabled package tests pass. Claude must independently rerun the
+corrective cases.
 
 ### A6-05 Rank agents by outcome
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-04`
@@ -2830,7 +2869,7 @@ current revision, with diff size as a tiebreak.
 Acceptance: the ranking refuses to rank anything whose evidence is stale or unknown rather than
 guessing. The reason for each placement is visible.
 
-`verify: claude [x] 2026-07-27   codex [x] 2026-07-27`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-27`
 
 notes: **the strategic argument for the entire project.** Orca fans out across agents. Nobody
 appears to use test truth to rank the results.
@@ -2851,6 +2890,13 @@ passing-before-failing order, diff-size tiebreaks, stale refusal, never-run refu
 revision refusal. Source tracing confirmed that only current required-test verdicts enter the
 ranked slice; unranked entries retain their visible refusal reason.
 
+**Corrective extension 2026-07-28.** A diff measurement failure previously became an empty diff,
+which made missing tiebreak evidence look like the smallest change. Ranking now refuses that agent
+with the Git reason. Because Codex wrote this extension, Claude must rerun the ranking suite against
+this branch even though both older identity checks are already dated above. **Rerun 2026-07-28 at
+8f3e5f9**: the ranking and review-queue tests pass, including the refusal of an unmeasurable diff and
+the refusal of a shared workspace, and the signature above is dated to that run.
+
 ### A6-06 Ready to review queue
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-04`
 `scope: internal/tui/`
@@ -2861,7 +2907,7 @@ ordered so the easiest review comes first.
 Acceptance: an agent whose result went stale leaves the queue immediately. An agent with a green
 result and an empty diff never enters it.
 
-`verify: claude [x] 2026-07-27   codex [ ]`
+`verify: claude [x] 2026-07-28 (at 8f3e5f9, see A6 verification note)   codex [x] 2026-07-28`
 
 notes: **added 2026-07-26.** Nearly free, since the truth engine already knows all of this.
 
@@ -2869,12 +2915,72 @@ Derived on every call rather than maintained, which is why an agent whose result
 immediately: there is no cached membership to forget to invalidate. Green with an empty diff never
 enters, because a passing suite over no changes is the state every repository starts in.
 
+**Codex corrective pass 2026-07-28.** The queue now excludes agents while their diff is unavailable
+instead of treating missing evidence as empty. Untracked-file line counting is constant-memory and
+never follows a symlink outside the worktree; an unknown revision skips diff measurement entirely,
+which prevents the oversized file that forced UNKNOWN from then being read into memory for a queue
+it cannot enter. Exact whitespace in NUL-delimited filenames is preserved. Race-enabled package
+tests pass. Claude's earlier check must be rerun on the corrective diff before done.
+
 ### PG-A6 Phase A6 gate
 `status: todo | depends: A6-05, A6-06`
 
 Both supervisors give three agents the same task and watch Canopy pick the winner on evidence.
 
 `signed: walid [ ]   classmate [ ]`
+
+### A6 verification at 8f3e5f9
+
+`recorded: Claude 2026-07-28`
+
+The four A6 tasks above carried a `claude [x]` from 2026-07-27 that predated the corrective work on
+`verify/freshness-and-ranking`, which Codex marked honestly rather than letting the old signature
+stand for code it never saw. This is the rerun at the current head, so the signatures mean what they
+say again.
+
+Reviewed rather than only rerun. The corrections that carry the branch, each confirmed by reading
+the code rather than by trusting the commit message:
+
+- **`strings.TrimSpace` was being applied to `git status --porcelain=v1 -z`.** The leading character
+  of that format is the first status column and it is a space for an unstaged modification, so
+  trimming turned ` M file` into `M file` and reported it as staged. Split into `runRaw` for every
+  machine-readable caller.
+- **The content hash cache could be fooled by restoring an mtime.** Change time is compared as well
+  now, with `os.SameFile` and a re-stat after the read, and cache hits are disabled outright on a
+  platform where change time is unavailable rather than weakened.
+- **Two races.** A poll in flight while `Watch` changed could resurrect a removed workspace or
+  overwrite the first observation of its replacement; an older test run finishing after a newer one
+  started could overwrite the newer result.
+- **Evidence is cleared when the workspace behind an agent name is replaced.** A replacement worktree
+  can legitimately have the same revision key, so the old run would have made it green before it ran
+  anything.
+- **`countLines` no longer follows symlinks or reads whole files into memory.** Git records the link
+  target as the content, so following it let a size measurement read outside the worktree.
+
+Two follow-ups were added on the same branch after review:
+
+- `Observe` compared a subject's directory to a change's path as raw strings while `sharedWorkspaces`
+  cleaned both. A trailing separator on either side made `Observe` match nothing, which reads as a
+  worktree where nothing ever changes rather than as anything going wrong.
+- `ReadyToReview` did not check whether a workspace was shared while `placementFor` did. The first
+  version of this was recorded as mutation checked and was not: the test drove the public flow, where
+  sharing clears the evidence before the queue is read, so deleting the guard changed nothing and the
+  test passed anyway. Codex caught the false claim by deleting the guard. The test now constructs a
+  green-but-shared state directly, which is the only way to make the guard the thing under test, and
+  deleting it fails.
+
+The path normalisation was mutation checked from the start, in both directions: a trailing separator
+hiding a workspace, and the same directory written two ways escaping the sharing check.
+
+Reran at 8f3e5f9 on darwin: `go build ./...`, `go test -count=1 ./...`, `go test -race` on
+`internal/git`, `internal/verify` and `internal/exec`, `go vet ./...`, `golangci-lint run` (0 issues),
+`gofmt -l .` (clean).
+
+**A6-03 stays blocked and this note does not clear it.** Q-16 is a genuine contract violation found
+by this pass: `canopy.json` accepts only a shell string while D-05 requires an argument array by
+default, so a missing executable is observed as shell exit 127 and reported as a failing test rather
+than a command-start error. That needs both supervisors to either implement D-05 as written or
+supersede it, and no agent should clear it by matching shell output or redefining exit 126 and 127.
 
 ---
 

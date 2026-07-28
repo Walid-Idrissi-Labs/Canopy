@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -55,11 +56,11 @@ func (r *Repo) Changes(ctx context.Context, dir, base string) ([]core.FileChange
 	// numstat and name-status are two calls because one format does not carry both. They are joined
 	// on path below rather than trusted to arrive in the same order, since a rename changes what
 	// "the path" is in each.
-	numstat, err := worktree.run(ctx, "diff", "--numstat", "-z", from)
+	numstat, err := worktree.runRaw(ctx, "diff", "--numstat", "-z", from)
 	if err != nil {
 		return nil, fmt.Errorf("measuring the changes in %s: %w", dir, err)
 	}
-	nameStatus, err := worktree.run(ctx, "diff", "--name-status", "-z", from)
+	nameStatus, err := worktree.runRaw(ctx, "diff", "--name-status", "-z", from)
 	if err != nil {
 		return nil, fmt.Errorf("listing the changes in %s: %w", dir, err)
 	}
@@ -70,7 +71,7 @@ func (r *Repo) Changes(ctx context.Context, dir, base string) ([]core.FileChange
 	// Untracked files are not in any diff, and an agent that has written a new file and not added it
 	// has still written it. Left out, a fresh implementation in a new file would rank as no work at
 	// all.
-	untracked, err := worktree.run(ctx, "ls-files", "--others", "--exclude-standard", "-z")
+	untracked, err := worktree.runRaw(ctx, "ls-files", "--others", "--exclude-standard", "-z")
 	if err == nil {
 		for _, path := range strings.Split(untracked, "\x00") {
 			if path == "" {
@@ -146,21 +147,61 @@ func (r *Repo) Patch(ctx context.Context, dir, base, path string) (string, error
 func countLines(dir, path string) (int, bool) {
 	const peek = 8000
 
-	content, err := os.ReadFile(filepath.Join(dir, path))
+	full := filepath.Join(dir, path)
+	info, err := os.Lstat(full)
 	if err != nil {
 		return 0, false
 	}
-
-	head := content
-	if len(head) > peek {
-		head = head[:peek]
+	if info.Mode()&os.ModeSymlink != 0 {
+		// Git records the link target as the content of a symlink. Following it here would let a
+		// review-size measurement read an arbitrary file outside the worktree, disagreeing with the
+		// revision key which deliberately hashes only this string.
+		target, err := os.Readlink(full)
+		if err != nil || target == "" {
+			return 0, false
+		}
+		return 1 + strings.Count(strings.TrimSuffix(target, "\n"), "\n"), false
 	}
-	if bytes.IndexByte(head, 0) >= 0 {
+	if !info.Mode().IsRegular() {
 		return 0, true
 	}
 
-	lines := bytes.Count(content, []byte{'\n'})
-	if len(content) > 0 && !bytes.HasSuffix(content, []byte{'\n'}) {
+	file, err := os.Open(full)
+	if err != nil {
+		return 0, false
+	}
+	defer func() { _ = file.Close() }()
+
+	buffer := make([]byte, 32*1024)
+	lines, read, inspected := 0, 0, 0
+	var last byte
+	for {
+		n, readErr := file.Read(buffer)
+		if n > 0 {
+			chunk := buffer[:n]
+			if inspected < peek {
+				end := n
+				if end > peek-inspected {
+					end = peek - inspected
+				}
+				if bytes.IndexByte(chunk[:end], 0) >= 0 {
+					return 0, true
+				}
+				inspected += end
+			}
+			lines += bytes.Count(chunk, []byte{'\n'})
+			read += n
+			last = chunk[n-1]
+		}
+		if readErr != nil {
+			if readErr != io.EOF {
+				return 0, false
+			}
+			break
+		}
+	}
+
+	if read > 0 && last != '\n' {
 		lines++
 	}
 	return lines, false

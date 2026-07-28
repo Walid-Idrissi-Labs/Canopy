@@ -325,3 +325,32 @@ were recorded as allowed operations that ran and failed. Restricted agents were 
 their trust level structurally denied. Proposed fixes and mutation-resistant tests are on
 `feat/permissions-and-confinement`; this question stays open until those changes receive an
 independent rerun.
+
+---
+
+## Q-16 Test commands do not implement D-05
+
+**Added 2026-07-28 by the independent A6 pass.**
+
+D-05 is still a settled decision and D-22 explicitly says it is unaffected by the agent-runtime
+pivot. It requires an argument array as the default command form and permits a shell string only
+with an explicit opt-in. The current `canopy.json` schema accepts only `"command": "..."`, and the
+runner always invokes `/bin/sh -c`.
+
+That is not only a schema mismatch. It breaks A6-03's three-outcome acceptance contract. When the
+configured executable does not exist, the shell itself starts successfully and returns 127, so
+Canopy records FAIL even though no test ran. The existing test notices this exact result but does
+not fail on it. Guessing from stderr is locale- and shell-dependent, while treating every 126 or
+127 as ERROR would misclassify a valid shell test that deliberately exits with that code.
+
+**Supervisor decision required, with one recommended path:**
+
+1. **Recommended: implement D-05 as written.** Make the committed shape
+   `"command": {"argv": ["go", "test", "./..."]}` by default, accept
+   `"command": {"shell": "...", "allow_shell": true}` only deliberately, migrate Canopy's own
+   config, and let the argv runner distinguish start failure from a non-zero test exit.
+2. Explicitly supersede D-05 with a shell-only decision and revise A6-03 to admit that an inner
+   command-start failure cannot be distinguished reliably from a test returning the same status.
+
+Until both supervisors choose, A6-03 is blocked. A later agent must not clear it by matching English
+shell output or by silently redefining exit 126/127.

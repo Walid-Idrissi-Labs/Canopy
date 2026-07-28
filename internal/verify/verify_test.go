@@ -387,6 +387,130 @@ func TestEndingAnAgentRemovesItsEvidence(t *testing.T) {
 	}
 }
 
+// Agent names are labels, not evidence identities. Reusing a name for another worktree must start
+// with no result even when both worktrees happen to be at the same revision. Otherwise a brand-new
+// agent can inherit a green run it never performed.
+func TestMovingAnAgentToAnotherWorkspaceClearsItsEvidence(t *testing.T) {
+	verifier, repo, subjects := harness(t, "one")
+	first := subjects["one"]
+
+	writeFile(t, first.Dir, "pass", "")
+	look(t, verifier, subjects)
+	verified(t, verifier, "one")
+	if rollup, _ := verifier.Rollup("one"); !rollup.Green {
+		t.Fatalf("the first workspace never became green: %s", rollup.Reason)
+	}
+
+	secondWorkspace, err := repo.Create(context.Background(), "replacement", "")
+	if err != nil {
+		t.Fatalf("Create replacement: %v", err)
+	}
+	second := Subject{
+		Agent:       "one",
+		WorkspaceID: secondWorkspace.ID,
+		Dir:         secondWorkspace.Path,
+		Branch:      secondWorkspace.Branch,
+	}
+	// The marker is ignored, so both worktrees still have the exact same RevisionKey. That is what
+	// makes inherited evidence dangerous instead of merely stale.
+	writeFile(t, second.Dir, "pass", "")
+	verifier.Watch([]Subject{second})
+	secondKey, reason := repo.Revision(context.Background(), second.Dir)
+	verifier.Observe(context.Background(), git.Change{
+		WorkspaceID: second.WorkspaceID,
+		Path:        second.Dir,
+		To:          secondKey,
+		Reason:      reason,
+	})
+
+	rollup, ok := verifier.Rollup("one")
+	if !ok {
+		t.Fatal("the replacement agent is not being watched")
+	}
+	if rollup.Green {
+		t.Fatal("the replacement workspace inherited green evidence from another workspace")
+	}
+	if rollup.Tests != core.TestUnknown {
+		t.Errorf("the replacement workspace reports %q, want unknown until it runs its own test", rollup.Tests)
+	}
+}
+
+func TestAgentsSharingAWorkspaceAreRefusedVerificationAttribution(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "main", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+	workspaceID := git.WorkspaceID(dir)
+	subjects := []Subject{
+		{Agent: "one", WorkspaceID: workspaceID, Dir: dir, Branch: "main"},
+		{Agent: "two", WorkspaceID: workspaceID, Dir: dir, Branch: "main"},
+	}
+	verifier.Watch(subjects)
+
+	key, reason := repo.Revision(context.Background(), dir)
+	verifier.Observe(context.Background(), git.Change{
+		WorkspaceID: workspaceID, Path: dir, To: key, Reason: reason,
+	})
+
+	for _, name := range []string{"one", "two"} {
+		err := verifier.Verify(context.Background(), name)
+		if err == nil || !strings.Contains(err.Error(), "shared") {
+			t.Errorf("Verify(%q) = %v, want an explicit shared-workspace refusal", name, err)
+		}
+	}
+	ranking := verifier.Rank()
+	if len(ranking.Ranked) != 0 || len(ranking.Unranked) != 2 {
+		t.Fatalf("shared agents were attributed a ranking: %+v", ranking)
+	}
+	for _, placement := range ranking.Unranked {
+		if !strings.Contains(placement.Reason, "isolate") {
+			t.Errorf("%s refusal does not say how to make attribution possible: %q",
+				placement.Agent, placement.Reason)
+		}
+	}
+}
+
+// A rerun supersedes the previous run when it starts, not when it finishes. If an older slow pass
+// can overwrite a newer run-in-progress, the screen flashes green while the current evidence is
+// still unknown and may later fail.
+func TestAnOlderRunCannotOverwriteANewerRunInProgress(t *testing.T) {
+	verifier, _, subjects := harness(t, "one")
+	subject := subjects["one"]
+	start := time.Now()
+
+	older := core.TestRun{
+		ID: "run-1", WorkspaceID: subject.WorkspaceID, TestName: "unit",
+		StartedAt: start, State: core.TestRunning, Revision: core.RevisionKey{HeadSHA: "same"},
+	}
+	newer := core.TestRun{
+		ID: "run-2", WorkspaceID: subject.WorkspaceID, TestName: "unit",
+		StartedAt: start.Add(time.Millisecond), State: core.TestRunning,
+		Revision: core.RevisionKey{HeadSHA: "same"},
+	}
+	verifier.record(older)
+	verifier.record(newer)
+
+	finished := start.Add(2 * time.Millisecond)
+	older.State = core.TestPassing
+	older.FinishedAt = &finished
+	verifier.record(older)
+
+	snapshot, _ := verifier.Snapshot("one")
+	if len(snapshot.Tests) != 1 || snapshot.Tests[0].Latest == nil {
+		t.Fatalf("the current run is missing from the snapshot: %+v", snapshot.Tests)
+	}
+	if got := snapshot.Tests[0].Latest.ID; got != newer.ID {
+		t.Fatalf("the older run %q replaced the newer run %q", got, newer.ID)
+	}
+	if got := snapshot.Tests[0].Latest.State; got != core.TestRunning {
+		t.Errorf("the current run is shown as %q, want running", got)
+	}
+}
+
 // Nothing configured is not the same as nothing wrong, and it must not produce a placement either.
 func TestAnAgentWithNoConfiguredTestsIsNotRanked(t *testing.T) {
 	dir := repository(t)
@@ -485,5 +609,156 @@ func TestAnUnknownRevisionIsRefusedRatherThanRankedLast(t *testing.T) {
 	}
 	if len(verifier.ReadyToReview()) != 0 {
 		t.Error("an agent whose revision is unknown is queued for review")
+	}
+}
+
+// Diff size is the declared tiebreak. Treating an unmeasurable diff as zero would put the agent
+// with missing evidence first and describe that as the smallest change. Refusal is the only honest
+// result until the comparison can actually be made.
+func TestAnUnmeasurableDiffIsRefusedRatherThanRankedAsEmpty(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "branch-that-does-not-exist", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+
+	workspace, err := repo.Create(context.Background(), "one", "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	subject := Subject{
+		Agent: "one", WorkspaceID: workspace.ID, Dir: workspace.Path, Branch: workspace.Branch,
+	}
+	verifier.Watch([]Subject{subject})
+	key, reason := repo.Revision(context.Background(), subject.Dir)
+	verifier.Observe(context.Background(), git.Change{
+		WorkspaceID: subject.WorkspaceID, Path: subject.Dir, To: key, Reason: reason,
+	})
+	verified(t, verifier, "one")
+
+	ranking := verifier.Rank()
+	if len(ranking.Ranked) != 0 {
+		t.Fatalf("an agent with no measurable diff was ranked as %+v", ranking.Ranked)
+	}
+	if len(ranking.Unranked) != 1 {
+		t.Fatalf("%d unranked agents, want one", len(ranking.Unranked))
+	}
+	if !strings.Contains(ranking.Unranked[0].Reason, "diff could not be measured") {
+		t.Errorf("the refusal does not name the missing evidence: %q", ranking.Unranked[0].Reason)
+	}
+	if queue := verifier.ReadyToReview(); len(queue) != 0 {
+		t.Errorf("an agent with an unmeasurable diff entered the review queue: %+v", queue)
+	}
+}
+
+// A trailing separator on either side of a path comparison must not make a workspace invisible.
+//
+// The two paths reach Observe by different routes: a subject's directory is configured, and a
+// change's path comes back through the poller's watch list. If one of them gains a separator the
+// match fails, no revision is ever recorded, and every agent stays unknown. That reads as a
+// workspace where nothing has changed rather than as anything going wrong, which is the worst
+// direction for this to fail in.
+func TestATrailingSeparatorDoesNotHideAWorkspace(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "main", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+
+	workspaceID := git.WorkspaceID(dir)
+	verifier.Watch([]Subject{
+		{Agent: "one", WorkspaceID: workspaceID, Dir: dir + string(filepath.Separator), Branch: "main"},
+	})
+
+	key, reason := repo.Revision(context.Background(), dir)
+	verifier.Observe(context.Background(), git.Change{
+		WorkspaceID: workspaceID, Path: dir, To: key, Reason: reason,
+	})
+
+	snapshot, ok := verifier.Snapshot("one")
+	if !ok {
+		t.Fatal("the agent is not being watched")
+	}
+	if !snapshot.Revision.Known() {
+		t.Errorf("the revision was never recorded, so the worktree reads as unchanged forever")
+	}
+}
+
+// And the same path written two ways is still one workspace, so two agents in it are still sharing.
+func TestSharingIsDetectedThroughAnUncleanPath(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "main", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+
+	// Different WorkspaceIDs deliberately, so the only thing that can catch this is the path.
+	verifier.Watch([]Subject{
+		{Agent: "one", WorkspaceID: "a", Dir: dir, Branch: "main"},
+		{Agent: "two", WorkspaceID: "b", Dir: dir + string(filepath.Separator) + ".", Branch: "main"},
+	})
+
+	for _, name := range []string{"one", "two"} {
+		if err := verifier.Verify(context.Background(), name); err == nil ||
+			!strings.Contains(err.Error(), "shared") {
+			t.Errorf("Verify(%q) = %v, want a shared-workspace refusal", name, err)
+		}
+	}
+}
+
+// Refusing to rank an agent and then offering it for review are two answers to one question.
+//
+// A queue entry is a claim that this agent's work is finished and verified, which is exactly the
+// claim a shared workspace makes unattributable.
+//
+// The state is built directly rather than driven through Observe and record, and that is the whole
+// point of the test. Through the public flow the guard cannot be reached: sharing clears the
+// evidence and no run is recorded while it lasts, so the roll-up is never green and an earlier check
+// drops the agent first. A test that went through the front door would pass with the guard deleted,
+// which is what happened to the first version of this and what the ledger wrongly claimed it proved.
+// Constructing green-but-shared is the only way to make the guard the thing under test.
+func TestTheReviewQueueExcludesSharedWorkspaces(t *testing.T) {
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatalf("OpenRepo: %v", err)
+	}
+	verifier := New(repo, "main", []canopyexec.Test{
+		{Name: "unit", Command: "exit 0", Required: true},
+	}, nil)
+
+	workspaceID := git.WorkspaceID(dir)
+	verifier.Watch([]Subject{
+		{Agent: "one", WorkspaceID: workspaceID, Dir: dir, Branch: "main"},
+		{Agent: "two", WorkspaceID: workspaceID, Dir: dir, Branch: "main"},
+	})
+
+	revision := core.RevisionKey{HeadSHA: "aaa111"}
+	verifier.mu.Lock()
+	for _, name := range []string{"one", "two"} {
+		verifier.revision[name] = revision
+		verifier.latest[name] = map[string]core.TestRun{
+			"unit": {ID: "run-1", TestName: "unit", State: core.TestPassing, Revision: revision},
+		}
+		verifier.diffs[name] = core.DiffStat{FilesChanged: 1, Insertions: 5}
+	}
+	verifier.mu.Unlock()
+
+	// Green by every other measure, so the only thing that can keep it out of the queue is the guard.
+	if snapshot, ok := verifier.Snapshot("one"); !ok || !core.RollUp(snapshot).Green {
+		t.Fatal("the constructed state is not green, so this proves nothing about the guard")
+	}
+
+	if queue := verifier.ReadyToReview(); len(queue) != 0 {
+		t.Errorf("a shared workspace was offered for review: %+v", queue)
 	}
 }

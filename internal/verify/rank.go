@@ -71,10 +71,15 @@ func (v *Verifier) placementFor(agent string) (core.Placement, bool) {
 	v.mu.Lock()
 	snapshot, known := v.snapshotLocked(agent)
 	stat := v.diffs[agent]
+	diffErr := v.diffErr[agent]
+	shared := v.shared[agent]
 	v.mu.Unlock()
 
 	if !known {
 		return core.Placement{Agent: agent, Reason: "this agent is no longer being verified"}, false
+	}
+	if shared != "" {
+		return core.Placement{Agent: agent, Reason: "not ranked: " + shared}, false
 	}
 
 	placement := core.Placement{
@@ -90,6 +95,10 @@ func (v *Verifier) placementFor(agent string) (core.Placement, bool) {
 		if snapshot.RevisionError != "" {
 			placement.Reason = "not ranked: " + snapshot.RevisionError
 		}
+		return placement, false
+	}
+	if diffErr != "" {
+		placement.Reason = "not ranked: " + diffErr
 		return placement, false
 	}
 
@@ -164,9 +173,21 @@ func (v *Verifier) ReadyToReview() []core.ReadyForReview {
 		v.mu.Lock()
 		snapshot, known := v.snapshotLocked(name)
 		stat := v.diffs[name]
+		diffErr := v.diffErr[name]
+		shared := v.shared[name]
 		v.mu.Unlock()
 
-		if !known {
+		// Shared as well, by the same rule placementFor uses. A queue entry is a claim that this
+		// agent's work is finished and verified, and a shared workspace is precisely the case that
+		// makes that claim unattributable, so refusing to rank one and then offering it for review
+		// would be two answers to one question.
+		//
+		// Unreachable today, and worth saying rather than leaving somebody to find out by deleting
+		// it: evidence is cleared when a workspace becomes shared and no run is recorded while it
+		// stays that way, so the roll-up is never green and the check below already drops it. This
+		// holds for a reason that lives in two other functions, and the next change to either of them
+		// is where that stops being true.
+		if !known || diffErr != "" || shared != "" {
 			continue
 		}
 		rollup := core.RollUp(snapshot)
