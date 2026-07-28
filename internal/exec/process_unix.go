@@ -70,6 +70,21 @@ func killGroup(cmd *exec.Cmd, reaped <-chan struct{}) {
 // Asked twice on the way through a kill, before each signal, rather than answered once and cached.
 // The window it closes is the interval between the two, and a stale answer would be exactly as
 // wrong as no answer.
+//
+// **This narrows the window and does not close it, and the residual case cannot be closed with
+// kill(2).** Two things are left. The reaped branch asks whether a group with this id exists and
+// takes yes to mean it is still ours, which it cannot distinguish from the id having been reissued
+// to somebody else. And whichever answer comes back, the last member of the group can exit between
+// this returning and the caller signalling, so even a correct answer can be stale by the time it is
+// used. Both need an identifier the kernel will not recycle, which on Linux means a pidfd and on
+// darwin, which is what Canopy is developed on, means nothing that exists.
+//
+// It is kept because the alternative is worse in the ordinary case rather than because it is
+// complete. Not signalling at all after the leader is reaped would close both holes and leave every
+// orphaned child of every cancelled test run alive, holding the ports that make the next run fail.
+// The failure this guards against needs the group to empty in a window of microseconds and the
+// number to be handed straight to somebody else; the failure it prevents happens every time a test
+// runner spawns workers and is cancelled.
 func oursToSignal(pid int, reaped <-chan struct{}, signal signalFunc) bool {
 	select {
 	case <-reaped:
