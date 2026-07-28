@@ -3297,6 +3297,84 @@ A chat picker is still out of scope and comes later. The code printed on exit is
 0.1, and it is the conversation's number rather than a token, because a token needs a table mapping
 it back and would still only work on the machine that printed it.
 
+### M-09 The mode ladder
+`status: todo | owner: none | branch: none | depends: M-08`
+`scope: internal/permission/, internal/agent/loop.go, internal/core/profile.go, internal/session/, internal/tui/chat/`
+
+Deliverable: seven modes, four of them on `shift+tab`, each one a capability, an approval policy and
+a prompt. Switchable while a turn is running.
+
+Acceptance: every mode is enforced by the permission layer rather than by the prompt, and a test
+proves each one refuses what it claims to refuse. Changing mode mid turn takes effect on the next
+tool call rather than the next message. `runway` and `cruise` refuse to engage where their safety net
+is missing rather than quietly behaving like the mode below them.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: **added 2026-07-28**, at the supervisors' request, after reading what the field does.
+
+M-08 shipped plan and build and they are enforced properly: `permission.Decide` runs at
+`loop.go:328` before `tool.Run`, structural denial is checked before grants so an earlier "always
+allow" cannot unlock a write in plan mode, and an unrecognised level denies. The model cannot argue
+its way past any of that. Three things are wrong with it, and this task is those three.
+
+**The prompt is missing entirely.** Plan mode is pure enforcement, so the model is never told it is
+planning: it tries to edit, gets `refused: changing files needs at least confined trust`, and
+thrashes. Enforcement without a prompt is safe and wasteful; a prompt without enforcement is
+theatre. Both, always. `internal/agent/plan.go` already holds a written `PlanPrompt` that nothing
+calls, which is the same shape as the theme being unreachable at M-07.
+
+**Trust is a snapshot.** `engine.go` reads the level once at turn start and hands it to the loop, so
+changing mode while a reply is arriving does nothing until the next message. `agent.Loop` should
+hold a function rather than a value and call it per tool call. Tightening mid turn will start
+refusing a model that is halfway through a sequence, which is correct and is what Claude Code does.
+
+**Capability and approval are one field and should be two.** `TrustLevel` says both what an agent
+can do and what it asks about, so `standard` means "writes silently and asks about shell" as a
+single value. That is why review-every-edit is not expressible today. Codex CLI is the one that gets
+this right, with `approval_policy` and `sandbox_mode` as separate axes. The existing ladder stays as
+the capability axis and an ask policy layers on top, so `permission.Decide` is extended rather than
+rewritten.
+
+The cycle, ordered by how much can go permanently wrong rather than by how much is allowed:
+
+| mode | can do | asks about | told |
+|---|---|---|---|
+| `plan` | read | nothing, it cannot | write the plan and stop |
+| `build` | read, write in workspace | shell, network | nothing. The default |
+| `runway` | read, write, shell | nothing | you may break things while working, not when you stop |
+| `cruise` | everything, destructive git included | nothing | you have the wheel |
+
+Off the cycle, reachable by flag: `ask`, every action asks including reads, for working next to
+something that matters; `sealed`, full capability confined to its own worktree with no network, for
+fanning several agents out at once; `fixed`, only pre-approved tools run and nothing prompts, for CI
+and cron.
+
+**`runway` is the one no other harness can build, and it is the reason to do this at all.** The agent
+writes and runs whatever it likes, and a turn is not accepted until the workspace verifies green: red
+tests roll back to the checkpoint already taken and the model is told what broke. Every other tool
+asks what an agent may touch. This asks what state it may leave you in, which is the question people
+actually have. Canopy can ask it because it already has all three pieces, a checkpoint before every
+turn, a verifier that knows test state, and staleness detection that knows whether a green result
+still applies to this revision. A classifier guesses at intent; this checks an outcome.
+
+Named `runway` by the supervisors, over ratchet, because it carries the shell and it lands before
+cruise: a runway is where you commit to running flat out while an abort is still available.
+
+The honesty rule from A8-08 applies to both of the bottom two. Outside a git repository, or with no
+tests configured, `runway` refuses to engage rather than silently behaving like `cruise`, and
+`cruise` refuses outside a repository too, because cruise with no undo is recklessness and cruise
+with a checkpoint per turn is a trade somebody can defend.
+
+Deliberately not included: Aider's architect split, an expensive model proposing and a cheap one
+editing. Canopy is better placed for it than Aider is, since per agent credential and model already
+exist and cost tracking could show what the split saved, but it changes how a turn executes rather
+than what it may do, and putting it on the mode key would merge the two axes this task exists to
+separate. Its own task when somebody wants it.
+
+Read before starting: Claude Code's six modes and its classifier fallback, Kimi Code's read-only
+plan sub-agent, OpenCode's per tool allow/ask/deny, Codex CLI's two axes, Aider's three chat modes.
+
 ### PG-M Phase M gate
 `status: todo | depends: M-01, M-02, M-03, M-04, M-05, M-06`
 
