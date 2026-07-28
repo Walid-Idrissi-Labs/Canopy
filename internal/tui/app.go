@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"time"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -31,8 +29,7 @@ type Engine interface {
 type screen int
 
 const (
-	screenSplash screen = iota
-	screenChat
+	screenChat screen = iota
 	screenAgents
 	screenDashboard
 	screenReview
@@ -40,14 +37,14 @@ const (
 	screenHelp
 )
 
-// splashDuration is how long the launch screen stays before the application appears.
+// There was a launch screen here, shown for nine hundred milliseconds before the application
+// appeared. It is gone, at the supervisors' request, and the request is right: a splash is a delay
+// somebody has to sit through to reach the thing they typed a command to reach, and the argument
+// for it was recognition, which the opening screen already does while being usable. Every terminal
+// tool worth being measured against opens on something you can type into.
 //
-// Short on purpose. A splash is worth a moment of recognition and nothing more, and any key
-// dismisses it, so nobody who is in a hurry ever waits.
-const splashDuration = 900 * time.Millisecond
-
-// splashDoneMsg ends the splash.
-type splashDoneMsg struct{}
+// The mark and the drawn name did not go with it. They are on the screen a conversation opens on,
+// which is where somebody is looking anyway.
 
 // App is the top level model. It owns which screen is showing and routes messages to it.
 //
@@ -66,10 +63,6 @@ type App struct {
 	// can do for itself: the chat screen shows a session and the agents screen makes agents, and a
 	// plain new conversation belongs to neither.
 	engine Engine
-
-	// afterSplash is the screen to show once the launch screen clears, decided at construction so
-	// the splash never has to know anything about credentials.
-	afterSplash screen
 
 	// confirmingNew is true when a new conversation has been asked for while a reply is still
 	// arriving, and the same key pressed again will go through with it.
@@ -164,18 +157,17 @@ func NewAppConfigured(
 	}
 
 	app := App{
-		screen:      screenSplash,
-		engine:      engine,
-		afterSplash: screenChat,
-		chat:        chat.New(engine, sessionID, dir, keyName),
-		agents:      agentsui.New(engine),
-		dashboard:   New(store),
-		review:      NewReview(options.Review),
-		keys:        credentials,
-		cameFrom:    screenChat,
-		usingKey:    keyName,
-		dir:         dir,
-		dim:         Dimensions{Width: 80, Height: 24},
+		screen:    screenChat,
+		engine:    engine,
+		chat:      chat.New(engine, sessionID, dir, keyName),
+		agents:    agentsui.New(engine),
+		dashboard: New(store),
+		review:    NewReview(options.Review),
+		keys:      credentials,
+		cameFrom:  screenChat,
+		usingKey:  keyName,
+		dir:       dir,
+		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
 	app.review.SetCostOutcomes(options.Costs)
@@ -187,7 +179,7 @@ func NewAppConfigured(
 	// landing on the chat means typing a message and watching it fail, which is a worse introduction
 	// than being asked the one question that makes everything else work.
 	if app.keys.IsEmpty() || keyName == "" {
-		app.afterSplash = screenKeys
+		app.screen = screenKeys
 	}
 
 	app.resize(app.dim)
@@ -202,11 +194,7 @@ func (a *App) resize(dim Dimensions) {
 }
 
 func (a App) Init() tea.Cmd {
-	return tea.Batch(
-		a.dashboard.Init(),
-		a.chat.Init(),
-		tea.Tick(splashDuration, func(time.Time) tea.Msg { return splashDoneMsg{} }),
-	)
+	return tea.Batch(a.dashboard.Init(), a.chat.Init())
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -235,22 +223,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		a.resize(Dimensions{Width: m.Width, Height: m.Height})
-	case splashDoneMsg:
-		if a.screen == screenSplash {
-			a.screen = a.afterSplash
-		}
-		return a, nil
 	}
 
 	if key, ok := msg.(tea.KeyMsg); ok {
-		// Any key dismisses the splash, and is then not passed on. Swallowing it is deliberate:
-		// the first keystroke after launch is usually impatience rather than a command, and acting
-		// on it would mean landing somewhere you did not ask for.
-		if a.screen == screenSplash {
-			a.screen = a.afterSplash
-			return a, nil
-		}
-
 		// Help is answered before anything else, and any key leaves it except the ones that scroll
 		// it. Somebody who opened it by accident should not have to find the one key that closes it,
 		// and somebody reading it should not be thrown out for trying to see the rest.
@@ -547,9 +522,6 @@ func (a App) typing() bool {
 }
 
 func (a App) View() string {
-	if a.screen == screenSplash {
-		return Splash(a.dim, "a terminal coding agent for running several at once")
-	}
 	if !a.dim.Usable() {
 		return TooSmall(a.dim)
 	}
@@ -610,8 +582,6 @@ func (a App) View() string {
 // Screen reports which view is in front. For tests.
 func (a App) Screen() string {
 	switch a.screen {
-	case screenSplash:
-		return "splash"
 	case screenChat:
 		return "chat"
 	case screenAgents:
@@ -629,9 +599,9 @@ func (a App) Screen() string {
 
 // SubscribeCmd returns the command that waits on the next engine event.
 //
-// Init batches this with the splash timer, and a batched command yields a tea.BatchMsg rather than
-// the event itself, so a test driving the event path needs the subscription on its own. Exported
-// for that reason and no other.
+// Init batches this with the chat's own commands, and a batched command yields a tea.BatchMsg rather
+// than the event itself, so a test driving the event path needs the subscription on its own.
+// Exported for that reason and no other.
 func (a App) SubscribeCmd() tea.Cmd { return a.dashboard.Init() }
 
 // ChatInput exposes what has been typed into the message box. For tests.
@@ -639,14 +609,6 @@ func (a App) ChatInput() string { return a.chat.InputValue() }
 
 // ChatSubscribeCmd is the same, for the chat screen's own event stream.
 func (a App) ChatSubscribeCmd() tea.Cmd { return a.chat.SubscribeCmd() }
-
-// DismissSplash skips the launch screen. For tests, which should not wait on a timer.
-func (a App) DismissSplash() App {
-	if a.screen == screenSplash {
-		a.screen = a.afterSplash
-	}
-	return a
-}
 
 // RunApp starts the full application.
 func RunApp(
