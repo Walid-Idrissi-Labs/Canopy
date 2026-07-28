@@ -125,6 +125,12 @@ func (e *stubEngine) Trust(string) core.TrustLevel {
 
 func (e *stubEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
 
+func (e *stubEngine) Fork(_, _ string) (core.Session, error) {
+	return core.Session{ID: "session-forked"}, nil
+}
+
+func (e *stubEngine) Trail() *permission.Trail { return nil }
+
 func (e *stubEngine) Undo(_ context.Context, _, turnID string) error {
 	e.undone = append(e.undone, turnID)
 	return nil

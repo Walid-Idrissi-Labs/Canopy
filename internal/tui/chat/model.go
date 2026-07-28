@@ -62,6 +62,15 @@ type Engine interface {
 	// less than no mode at all, because it would look like a guarantee.
 	Trust(sessionID string) core.TrustLevel
 	SetTrust(sessionID string, trust core.TrustLevel)
+
+	// Fork branches a conversation at a turn, keeping everything said up to it. The original is
+	// untouched, which is what makes trying a second approach cheap enough to be worth doing.
+	Fork(sessionID, throughTurnID string) (core.Session, error)
+
+	// Trail is the record of every tool call and what was decided about it. Nil where nothing is
+	// recording, which is a legitimate state rather than an error: a conversation with no tools
+	// attached has nothing to record.
+	Trail() *permission.Trail
 }
 
 // Commands is the catalog resolved for this chat's project.

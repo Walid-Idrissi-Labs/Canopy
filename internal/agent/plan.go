@@ -51,6 +51,10 @@ type PlanOutcome struct {
 func (l *Loop) Plan(ctx context.Context, req core.Request, obs Observer) (PlanOutcome, error) {
 	planning := *l
 	planning.Trust = core.TrustReadOnly
+	// And no live source, so nothing can raise it while the plan is being written. A planning phase
+	// whose level could be lifted underneath it by anything other than the person asking for the
+	// plan is not a planning phase, it is a suggestion.
+	planning.LiveTrust = nil
 	planning.Approver = DenyAll
 	// A fresh grant set, so an approval given earlier in the session cannot let a tool run during
 	// planning. Reusing the session's grants would mean "always allow edits" quietly turning plan

@@ -603,9 +603,13 @@ func (e *Engine) run(
 	e.mu.Unlock()
 
 	loop := &agent.Loop{
-		Client:    client,
-		Tools:     tools,
-		Trust:     trust,
+		Client: client,
+		Tools:  tools,
+		Trust:  trust,
+		// Asked again before every tool call, so changing mode while a reply is arriving takes hold
+		// on the next thing the model tries rather than on the next thing the user says. The level
+		// above is the one this turn started on and is the fallback.
+		LiveTrust: func() core.TrustLevel { return e.Trust(sessionID) },
 		Grants:    e.grantsFor(sessionID),
 		Trail:     trail,
 		Approver:  approver,

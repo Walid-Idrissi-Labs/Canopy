@@ -80,12 +80,19 @@ type Builtin struct {
 func Builtins() []Builtin {
 	return []Builtin{
 		{"help", "every key, on one screen"},
-		{"commands", "list every command available here"},
-		{"new", "start a fresh conversation, keeping this one"},
-		{"compact", "summarise the conversation so far, to free context"},
+		{"commands", "everything you can type here, and where each one came from"},
+		{"new", "a fresh conversation, keeping this one"},
 		{"undo", "put the workspace back as it was before the last turn"},
-		{"cost", "what this conversation has cost so far"},
-		{"agents", "the agents that are running"},
+		{"green", "whether this workspace is verified, and what has gone stale"},
+		{"compact", "summarise what has been said, to buy back context"},
+		{"context", "how full this conversation is, before it has to be compacted"},
+		{"cost", "tokens and money spent, and which of the two is a guess"},
+		{"trail", "every tool call this agent made, and what was allowed or refused"},
+		{"tasks", "what the agent says it is working through"},
+		{"fork", "branch the conversation here, keeping everything said so far"},
+		{"agents", "every agent running, and the state of its worktree"},
+		{"pickup", "the code that brings you back to this conversation later"},
+		{"theme", "the palette, including one with no colour in it at all"},
 		{"keys", "the credentials Canopy can use"},
 	}
 }

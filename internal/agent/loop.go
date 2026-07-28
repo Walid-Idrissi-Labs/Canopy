@@ -105,7 +105,22 @@ type Loop struct {
 	Client core.ProviderClient
 	Tools  *core.ToolRegistry
 
-	Trust    core.TrustLevel
+	// Trust is how much this agent may do, and it is fixed for the whole turn.
+	//
+	// Use TrustNow instead of reading it. A turn can outlast the decision that started it: somebody
+	// watching a reply arrive and deciding halfway through that they want it planning rather than
+	// building expects that to take hold on the next tool call, not on the next message. A level
+	// captured at the top of Run cannot do that, and the version of this that was a plain field
+	// meant switching mode mid reply looked like it worked and changed nothing.
+	Trust core.TrustLevel
+
+	// LiveTrust, when set, is asked before every tool call and wins over Trust.
+	//
+	// A function rather than a channel or a mutex-guarded field, so the loop holds no state that has
+	// to be kept in step with the engine's, and so a caller that has no notion of changing its mind
+	// can leave it nil and get the fixed level.
+	LiveTrust func() core.TrustLevel
+
 	Grants   *permission.Grants
 	Trail    *permission.Trail
 	Approver Approver
@@ -118,6 +133,24 @@ type Loop struct {
 	// MaxTokens bounds the whole turn. Zero means no token bound, which is only appropriate when
 	// something above is enforcing one.
 	MaxTokens int
+}
+
+// TrustNow is how much this agent may do at this moment.
+//
+// Asked per tool call rather than once per turn, so that tightening the level while a reply is
+// arriving takes hold on the next thing the model tries rather than on the next thing the user
+// says. Loosening mid turn works the same way, which is the less interesting direction.
+//
+// A tightened level will start refusing a model that is halfway through a sequence of edits, and
+// that is the correct outcome rather than a rough edge: the refusal goes back as a tool result the
+// model can read and react to, so it stops and says what it was doing instead of failing the turn.
+func (l *Loop) TrustNow() core.TrustLevel {
+	if l.LiveTrust != nil {
+		if level := l.LiveTrust(); level != "" {
+			return level
+		}
+	}
+	return l.Trust
 }
 
 // Run drives a turn until the model stops or a bound is reached.
@@ -325,7 +358,7 @@ func (l *Loop) invoke(
 		Command:   commandIn(call.Input),
 	}
 
-	decision := permission.Decide(req, l.Trust, l.Grants)
+	decision := permission.Decide(req, l.TrustNow(), l.Grants)
 	entry.Outcome = decision.Outcome
 	entry.Reason = decision.Reason
 

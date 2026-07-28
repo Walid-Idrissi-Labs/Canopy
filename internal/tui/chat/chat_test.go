@@ -35,6 +35,9 @@ type fakeEngine struct {
 	trust      core.TrustLevel
 	undone     []string
 	undoErr    error
+
+	forkedThrough string
+	trail         *permission.Trail
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -89,6 +92,16 @@ func (e *fakeEngine) Trust(string) core.TrustLevel {
 }
 
 func (e *fakeEngine) SetTrust(_ string, trust core.TrustLevel) { e.trust = trust }
+
+func (e *fakeEngine) Fork(_, throughTurnID string) (core.Session, error) {
+	e.forkedThrough = throughTurnID
+	return core.Session{ID: "session-9"}, nil
+}
+
+// Nil is a legitimate answer and the one most of these tests want: a conversation with no tools
+// attached has nothing recording, and the commands that read the trail have to say so rather than
+// falling over.
+func (e *fakeEngine) Trail() *permission.Trail { return e.trail }
 
 func (e *fakeEngine) Undo(_ context.Context, _, turnID string) error {
 	if e.undoErr != nil {

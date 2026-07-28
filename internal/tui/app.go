@@ -492,8 +492,10 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 		return a.newConversationModel()
 	case chat.ActionAgents:
 		a.screen = screenAgents
-	case chat.ActionReview:
-		a.screen = screenReview
+	case chat.ActionGreen:
+		// The worktree monitor, which is the screen that answers "is this verified, and what has
+		// gone stale". Canopy exists for that question, so it gets a word rather than a route.
+		a.screen = screenDashboard
 	case chat.ActionKeys:
 		a.cameFrom, a.screen = screenChat, screenKeys
 	}

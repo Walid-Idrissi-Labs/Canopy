@@ -8,6 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 // The commands Canopy answers itself.
@@ -31,7 +34,7 @@ const (
 	ActionHelp   = "help"
 	ActionNew    = "new"
 	ActionAgents = "agents"
-	ActionReview = "review"
+	ActionGreen  = "green"
 	ActionKeys   = "keys"
 )
 
@@ -77,6 +80,25 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 	case "cost":
 		m.notice = m.spending()
 
+	case "context":
+		m.notice = m.contextUse()
+
+	case "trail":
+		m.notice = m.toolTrail()
+
+	case "tasks":
+		m.notice = m.taskSummary()
+
+	case "pickup":
+		m.notice = "come back to this conversation with:  canopy pickup " +
+			session.Code(m.sessionID)
+
+	case "theme":
+		m.notice = m.switchTheme(arguments)
+
+	case "fork":
+		m.forkHere()
+
 	case "undo":
 		return true, m.undoLastTurn()
 
@@ -105,6 +127,119 @@ func (m Model) spending() string {
 		return tokens + ", cost unknown because this provider does not publish prices"
 	}
 	return fmt.Sprintf("%s, $%.4f", tokens, usage.CostUSD)
+}
+
+// contextUse is how much of the window this conversation is using.
+//
+// Worth a command as well as the meter in the header, because the meter says a percentage and the
+// question people actually have when they look at it is whether they need to do something about it.
+func (m Model) contextUse() string {
+	use := m.session.ContextUse()
+	if len(m.session.Turns) == 0 {
+		return "nothing said yet, so the whole window is free"
+	}
+	if use.NeedsCompaction() {
+		return use.String() + " used, worth running /compact before the next long turn"
+	}
+	return use.String() + " used, with room to keep going"
+}
+
+// toolTrail is what this agent actually did, and what it was not allowed to do.
+//
+// The refusals are the half worth having. A permission model nobody can inspect is a permission
+// model nobody can trust, and "it did not do the thing I asked" is answered by a refused entry far
+// more often than by anything the model said about it.
+func (m Model) toolTrail() string {
+	trail := m.engine.Trail()
+	if trail == nil {
+		return "no tool calls are being recorded for this conversation"
+	}
+	entries := trail.ForAgent(m.sessionID)
+	if len(entries) == 0 {
+		return "this agent has not called a tool yet"
+	}
+
+	// The tail, newest last, because the question is almost always about what just happened.
+	if len(entries) > trailLines {
+		entries = entries[len(entries)-trailLines:]
+	}
+	lines := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		detail := entry.Tool
+		if entry.Arguments != "" {
+			detail += "  " + firstLine(entry.Arguments)
+		}
+		line := fmt.Sprintf("%-7s %s", entry.Outcome, detail)
+		if entry.Outcome != permission.Allow && entry.Reason != "" {
+			// The reason only on the ones that did not run. On an allowed call it is boilerplate
+			// repeated on every line; on a refusal it is the entire content of the entry.
+			line += "  (" + entry.Reason + ")"
+		}
+		lines = append(lines, truncate(line, m.width-2))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// trailLines is how much of the trail one command prints.
+//
+// The tail rather than the whole thing, because a long turn makes hundreds of calls and a notice
+// that fills the screen is one nobody reads. The full record is the audit trail's own to keep.
+const trailLines = 12
+
+// taskSummary is the agent's own plan, for the moments the pane is not on screen.
+func (m Model) taskSummary() string {
+	if len(m.session.Tasks) == 0 {
+		return "the agent has not written down a plan for this conversation"
+	}
+	lines := make([]string, 0, len(m.session.Tasks))
+	for _, task := range m.session.Tasks {
+		line := "[" + task.State.Glyph() + "] " + task.Text
+		if task.Outcome != "" {
+			line += ", " + task.Outcome
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// switchTheme changes the palette, or says which ones there are.
+//
+// This exists because A9-03 shipped two themes and one way to reach the second, an environment
+// variable read at startup. A setting you have to restart the program to change is one nobody tries,
+// and a theme nobody can try is a theme that goes unmaintained.
+func (m Model) switchTheme(name string) string {
+	if name == "" {
+		return "the palette is " + theme.Current().Palette.Name +
+			", and /theme takes one of: " + strings.Join(theme.Names(), ", ")
+	}
+	palette, ok := theme.ByName(strings.ToLower(name))
+	if !ok {
+		return "there is no theme called " + name + ", try one of: " +
+			strings.Join(theme.Names(), ", ")
+	}
+	theme.Set(palette)
+	return "the palette is " + palette.Name
+}
+
+// forkHere branches the conversation at the last turn.
+//
+// The fork keeps everything said so far and the original is untouched, which is what makes this
+// worth having: trying a second approach without losing the first is otherwise a matter of starting
+// over and retyping the context that got you here.
+func (m *Model) forkHere() {
+	if len(m.session.Turns) == 0 {
+		m.err = "there is nothing to branch from yet"
+		return
+	}
+
+	through := m.session.Turns[len(m.session.Turns)-1].ID
+	forked, err := m.engine.Fork(m.sessionID, through)
+	if err != nil {
+		m.err = err.Error()
+		return
+	}
+	m.notice = "branched to a new conversation with everything said so far, reach it with " +
+		"ctrl+d or:  canopy pickup " + session.Code(forked.ID)
 }
 
 // undoLastTurn puts the workspace back as it was before the last turn.

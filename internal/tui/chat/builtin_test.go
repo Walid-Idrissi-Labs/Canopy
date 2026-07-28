@@ -8,7 +8,9 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 // The commands Canopy answers itself.
@@ -124,6 +126,100 @@ func TestNavigatingCommandsAskTheApplication(t *testing.T) {
 		if !ok || action.Action != tc.action {
 			t.Errorf("%s asked for %#v, want %q", tc.typed, cmd(), tc.action)
 		}
+	}
+}
+
+// Fork branches the conversation and leaves the original alone, which is what makes trying a second
+// approach cheap: the alternative is starting over and retyping the context that got you here.
+func TestForkBranchesAtTheLastTurnAndSaysHowToReachIt(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "first"}, State: core.TurnComplete},
+		{ID: "turn-2", Request: core.Message{Text: "second"}, State: core.TurnComplete},
+	}}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, _ := run(m, "/fork")
+	if engine.forkedThrough != "turn-2" {
+		t.Errorf("forked through %q, want the last turn", engine.forkedThrough)
+	}
+	// The conversation on screen is still the original. A fork that moved you into the branch would
+	// make it impossible to compare the two, which is the entire reason to have branched.
+	if next.SessionID() != "s1" {
+		t.Errorf("forking moved the screen to %q", next.SessionID())
+	}
+	if view := plain(next.Body()); !strings.Contains(view, "canopy pickup 9") {
+		t.Errorf("nothing on screen says how to reach the branch:\n%s", view)
+	}
+}
+
+// The trail is worth having for the refusals. A permission model nobody can inspect is one nobody
+// can trust, and "it did not do what I asked" is answered by a refused entry far more often than by
+// anything the model said about it.
+func TestTheTrailShowsRefusalsWithTheirReason(t *testing.T) {
+	trail := permission.NewTrail()
+	trail.Record(permission.Entry{
+		AgentID: "s1", Tool: "write_file", Arguments: "internal/core/session.go",
+		Outcome: permission.Deny, Reason: "changing files needs at least confined trust",
+	})
+
+	engine := &fakeEngine{session: core.Session{ID: "s1"}, trail: trail}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, _ := run(m, "/trail")
+	view := plain(next.Body())
+	for _, want := range []string{"write_file", "confined trust"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the trail does not mention %q:\n%s", want, view)
+		}
+	}
+}
+
+// Nothing recording is a legitimate state, not an error. A conversation with no tools attached has
+// no trail, and the command has to say that rather than falling over on a nil.
+func TestTheTrailSaysSoWhenNothingIsRecording(t *testing.T) {
+	m := chat.New(&fakeEngine{session: core.Session{ID: "s1"}}, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, _ := run(m, "/trail")
+	if view := plain(next.Body()); !strings.Contains(view, "no tool calls are being recorded") {
+		t.Errorf("a conversation with no trail did not say so:\n%s", view)
+	}
+}
+
+// The theme command exists because A9-03 shipped two themes and one way to reach the second, an
+// environment variable read at startup. A setting you have to restart the program to change is one
+// nobody tries, and a theme nobody tries is a theme that goes unmaintained.
+func TestTheThemeCommandChangesThePaletteAndListsTheChoices(t *testing.T) {
+	defer theme.Set(theme.Default)
+
+	m := chat.New(&fakeEngine{session: core.Session{ID: "s1"}}, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, _ := run(m, "/theme mono")
+	if got := theme.Current().Palette.Name; got != "mono" {
+		t.Errorf("the palette is %q after asking for mono", got)
+	}
+
+	// With no name it says what is on and what else there is, rather than doing nothing.
+	next, _ = run(next, "/theme")
+	view := plain(next.Body())
+	for _, want := range []string{"mono", "canopy"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the bare command does not mention %q:\n%s", want, view)
+		}
+	}
+}
+
+// The code that brings you back, said in the form you would type.
+func TestPickupPrintsTheCodeForThisConversation(t *testing.T) {
+	m := chat.New(&fakeEngine{session: core.Session{ID: "session-7"}}, "session-7", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, _ := run(m, "/pickup")
+	if view := plain(next.Body()); !strings.Contains(view, "canopy pickup 7") {
+		t.Errorf("the pickup code is not on screen:\n%s", view)
 	}
 }
 
