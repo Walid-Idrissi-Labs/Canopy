@@ -3924,9 +3924,11 @@ inherits them, so for the case in question the leader is unreaped and the ordina
 reaches the whole group safely. The post-reap probe bought only the case of a child that redirects
 its own output, and paid for it with a signal that can land on an unrelated group.
 
-So no group is signalled once its leader has been waited on, the check and the signal happen under
-the same lock the reap takes so the microsecond window closes too, and `exec.Child` exists to hold
-that invariant. What it gives up is stated in D-37 and in LIMITATIONS: a detached daemon that
+So no group is signalled once its leader has been waited on. Exit is first observed without reaping
+(`waitid` with `WNOWAIT` on Linux, kqueue `NOTE_EXIT` on macOS), then the actual reap and every signal
+are serialized under the same lock. This closes the gap between `cmd.Wait` returning and a Go flag
+being updated; `exec.Child` exists to hold that invariant. What it gives up is stated in D-37 and in
+LIMITATIONS: a detached daemon that
 outlives its parent is left running. Both halves are mutation checked, the reaped guard and the
 atomicity of the guard, and removing either fails a named test.
 
@@ -3944,7 +3946,8 @@ Three of the six held already and are now covered rather than merely true. Three
   leader's pid a quarter of a second after that leader may already have been reaped. A group id is
   only reserved while the group has a member in it, so the second signal could land on a job started
   by somebody else in the meantime. **Closed on 2026-07-28 by D-37**: no group is signalled after its
-  leader has been reaped, and the check and the signal are one step under the lock the reap takes.
+  leader has been reaped. Supported platforms first observe exit without reaping, then serialize
+  the actual reap and every signal under one lock.
   The behavioural half, a timeout taking grandchildren with it, held and now has its own test rather
   than sharing the cancellation one.
 - **Huge output.** The bound held for what the buffer kept and not for what it allocated: a single

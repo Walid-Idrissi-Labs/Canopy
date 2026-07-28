@@ -110,6 +110,33 @@ func TestAToolListThatNeverEndsIsBoundedAndSaysWhatItLeftOut(t *testing.T) {
 	}
 }
 
+func TestExactlyTheToolLimitIsStillACompleteList(t *testing.T) {
+	session := connect(t, "docs", "exactly-500")
+	if got := len(session.Tools()); got != maxTools {
+		t.Fatalf("tools = %d, want %d", got, maxTools)
+	}
+	if note := session.Incomplete(); note != "" {
+		t.Errorf("an exactly complete list was reported as incomplete: %q", note)
+	}
+}
+
+func TestMoreThanTheToolLimitIsReportedAsIncomplete(t *testing.T) {
+	session := connect(t, "docs", "over-500")
+	if got := len(session.Tools()); got != maxTools {
+		t.Fatalf("tools = %d, want the bounded %d", got, maxTools)
+	}
+	if note := session.Incomplete(); !strings.Contains(note, strconv.Itoa(maxTools)) {
+		t.Errorf("incomplete note = %q, want the tool bound", note)
+	}
+}
+
+func TestARepeatedCursorIsNotReportedAsACompleteList(t *testing.T) {
+	session := connect(t, "docs", "repeated-cursor")
+	if note := session.Incomplete(); !strings.Contains(note, "repeated cursor") {
+		t.Errorf("incomplete note = %q, want the malformed cursor named", note)
+	}
+}
+
 // The ordinary path, end to end through a real subprocess.
 func TestAServersToolsBecomeCallableTools(t *testing.T) {
 	session := connect(t, "docs", "normal")

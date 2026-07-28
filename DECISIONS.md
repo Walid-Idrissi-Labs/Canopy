@@ -806,9 +806,15 @@ The post-reap probe therefore bought exactly one case, a child that detaches its
 for it with a signal that can land on an unrelated process group. So the rule is now absolute: no
 group is signalled once its leader has been waited on.
 
-The check and the signal are one indivisible step, under the same lock the reap takes. Asking and
-then signalling would leave a window between the two, and a window of microseconds is still a window.
-That is why `exec.Child` is a type rather than a boolean.
+The check and the signal are one indivisible step, under the same lock as the actual reap. That
+requires observing exit without reaping first: Linux uses `waitid(..., WNOWAIT)` and macOS uses
+`EVFILT_PROC/NOTE_EXIT`. The unreaped leader still reserves its pid. After that observation,
+`cmd.Wait`, the `reaped` transition and every group signal are serialized by one lock, so a signal
+is wholly before the reap or is refused wholly after it. Setting a boolean after `cmd.Wait` returns
+does not establish this ordering and was explicitly regression-tested.
+
+That is why `exec.Child` is a type rather than a boolean, and why the two supported kernels have
+separate exit observers.
 
 **What this gives up**, stated plainly: a child that closes or redirects the standard streams it
 inherited and outlives its parent is no longer killed. It is left running. That is the daemon case,

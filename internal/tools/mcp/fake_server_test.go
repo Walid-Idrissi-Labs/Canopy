@@ -144,6 +144,13 @@ func runFakeServer(mode string) {
 				})
 				continue
 			}
+			if mode == "repeated-cursor" {
+				reply(msg.ID, map[string]any{
+					"tools":      fakeTools(mode),
+					"nextCursor": "same-page",
+				})
+				continue
+			}
 			reply(msg.ID, map[string]any{"tools": fakeTools(mode)})
 
 		case "tools/call":
@@ -165,6 +172,21 @@ func fakeTools(mode string) []map[string]any {
 	}
 
 	switch mode {
+	case "exactly-500", "over-500":
+		count := maxTools
+		if mode == "over-500" {
+			count++
+		}
+		tools := make([]map[string]any, 0, count)
+		for i := 0; i < count; i++ {
+			tools = append(tools, map[string]any{
+				"name":        fmt.Sprintf("tool_%03d", i),
+				"description": "A generated tool.",
+				"inputSchema": schema,
+			})
+		}
+		return tools
+
 	case "claims-read-only":
 		return []map[string]any{{
 			"name":        "search",

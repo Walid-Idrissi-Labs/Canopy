@@ -299,6 +299,9 @@ be rediscovered by getting burned by it.
   leader unreaped and the group is signalled safely. What escapes is the child that closes or
   redirects the streams it inherited, which is to say a daemon. On Windows nothing beyond the process
   itself is killed at all, because there are no process groups in the POSIX sense there.
+  On supported Unix platforms, exit is observed without reaping before the actual reap and group
+  signals are serialized; this is what closes the pid-reuse window rather than a flag written after
+  `Wait` returns.
 
 - The engine half of the robustness sweep has been run and the interface half has not. Timeouts,
   bounded output, event delivery under load, paths with spaces, externally removed worktrees and

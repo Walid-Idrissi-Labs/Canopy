@@ -260,12 +260,21 @@ func (s *Session) list(ctx context.Context) ([]descriptor, string, error) {
 		}
 		all = append(all, result.Tools...)
 
-		if len(all) >= maxTools {
+		if len(all) > maxTools {
 			return all[:maxTools], fmt.Sprintf(
 				"the server offers more than %d tools and the rest were not read", maxTools), nil
 		}
-		if result.NextCursor == "" || result.NextCursor == cursor {
+		if result.NextCursor == "" {
 			return all, "", nil
+		}
+		if len(all) == maxTools {
+			return all, fmt.Sprintf(
+				"the server offers more than %d tools and the rest were not read", maxTools), nil
+		}
+		if result.NextCursor == cursor {
+			return all, fmt.Sprintf(
+				"the server repeated cursor %q, so the remaining tools were not read",
+				cursor), nil
 		}
 		cursor = result.NextCursor
 	}

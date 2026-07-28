@@ -12,7 +12,8 @@ package exec
 // Nothing else here is subtle. What makes it worth a type rather than a boolean is that the check and
 // the signal have to be one indivisible step. Asking "has it been reaped" and then signalling leaves a
 // window between the two, and a window of microseconds is still a window, so both happen under the
-// same lock that the reap itself takes.
+// same lock as the actual reap. Platform exit observers wait without reaping first, so Wait can take
+// that lock only once the blocking part is over; see wait_linux.go and wait_darwin.go.
 //
 // See D-37 for why this is a complete answer rather than a narrowing, and for what it gives up.
 
@@ -39,20 +40,6 @@ func Contain(cmd *exec.Cmd) { setProcessGroup(cmd) }
 
 // Started returns a Child for a command that has already been started.
 func Started(cmd *exec.Cmd) *Child { return &Child{cmd: cmd} }
-
-// Wait reaps the command and records that it has been reaped.
-//
-// The flag is set under the lock before Wait's error reaches the caller, so a caller that acts on the
-// result cannot race a signaller into the window this type exists to close.
-func (c *Child) Wait() error {
-	err := c.cmd.Wait()
-
-	c.mu.Lock()
-	c.reaped = true
-	c.mu.Unlock()
-
-	return err
-}
 
 // alive runs f with the process id, but only while that id is still this command's.
 //
