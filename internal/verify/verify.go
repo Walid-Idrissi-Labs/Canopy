@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -57,6 +58,8 @@ type Verifier struct {
 	reason   map[string]string
 	latest   map[string]map[string]core.TestRun
 	diffs    map[string]core.DiffStat
+	diffErr  map[string]string
+	shared   map[string]string
 	order    []string
 }
 
@@ -79,6 +82,8 @@ func New(repo *git.Repo, base string, tests []exec.Test, publish func(core.Event
 		reason:   make(map[string]string),
 		latest:   make(map[string]map[string]core.TestRun),
 		diffs:    make(map[string]core.DiffStat),
+		diffErr:  make(map[string]string),
+		shared:   make(map[string]string),
 	}
 	v.runner = exec.NewRunner(v.record)
 	return v
@@ -102,16 +107,87 @@ func (v *Verifier) Watch(subjects []Subject) {
 		fresh[subject.Agent] = subject
 		order = append(order, subject.Agent)
 	}
+	shared := sharedWorkspaces(subjects)
 
 	for name := range v.subjects {
 		if _, still := fresh[name]; !still {
-			delete(v.revision, name)
-			delete(v.reason, name)
-			delete(v.latest, name)
-			delete(v.diffs, name)
+			v.clearEvidenceLocked(name)
 		}
 	}
-	v.subjects, v.order = fresh, order
+	for name, next := range fresh {
+		previous, existed := v.subjects[name]
+		if existed && (previous.WorkspaceID != next.WorkspaceID || previous.Dir != next.Dir) {
+			// An agent name is a label. Evidence belongs to the workspace that produced it, and a
+			// replacement workspace may legitimately have the same RevisionKey as the old one.
+			// Keeping the old run in that case would make an agent green before it ran anything.
+			v.clearEvidenceLocked(name)
+		}
+		if v.shared[name] != shared[name] {
+			// Evidence gathered while a workspace was uniquely attributable cannot survive it
+			// becoming shared, or vice versa.
+			v.clearEvidenceLocked(name)
+		}
+	}
+	v.subjects, v.order, v.shared = fresh, order, shared
+}
+
+// cleanPath is the one definition of what makes two workspace directories the same.
+//
+// Used by the two comparisons that decide attribution: matching a change to the agents it belongs
+// to, and deciding whether a workspace is shared. Those are the ones where a difference in spelling
+// changes the answer in a direction nobody would notice.
+//
+// The other directory comparisons in this file, in Watch and in the guard that attaches a diff after
+// Git has measured it, still compare raw strings. They are deliberately left alone: both fail by
+// clearing or withholding evidence, so a spelling difference there costs a rerun rather than
+// producing a claim that is wrong.
+//
+// An empty path stays empty rather than becoming ".", which Clean does and which would make a
+// subject with no directory match a change with no directory.
+func cleanPath(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
+}
+
+func sharedWorkspaces(subjects []Subject) map[string]string {
+	byID := make(map[string][]string)
+	byPath := make(map[string][]string)
+	for _, subject := range subjects {
+		if subject.WorkspaceID != "" {
+			byID[subject.WorkspaceID] = append(byID[subject.WorkspaceID], subject.Agent)
+		}
+		if path := cleanPath(subject.Dir); path != "" {
+			byPath[path] = append(byPath[path], subject.Agent)
+		}
+	}
+
+	shared := make(map[string]string)
+	mark := func(names []string) {
+		if len(names) >= 2 {
+			reason := fmt.Sprintf("workspace is shared by %s; isolate the agents before attributing verification",
+				strings.Join(names, ", "))
+			for _, name := range names {
+				shared[name] = reason
+			}
+		}
+	}
+	for _, names := range byID {
+		mark(names)
+	}
+	for _, names := range byPath {
+		mark(names)
+	}
+	return shared
+}
+
+func (v *Verifier) clearEvidenceLocked(name string) {
+	delete(v.revision, name)
+	delete(v.reason, name)
+	delete(v.latest, name)
+	delete(v.diffs, name)
+	delete(v.diffErr, name)
 }
 
 // Observe takes a revision change from the poller.
@@ -121,27 +197,68 @@ func (v *Verifier) Watch(subjects []Subject) {
 // having to go around marking it.
 func (v *Verifier) Observe(ctx context.Context, change git.Change) {
 	v.mu.Lock()
-	name := ""
-	for agent, subject := range v.subjects {
-		if subject.WorkspaceID == change.WorkspaceID {
-			name = agent
-			break
+	var names []string
+	var subject Subject
+	// Cleaned on both sides, because this compares two paths that reach here by different routes and
+	// the failure is silent in the worst direction. A subject's directory is configured and a
+	// change's path comes back through the poller's watch list, so one gaining a trailing separator
+	// makes this match nothing: no revision is ever recorded, every agent stays unknown, and it
+	// reads as a workspace where nothing has changed rather than as anything going wrong.
+	// sharedWorkspaces already cleans before comparing, and two places deciding what makes two paths
+	// equal by different rules is how the third one gets it wrong.
+	wanted := cleanPath(change.Path)
+	for agent, candidate := range v.subjects {
+		if candidate.WorkspaceID == change.WorkspaceID &&
+			(wanted == "" || cleanPath(candidate.Dir) == wanted) {
+			names = append(names, agent)
+			if len(names) == 1 {
+				subject = candidate
+			}
 		}
 	}
-	if name == "" {
+	if len(names) == 0 {
 		v.mu.Unlock()
 		return
 	}
-	v.revision[name] = change.To
-	v.reason[name] = change.Reason
-	subject := v.subjects[name]
+	for _, name := range names {
+		v.revision[name] = change.To
+		v.reason[name] = change.Reason
+		delete(v.diffs, name)
+	}
+	if !change.To.Known() {
+		// There can be no rank or review entry without a revision, so measuring the diff would do
+		// work that cannot affect the answer. More importantly, the common reason for unknown is an
+		// oversized untracked file; reading that entire file merely to count its lines can exhaust
+		// memory while the truth layer is correctly refusing to use it.
+		for _, name := range names {
+			delete(v.diffErr, name)
+		}
+		v.mu.Unlock()
+		return
+	}
+	for _, name := range names {
+		v.diffErr[name] = "the diff is still being measured for this revision"
+	}
 	v.mu.Unlock()
 
-	if stat, err := v.repo.Diff(ctx, subject.Dir, v.base); err == nil {
-		v.mu.Lock()
-		v.diffs[name] = stat
-		v.mu.Unlock()
+	stat, err := v.repo.Diff(ctx, subject.Dir, v.base)
+	v.mu.Lock()
+	// Watch can replace an agent while Git is measuring the old workspace. Never attach that
+	// result, successful or otherwise, to the replacement merely because it reused the name.
+	for _, name := range names {
+		if current, still := v.subjects[name]; still &&
+			current.WorkspaceID == subject.WorkspaceID &&
+			current.Dir == subject.Dir {
+			if err == nil {
+				v.diffs[name] = stat
+				delete(v.diffErr, name)
+			} else {
+				delete(v.diffs, name)
+				v.diffErr[name] = fmt.Sprintf("the diff could not be measured: %v", err)
+			}
+		}
 	}
+	v.mu.Unlock()
 }
 
 // record takes a test run update from the runner.
@@ -154,11 +271,21 @@ func (v *Verifier) record(run core.TestRun) {
 			break
 		}
 	}
-	if name != "" {
+	if name != "" && v.shared[name] == "" {
 		if v.latest[name] == nil {
 			v.latest[name] = make(map[string]core.TestRun)
 		}
-		v.latest[name][run.TestName] = run
+		current, exists := v.latest[name][run.TestName]
+		// Start publishes queued synchronously before its goroutine can publish running. That
+		// queued update makes the new run authoritative immediately. Updates from the same run may
+		// advance it; an older run finishing later may not replace it and flash a previous result
+		// while the rerun is still in progress.
+		if !exists ||
+			current.ID == run.ID ||
+			run.State == core.TestQueued ||
+			run.StartedAt.After(current.StartedAt) {
+			v.latest[name][run.TestName] = run
+		}
 	}
 	v.mu.Unlock()
 
@@ -178,11 +305,15 @@ var ErrUnknownAgent = errors.New("no agent by that name is being verified")
 func (v *Verifier) Verify(ctx context.Context, agent string) error {
 	v.mu.Lock()
 	subject, ok := v.subjects[agent]
+	shared := v.shared[agent]
 	tests := v.tests
 	v.mu.Unlock()
 
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownAgent, agent)
+	}
+	if shared != "" {
+		return errors.New(shared)
 	}
 	if len(tests) == 0 {
 		return errors.New("no test is configured, so there is nothing to run")

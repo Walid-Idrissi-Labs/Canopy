@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,8 +43,15 @@ func reportRepo(t *testing.T, test string) string {
 	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello\n"), 0o600); err != nil {
 		t.Fatalf("writing the file: %v", err)
 	}
-	config := `{"tests": [{"name": "slow", "command": "` + test + `", "required": true}]}`
-	if err := os.WriteFile(filepath.Join(dir, "canopy.json"), []byte(config), 0o600); err != nil {
+	config, err := json.Marshal(map[string]any{
+		"tests": []map[string]any{{
+			"name": "slow", "command": test, "required": true,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("encoding the config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "canopy.json"), config, 0o600); err != nil {
 		t.Fatalf("writing the config: %v", err)
 	}
 	run("add", "-A")
@@ -61,26 +71,52 @@ func reportRepo(t *testing.T, test string) string {
 // read "Verified", while the diff was the one measured before the tests began and said nothing had
 // changed. A reader was told the work was finished and verified, and that there was no work.
 func TestAReportDoesNotClaimAVerdictForAWorktreeThatMoved(t *testing.T) {
-	dir := reportRepo(t, "sleep 3")
+	started := filepath.Join(t.TempDir(), "check-started")
+	t.Setenv("CANOPY_REPORT_TEST_STARTED", started)
+	dir := reportRepo(t, `touch "$CANOPY_REPORT_TEST_STARTED"; sleep 3`)
 	t.Chdir(dir)
 
-	edited := make(chan struct{})
+	edited := make(chan error, 1)
 	go func() {
-		defer close(edited)
-		time.Sleep(750 * time.Millisecond)
+		// The runner captures the revision before it starts the command. Wait for the command's
+		// marker rather than guessing that startup takes less than 750 ms: under a loaded full suite
+		// the old delay could expire first, making the edit part of the revision the test correctly
+		// verified and failing this test for the wrong reason.
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			if _, err := os.Stat(started); err == nil {
+				break
+			} else if !errors.Is(err, os.ErrNotExist) {
+				edited <- fmt.Errorf("reading the check marker: %w", err)
+				return
+			}
+			if time.Now().After(deadline) {
+				edited <- errors.New("the check command never wrote its start marker")
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+
 		f, err := os.OpenFile(filepath.Join(dir, "file.txt"), os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
+			edited <- err
 			return
 		}
-		_, _ = f.WriteString("edited while the checks were running\n")
-		_ = f.Close()
+		if _, err := f.WriteString("edited while the checks were running\n"); err != nil {
+			_ = f.Close()
+			edited <- err
+			return
+		}
+		edited <- f.Close()
 	}()
 
 	var out bytes.Buffer
 	if err := runReport(context.Background(), &out); err != nil {
 		t.Fatalf("runReport: %v", err)
 	}
-	<-edited
+	if err := <-edited; err != nil {
+		t.Fatalf("editing while the checks ran: %v", err)
+	}
 
 	got := out.String()
 	if strings.Contains(got, "**Verified.**") {

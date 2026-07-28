@@ -231,31 +231,80 @@ func TestPollingManyWorktreesStaysBounded(t *testing.T) {
 	var live, peak int
 	var mu sync.Mutex
 	poller := NewPoller(repo, time.Hour, func(Change) {})
-
-	// The counter wraps the change callback's own accounting rather than the git call, so what is
-	// measured is the same code path a real poll takes.
-	original := poller.onChange
-	poller.onChange = func(c Change) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAll := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseAll()
+	started := make(chan struct{}, len(watched))
+	poller.revision = func(context.Context, string) (core.RevisionKey, string) {
 		mu.Lock()
 		live++
 		if live > peak {
 			peak = live
 		}
 		mu.Unlock()
-		original(c)
+		started <- struct{}{}
+		<-release
 		mu.Lock()
 		live--
 		mu.Unlock()
+		return core.RevisionKey{HeadSHA: "abc"}, ""
 	}
 
 	poller.Watch(watched)
-	changes := poller.Poll(context.Background())
+	done := make(chan []Change, 1)
+	go func() { done <- poller.Poll(context.Background()) }()
+
+	for range maxConcurrentPolls() {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("the poller never filled its bounded worker slots")
+		}
+	}
+	select {
+	case <-started:
+		t.Fatalf("more than %d revision reads started before a slot was released", maxConcurrentPolls())
+	case <-time.After(50 * time.Millisecond):
+	}
+	releaseAll()
+	changes := <-done
 
 	if len(changes) != len(watched) {
 		t.Errorf("%d changes for %d worktrees on the first look", len(changes), len(watched))
 	}
-	if peak != 1 {
-		t.Errorf("the change callback ran %d deep, so a consumer of it would need its own locking", peak)
+	if peak != maxConcurrentPolls() {
+		t.Errorf("revision reads peaked at %d, want the configured bound of %d", peak, maxConcurrentPolls())
+	}
+}
+
+// The watched set is refreshed concurrently with polling in the running application. A slow
+// observation of an agent that has just ended must not land after Watch removed it and resurrect
+// its revision or emit a change for a row that no longer exists.
+func TestChangingTheWatchSetDiscardsAnInFlightObservation(t *testing.T) {
+	repo, worktrees := watching(t)
+	poller := NewPoller(repo, time.Hour, nil)
+	poller.Watch(worktrees[:1])
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	poller.revision = func(context.Context, string) (core.RevisionKey, string) {
+		close(started)
+		<-release
+		return core.RevisionKey{HeadSHA: "old-workspace"}, ""
+	}
+
+	done := make(chan []Change, 1)
+	go func() { done <- poller.Poll(context.Background()) }()
+	<-started
+	poller.Watch(nil)
+	close(release)
+
+	if changes := <-done; len(changes) != 0 {
+		t.Errorf("an observation of a removed workspace was reported: %+v", changes)
+	}
+	if _, _, ok := poller.Revision(worktrees[0].ID); ok {
+		t.Error("an in-flight observation resurrected a workspace after Watch removed it")
 	}
 }
 

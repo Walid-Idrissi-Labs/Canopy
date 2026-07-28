@@ -66,6 +66,7 @@ type Change struct {
 type Poller struct {
 	repo     *Repo
 	interval time.Duration
+	revision func(context.Context, string) (core.RevisionKey, string)
 
 	// onChange is called once per changed worktree, from the poller's own goroutine. It must not
 	// block for long, since the next poll waits behind it.
@@ -75,6 +76,7 @@ type Poller struct {
 	watched []core.WorkspaceSnapshot
 	seen    map[string]core.RevisionKey
 	reasons map[string]string
+	version uint64
 }
 
 // NewPoller returns a poller for a repository. An interval of zero means DefaultPollInterval.
@@ -88,6 +90,7 @@ func NewPoller(repo *Repo, interval time.Duration, onChange func(Change)) *Polle
 	return &Poller{
 		repo:     repo,
 		interval: interval,
+		revision: repo.Revision,
 		onChange: onChange,
 		seen:     make(map[string]core.RevisionKey),
 		reasons:  make(map[string]string),
@@ -114,19 +117,23 @@ func Publishing(publish func(core.Event) uint64) func(Change) {
 // some later tidy up, because that cache is the one part of this that grows with every agent a long
 // session ever ran.
 func (p *Poller) Watch(workspaces []core.WorkspaceSnapshot) {
-	current := make(map[string]bool, len(workspaces))
+	current := make(map[string]string, len(workspaces))
 	for _, w := range workspaces {
-		current[w.ID] = true
+		current[w.ID] = w.Path
 	}
 
 	p.mu.Lock()
 	gone := make([]string, 0)
 	for _, previous := range p.watched {
-		if !current[previous.ID] {
+		path, still := current[previous.ID]
+		if !still || path != previous.Path {
 			gone = append(gone, previous.Path)
 			delete(p.seen, previous.ID)
 			delete(p.reasons, previous.ID)
 		}
+	}
+	if watchedChanged(p.watched, workspaces) {
+		p.version++
 	}
 	p.watched = append([]core.WorkspaceSnapshot(nil), workspaces...)
 	p.mu.Unlock()
@@ -136,6 +143,18 @@ func (p *Poller) Watch(workspaces []core.WorkspaceSnapshot) {
 			revisions.Forget(path)
 		}
 	}
+}
+
+func watchedChanged(before, after []core.WorkspaceSnapshot) bool {
+	if len(before) != len(after) {
+		return true
+	}
+	for i := range before {
+		if before[i].ID != after[i].ID || before[i].Path != after[i].Path {
+			return true
+		}
+	}
+	return false
 }
 
 // Revision returns the revision most recently observed for a workspace.
@@ -181,6 +200,7 @@ func (p *Poller) Poll(ctx context.Context) []Change {
 
 	p.mu.Lock()
 	watched := append([]core.WorkspaceSnapshot(nil), p.watched...)
+	version := p.version
 	p.mu.Unlock()
 
 	type observation struct {
@@ -208,7 +228,7 @@ func (p *Poller) Poll(ctx context.Context) []Change {
 			}
 			defer func() { <-slots }()
 
-			key, reason := p.repo.Revision(ctx, workspace.Path)
+			key, reason := p.revision(ctx, workspace.Path)
 			observations[i] = observation{workspace: workspace, key: key, reason: reason}
 		}()
 	}
@@ -227,6 +247,12 @@ func (p *Poller) Poll(ctx context.Context) []Change {
 		}
 
 		p.mu.Lock()
+		if version != p.version {
+			// Watch changed while this poll was in flight. An observation of an old path must not
+			// resurrect a removed workspace or overwrite the first observation of its replacement.
+			p.mu.Unlock()
+			continue
+		}
 		previous, existed := p.seen[seen.workspace.ID]
 		previousReason := p.reasons[seen.workspace.ID]
 		p.seen[seen.workspace.ID] = seen.key

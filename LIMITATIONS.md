@@ -48,6 +48,13 @@ be rediscovered by getting burned by it.
   command did not finish, not evidence the tests failed, but the default itself is still flagged as
   unconfirmed rather than settled (D-18).
 
+- Test command configuration currently contradicts D-05. The settled decision requires an argument
+  array by default and an explicit opt-in for a shell string, but `canopy.json` currently accepts
+  only a string and runs it through `/bin/sh -c`. That means a missing executable is observed as
+  shell exit 127 and reported as a failing test instead of a command-start error. A6-03 is blocked
+  until both supervisors either implement the decided structured form or explicitly supersede
+  D-05 and define the shell-only semantics (Q-16).
+
 - Whether tests ever re-run automatically when a file changes is still an open question. The current
   plan is manual triggering only: a green result still goes stale by itself the moment the revision
   changes, but nothing re-runs the command for you until you ask (D-19).

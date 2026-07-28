@@ -302,7 +302,7 @@ func (r *Repo) DirtyState(ctx context.Context, path string) (core.DirtyState, er
 	worktree := &Repo{dir: path}
 
 	// -z so filenames containing newlines, which are legal and do exist, do not become two entries.
-	out, err := worktree.run(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	out, err := worktree.runRaw(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return core.DirtyState{}, err
 	}
@@ -430,6 +430,20 @@ var ErrOutputTruncated = errors.New("git produced more output than Canopy read i
 const maxGitOutputBytes = 64 * 1024 * 1024
 
 func (r *Repo) run(ctx context.Context, args ...string) (string, error) {
+	out, err := r.runRaw(ctx, args...)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// runRaw preserves stdout byte for byte.
+//
+// Git's NUL-delimited formats are protocols, not prose. In porcelain v1 a leading space is the
+// first status column, and filenames may themselves begin or end with whitespace. Trimming either
+// before parsing changes the answer while leaving it plausible enough to accept. Human-readable
+// callers use run above; every machine-readable -z caller uses this one.
+func (r *Repo) runRaw(ctx context.Context, args ...string) (string, error) {
 	limit := r.outputLimit
 	if limit <= 0 {
 		limit = maxGitOutputBytes
@@ -461,5 +475,5 @@ func (r *Repo) run(ctx context.Context, args ...string) (string, error) {
 	if result.Truncated > 0 {
 		return "", fmt.Errorf("git %s: %w (%d bytes dropped)", args[0], ErrOutputTruncated, result.Truncated)
 	}
-	return strings.TrimSpace(result.Output), nil
+	return result.Output, nil
 }
