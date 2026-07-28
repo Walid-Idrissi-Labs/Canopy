@@ -147,10 +147,10 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 // function did not enforce. It returned the mode's level outright, so anything that put a session
 // into a mode above its configuration handed it permissions its profile said it could never have.
 //
-// That was reachable without anybody choosing it. There is no mode at confined, so the default for a
-// confined agent resolved through ModeForTrust to build, whose level is standard, and a confined
-// agent ran with the shell and every other execute tool. Confinement is not a preference: it is the
-// property that makes an isolated agent's worktree a boundary rather than a suggestion.
+// That was reachable without anybody choosing it. The old ladder had no confined mode, so a
+// confined agent resolved through ModeForTrust to build, whose level is standard, and ran with the
+// shell and every other execute tool. Confinement is not a preference: it is the property that
+// keeps command execution out of this profile.
 func (e *Engine) trustForLocked(sessionID string) core.TrustLevel {
 	configured := e.configuredTrustLocked(sessionID)
 

@@ -168,11 +168,13 @@ absent, arguments are appended under an `Arguments:` heading.
 
 ## Modes, on shift+tab
 
-Four postures, and each one is a trust level the permission layer enforces rather than a paragraph
+Five postures, and each one is a trust level the permission layer enforces rather than a paragraph
 asking the model to behave. An agent told it is planning and choosing to edit a file anyway is
 stopped, which is the only kind of instruction worth relying on.
 
 - **plan** reads and thinks and changes nothing.
+- **confined** edits through structured tools in the assigned workspace and cannot use shell.
+  Network calls still ask. This is a capability profile, not an operating-system sandbox.
 - **build** edits freely and asks before running anything. The ordinary way to work.
 - **runway** edits and runs freely, and the turn is put back if the workspace does not verify
   afterwards. Needs a git repository and a configured test, and refuses to engage without them.

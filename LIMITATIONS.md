@@ -189,11 +189,14 @@ be rediscovered by getting burned by it.
   address of, which covers checking a library version or similar, but it cannot discover a page it
   has never heard of, because no search provider or account has been chosen yet (A4-07).
 
-- There are four modes on `shift+tab`, and each is a trust level the permission layer enforces
-  rather than an instruction the model is asked to follow (M-09). Plan reads and thinks, build edits
-  and asks before running anything, runway edits and runs freely and reverts a turn that ends red,
-  cruise runs everything without asking. Runway and cruise refuse to engage where their safety net
-  is missing rather than quietly behaving like the mode below. What is not built is the second axis:
+- There are five modes on `shift+tab`, and each is a trust level the permission layer enforces
+  rather than an instruction the model is asked to follow (M-09, D-41). Plan reads and thinks;
+  confined edits through structured tools in its assigned workspace but cannot use shell; build
+  edits and asks before running anything; runway edits and runs freely and reverts a turn that ends
+  red; cruise runs everything without asking. Network calls still ask at confined trust. Confined
+  is a capability profile, not an operating-system sandbox. Runway and cruise refuse to engage
+  where their safety net is missing rather than quietly behaving like the mode below. What is not
+  built is the second axis:
   capability and approval are one setting, so "edit freely but review every edit" cannot be
   expressed, and there is no screen for reviewing a plan before approving it (A4-09). The separate
   plan-and-execute approval mechanism in `internal/agent/plan.go` is still called from nowhere and

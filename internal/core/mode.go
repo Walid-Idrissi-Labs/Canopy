@@ -41,10 +41,11 @@ type Mode struct {
 
 // The names, which are what a command takes and what the box shows.
 const (
-	ModePlan   = "plan"
-	ModeBuild  = "build"
-	ModeRunway = "runway"
-	ModeCruise = "cruise"
+	ModePlan     = "plan"
+	ModeConfined = "confined"
+	ModeBuild    = "build"
+	ModeRunway   = "runway"
+	ModeCruise   = "cruise"
 )
 
 // Modes returns the ladder, in the order the key cycles through it.
@@ -67,6 +68,19 @@ doing it is the one answer that leaves somebody waiting for something that is ne
 Say specifically which files you would change or create, which commands you would run written out as
 you would run them, and anything you are unsure about along with what you would do if it turned out
 differently. Then stop and wait to be told to go ahead.`,
+		},
+		{
+			Name:        ModeConfined,
+			Description: "edit in the assigned workspace; no shell",
+			Trust:       TrustConfined,
+			Prompt: `You may read and edit files through the structured workspace tools.
+
+You cannot run shell commands. Command tools are not offered and are refused by the permission
+layer, so do not spend turns trying them. Network calls still require the person's approval.
+Structured file and path-scoped Git operations remain bounded to the workspace Canopy assigned.
+
+This is capability confinement, not an operating-system sandbox. Work through the available file
+tools, and say plainly when the task requires a command this mode cannot use.`,
 		},
 		{
 			Name:        ModeBuild,
@@ -136,6 +150,9 @@ func ModeForTrust(level TrustLevel) Mode {
 	switch {
 	case level == TrustReadOnly:
 		mode, _ := ModeByName(ModePlan)
+		return mode
+	case level == TrustConfined:
+		mode, _ := ModeByName(ModeConfined)
 		return mode
 	case level.AtLeast(TrustBroad):
 		mode, _ := ModeByName(ModeCruise)
