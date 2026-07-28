@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -77,7 +78,11 @@ func (t *Taker) Take(ctx context.Context, id, label string) (Checkpoint, error) 
 	// A temporary index, so staging for the checkpoint does not disturb what the user has staged.
 	// Without this, taking a checkpoint would silently stage every untracked file in their working
 	// tree, and the next `git commit` would include things they never chose.
-	indexFile := fmt.Sprintf("%s.canopy-checkpoint-%s", t.indexPath(), id)
+	index, err := t.indexPath(ctx)
+	if err != nil {
+		return Checkpoint{}, fmt.Errorf("finding the index for the checkpoint: %w", err)
+	}
+	indexFile := fmt.Sprintf("%s.canopy-checkpoint-%s", index, id)
 	env := append(environ(), "GIT_INDEX_FILE="+indexFile)
 	// Removed with os rather than by shelling out, since it is a plain file and `git rm` means
 	// something entirely different from removing a file off disk.
@@ -207,7 +212,33 @@ func min(a, b int) int {
 	return b
 }
 
-func (t *Taker) indexPath() string { return t.dir + "/.git/index" }
+// indexPath is where this worktree's index actually lives.
+//
+// Asked of git rather than assembled from the directory, because `.git` is a directory in an
+// ordinary checkout and a *file* in a linked worktree, holding a line that points at the real git
+// directory under the main checkout. Building the path by hand therefore produced `.git/index`
+// underneath a file, which fails with "Not a directory". markerPath in worktree.go had already
+// worked this out for the marker file; this one had not.
+//
+// The consequence was worse than the bug. Taking a checkpoint failed for every isolated agent, the
+// engine reported it through onStorageError and carried on, and undo silently did nothing for
+// exactly the agents most likely to need it. Found by the A9-01 sweep.
+func (t *Taker) indexPath(ctx context.Context) (string, error) {
+	out, err := t.run(ctx, "rev-parse", "--git-path", "index")
+	if err != nil {
+		return "", err
+	}
+
+	path := strings.TrimSpace(out)
+	if path == "" {
+		return "", fmt.Errorf("git did not say where the index is")
+	}
+	if !filepath.IsAbs(path) {
+		// git answers relative to the worktree it was run in.
+		path = filepath.Join(t.dir, path)
+	}
+	return path, nil
+}
 
 func (t *Taker) run(ctx context.Context, args ...string) (string, error) {
 	return t.runEnv(ctx, environ(), args...)

@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -49,6 +50,10 @@ const DefaultHashLimit int64 = 25 << 20
 type Revisions struct {
 	limit int64
 
+	// outputLimit is passed to the throwaway repository handles this builds. Zero means the package
+	// default, and it is set only by the test that proves a truncated status never becomes a key.
+	outputLimit int
+
 	mu     sync.Mutex
 	cached map[string]cachedHash
 }
@@ -74,7 +79,7 @@ func NewRevisions(limit int64) *Revisions {
 // observation about the world, not a failure of the call, and WorkspaceSnapshot has a field for it
 // precisely so the dashboard can say which file it could not read instead of shrugging.
 func (v *Revisions) Key(ctx context.Context, path string) (core.RevisionKey, string) {
-	worktree := &Repo{dir: path}
+	worktree := &Repo{dir: path, outputLimit: v.outputLimit}
 
 	head, err := worktree.run(ctx, "rev-parse", "HEAD")
 	if err != nil {
@@ -83,6 +88,16 @@ func (v *Revisions) Key(ctx context.Context, path string) (core.RevisionKey, str
 
 	status, err := worktree.run(ctx, "status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
+		if errors.Is(err, ErrOutputTruncated) {
+			// Unknown, deliberately, and this is the case worth being careful about. A truncated
+			// status still parses and still digests, so the tempting behaviour is to carry on with
+			// what arrived. That produces a key that does not move when a file in the dropped part
+			// changes, which means a result recorded before the edit keeps reading as current. An
+			// honest unknown is a nuisance; that is a lie.
+			return core.RevisionKey{}, "this worktree reports more changes than Canopy can read " +
+				"in one pass, so what it contains cannot be established. Usually a large untracked " +
+				"directory that belongs in .gitignore"
+		}
 		return core.RevisionKey{}, fmt.Sprintf("the state of this worktree could not be read: %v", err)
 	}
 	entries := parseStatus(status)
