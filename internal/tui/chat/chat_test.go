@@ -905,3 +905,23 @@ func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error
 }
 
 func (e *fakeEngine) Tools() (*core.ToolRegistry, bool) { return e.tools, e.tools != nil }
+
+// The whole error, not its first line. The provider clients go to some trouble to keep the
+// provider's own words on the message, and a renderer that cut everything past the first line or
+// the first eighty columns would throw that detail away at the very last step.
+func TestAFailedTurnShowsTheWholeError(t *testing.T) {
+	failed := turn("t1", "go", "", core.TurnFailed)
+	failed.Error = "anthropic: rate-limited: rate limited, retry in 20s. The provider said: " +
+		"tokens per minute limit exceeded for this organization, see the usage page"
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{failed}}}
+
+	m := model(engine)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	view := plain(m.Body())
+	for _, want := range []string{"✗", "retry in 20s", "usage page"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the failed turn lost %q:\n%s", want, view)
+		}
+	}
+}

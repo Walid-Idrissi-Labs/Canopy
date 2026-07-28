@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -384,6 +385,37 @@ func (k ProviderErrorKind) Retryable() bool {
 // different key because the first one was wrong is dishonest, and it hides the actual problem.
 func (k ProviderErrorKind) AllowsFallback() bool {
 	return k == ErrRateLimited || k == ErrOverloaded
+}
+
+// WithDetail joins advice with what the provider actually said.
+//
+// The two halves answer different questions and a good error needs both: the advice says what to do
+// about it, and the provider's own words say what specifically happened — which limit was hit,
+// which model was unknown, what the billing state is. Advice that replaces the detail sends
+// somebody to the provider's dashboard to rediscover a sentence Canopy was already holding.
+// Detail without advice is a fact nobody can act on. Empty detail leaves the advice alone, so a
+// provider that said nothing beyond the status line does not grow a trailing stub.
+func WithDetail(advice, said string) string {
+	said = strings.TrimSpace(said)
+	if said == "" || said == advice {
+		return advice
+	}
+	return advice + ". The provider said: " + said
+}
+
+// ParseRetryAfter reads a Retry-After header given in seconds, zero when absent or unreadable.
+//
+// The delta-seconds form is what the model APIs send. The HTTP-date form is legal and not worth
+// parsing here: a wall clock comparison against a provider's clock is a subtle bug in service of a
+// header nobody has been seen sending.
+func ParseRetryAfter(header string) time.Duration {
+	if header == "" {
+		return 0
+	}
+	if seconds, err := time.ParseDuration(header + "s"); err == nil && seconds > 0 {
+		return seconds
+	}
+	return 0
 }
 
 func (e *ProviderError) Error() string {

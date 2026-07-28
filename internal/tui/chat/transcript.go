@@ -126,9 +126,7 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf) []strin
 		lines = append(lines, renderToolCall(call, resultFor(turn, call), width, kinds)...)
 	}
 
-	if status := statusLine(turn, spinner); status != "" {
-		lines = append(lines, status)
-	}
+	lines = append(lines, statusLines(turn, spinner, width)...)
 	return lines
 }
 
@@ -354,28 +352,29 @@ func truncate(s string, width int) string {
 	return string(runes[:width-1]) + "…"
 }
 
-// statusLine says how a turn ended, or that it has not.
+// statusLines say how a turn ended, or that it has not.
 //
-// Empty for a turn that finished cleanly, because a completed answer speaks for itself and a line
+// Nothing for a turn that finished cleanly, because a completed answer speaks for itself and a line
 // under every reply saying "complete" is noise that trains people to stop reading the ones that
 // matter.
-func statusLine(turn core.Turn, spinner string) string {
+func statusLines(turn core.Turn, spinner string, width int) []string {
 	t := theme.Current()
+	one := func(s string) []string { return []string{s} }
 
 	switch turn.State {
 	case core.TurnPending:
-		return t.Muted.Render(spinner + " thinking")
+		return one(t.Muted.Render(spinner + " thinking"))
 
 	case core.TurnStreaming:
 		// No spinner once text is arriving: the text moving is the progress indicator, and a
 		// spinner next to it is two things claiming to say the same thing.
 		if turn.Text == "" {
-			return t.Muted.Render(spinner + " thinking")
+			return one(t.Muted.Render(spinner + " thinking"))
 		}
-		return ""
+		return nil
 
 	case core.TurnAwaitingTools:
-		return t.Info.Render(spinner + " running tools")
+		return one(t.Info.Render(spinner + " running tools"))
 
 	case core.TurnComplete:
 		if turn.RolledBack != "" {
@@ -383,24 +382,40 @@ func statusLine(turn core.Turn, spinner string) string {
 			// not fail: the model answered and the tools ran, and then the workspace did not verify
 			// and the whole thing was put back. Showing it as a failure would lose the difference
 			// between "this did not work" and "this worked and was not kept".
-			return t.Warning.Render("[" + firstLine(turn.RolledBack) + "]")
+			return one(t.Warning.Render("[" + firstLine(turn.RolledBack) + "]"))
 		}
-		return ""
+		return nil
 
 	case core.TurnInterrupted:
-		return t.Warning.Render("[stopped, the reply above is partial]")
+		return one(t.Warning.Render("[stopped, the reply above is partial]"))
 
 	case core.TurnRefused:
-		return t.Warning.Render("[the provider declined this request]")
+		return one(t.Warning.Render("[the provider declined this request]"))
 
 	case core.TurnTruncated:
-		return t.Warning.Render("[cut off at the output limit, so the reply above is incomplete]")
+		return one(t.Warning.Render("[cut off at the output limit, so the reply above is incomplete]"))
 
 	case core.TurnFailed:
-		return t.Danger.Render("[" + firstLine(turn.Error) + "]")
+		// The whole error, wrapped, rather than its first line in brackets. The classifier goes to
+		// some trouble to keep the provider's own words on the message, and a renderer that cut
+		// everything past the first line would throw that detail away at the last step. The mark is
+		// the same one a failed tool call carries, so red failures look alike wherever they appear.
+		reason := turn.Error
+		if reason == "" {
+			reason = "the turn failed"
+		}
+		out := make([]string, 0, 2)
+		for i, line := range wrap(reason, width-2) {
+			prefix := "✗ "
+			if i > 0 {
+				prefix = "  "
+			}
+			out = append(out, t.Danger.Render(prefix+line))
+		}
+		return out
 
 	default:
-		return ""
+		return nil
 	}
 }
 
