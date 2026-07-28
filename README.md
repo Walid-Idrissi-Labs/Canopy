@@ -133,6 +133,21 @@ Canopy runs the test commands you configure in `canopy.json` and has no idea wha
 until you tell it. On a repository it has never seen, the honest answer is "nothing is configured",
 not a green tick.
 
+```json
+{
+  "tests": [
+    { "name": "unit", "command": { "argv": ["go", "test", "./..."] }, "required": true },
+    { "name": "lint", "command": { "shell": "eslint . | tee lint.log", "allow_shell": true } }
+  ]
+}
+```
+
+The argument form is the default and the shell form has to be asked for, because a shell always
+starts successfully. Run `go test ./...` through one and you get exit 127, which looks exactly like a
+failing test suite, and you go looking for the bug in your code. Run it as an argument list and
+Canopy says the program does not exist, which is what actually happened. Reach for `shell` when you
+need a pipe or a redirect, and know that you are giving that distinction up.
+
 The review screen also compares model cost with verified outcomes from this repository's own
 history. It records a sample only when the evidence describes the current revision, excludes
 unknown provider costs, names the sample size, and refuses a conclusion until at least two models

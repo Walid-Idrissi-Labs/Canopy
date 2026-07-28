@@ -14,8 +14,10 @@ package exec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,14 +31,48 @@ import (
 // a hung run is noticed in the same sitting rather than holding an agent's slot all afternoon.
 const DefaultTestTimeout = 15 * time.Minute
 
+// Invocation is what a test runs, and how.
+//
+// The choice between the two is the whole of D-05 and it decides whether this package can keep its
+// promise. With an argument vector, a program that is not installed fails at Start and never runs, so
+// "could not start" and "ran and failed" are different objects. With a shell, the shell starts
+// successfully and exits 127, so both arrive as the same integer and the distinction is gone. That is
+// why one of these is the default and the other has to be asked for.
+type Invocation struct {
+	// Argv is the program and its arguments, run directly.
+	Argv []string
+
+	// Shell is a command line for /bin/sh -c, used only when Argv is empty.
+	Shell string
+}
+
+// Argv builds an invocation that runs a program directly, which is the preferred form.
+func Argv(argv ...string) Invocation { return Invocation{Argv: argv} }
+
+// ShellLine builds an invocation that goes through /bin/sh -c.
+//
+// Named for what it takes rather than as the opposite of Argv, because reaching for it should read
+// as a choice. It costs the ability to tell a program that is not installed from a test that failed.
+func ShellLine(line string) Invocation { return Invocation{Shell: line} }
+
+// Display is the command as a person would read it.
+func (i Invocation) Display() string {
+	if len(i.Argv) > 0 {
+		encoded, _ := json.Marshal(i.Argv)
+		return string(encoded)
+	}
+	return i.Shell
+}
+
+// Empty reports whether there is nothing to run.
+func (i Invocation) Empty() bool { return len(i.Argv) == 0 && strings.TrimSpace(i.Shell) == "" }
+
 // Test is a configured test command.
 type Test struct {
 	Name string
 
-	// Command runs through a shell, matching the shell tool and the A5-04 setup command. Test
-	// commands come out of a project's own notes and are full of pipes and environment prefixes, and
-	// a runner that only accepted argv would have half of them fail for reasons the user cannot see.
-	Command string
+	// Command is an argument vector by default, and a shell string when the project asked for one.
+	Command Invocation
 
 	// Required decides whether this test can block a green roll-up. Carried here so the caller that
 	// builds a TestSnapshot does not need a second lookup.
@@ -82,7 +118,7 @@ func RunTest(ctx context.Context, test Test, target Target, runID string) Outcom
 		ID:             runID,
 		WorkspaceID:    target.WorkspaceID,
 		TestName:       test.Name,
-		CommandDisplay: test.Command,
+		CommandDisplay: test.Command.Display(),
 		StartedAt:      time.Now(),
 		OutputBufferID: runID,
 		State:          core.TestRunning,
@@ -103,7 +139,7 @@ func RunTest(ctx context.Context, test Test, target Target, runID string) Outcom
 // Calling RunTest from synchronous code still takes the revision itself immediately above.
 func runPreparedTest(ctx context.Context, test Test, target Target, run core.TestRun) Outcome {
 	switch {
-	case test.Command == "":
+	case test.Command.Empty():
 		return finishTest(run, "", core.TestError, nil,
 			fmt.Sprintf("the test %q has no command configured", test.Name))
 	case target.Dir == "":
@@ -116,7 +152,14 @@ func runPreparedTest(ctx context.Context, test Test, target Target, run core.Tes
 		timeout = DefaultTestTimeout
 	}
 
-	result, err := Run(ctx, "/bin/sh", []string{"-c", test.Command}, Options{
+	// The argument form runs the program itself, which is what makes a missing executable a failure
+	// to start rather than exit 127 from a shell that started perfectly well.
+	name, args := "/bin/sh", []string{"-c", test.Command.Shell}
+	if len(test.Command.Argv) > 0 {
+		name, args = test.Command.Argv[0], test.Command.Argv[1:]
+	}
+
+	result, err := Run(ctx, name, args, Options{
 		Dir:     target.Dir,
 		Timeout: timeout,
 	})
@@ -251,7 +294,7 @@ func (r *Runner) Start(ctx context.Context, test Test, target Target) (string, e
 		ID:             runID,
 		WorkspaceID:    target.WorkspaceID,
 		TestName:       test.Name,
-		CommandDisplay: test.Command,
+		CommandDisplay: test.Command.Display(),
 		StartedAt:      time.Now(),
 		OutputBufferID: runID,
 		State:          core.TestQueued,

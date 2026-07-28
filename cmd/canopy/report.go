@@ -99,8 +99,11 @@ func testsFor(project config.Project) []execpkg.Test {
 	tests := make([]execpkg.Test, 0, len(project.Tests))
 	for _, test := range project.Tests {
 		tests = append(tests, execpkg.Test{
-			Name:     test.Name,
-			Command:  test.Command,
+			Name: test.Name,
+			Command: execpkg.Invocation{
+				Argv:  test.Command.Argv,
+				Shell: test.Command.Shell,
+			},
 			Required: test.Required,
 			Timeout:  test.TestTimeout(),
 		})

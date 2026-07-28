@@ -39,10 +39,21 @@ func (s *Set) Tools() []core.Tool {
 }
 
 // Close stops every server.
+//
+// Concurrently, for the same reason ConnectAll dials concurrently and one more besides: each Close
+// gives its server a fixed moment to leave on its own before signalling the group it leads, and in
+// series that moment is paid once per configured server while somebody waits to get their terminal
+// back.
 func (s *Set) Close() {
+	var wg sync.WaitGroup
 	for _, session := range s.Sessions {
-		session.Close()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			session.Close()
+		}()
 	}
+	wg.Wait()
 }
 
 // ConnectAll dials every enabled server.

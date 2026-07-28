@@ -191,7 +191,7 @@ func TestQuittingDoesNotReturnUntilEveryTestProcessHasGone(t *testing.T) {
 		marker)
 
 	if _, err := runner.Start(context.Background(),
-		Test{Name: "suite", Command: command}, Target{WorkspaceID: "ws-1", Dir: dir}); err != nil {
+		Test{Name: "suite", Command: ShellLine(command)}, Target{WorkspaceID: "ws-1", Dir: dir}); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 

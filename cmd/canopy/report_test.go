@@ -43,9 +43,13 @@ func reportRepo(t *testing.T, test string) string {
 	if err := os.WriteFile(filepath.Join(dir, "file.txt"), []byte("hello\n"), 0o600); err != nil {
 		t.Fatalf("writing the file: %v", err)
 	}
+	// The shell form, opted into explicitly, because these checks are shell scripts with markers and
+	// sleeps in them rather than a program with arguments.
 	config, err := json.Marshal(map[string]any{
 		"tests": []map[string]any{{
-			"name": "slow", "command": test, "required": true,
+			"name":     "slow",
+			"command":  map[string]any{"shell": test, "allow_shell": true},
+			"required": true,
 		}},
 	})
 	if err != nil {
