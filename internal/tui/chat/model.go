@@ -80,6 +80,11 @@ type Engine interface {
 	// Cancel on purpose: correcting an agent by interrupting it throws away the work in progress,
 	// which usually means throwing away the reasoning that led to it.
 	Steer(sessionID, guidance string) error
+
+	// Aside answers a question from this conversation's context without joining it. Nothing is
+	// recorded, no turn is created, and a turn in flight is undisturbed, which is what separates
+	// asking something from saying something.
+	Aside(ctx context.Context, sessionID, question string) (string, error)
 }
 
 // Commands is the catalog resolved for this chat's project.
@@ -290,6 +295,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.markStep++
 		return m, markTick(m.markGeneration)
+
+	case asideMsg:
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			m.notice = ""
+			return m, nil
+		}
+		// Shown above the box rather than folded into the transcript, because it is not part of the
+		// conversation and putting it there would make it look like one. It goes when the next thing
+		// happens, which is right: an aside is read once.
+		m.notice = "btw " + msg.question + "\n" + msg.answer
+		m.err = ""
+		return m, nil
 
 	case undoneMsg:
 		m.notice = ""

@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -356,4 +357,172 @@ func TestBuildModeSendsNoSystemPrompt(t *testing.T) {
 	if got != "" {
 		t.Errorf("build sent a system prompt: %q", got)
 	}
+}
+
+// stubGate answers the green check with whatever a test puts in it.
+type stubGate struct {
+	green  bool
+	reason string
+	err    error
+	checks int
+}
+
+func (g *stubGate) Check(context.Context, string) (bool, string, error) {
+	g.checks++
+	return g.green, g.reason, g.err
+}
+
+func runwayEngine(t *testing.T, gate Gate) (*Engine, *scriptedClient) {
+	t.Helper()
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	e.WithGate(gate)
+	return e, client
+}
+
+// M-09. The green gate is what makes runway more than cruise with a better prompt.
+//
+// Every other tool asks what an agent may touch. This asks what state it may leave you in: the turn
+// runs freely and is only kept if the workspace still verifies, and where it does not the checkpoint
+// taken before it is restored.
+func TestRunwayPutsTheWorkspaceBackWhenATurnEndsRed(t *testing.T) {
+	gate := &stubGate{green: false, reason: "2 of 14 tests failed"}
+	e, _ := runwayEngine(t, gate)
+
+	created := e.Create("claude", "claude-opus-5")
+	runway, _ := core.ModeByName(core.ModeRunway)
+	e.mu.Lock()
+	e.sessionMode[created.ID] = runway
+	e.mu.Unlock()
+
+	turnID, err := e.Send(created.ID, "refactor the parser")
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	waitForTurn(t, e, created.ID, turnID)
+
+	if gate.checks != 1 {
+		t.Fatalf("the gate ran %d times, want once", gate.checks)
+	}
+	turn := turnIn(t, e, created.ID, turnID)
+	if turn.RolledBack == "" {
+		t.Fatal("a turn that ended red was kept without a word")
+	}
+	if !strings.Contains(turn.RolledBack, "2 of 14 tests failed") {
+		t.Errorf("the note does not say what broke: %q", turn.RolledBack)
+	}
+	// The text of the attempt survives even though its changes do not. A rolled back turn that left
+	// no trace would look like nothing happened.
+	if turn.Text == "" {
+		t.Error("the rolled back turn lost what the model said")
+	}
+}
+
+// A green turn is kept and nothing is said about it, which is the common case and should be silent.
+func TestRunwayKeepsATurnThatEndsGreen(t *testing.T) {
+	gate := &stubGate{green: true}
+	e, _ := runwayEngine(t, gate)
+
+	created := e.Create("claude", "claude-opus-5")
+	runway, _ := core.ModeByName(core.ModeRunway)
+	e.mu.Lock()
+	e.sessionMode[created.ID] = runway
+	e.mu.Unlock()
+
+	turnID, _ := e.Send(created.ID, "rename a field")
+	waitForTurn(t, e, created.ID, turnID)
+
+	if turn := turnIn(t, e, created.ID, turnID); turn.RolledBack != "" {
+		t.Errorf("a green turn was annotated: %q", turn.RolledBack)
+	}
+}
+
+// "The checks could not be run" and "the checks failed" are different facts, and treating the first
+// as the second is how a mode meant to protect work becomes the thing that destroys it.
+func TestRunwayKeepsTheTurnWhenTheCheckItselfFails(t *testing.T) {
+	gate := &stubGate{err: errors.New("the test runner could not start")}
+	e, _ := runwayEngine(t, gate)
+
+	created := e.Create("claude", "claude-opus-5")
+	runway, _ := core.ModeByName(core.ModeRunway)
+	e.mu.Lock()
+	e.sessionMode[created.ID] = runway
+	e.mu.Unlock()
+
+	turnID, _ := e.Send(created.ID, "do the thing")
+	waitForTurn(t, e, created.ID, turnID)
+
+	turn := turnIn(t, e, created.ID, turnID)
+	if !strings.Contains(turn.RolledBack, "kept") {
+		t.Errorf("a turn was judged on a check that never ran: %q", turn.RolledBack)
+	}
+}
+
+// Every other mode leaves the gate alone, or build would pay for a full test run after every message.
+func TestOnlyRunwayRunsTheGate(t *testing.T) {
+	for _, name := range []string{core.ModePlan, core.ModeBuild, core.ModeCruise} {
+		gate := &stubGate{green: false, reason: "red"}
+		e, _ := runwayEngine(t, gate)
+
+		created := e.Create("claude", "claude-opus-5")
+		mode, _ := core.ModeByName(name)
+		e.mu.Lock()
+		e.sessionMode[created.ID] = mode
+		e.mu.Unlock()
+
+		turnID, _ := e.Send(created.ID, "go")
+		waitForTurn(t, e, created.ID, turnID)
+
+		if gate.checks != 0 {
+			t.Errorf("%s ran the gate %d times", name, gate.checks)
+		}
+	}
+}
+
+// Runway without a gate is cruise wearing a promise it cannot keep, so it is refused rather than
+// quietly downgraded. A mode that silently became the more dangerous one below it would be the worst
+// possible failure of a safety setting.
+func TestRunwayIsRefusedWithNothingToCheckWith(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+
+	created := e.Create("claude", "claude-opus-5")
+	runway, _ := core.ModeByName(core.ModeRunway)
+
+	err := e.SetMode(created.ID, runway)
+	if err == nil {
+		t.Fatal("runway was allowed with no way to check the workspace")
+	}
+	if got := e.Mode(created.ID).Name; got == core.ModeRunway {
+		t.Errorf("the conversation is in runway anyway, reported as %q", got)
+	}
+}
+
+// And cruise with no undo is recklessness rather than a trade, so it is refused outside a repository
+// for the same reason.
+func TestCruiseIsRefusedWithNoWayToPutThingsBack(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+
+	created := e.Create("claude", "claude-opus-5")
+	cruise, _ := core.ModeByName(core.ModeCruise)
+
+	if err := e.SetMode(created.ID, cruise); err == nil {
+		t.Fatal("cruise was allowed with no checkpoint to undo it with")
+	}
+}
+
+func turnIn(t *testing.T, e *Engine, sessionID, turnID string) core.Turn {
+	t.Helper()
+	s, _ := e.Session(sessionID)
+	for _, turn := range s.Turns {
+		if turn.ID == turnID {
+			return turn
+		}
+	}
+	t.Fatalf("turn %s is not in the conversation", turnID)
+	return core.Turn{}
 }

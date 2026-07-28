@@ -200,6 +200,18 @@ type Turn struct {
 	// with along with the one they were not.
 	Checkpoint string
 
+	// RolledBack explains a turn that was undone because it left the workspace red.
+	//
+	// Only runway sets it. Kept apart from Error because the turn did not fail: the model answered,
+	// the tools ran, and then the workspace did not verify and the whole thing was put back. Folding
+	// that into Error would report a working turn as broken and lose the distinction between "this
+	// did not work" and "this worked and was not kept".
+	//
+	// The text stays even though the changes do not, which is the point. A rolled back turn that
+	// left no trace would look like nothing happened, and the reader needs to know an attempt was
+	// made and what it ran into.
+	RolledBack string
+
 	StartedAt time.Time
 	// EndedAt is zero until the turn is terminal.
 	EndedAt time.Time

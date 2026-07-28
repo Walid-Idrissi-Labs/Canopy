@@ -238,3 +238,53 @@ func TestACommandFileCannotRedefineABuiltin(t *testing.T) {
 		t.Errorf("the refusal does not say the name is reserved: %v", err)
 	}
 }
+
+// The counterpart to steering, and the difference is the whole feature. Steering changes what the
+// agent does. This changes nothing: no message is sent, no turn is created, and the answer is never
+// part of the conversation the next turn is built from.
+func TestBtwAsksWithoutJoiningTheConversation(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "build the parser"}, State: core.TurnComplete},
+	}}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+
+	next, cmd := run(m, "/btw which file holds the parser")
+	if cmd == nil {
+		t.Fatal("/btw asked nothing")
+	}
+	next, _ = next.Update(cmd())
+
+	if len(engine.asked) != 1 || engine.asked[0] != "which file holds the parser" {
+		t.Errorf("asked = %v", engine.asked)
+	}
+	// Nothing was sent as a message, and no turn was added.
+	if len(engine.sent) != 0 {
+		t.Errorf("the question was sent to the model as a message: %v", engine.sent)
+	}
+	if got := len(next.Session().Turns); got != 1 {
+		t.Errorf("the conversation grew to %d turns", got)
+	}
+	if view := plain(next.Body()); !strings.Contains(view, "internal/config") {
+		t.Errorf("the answer is not on screen:\n%s", view)
+	}
+}
+
+// And it says what it wants when given nothing, rather than asking an empty question.
+func TestBtwWithNoQuestionSaysSo(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	next, _ := run(boxedChat(engine), "/btw")
+
+	if len(engine.asked) != 0 {
+		t.Errorf("an empty question was asked: %v", engine.asked)
+	}
+	if view := plain(next.Body()); !strings.Contains(view, "like to know") {
+		t.Errorf("the screen does not say what it wants:\n%s", view)
+	}
+}
+
+func boxedChat(engine chat.Engine) chat.Model {
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+	return m
+}

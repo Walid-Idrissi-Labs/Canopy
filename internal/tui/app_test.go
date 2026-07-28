@@ -648,3 +648,5 @@ func (e *stubEngine) Steer(_, guidance string) error {
 	e.steered = append(e.steered, guidance)
 	return nil
 }
+
+func (e *stubEngine) Aside(_ context.Context, _, _ string) (string, error) { return "", nil }

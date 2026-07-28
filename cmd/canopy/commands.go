@@ -121,6 +121,13 @@ func runChat(resume string) error {
 	// repository there is nothing to read and the screen says so, which is the honest answer and
 	// the one this used to lie about: it was handed four invented worktrees and a timer that
 	// pretended one of them was being edited.
+	// The green gate, which is what makes runway mode more than cruise with a better prompt. Attached
+	// only where there is something to check with, and its absence is what makes runway refuse to be
+	// entered rather than quietly behaving like the mode below it.
+	if verification != nil {
+		engine.WithGate(gate{verifier: verification.verifier, agent: main.Name})
+	}
+
 	var review tui.ReviewSource
 	var costs tui.CostOutcomeSource
 	monitor := newWorktrees("", nil)

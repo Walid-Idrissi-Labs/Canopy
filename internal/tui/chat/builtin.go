@@ -87,6 +87,9 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 	case "steer":
 		m.steer(arguments)
 
+	case "btw":
+		return true, m.aside(arguments)
+
 	case "context":
 		m.notice = m.contextUse()
 
@@ -181,6 +184,35 @@ func (m *Model) steer(guidance string) {
 	}
 	m.notice = "sent"
 	m.refresh()
+}
+
+// aside asks something about the conversation without joining it.
+//
+// The counterpart to steering, and the difference is worth keeping straight because both are things
+// you type while an agent is working. Steering changes what it does. This changes nothing: the
+// question and its answer are never recorded, no turn is created, and an agent working at the time
+// goes on working. The model in the next real turn has no idea it was asked.
+func (m *Model) aside(question string) tea.Cmd {
+	if question == "" {
+		m.err = "what would you like to know? For example `/btw which file holds the parser`"
+		return nil
+	}
+
+	engine, sessionID := m.engine, m.sessionID
+	m.notice = "asking, and this changes nothing"
+	m.err = ""
+
+	return func() tea.Msg {
+		answer, err := engine.Aside(context.Background(), sessionID, question)
+		return asideMsg{question: question, answer: answer, err: err}
+	}
+}
+
+// asideMsg carries a side answer back into the update loop.
+type asideMsg struct {
+	question string
+	answer   string
+	err      error
 }
 
 // contextUse is how much of the window this conversation is using.

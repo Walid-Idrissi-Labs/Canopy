@@ -42,8 +42,10 @@ type fakeEngine struct {
 
 	// mode is what has been chosen, and trust is the ceiling it cannot be raised above. Empty trust
 	// means no ceiling, which is what most of these tests want.
-	mode    core.Mode
-	steered []string
+	mode     core.Mode
+	steered  []string
+	asked    []string
+	asideErr error
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -883,4 +885,12 @@ func (e *fakeEngine) UseCredential(_, keyName, model string) error {
 func (e *fakeEngine) Steer(_, guidance string) error {
 	e.steered = append(e.steered, guidance)
 	return nil
+}
+
+func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error) {
+	e.asked = append(e.asked, question)
+	if e.asideErr != nil {
+		return "", e.asideErr
+	}
+	return "the parser lives in internal/config", nil
 }

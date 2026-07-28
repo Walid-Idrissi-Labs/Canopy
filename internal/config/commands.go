@@ -83,6 +83,7 @@ func Builtins() []Builtin {
 		{"commands", "everything you can type here, and where each one came from"},
 		{"mode", "plan, build, runway or cruise, and what each one may change"},
 		{"steer", "correct the agent without throwing away what it has done"},
+		{"btw", "ask something about this conversation without joining it"},
 		{"new", "a fresh conversation, keeping this one"},
 		{"undo", "put the workspace back as it was before the last turn"},
 		{"green", "whether this workspace is verified, and what has gone stale"},

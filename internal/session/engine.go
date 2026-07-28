@@ -98,6 +98,11 @@ type Engine struct {
 	// checkpoints captures the worktree before each turn, when there is a worktree to capture.
 	checkpoints *git.Taker
 
+	// gate is the check runway mode runs after every turn. Nil where there is nothing to check
+	// with, which is what stops runway being offered rather than something that quietly downgrades
+	// it. See gate.go.
+	gate Gate
+
 	// agents are the named workers, and agentOrder is the order they were created in.
 	agents     map[string]*Agent
 	agentOrder []string
@@ -186,6 +191,13 @@ func (e *Engine) SetMode(sessionID string, mode core.Mode) error {
 	if ceiling.Valid() && !ceiling.AtLeast(mode.Trust) {
 		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode, which needs %s",
 			ceiling, mode.Name, mode.Trust)
+	}
+	if checkpoints, gate := e.checkpoints, e.gate; mode.NeedsUndo && checkpoints == nil {
+		return fmt.Errorf(
+			"%s needs to be able to put the workspace back, which needs a git repository", mode.Name)
+	} else if mode.KeepsGreen && gate == nil {
+		return fmt.Errorf(
+			"%s needs to be able to check the workspace, which needs a configured test", mode.Name)
 	}
 	if e.sessionMode == nil {
 		e.sessionMode = make(map[string]core.Mode)
@@ -687,6 +699,16 @@ func (e *Engine) run(
 	}
 
 	e.finish(sessionID, turnID, state, reason, usage, client.Name())
+
+	// Only a turn that finished on its own terms is worth checking. A cancelled or failed turn has
+	// nothing to keep, and running the project's tests over the wreckage of one somebody interrupted
+	// would spend a minute to conclude what the interruption already said.
+	//
+	// Deliberately after finish, with a fresh context. The turn's own context is cancelled the moment
+	// it is terminal, and the checks are about what that turn left behind rather than part of it.
+	if state == core.TurnComplete {
+		e.keepGreen(context.WithoutCancel(ctx), sessionID, turnID)
+	}
 }
 
 // snapshot returns a copy of a session, or the zero value if it has gone.
