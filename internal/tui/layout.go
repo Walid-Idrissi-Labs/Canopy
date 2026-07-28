@@ -42,18 +42,17 @@ func (d Dimensions) BodyHeight() int {
 // reaching the thing they typed it for, and the argument for one was recognition, which the screen
 // a conversation opens on already does while also being usable.
 
-// Frame composes a screen: title bar, body, and a footer pinned to the bottom.
-func Frame(d Dimensions, title, context, body, footer string) string {
+// Frame composes a screen: header bar, body, and a footer pinned to the bottom.
+//
+// The header is three lines and used to be a title, a rule and a blank. The count has to stay the
+// same, because BodyHeight subtracts a fixed amount of chrome and a header one line taller would
+// push every screen's footer off the bottom at once.
+func Frame(d Dimensions, s Status, body, footer string) string {
 	t := theme.Current()
 
 	var b strings.Builder
-	b.WriteString(t.Title.Render(title))
-	if context != "" {
-		b.WriteString(t.Muted.Render("  " + context))
-	}
+	b.WriteString(Header(d, s))
 	b.WriteString("\n")
-	b.WriteString(t.Border.Render(strings.Repeat("─", maxInt(1, minInt(d.Width, 200)))))
-	b.WriteString("\n\n")
 
 	bodyLines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	b.WriteString(strings.Join(bodyLines, "\n"))

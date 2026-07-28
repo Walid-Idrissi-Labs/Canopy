@@ -567,7 +567,7 @@ func (a App) View() string {
 		if HelpHeight(a.dim.Width) > a.dim.BodyHeight() {
 			footer = Keys(a.dim.Width, "j/k", "scroll", "any other key", "back")
 		}
-		return Frame(a.dim, "canopy", "keys", HelpFrom(a.dim, a.helpScroll), footer)
+		return Frame(a.dim, Status{Screen: "help"}, HelpFrom(a.dim, a.helpScroll), footer)
 
 	case screenAgents:
 		footer := Keys(a.dim.Width, "enter", "open", "n", "new", "j/k", "move", "v", "layout",
@@ -577,10 +577,12 @@ func (a App) View() string {
 		} else if a.agents.Naming() {
 			footer = Keys(a.dim.Width, "enter", "review", "esc", "cancel")
 		}
-		return Frame(a.dim, "canopy", a.agents.Context(), a.agents.Body(), footer)
+		return Frame(a.dim, Status{Screen: "agents", Parts: []string{a.agents.Context()}},
+			a.agents.Body(), footer)
 
 	case screenReview:
-		return Frame(a.dim, "canopy", a.review.Context(), a.review.Body(), a.review.Footer())
+		return Frame(a.dim, Status{Screen: "review", Parts: []string{a.review.Context()}},
+			a.review.Body(), a.review.Footer())
 
 	case screenChat:
 		// The keys mean something different while a question is up, and again depending on whether
@@ -604,11 +606,16 @@ func (a App) View() string {
 		if a.chat.Awaiting() {
 			footer = Keys(a.dim.Width, "y", "allow once", "a", "always", "any other key", "refuse")
 		}
-		return Frame(a.dim, "canopy", a.chat.Context(), a.chat.Body(), footer)
+		return Frame(a.dim, Status{
+			Screen: "chat",
+			Parts:  a.chat.ContextParts(),
+			Mode:   a.chat.Mode(),
+		}, a.chat.Body(), footer)
 	case screenKeys:
-		return Frame(a.dim, "canopy", "credentials", a.keys.Body(), a.keys.Footer())
+		return Frame(a.dim, Status{Screen: "credentials"}, a.keys.Body(), a.keys.Footer())
 	default:
-		return Frame(a.dim, "canopy", a.dashboard.Context(), a.dashboard.Body(),
+		return Frame(a.dim, Status{Screen: "worktrees", Parts: []string{a.dashboard.Context()}},
+			a.dashboard.Body(),
 			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc/q", "agents",
 				"?", "help"))
 	}

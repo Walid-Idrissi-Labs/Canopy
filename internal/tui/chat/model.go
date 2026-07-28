@@ -1099,7 +1099,15 @@ func (m Model) boxTop(left, right, horizontal string, width int) string {
 }
 
 // Context is what the frame shows beside the title.
-func (m Model) Context() string {
+// Context is the detail line, joined. Kept for callers that want one string.
+func (m Model) Context() string { return strings.Join(m.ContextParts(), "  ") }
+
+// ContextParts is the same detail, in the order it should survive a narrow terminal.
+//
+// Separate from Context because the header drops these from the right rather than truncating the
+// joined string. Truncating a joined string cuts a fact in half, and half of "12.3k tokens" is a
+// number with no unit on it.
+func (m Model) ContextParts() []string {
 	parts := []string{}
 	if m.agentName != "" {
 		// First, because with several agents the question "whose conversation am I in" comes before
@@ -1130,7 +1138,7 @@ func (m Model) Context() string {
 	if len(m.session.Turns) > 0 {
 		parts = append(parts, m.contextMeter())
 	}
-	return strings.Join(parts, "  ")
+	return parts
 }
 
 // contextMeter is the "how full is this conversation" figure in the header.
