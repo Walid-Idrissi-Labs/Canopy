@@ -303,7 +303,7 @@ func startVerification(
 	if configured := project.Runnable(); len(configured) > 0 {
 		// The revision reader is what stops a committing hook from firing on its own commit. Read
 		// live from git rather than from the verifier's last poll, because the poller has not looked
-		// yet at the moment this matters. See Q-17 and hooks.Runner.ownRevision.
+		// yet at the moment this matters. See Q-17 and the runner's code-interval guard.
 		v.runner = hooks.New(configured, dir, hooks.Shell, v.recordHook, verifier.Head)
 	}
 

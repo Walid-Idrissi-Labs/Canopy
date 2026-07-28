@@ -240,8 +240,9 @@ be rediscovered by getting burned by it.
   verification state that is current rather than stale, and a command bound to `tests-passed` is
   eligible again at the next revision, which is deliberate: tests passing over different code is a
   different event. It also means a hook that commits moves HEAD, and the pass at that new revision
-  is a second event that would fire it again, so a revision that appears between a hook firing and
-  that hook returning is treated as the hook's own and does not fire it a second time (D-39). The
+  is a second event that would fire it again, so a revision that appears between a hook batch firing
+  and its last command returning is treated as the batch's own and does not fire it a second time,
+  even if the poller verifies that revision before the first command returns (D-39). The
   cost of that rule falls in one place: if you commit your own work during the few seconds a hook is
   running, that revision is claimed too and the hook does not fire for it. It fires again for the
   next thing you do.

@@ -171,6 +171,7 @@ func TestPassingAgainAfterGoingStaleFiresAgain(t *testing.T) {
 	ctx := context.Background()
 
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("abc"), Tests: core.TestPassing})
+	r.Wait()
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Tests: core.TestStale})
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Tests: core.TestPassing})
 	r.Wait()
@@ -391,6 +392,7 @@ func TestANewRevisionPassingFiresAgainEvenWithNoStateSeenInBetween(t *testing.T)
 	ctx := context.Background()
 
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("abc"), Green: true})
+	r.Wait()
 	r.Observe(ctx, Observation{Subject: "a1", Revision: rev("def"), Green: true})
 	r.Wait()
 
@@ -458,6 +460,99 @@ func TestACommittingHookDoesNotFireOnItsOwnCommit(t *testing.T) {
 	if runs != 1 {
 		t.Errorf("the hook ran %d times, want 1: it committed, which moved the revision, which made "+
 			"it eligible again, which is a loop that only stops when somebody quits Canopy", runs)
+	}
+}
+
+func TestARevisionObservedBeforeTheHookReturnsDoesNotRetriggerIt(t *testing.T) {
+	tree := &worktree{sha: "r1"}
+	committed := make(chan struct{})
+	release := make(chan struct{})
+
+	var runs int
+	var mu sync.Mutex
+	exec := func(context.Context, string, string, []string) (string, error) {
+		mu.Lock()
+		runs++
+		run := runs
+		mu.Unlock()
+		if run == 1 {
+			tree.commit("r2")
+			close(committed)
+			<-release
+		}
+		return "", nil
+	}
+
+	var reports []Report
+	r := runnerReading(t, exec, &reports, tree.read,
+		Hook{On: TestsPassed, Run: "git commit -am wip; make notify"})
+
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("r1"), Tests: core.TestPassing, Green: true,
+	})
+	<-committed
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("r2"), Tests: core.TestPassing, Green: true,
+	})
+	close(release)
+	r.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 1 {
+		t.Errorf("the hook ran %d times, want 1: r2 appeared while the first run still owned the interval",
+			runs)
+	}
+}
+
+func TestTheIntervalCoversEveryHookInTheBatch(t *testing.T) {
+	tree := &worktree{sha: "r1"}
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+
+	var runs int
+	var mu sync.Mutex
+	exec := func(context.Context, string, string, []string) (string, error) {
+		mu.Lock()
+		runs++
+		run := runs
+		mu.Unlock()
+		if run <= 2 {
+			tree.commit(fmt.Sprintf("hook-%d", run))
+			started <- struct{}{}
+			<-release
+		}
+		return "", nil
+	}
+
+	var reports []Report
+	r := runnerReading(t, exec, &reports, tree.read,
+		Hook{On: Verified, Run: "first"},
+		Hook{On: Verified, Run: "second"})
+
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("r1"), Tests: core.TestPassing, Green: true,
+	})
+	<-started
+	<-started
+	current, _ := tree.read(context.Background(), "a1")
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: current, Tests: core.TestPassing, Green: true,
+	})
+	close(release)
+	r.Wait()
+
+	tree.commit("person-work")
+	r.Observe(context.Background(), Observation{
+		Subject: "a1", Revision: rev("person-work"), Tests: core.TestPassing, Green: true,
+	})
+	r.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if runs != 4 {
+		t.Errorf("hooks ran %d times, want two for r1, none inside their interval, and two for person-work",
+			runs)
 	}
 }
 

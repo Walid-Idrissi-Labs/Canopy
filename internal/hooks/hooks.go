@@ -151,6 +151,10 @@ type Runner struct {
 	// entered remembers which agent-state events are currently true, so those fire on entering a
 	// state rather than on being in one.
 	entered map[string]map[Event]bool
+	// inFlight counts the hooks currently running for one subject and code event. A revision that
+	// appears before those hooks return is inside their interval and must be claimed immediately;
+	// waiting until the executor returns leaves enough time for the poller to start the hook again.
+	inFlight map[string]int
 
 	running sync.WaitGroup
 }
@@ -177,6 +181,7 @@ func New(hooks []Hook, dir string, exec Executor, report func(Report), revision 
 		revision: revision,
 		firedAt:  map[string]string{},
 		entered:  map[string]map[Event]bool{},
+		inFlight: map[string]int{},
 	}
 }
 
@@ -220,6 +225,13 @@ func (r *Runner) Observe(ctx context.Context, obs Observation) []Event {
 
 		key := obs.Subject + "\x00" + string(event)
 		if aboutCode(event) {
+			if r.inFlight[key] > 0 {
+				// The poller can observe and verify a commit before the hook process that made it
+				// returns. Claim it now, while the interval is visibly in progress, rather than
+				// starting another copy and hoping the post-run read wins the race.
+				r.firedAt[key] = obs.Revision.String()
+				continue
+			}
 			// Once per revision. That is both halves at once: the poller reporting the same green
 			// every two seconds sees the same revision and fires nothing, and a hook that commits
 			// moves HEAD, which moves the revision, which makes the tests stale, which makes them
@@ -233,6 +245,7 @@ func (r *Runner) Observe(ctx context.Context, obs Observation) []Event {
 				continue
 			}
 			r.firedAt[key] = obs.Revision.String()
+			r.inFlight[key] += len(r.hooks[event])
 		} else if previous[event] {
 			// An agent event is about the agent, so it fires on entering the state and not again
 			// while it stays there. Keying these on the revision instead would fire "idle" a second
@@ -288,7 +301,7 @@ func (r *Runner) run(parent context.Context, obs Observation, event Event, hook 
 		err = fmt.Errorf("it did not finish within %s", timeout)
 	}
 
-	r.ownRevision(parent, obs, event)
+	r.finishCodeInterval(parent, obs, event)
 
 	if r.report != nil {
 		r.report(Report{
@@ -302,7 +315,8 @@ func (r *Runner) run(parent context.Context, obs Observation, event Event, hook 
 	}
 }
 
-// ownRevision claims whatever the hook just produced, so the hook does not fire on its own work.
+// finishCodeInterval claims whatever the hook batch just produced and records that one member of
+// the batch finished, so the hook does not fire on its own work.
 //
 // This is the answer to Q-17, recorded as D-39. It is the only rule available that does not depend
 // on trusting the hook. A committing hook otherwise re-triggers itself forever: it commits, HEAD
@@ -324,25 +338,34 @@ func (r *Runner) run(parent context.Context, obs Observation, event Event, hook 
 // trusted to declare itself is the thing being guarded against.
 //
 // A nil reader means the caller opted out and the loop above is theirs to own.
-func (r *Runner) ownRevision(ctx context.Context, obs Observation, event Event) {
-	if r.revision == nil || !aboutCode(event) {
+func (r *Runner) finishCodeInterval(ctx context.Context, obs Observation, event Event) {
+	if !aboutCode(event) {
 		return
 	}
 
-	// Detached from the hook's own deadline, which has usually just expired if the hook timed out.
-	// A hook that was killed halfway may still have committed, and that revision is exactly the one
-	// worth claiming.
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revisionReadTimeout)
-	defer cancel()
-
-	after, ok := r.revision(ctx, obs.Subject)
-	if !ok || after.String() == obs.Revision.String() {
-		return
+	var (
+		after core.RevisionKey
+		ok    bool
+	)
+	if r.revision != nil {
+		// Detached from the hook's own deadline, which has usually just expired if the hook timed
+		// out. A hook killed halfway may still have committed, and that revision is worth claiming.
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revisionReadTimeout)
+		after, ok = r.revision(readCtx, obs.Subject)
+		cancel()
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.firedAt[obs.Subject+"\x00"+string(event)] = after.String()
+	key := obs.Subject + "\x00" + string(event)
+	if ok && after.String() != obs.Revision.String() {
+		r.firedAt[key] = after.String()
+	}
+	if r.inFlight[key] <= 1 {
+		delete(r.inFlight, key)
+	} else {
+		r.inFlight[key]--
+	}
 }
 
 // revisionReadTimeout bounds reading the revision back after a hook.

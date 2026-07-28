@@ -3672,6 +3672,9 @@ between a hook firing and that hook returning is claimed as the hook's own, so a
 longer fires on its own commit. What made this tractable is that the recognisable thing is the
 interval rather than the revision: every property of a revision fails to identify who made it, but
 the runner already holds the revision the hook fired at and can read it again when the hook returns.
+The interval is also marked in flight before execution, so a fast poll and test pass cannot start a
+second batch while the first command is still running. Multiple hooks for one event share the batch
+interval until the last returns.
 Mutation checked, and without the guard the loop test runs the hook ten times out of ten instead of
 once. A companion test pins that work somebody actually did still fires, because over-suppressing here
 would silently skip the commit for the next piece of real work.

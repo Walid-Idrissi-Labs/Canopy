@@ -794,8 +794,13 @@ the commit author is the user when the hook commits as the user, and remembering
 hook produced breaks the moment it produces two. What is knowable is the interval. The runner already
 holds the revision the hook fired at, because that is what the once-per-revision guard is keyed on,
 and it can read the revision again when the hook returns. Anything that moved between those two
-points moved while this hook was running, and the hook is the only thing that was asked to do
-anything. That revision is recorded as already fired.
+points moved while the configured hook batch was running, and those hooks were the only work Canopy
+asked to do. That revision is recorded as already fired.
+
+The interval is active before the commands start, not only after they return. The poller can observe
+and verify a hook's commit while that hook continues with later commands; an observation inside the
+interval is claimed immediately instead of starting a second batch. When several hooks listen to
+one event, the interval remains active until the last of them returns.
 
 Read from git directly rather than from the poller's last answer. The poller is up to an interval
 behind, and the whole question is what happened in the last few seconds.
