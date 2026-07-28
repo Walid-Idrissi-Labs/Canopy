@@ -328,7 +328,7 @@ independent rerun.
 
 ---
 
-## Q-16 Test commands do not implement D-05
+## ~~Q-16 Test commands do not implement D-05~~ resolved 2026-07-28
 
 **Added 2026-07-28 by the independent A6 pass.**
 
@@ -343,17 +343,23 @@ Canopy records FAIL even though no test ran. The existing test notices this exac
 not fail on it. Guessing from stderr is locale- and shell-dependent, while treating every 126 or
 127 as ERROR would misclassify a valid shell test that deliberately exits with that code.
 
-**Supervisor decision required, with one recommended path:**
+**Resolved by implementing D-05 as written**, which both supervisors recommended independently and
+which D-22 says the agent-runtime pivot left untouched. This was drift from a settled decision, not a
+choice that was still open, so option 2 was never really on the table.
 
-1. **Recommended: implement D-05 as written.** Make the committed shape
-   `"command": {"argv": ["go", "test", "./..."]}` by default, accept
-   `"command": {"shell": "...", "allow_shell": true}` only deliberately, migrate Canopy's own
-   config, and let the argv runner distinguish start failure from a non-zero test exit.
-2. Explicitly supersede D-05 with a shell-only decision and revise A6-03 to admit that an inner
-   command-start failure cannot be distinguished reliably from a test returning the same status.
+`command` is now an object. `{"argv": [...]}` is the default, `{"shell": "...", "allow_shell": true}`
+is available for the pipes and prefixes that genuinely need one, and setting both is a validation
+error. Canopy's own `canopy.json` is migrated, and a bare string is refused with a message showing
+both forms rather than with Go's unmarshalling error.
 
-Until both supervisors choose, A6-03 is blocked. A later agent must not clear it by matching English
-shell output or by silently redefining exit 126/127.
+The acceptance contract for A6-03 is met rather than approximated: with an argument vector the
+executable either exists or `Start` fails, so a command that could not start and a test that failed
+are different objects instead of the same integer. Neither prohibited shortcut was used. Nothing
+reads shell stderr and nothing reinterprets 126 or 127.
+
+What the shell form costs is now asserted in the test file rather than described in a comment. The
+same missing program run through a shell is pinned as `failing`, so the trade someone accepts by
+writing `allow_shell` is visible next to the case it contrasts with. A6-03 is unblocked.
 
 ---
 

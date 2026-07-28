@@ -2795,8 +2795,8 @@ reads at the semaphore rather than measuring the already-serial callback. Race-e
 tests pass. Claude's earlier check predates this diff and must be rerun before done.
 
 ### A6-03 Test runner
-`status: blocked | owner: Claude | branch: feat/verification-and-release | depends: A6-01, A5-04`
-`scope: internal/exec/`
+`status: review | owner: Claude | branch: contract/test-commands | depends: A6-01, A5-04`
+`scope: internal/exec/, internal/config/testcommand.go, canopy.json`
 
 Deliverable: run a configured test command per agent worktree, capturing exit code, duration and
 the revision at start.
@@ -2816,18 +2816,34 @@ code is broken when what is broken is their configuration.
 Logs stay out of run state per D-08, so RunTest returns the run and the output separately rather
 than putting a log buffer inside a state record.
 
-**Blocked by independent Codex review 2026-07-28.** D-05 still requires `command.argv` as the
-default and an explicitly opted-in `command.shell`. The committed `canopy.json` schema instead
-accepts only a string and always runs `/bin/sh -c`. A missing executable therefore exits 127 and is
-recorded as FAIL, contradicting this task's acceptance sentence that a command which cannot start
-is ERROR. The existing test observes that mismatch but deliberately does not fail. Q-16 records the
-two supervisor choices. Do not clear this block by matching shell stderr or treating every 126/127
-as infrastructure failure; a valid shell test can deliberately return either code.
+**Was blocked by independent Codex review 2026-07-28, and is unblocked by implementing D-05 as
+written.** The schema accepted only a string and the runner always ran `/bin/sh -c`, so a missing
+executable exited 127 and was recorded as FAIL, contradicting this task's own acceptance sentence.
+The test that covered it observed the mismatch and logged rather than failed.
 
-The corrective branch did fix an adjacent truth-path defect: a RUNNING update now carries the same
-start revision as its terminal result, so the interface can render RUN instead of UNKNOWN for the
-duration. That does not settle the command-format contradiction, and Codex verification stays
-unchecked.
+Both supervisors recommended the same path independently, and D-22 says the pivot left D-05
+untouched, so this was drift from a settled decision rather than a choice still open. `command` is
+now an object: `{"argv": [...]}` by default, `{"shell": "...", "allow_shell": true}` when a pipeline
+is genuinely needed, both set is a validation error. Canopy's own `canopy.json` is migrated.
+
+The acceptance sentence is now true rather than aspirational, because with argv there is no
+ambiguity to recover from: the executable exists or `Start` fails, which are different objects
+instead of one integer. Mutation checked, and reverting the argv dispatch fails the named subtest
+with exactly the old symptom, exit 127 and state `failing`.
+
+What the shell form still costs is asserted rather than left to a comment. A second subtest runs the
+same missing program through a shell and pins that it comes back as `failing`, so the difference
+between the two forms is visible in the test file and a reader can see what opting in buys and loses.
+
+The bare string is refused with a message that shows both forms, because Go's own "cannot unmarshal
+string into Go value of type config.TestCommand" says nothing about what to write instead, and this
+is the one error most people will meet exactly once.
+
+An earlier corrective branch fixed an adjacent truth-path defect: a RUNNING update carries the same
+start revision as its terminal result, so the interface renders RUN instead of UNKNOWN for the
+duration.
+
+Codex verification stays unchecked, as does every other task's.
 
 ### A6-04 Verification per agent
 `status: review | owner: Claude | branch: feat/verification-and-release | depends: A6-03, A5-06`

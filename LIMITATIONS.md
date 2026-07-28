@@ -48,12 +48,18 @@ be rediscovered by getting burned by it.
   command did not finish, not evidence the tests failed, but the default itself is still flagged as
   unconfirmed rather than settled (D-18).
 
-- Test command configuration currently contradicts D-05. The settled decision requires an argument
-  array by default and an explicit opt-in for a shell string, but `canopy.json` currently accepts
-  only a string and runs it through `/bin/sh -c`. That means a missing executable is observed as
-  shell exit 127 and reported as a failing test instead of a command-start error. A6-03 is blocked
-  until both supervisors either implement the decided structured form or explicitly supersede
-  D-05 and define the shell-only semantics (Q-16).
+- A test command is an argument array by default, and a shell string only when you write
+  `"allow_shell": true` next to it (D-05). The difference is not cosmetic. With an argument array a
+  program that is not installed fails to start, which Canopy reports as an error rather than as a
+  failing test. Through a shell it exits 127, which is indistinguishable from a suite that failed, so
+  opting in costs you that distinction. Canopy will not guess it back for you by reading stderr,
+  because that answer is locale and shell dependent, and it will not treat every 126 and 127 as an
+  error, because a suite can legitimately exit with one.
+
+- **Test commands written as a plain string no longer load.** `"command": "go test ./..."` becomes
+  `"command": {"argv": ["go", "test", "./..."]}`. The error says so and shows both forms. This is a
+  breaking change to a pre-release file format, made now because it is the cheapest moment there
+  will ever be.
 
 - Whether tests ever re-run automatically when a file changes is still an open question. The current
   plan is manual triggering only: a green result still goes stale by itself the moment the revision
