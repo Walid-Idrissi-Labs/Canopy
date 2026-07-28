@@ -414,13 +414,26 @@ func (m Model) promptLines() []string {
 
 	// The thing being approved, shown verbatim and in full. A command summarised or truncated is a
 	// command somebody approved without having seen it.
-	if req.Command != "" {
-		for _, line := range wrap(req.Command, m.width-4) {
+	//
+	// For a tool whose arguments Canopy did not define, that is the arguments themselves and not the
+	// fields below: those are picked out by looking for names like "path", which means nothing on a
+	// remote server, and what an approval covers there is the exact call. Offering "always, this tool
+	// with exactly these arguments" while showing none of them asks somebody to agree to something
+	// they cannot see.
+	switch {
+	case req.Opaque && req.Arguments != "":
+		for _, line := range wrap(req.Arguments, m.width-4) {
 			lines = append(lines, "  "+t.Body.Render(line))
 		}
-	}
-	for _, path := range req.Paths {
-		lines = append(lines, "  "+t.Body.Render(path))
+	default:
+		if req.Command != "" {
+			for _, line := range wrap(req.Command, m.width-4) {
+				lines = append(lines, "  "+t.Body.Render(line))
+			}
+		}
+		for _, path := range req.Paths {
+			lines = append(lines, "  "+t.Body.Render(path))
+		}
 	}
 
 	lines = append(lines, "")

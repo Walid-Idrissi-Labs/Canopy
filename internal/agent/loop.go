@@ -8,12 +8,12 @@
 package agent
 
 import (
+	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -358,7 +358,8 @@ func (l *Loop) invoke(
 		Kind:      tool.Kind(),
 		Paths:     pathsIn(call.Input),
 		Command:   commandIn(call.Input),
-		Arguments: fingerprintOf(call.Input),
+		Arguments: canonicalArguments(call.Input),
+		Opaque:    externalArguments(tool),
 	}
 
 	decision := permission.Decide(req, l.TrustNow(), l.Grants)
@@ -450,32 +451,108 @@ func commandIn(input json.RawMessage) string {
 	return ""
 }
 
-// fingerprintOf identifies one exact set of arguments, so an approval can be pinned to it.
+// externalArguments reports whether a tool's arguments are somebody else's vocabulary.
 //
-// For tools that name neither a path nor a command, which in practice means anything reached over
-// MCP. Those are the tools Canopy knows least about, and without a fingerprint their approvals are
-// scoped to the tool alone, so saying yes once says yes to every later call whatever it asks for.
+// Asked of the tool rather than inferred from its name, so a tool added later answers for itself
+// instead of matching a prefix somebody has to remember to update.
+func externalArguments(tool core.Tool) bool {
+	external, ok := tool.(core.ExternalTool)
+	return ok && external.External()
+}
+
+// canonicalArguments renders a call in one fixed form, so an approval can be pinned to it and shown.
 //
-// Re-encoded through a map rather than hashed as it arrived, because two calls that are the same
-// call can differ in key order or spacing, and a fingerprint that changed with the whitespace would
-// re-ask for something already approved. Arguments that do not parse are hashed as they came, which
-// is the honest answer: two byte-identical inputs are the same call, and nothing more is claimed.
-func fingerprintOf(input json.RawMessage) string {
-	if len(input) == 0 {
+// Two calls that are the same call can differ in key order and in spacing, and an approval that
+// stopped matching because the model emitted its keys in a different order would ask again for
+// something already agreed to. So keys are sorted and the whitespace is fixed.
+//
+// **Numbers are copied through exactly as they were written**, which is the part that is easy to get
+// wrong and was. Decoding into `any` turns every JSON number into a float64, and a float64 cannot
+// represent every integer: 9007199254740993 becomes 9007199254740992, so two calls naming different
+// records produce identical text and one approval covers both. An issue id, an account number and a
+// row id are all exactly this shape. json.Number keeps the literal.
+//
+// Arguments that do not parse are returned as they arrived. That is the honest answer rather than a
+// failure: two byte-identical inputs are the same call, and nothing more is claimed about them.
+func canonicalArguments(input json.RawMessage) string {
+	if len(bytes.TrimSpace(input)) == 0 {
 		return ""
 	}
 
-	canonical := []byte(input)
-	var args map[string]any
-	if err := json.Unmarshal(input, &args); err == nil {
-		// Marshal sorts map keys, so this is stable across calls.
-		if encoded, err := json.Marshal(args); err == nil {
-			canonical = encoded
-		}
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	decoder.UseNumber()
+
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return string(input)
+	}
+	// Anything after the first value means this is not one JSON document, and re-encoding only the
+	// first part would produce a fingerprint that ignores the rest of what was sent.
+	if decoder.More() {
+		return string(input)
 	}
 
-	sum := sha256.Sum256(canonical)
-	return hex.EncodeToString(sum[:])
+	var out bytes.Buffer
+	if !writeCanonical(&out, value) {
+		return string(input)
+	}
+	return out.String()
+}
+
+// writeCanonical writes a decoded value back in sorted, fixed form. False if it cannot be encoded.
+func writeCanonical(out *bytes.Buffer, value any) bool {
+	switch v := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		out.WriteByte('{')
+		for i, key := range keys {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			encoded, err := json.Marshal(key)
+			if err != nil {
+				return false
+			}
+			out.Write(encoded)
+			out.WriteByte(':')
+			if !writeCanonical(out, v[key]) {
+				return false
+			}
+		}
+		out.WriteByte('}')
+		return true
+
+	case []any:
+		// Order is preserved, because the order of a JSON array is part of what it says.
+		out.WriteByte('[')
+		for i, item := range v {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			if !writeCanonical(out, item) {
+				return false
+			}
+		}
+		out.WriteByte(']')
+		return true
+
+	case json.Number:
+		out.WriteString(v.String())
+		return true
+
+	default:
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			return false
+		}
+		out.Write(encoded)
+		return true
+	}
 }
 
 // accumulate adds a step's usage to a running total.

@@ -87,6 +87,23 @@ type Tool interface {
 	Run(ctx context.Context, input json.RawMessage) (ToolResult, error)
 }
 
+// ExternalTool is a tool whose arguments follow a vocabulary Canopy did not define.
+//
+// Anything reached over MCP, and anything added later that is described by somebody else's schema.
+// Optional rather than a method on Tool, so that adding it did not touch every tool in the codebase
+// to say "no" and so that the answer for a tool that has not thought about it is the safe one.
+//
+// It exists because the permission layer reads argument names to decide how narrowly an approval
+// should be scoped, and looking for "path" or "command" is a sound reading of Canopy's own tools and
+// a guess about everybody else's. A remote tool naming something "path" does not make it a path, and
+// treating it as one lets a single approval cover calls that differ everywhere else.
+type ExternalTool interface {
+	Tool
+
+	// External reports that this tool's arguments are somebody else's vocabulary.
+	External() bool
+}
+
 // ToolResult is what a tool call produced.
 //
 // Deliberately the same shape the provider contract already uses, so a result travels from a tool

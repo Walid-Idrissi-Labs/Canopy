@@ -695,3 +695,122 @@ func (s *blockedStream) Next() bool {
 func (s *blockedStream) Event() core.StreamEvent { return s.current }
 func (s *blockedStream) Err() error              { return nil }
 func (s *blockedStream) Close() error            { return nil }
+
+// remoteishTool is a tool whose arguments are somebody else's vocabulary, as an MCP tool's are.
+type remoteishTool struct{ countingTool }
+
+func (t *remoteishTool) External() bool { return true }
+
+// An approval for a remote tool covers the call it was given for, not every later call that happened
+// to reuse a familiar-looking field.
+//
+// The scope is otherwise chosen by looking for arguments named "path" or "command". That is a sound
+// reading of the tools Canopy wrote and a guess about everybody else's: a server is free to call
+// something "path" that is not a path, and these two calls agree on exactly that field and differ on
+// the one that decides what happens.
+//
+// Driven through the real loop, the real permission decision, the real remembered grant and the real
+// approver, because constructing two Requests by hand proves only that the scope function agrees
+// with itself.
+func TestApprovingARemoteCallDoesNotApproveADifferentOne(t *testing.T) {
+	tool := &remoteishTool{countingTool{
+		name: "workspace_op", kind: core.ToolExecute, answer: "done",
+		schema: `{"type":"object","properties":{"path":{"type":"string"},` +
+			`"operation":{"type":"string"}},"required":["path","operation"]}`,
+	}}
+
+	asked := 0
+	l := loop(&scriptedClient{turns: [][]core.StreamEvent{
+		asksFor("workspace_op", `{"path":"project-1","operation":"read"}`),
+		asksFor("workspace_op", `{"path":"project-1","operation":"delete"}`),
+		says("done"),
+	}}, registryWith(tool), core.TrustStandard)
+	l.Approver = ApproverFunc(func(_ context.Context, _ permission.Request, d permission.Decision) bool {
+		asked++
+		// Remembered, which is what pressing "a" does and what makes the scope matter at all.
+		l.Grants.Grant(d.Scope)
+		return true
+	})
+
+	if _, err := l.Run(context.Background(), ask("tidy up project-1"), nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if asked != 2 {
+		t.Errorf("the person was asked %d times, want 2: approving a read also approved a delete",
+			asked)
+	}
+}
+
+// And the same call twice is still only asked once, or the fix above would have been bought by
+// making every approval useless.
+func TestApprovingARemoteCallCoversTheSameCallAgain(t *testing.T) {
+	tool := &remoteishTool{countingTool{
+		name: "workspace_op", kind: core.ToolExecute, answer: "done",
+		schema: `{"type":"object","properties":{"path":{"type":"string"},` +
+			`"operation":{"type":"string"}},"required":["path","operation"]}`,
+	}}
+
+	asked := 0
+	l := loop(&scriptedClient{turns: [][]core.StreamEvent{
+		asksFor("workspace_op", `{"path":"project-1","operation":"read"}`),
+		// The same call, written differently. Key order and spacing are not what makes two calls
+		// different, and re-asking for one already agreed to trains people to stop reading.
+		asksFor("workspace_op", `{ "operation" : "read" ,  "path" : "project-1" }`),
+		says("done"),
+	}}, registryWith(tool), core.TrustStandard)
+	l.Approver = ApproverFunc(func(_ context.Context, _ permission.Request, d permission.Decision) bool {
+		asked++
+		l.Grants.Grant(d.Scope)
+		return true
+	})
+
+	if _, err := l.Run(context.Background(), ask("read project-1 twice"), nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if asked != 1 {
+		t.Errorf("the person was asked %d times, want 1: the same call was not recognised", asked)
+	}
+}
+
+// Decoding arguments into `any` turns every JSON number into a float64, and a float64 cannot hold
+// every integer. 9007199254740993 becomes ...992, so two calls naming different records produce
+// identical text and one approval covers both. An issue id, an account number and a row id are all
+// exactly this shape.
+func TestTwoLargeIntegersAreNotTheSameCall(t *testing.T) {
+	first := canonicalArguments(json.RawMessage(`{"issue":9007199254740992}`))
+	second := canonicalArguments(json.RawMessage(`{"issue":9007199254740993}`))
+
+	if first == second {
+		t.Errorf("two different issue numbers canonicalised the same way: %s", first)
+	}
+	if !strings.Contains(second, "9007199254740993") {
+		t.Errorf("the number was not carried through as written: %s", second)
+	}
+}
+
+// Canonical means one form for one call, so an approval survives the model reformatting its own
+// arguments and does not survive it changing them.
+func TestCanonicalArgumentsAreStableAndFaithful(t *testing.T) {
+	same := []string{
+		`{"b":1,"a":[1,2,{"y":true,"x":null}]}`,
+		"{ \"a\" : [ 1 , 2 , { \"x\" : null , \"y\" : true } ] , \"b\" : 1 }\n",
+	}
+	first := canonicalArguments(json.RawMessage(same[0]))
+	if got := canonicalArguments(json.RawMessage(same[1])); got != first {
+		t.Errorf("the same call canonicalised two ways:\n%s\n%s", first, got)
+	}
+
+	// Array order is part of what a call says, so it is not sorted away.
+	if canonicalArguments(json.RawMessage(`{"a":[1,2]}`)) ==
+		canonicalArguments(json.RawMessage(`{"a":[2,1]}`)) {
+		t.Error("two different argument lists canonicalised the same way")
+	}
+
+	// Arguments that are not one JSON document are carried through as they arrived rather than
+	// half-parsed, since re-encoding the first value would fingerprint less than was sent.
+	if got := canonicalArguments(json.RawMessage(`{"a":1} trailing`)); got != `{"a":1} trailing` {
+		t.Errorf("trailing content was dropped from the fingerprint: %q", got)
+	}
+}

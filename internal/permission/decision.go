@@ -13,6 +13,8 @@
 package permission
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -73,16 +75,26 @@ type Request struct {
 	// Command is the shell command, for execute calls. Empty otherwise.
 	Command string
 
-	// Arguments is a fingerprint of the whole call, used to scope an approval for a tool that has
-	// neither a path nor a command to be pinned to.
+	// Arguments is the whole call in canonical form, for scoping an approval and for showing one.
 	//
-	// A tool on an MCP server is what this exists for. Those are remote, so there is no local path
-	// to name, and they take structured arguments rather than a command line. Without this the
-	// approval scope for one falls back to the tool alone, and "allow for the session" on a single
-	// call silently covers every later call to that tool with any arguments at all. That is a much
-	// broader promise than the one on the screen, and it is broadest for exactly the tools Canopy
-	// knows least about.
+	// The text rather than a hash of it, deliberately. The prompt has to be able to display exactly
+	// what an approval would cover, and a hash is not something anybody can read: offering "always,
+	// this tool with exactly these arguments" while showing no arguments asks somebody to agree to
+	// something they cannot see. The digest that keys the approval is derived from this, so the
+	// thing displayed and the thing remembered cannot come apart.
 	Arguments string
+
+	// Opaque says the argument names in this call follow a vocabulary Canopy did not define.
+	//
+	// True for anything reached over MCP. It matters because the scope below is otherwise chosen by
+	// looking for arguments called "path" or "command", which is a sound reading of the tools Canopy
+	// wrote and a guess about everybody else's. A remote tool is free to call something "path" that
+	// is not a path: these two differ only outside that field, and scoping by it would let one
+	// standing approval cover both.
+	//
+	//	{"path": "project-1", "operation": "read"}
+	//	{"path": "project-1", "operation": "delete"}
+	Opaque bool
 }
 
 // Decision is the answer, and why.
@@ -329,6 +341,11 @@ func hasFlag(command, flag string) bool {
 func scopeFor(req Request) Scope {
 	scope := Scope{Tool: req.Tool}
 	switch {
+	case req.Opaque && req.Arguments != "":
+		// First for anything Canopy did not define the arguments of, because for those the field
+		// names below are a guess. A remote tool naming something "path" does not make it one, and
+		// scoping by it would cover every other call that happened to use the same value there.
+		scope.Arguments = fingerprint(req.Arguments)
 	case req.Command != "":
 		scope.Command = req.Command
 	case len(req.Paths) > 0:
@@ -336,12 +353,21 @@ func scopeFor(req Request) Scope {
 		sort.Strings(sorted)
 		scope.Path = sorted[0]
 	case req.Arguments != "":
-		// Last, because a path or a command says something a person can read and a fingerprint does
-		// not. Reached only by tools that offer neither, and the alternative for those is a scope of
-		// the tool alone, which is an approval far wider than the one being displayed.
-		scope.Arguments = req.Arguments
+		// A tool of Canopy's own that names neither. The alternative is a scope of the tool alone,
+		// which is an approval far wider than the one being displayed.
+		scope.Arguments = fingerprint(req.Arguments)
 	}
 	return scope
+}
+
+// fingerprint keys an approval by the exact call it was given for.
+//
+// Hashed rather than held whole because a scope is a map key and an approval is remembered for the
+// life of a session, and some tools take a great deal of input. What the person agreed to is the
+// canonical text, which the prompt shows them; this only has to tell two of them apart.
+func fingerprint(canonical string) string {
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 // PathScope builds an approval covering a directory and everything under it.
