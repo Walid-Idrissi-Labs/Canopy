@@ -4616,8 +4616,8 @@ notes: found by reading the render path, not by a report from a user, which is t
 find it.
 
 ### U-03 Attention crosses screens
-`status: todo | owner: none | branch: none | depends: PG-M`
-`scope: internal/tui/, internal/tui/chat/, internal/tui/agents/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: PG-M`
+`scope: internal/tui/, internal/tui/agents/, README.md`
 
 Deliverable: an agent needing a person is visible from every screen, and no screen is ever
 locked. The header carries "N need you" everywhere, not only inside the agents screen's own
@@ -4630,11 +4630,23 @@ says so within a second, in a word and a glyph that survive NO_COLOR. ctrl+d, ct
 work while the current chat has a pending prompt. The pending prompt is unchanged on return. The
 bell fires once per transition, never per frame, and can be turned off.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-43's second rule, and the one the product's premise depends on. The current behaviour
 is the worst combination: the only screen that shows who needs you is unreachable exactly when
 someone needs you.
+
+notes: three refinements, each reversing something that was written down. The count left the
+agents screen's context line rather than being written in both places: the header counts every
+conversation waiting on a person and that line could only ever count agents, and two numbers a row
+apart disagreeing about the same question is worse than either alone. The comment in `app.go`
+arguing that leaving a screen with a tool call waiting would hide what is blocking is deleted, and
+the test asserting it (`TestANewConversationIsRefusedWhileAQuestionIsUp`) is reversed, because
+what the lock actually hid was every other blocked agent. The bell is configured through
+`CANOPY_BELL` rather than through `canopy.json`, following the argument theme.go already makes
+about the palette: how loud a program is belongs to the person at the terminal, not to the
+repository they happen to have open. It rings once per agent that starts needing somebody, so a
+second agent joining the queue rings again; only the same agent going on waiting is silent.
 
 ### U-04 A way back to every conversation
 `status: todo | owner: none | branch: none | depends: A3-02`

@@ -50,7 +50,7 @@ func bindings() []section {
 			{"esc", "interrupt the turn, or clear a half written message"},
 			{"ctrl+c", "stop the turn, then twice to quit"},
 			{"ctrl+n", "a new conversation, keeping this one"},
-			{"ctrl+d", "agents"},
+			{"ctrl+d", "agents, and it works with a question waiting here"},
 			{"ctrl+k", "credentials"},
 			{"ctrl+r", "compact the conversation"},
 			{"pgup / pgdown", "scroll the conversation, or the btw panel while it is up"},

@@ -85,6 +85,13 @@ Cancelling a turn to inject a correction throws away the work in progress, and u
 reasoning with it. Steering is the one you want almost every time, and it is the one most tools do
 not have.
 
+An agent that has stopped and cannot start again without you is counted in the header of every
+screen, not only on the one that lists agents, and no screen is ever locked because a question is
+waiting: leaving a conversation is not answering it, and the question is still there when you come
+back. Scrolling a permission prompt to read what is above it does not answer it either. Set
+`CANOPY_BELL=1` to have the terminal beep the moment an agent starts needing you, which is off
+unless you ask for it.
+
 ## Git as a real tool, not a shell string
 
 Agents get status, diff, log, add, commit and branch as structured tools rooted at their workspace.
