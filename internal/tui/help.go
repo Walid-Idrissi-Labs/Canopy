@@ -53,6 +53,7 @@ func bindings() []section {
 			{"ctrl+d", "agents"},
 			{"ctrl+k", "credentials"},
 			{"ctrl+r", "compact the conversation"},
+			{"ctrl+o", "show tool output and diffs in full, and fold them back"},
 			{"pgup / pgdown", "scroll the conversation, or the btw panel while it is up"},
 			{"mouse drag", "select conversation text, copied when you let go"},
 			{"ctrl+home / ctrl+end", "the top, and back to following"},

@@ -35,7 +35,33 @@ import (
 // than a wrong one.
 type KindOf func(name string) (core.ToolKind, bool)
 
+// Detail is how much of a tool call the transcript shows.
+//
+// Zero value is the reading view: every call names what it touched and how it ended, and the bulk of
+// what came back is summarised rather than printed. Expanded is the same transcript with the caps
+// lifted, which is what ctrl+o toggles. The distinction exists because these are two different jobs.
+// Following an agent is a glance, and the answer is what you are waiting for, so a thousand line file
+// read must not bury it. Checking an agent is a read, and then the caps are in the way.
+type Detail struct {
+	// Expanded lifts the caps on diffs, output previews and error text.
+	Expanded bool
+
+	// Now and Started say how long a call that has not come back yet has been going.
+	//
+	// Started is keyed by call ID and filled in by the screen, not by the engine, because a call
+	// carries no start time and internal/core is frozen. It is therefore how long the call has been
+	// on screen rather than how long it has been running, which differs by at most one frame and is
+	// the honest thing to render: the label says "running for", not "took".
+	Now     time.Time
+	Started map[string]time.Time
+}
+
 func Transcript(session core.Session, width int, spinner string, kinds KindOf) []string {
+	return TranscriptWith(session, width, spinner, kinds, Detail{})
+}
+
+// TranscriptWith renders a session at a chosen level of detail.
+func TranscriptWith(session core.Session, width int, spinner string, kinds KindOf, detail Detail) []string {
 	if width < 20 {
 		width = 20
 	}
@@ -54,7 +80,7 @@ func Transcript(session core.Session, width int, spinner string, kinds KindOf) [
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, renderTurn(turn, width, spinner, kinds)...)
+		lines = append(lines, renderTurn(turn, width, spinner, kinds, detail)...)
 	}
 	return lines
 }
@@ -93,7 +119,7 @@ func shortCount(n int) string {
 	return fmt.Sprintf("%d", n)
 }
 
-func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf) []string {
+func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail Detail) []string {
 	t := theme.Current()
 	var lines []string
 
@@ -123,7 +149,7 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf) []strin
 	}
 
 	for _, call := range turn.ToolCalls {
-		lines = append(lines, renderToolCall(call, resultFor(turn, call), width, kinds)...)
+		lines = append(lines, renderToolCall(call, resultFor(turn, call), width, kinds, detail)...)
 	}
 
 	lines = append(lines, statusLines(turn, spinner, width)...)
@@ -153,7 +179,7 @@ func resultFor(turn core.Turn, call core.ToolCall) *core.ToolResult {
 	return nil
 }
 
-func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kinds KindOf) []string {
+func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kinds KindOf, detail Detail) []string {
 	t := theme.Current()
 
 	// The label is what makes a call readable at a glance rather than at a read. A wall of tool
@@ -174,21 +200,21 @@ func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kind
 	// the call above it and the labels stay in one column down the left.
 	const indent = "      "
 
-	// No result yet means it is still running, or waiting on a person. Said in words, because a
-	// call that has been sitting there for a minute and a call that finished instantly look
-	// identical if the only difference is a line that is not there.
+	// No result yet means it is still running, or waiting on a person. Said in words and, once the
+	// screen has watched it for a second, with the count: a call that has been sitting there for a
+	// minute and a call that started a moment ago are the same line otherwise, and telling them
+	// apart is the whole question somebody watching a stuck agent is asking.
 	if result == nil {
-		return append(lines, t.Muted.Render(indent+"running"))
+		return append(lines, t.Muted.Render(indent+runningFor(call.ID, detail)))
 	}
 
 	timing := formatDuration(result.Duration)
 	if result.IsError {
 		lines = append(lines, t.Danger.Render(indent+"✗ failed after "+timing))
-		// The reason, in the agent's own words. This is the line that says whether the agent is
-		// stuck on something a person can fix, such as a missing tool or a refused permission.
-		for _, line := range wrap(firstLine(result.Content), width-len(indent)-2) {
-			lines = append(lines, t.Muted.Render(indent+"  "+line))
-		}
+		// The reason, in the agent's own words, and as many of those words as fit. Showing only the
+		// first line was a quiet loss of exactly the thing a person needs: a compiler error, a stack
+		// trace and a refused permission all start with a line that does not say which one it is.
+		lines = append(lines, renderOutput(result.Content, width, errorLines, detail, t.Muted)...)
 		return lines
 	}
 
@@ -196,7 +222,124 @@ func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kind
 	if extra := summariseResult(result.Content); extra != "" {
 		summary += ", " + extra
 	}
-	return append(lines, t.Muted.Render(summary))
+	lines = append(lines, t.Muted.Render(summary))
+
+	// What the call did to the repository, where it did something. A write is the one kind of call
+	// whose consequences outlive the conversation, so it is the one kind that gets shown rather than
+	// counted.
+	if change := renderChange(call, width, detail); len(change) > 0 {
+		return append(lines, change...)
+	}
+	return append(lines, renderOutput(result.Content, width, outputLines, detail, t.Muted)...)
+}
+
+// How much of what came back is worth putting on screen, before ctrl+o.
+//
+// Six lines of output and ten of an error, because they answer different questions. Output is
+// usually confirmation that a thing worked and the first few lines carry it; an error is the whole
+// reason you are reading, and a Go stack or a compiler's second sentence is routinely past line six.
+const (
+	outputLines = 6
+	errorLines  = 10
+	diffLines   = 14
+)
+
+// runningFor is the label on a call that has not come back.
+func runningFor(id string, detail Detail) string {
+	started, ok := detail.Started[id]
+	if !ok || detail.Now.IsZero() || !detail.Now.After(started) {
+		return "running"
+	}
+	elapsed := detail.Now.Sub(started)
+	if elapsed < time.Second {
+		return "running"
+	}
+	return "running for " + formatDuration(elapsed)
+}
+
+// renderChange draws what a writing call did, as a diff.
+//
+// Only the two tools whose arguments carry the change: `edit_file` sends the old and the new text,
+// and `write_file` sends the whole content, which against nothing is every line an addition. A tool
+// from an MCP server that happens to write files is not guessed at, because a diff drawn from
+// arguments this function does not understand would be a confident lie about somebody's repository.
+func renderChange(call core.ToolCall, width int, detail Detail) []string {
+	var args struct {
+		Path    string `json:"path"`
+		OldText string `json:"old_text"`
+		NewText string `json:"new_text"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(call.Input, &args); err != nil {
+		return nil
+	}
+
+	var lines []DiffLine
+	switch call.Name {
+	case "edit_file":
+		if args.OldText == "" && args.NewText == "" {
+			return nil
+		}
+		lines = trimToChanges(Diff(args.OldText, args.NewText))
+	case "write_file":
+		if args.Content == "" {
+			return nil
+		}
+		lines = Diff("", args.Content)
+	default:
+		return nil
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+
+	limit := diffLines
+	if detail.Expanded {
+		limit = 0
+	}
+	out := renderDiff(lines, languageFor(args.Path), width, limit)
+
+	added, removed := DiffCounts(lines)
+	t := theme.Current()
+	tally := t.Success.Render("+"+strconv.Itoa(added)) + " " + t.Danger.Render("-"+strconv.Itoa(removed))
+	return append([]string{"      " + tally}, out...)
+}
+
+// renderOutput shows the head of what a call returned.
+//
+// Bounded on purpose, and the bound is stated rather than silent. The rule this replaces was that
+// output belongs to the model and not to the screen, and the half of it worth keeping is still here:
+// the reply is what somebody is waiting for and a thousand line read must not bury it. What was
+// wrong was the other half, that the screen therefore shows none of it, which left a `run_command`
+// printing a test failure rendering as a tick and a duration.
+func renderOutput(content string, width int, limit int, detail Detail, style lipgloss.Style) []string {
+	content = strings.TrimRight(content, "\n")
+	if strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	const indent = "        "
+	body := width - len(indent)
+	if body < 8 {
+		body = 8
+	}
+
+	all := strings.Split(content, "\n")
+	if detail.Expanded {
+		limit = len(all)
+	}
+
+	var out []string
+	for i, line := range all {
+		if i >= limit {
+			out = append(out, style.Render(indent+plural(len(all)-i, "more line", "more lines")+", ctrl+o for all of it"))
+			break
+		}
+		for _, fragment := range wrapLine(expandTabs(line), body) {
+			out = append(out, style.Render(indent+fragment))
+		}
+	}
+	return out
 }
 
 // kindLabels are the four character tags, one per kind.
