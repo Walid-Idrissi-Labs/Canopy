@@ -128,6 +128,41 @@ func TestARestoredRunwayNeverBecomesCruise(t *testing.T) {
 	}
 }
 
+// Asking whether a mode can be entered and being refused when entering it are one rule, asked twice.
+//
+// The mode key needs the question, because it stops on a mode before it applies one and a mode
+// offered and then refused a moment later is a key that appeared to work. Two implementations of the
+// same rule is how the two answers come to disagree, so this holds them together: whatever an engine
+// with no safety net refuses to enter, it also declines to offer.
+func TestAskingWhetherAModeFitsMatchesEnteringIt(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+
+	created := e.Create("claude", "claude-opus-5")
+
+	var refused int
+	for _, mode := range core.Modes() {
+		asked := e.ModeUnusable(created.ID, mode)
+		entered := e.SetMode(created.ID, mode)
+
+		if (asked == nil) != (entered == nil) {
+			t.Errorf("%s: asked whether it fits gave %v and entering it gave %v",
+				mode.Name, asked, entered)
+		}
+		if asked != nil {
+			refused++
+		}
+	}
+
+	// Nothing here can put a workspace back, so the two modes that promise it must be among the
+	// refusals. A run where everything was offered would pass the agreement check above by agreeing
+	// about nothing.
+	if refused == 0 {
+		t.Error("every mode was offered by an engine that cannot undo a turn")
+	}
+}
+
 // A mode name this build has never heard of means the conversation was left somewhere that no longer
 // exists. Nothing can be assumed about it, so it comes back in the narrowest mode there is rather
 // than in whatever the configuration would otherwise allow.

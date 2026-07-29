@@ -266,6 +266,17 @@ func (e *Engine) Mode(sessionID string) core.Mode {
 	return e.modeLocked(sessionID)
 }
 
+// ModeUnusable reports why a mode cannot be entered in this conversation, or nil if it can.
+//
+// The question SetMode answers by refusing, asked without making the change. The interface needs it
+// because the mode key settles on a selection before applying it: offering somebody a mode and then
+// refusing it two seconds later is a key that appears to have worked and then quietly has not.
+func (e *Engine) ModeUnusable(sessionID string, mode core.Mode) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.modeUnusableLocked(sessionID, mode)
+}
+
 // SetMode changes it, for that conversation alone.
 //
 // Per conversation because the decision belongs to whoever is watching that one, and enforced rather

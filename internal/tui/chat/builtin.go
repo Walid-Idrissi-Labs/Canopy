@@ -150,15 +150,23 @@ func (m *Model) describeOrSetMode(name string) {
 	}
 
 	current := m.Mode()
+	// The selection gets a marker of its own rather than the same one. Two rungs claiming to be the
+	// current mode would be the listing disagreeing with itself about which one is enforced.
+	selecting, _ := m.Selecting()
+
 	lines := make([]string, 0, len(core.Modes())+1)
 	for _, mode := range core.Modes() {
 		marker := "  "
+		if mode.Name == selecting {
+			marker = "~ "
+		}
 		if mode.Name == current {
 			marker = "> "
 		}
 		lines = append(lines, marker+mode.Name+"  "+mode.Description)
 	}
-	lines = append(lines, "  shift+tab moves between them, and takes effect mid reply")
+	lines = append(lines,
+		"  shift+tab moves between them, and the one it stops on takes hold a moment later, mid reply")
 	m.notice = strings.Join(lines, "\n")
 }
 

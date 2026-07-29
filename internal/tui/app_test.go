@@ -129,6 +129,9 @@ func (e *stubEngine) SetMode(_ string, mode core.Mode) error {
 	return nil
 }
 
+// No ceiling here, so every mode is reachable and the key can offer all of them.
+func (e *stubEngine) ModeUnusable(string, core.Mode) error { return nil }
+
 func (e *stubEngine) Fork(_, _ string) (core.Session, error) {
 	return core.Session{ID: "session-forked"}, nil
 }

@@ -44,7 +44,15 @@ type fakeEngine struct {
 
 	// mode is what has been chosen, and trust is the ceiling it cannot be raised above. Empty trust
 	// means no ceiling, which is what most of these tests want.
-	mode           core.Mode
+	//
+	// entered is every mode the conversation was actually put into, in order. The mode key stops on
+	// a selection before applying it, and "the modes it walked past were never entered" is a claim
+	// about the whole sequence rather than about where it ended up, so the sequence is kept.
+	mode    core.Mode
+	entered []string
+	// sentIn is the mode in effect as each message was sent, which is how the ordering between
+	// applying a selection and sending is checked rather than assumed.
+	sentIn         []string
 	steered        []string
 	queuedSteering []string
 	asked          []string
@@ -58,6 +66,7 @@ func (e *fakeEngine) Send(_, prompt string) (string, error) {
 		return "", e.sendErr
 	}
 	e.sent = append(e.sent, prompt)
+	e.sentIn = append(e.sentIn, e.Mode("").Name)
 	return "turn", nil
 }
 
@@ -110,11 +119,22 @@ func (e *fakeEngine) Mode(string) core.Mode {
 	return core.ModeForTrust(core.TrustStandard)
 }
 
-func (e *fakeEngine) SetMode(_ string, mode core.Mode) error {
+func (e *fakeEngine) SetMode(sessionID string, mode core.Mode) error {
+	if err := e.ModeUnusable(sessionID, mode); err != nil {
+		return err
+	}
+	e.mode = mode
+	e.entered = append(e.entered, mode.Name)
+	return nil
+}
+
+// The same rule asked as a question, which is what the mode key uses to decide what it can offer
+// before it applies anything. Written once and called by SetMode, so the fake cannot come to
+// answer the question one way and enforce it the other.
+func (e *fakeEngine) ModeUnusable(_ string, mode core.Mode) error {
 	if e.trust != "" && !e.trust.AtLeast(mode.Trust) {
 		return fmt.Errorf("this agent is %s, so it cannot be put in %s mode", e.trust, mode.Name)
 	}
-	e.mode = mode
 	return nil
 }
 

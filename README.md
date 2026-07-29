@@ -199,6 +199,13 @@ stopped, which is the only kind of instruction worth relying on.
 `shift+tab` cycles them, and it works while a turn is running: tightening takes hold on the next
 tool call rather than on the next message.
 
+The mode it stops on is the one that takes effect, a couple of seconds after the last press. Cycling
+past a mode is not choosing it, and applying every rung on the way would put a working agent into
+plan for a fraction of a second on its way from cruise to build. The box says both while it settles,
+`cruise → plan`, so the mode in effect is never the one being claimed. Sending a message, naming a
+mode with `/mode`, leaving the conversation or quitting all apply it at once, and `/mode plan` skips
+the wait entirely. The key is not the emergency stop, and never was: `esc` ends the turn now.
+
 ## A report for the pull request
 
 ```bash

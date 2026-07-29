@@ -37,6 +37,9 @@ func TestTheBoxSaysWhichModeAndWhichModel(t *testing.T) {
 // shift+tab walks the ladder, and the ladder is ordered by how much can go permanently wrong rather
 // than by how much is allowed. That is why runway sits below cruise despite being the more capable
 // of the two: it can run anything and it cannot leave you with a workspace that does not build.
+//
+// What the key walks is a selection. The mode itself changes a moment after the last press, which
+// is the subject of the settling tests further down.
 func TestTheKeyWalksTheLadderInOrder(t *testing.T) {
 	engine := &fakeEngine{session: core.Session{ID: "s1"}}
 	m := boxed(engine)
@@ -46,7 +49,11 @@ func TestTheKeyWalksTheLadderInOrder(t *testing.T) {
 	}
 	for i, expected := range want {
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-		if got := m.Mode(); got != expected {
+		got, selecting := m.Selecting()
+		if !selecting {
+			t.Fatalf("press %d left the key on nothing, want %q", i+1, expected)
+		}
+		if got != expected {
 			t.Fatalf("press %d landed on %q, want %q", i+1, got, expected)
 		}
 	}
@@ -215,16 +222,25 @@ func TestTheKeySkipsModesThisAgentCannotEnter(t *testing.T) {
 	}
 
 	// runway and cruise both need broad, so the next reachable stop is plan.
+	landing := func() string {
+		t.Helper()
+		got, selecting := m.Selecting()
+		if !selecting {
+			t.Fatal("the key stopped on nothing at all")
+		}
+		return got
+	}
+
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if got := m.Mode(); got != core.ModePlan {
+	if got := landing(); got != core.ModePlan {
 		t.Errorf("the key landed on %q, want it to skip past what it cannot enter", got)
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if got := m.Mode(); got != core.ModeConfined {
+	if got := landing(); got != core.ModeConfined {
 		t.Errorf("the key landed on %q, want the confined posture between plan and build", got)
 	}
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	if got := m.Mode(); got != core.ModeBuild {
+	if got := landing(); got != core.ModeBuild {
 		t.Errorf("the key landed on %q after confined, want build", got)
 	}
 }
