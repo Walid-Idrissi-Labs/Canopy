@@ -613,3 +613,32 @@ func TestLeavingAModelEditDoesNotPoisonTheNextAdd(t *testing.T) {
 		t.Errorf("the credential was not stored, Put saw %q", store.lastPut.Ref.Name)
 	}
 }
+
+// The picker says when the list it is offering was last checked, and says out loud when that was
+// long enough ago that the row underneath, the one that takes anything typed, is the row that
+// matters.
+func TestThePickerSaysWhenTheCatalogHasGoneStale(t *testing.T) {
+	fresh := catalog.AsOf
+	t.Cleanup(func() { catalog.AsOf = fresh })
+
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}, Model: "claude-opus-5"},
+	}}
+	m := key(New(store), "m")
+
+	if view := plain(m.View()); strings.Contains(view, "may be missing models") {
+		t.Errorf("a fresh list called itself stale:\n%s", view)
+	}
+
+	catalog.AsOf = time.Now().Add(-2 * catalog.MaxAge)
+	m = key(New(store), "m")
+
+	view := plain(m.View())
+	if !strings.Contains(view, "may be missing models") {
+		t.Errorf("a stale list said nothing about it:\n%s", view)
+	}
+	// Still offered, because stale is a caveat and never a gate.
+	if !strings.Contains(view, "claude-sonnet-5") {
+		t.Errorf("a stale list stopped offering anything:\n%s", view)
+	}
+}

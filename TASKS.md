@@ -4992,7 +4992,7 @@ before it refuses, but refuses ambiguity rather than guessing.
 
 ### K-01 A key holds models, not a model
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: none`
-`scope: internal/catalog/ (new), internal/keys/, internal/tui/keys/, cmd/canopy/`
+`scope: internal/catalog/ (new), internal/keys/, internal/pricing/ (drift test), internal/tui/keys/, internal/tui/ (fake), cmd/canopy/`
 
 Deliverable: a new internal/catalog package that answers "what can this provider run", dated the
 way the pricing table is dated: the anthropic list derived from the eight priced IDs, an
@@ -5030,8 +5030,10 @@ a model typed into the free-text escape is remembered as well as selected, which
 but is what makes the escape worth using twice.
 
 One fix taken on the way, in the function being rewired: cancelling a model edit left the screen's
-editing flag set, so the next credential added on a provider that asks for a model was stored as an
-edit of the key the cursor had been on and the credential itself was never written. Held by
+editing flag set, so the next credential added on a provider that asks for a model went down the
+edit path at the model prompt. afterModel called SetModel with the name of the credential being
+added, which is a key the store has never heard of, so the call errored, the error was shown where
+a secret prompt should have been, and the credential itself was never written. Held by
 TestLeavingAModelEditDoesNotPoisonTheNextAdd.
 
 Acceptance, clause by clause: an anthropic key offers the catalog with no setup is
@@ -5044,6 +5046,40 @@ TestTheModelKeyOffersTheCatalogBeforeTheKeyboard, which also asserts Put was nev
 on no list can still be typed is TestAModelOnNoListCanStillBeTyped; and the previous build's
 keys.json loading with nothing lost is TestAKeysFileFromThePreviousBuildLoadsWithNothingLost, which
 also holds that an empty list is still absent from the file rather than written as an empty array.
+
+Three defects found in review and fixed here. Stale and MaxAge were exported with nothing calling
+them, which left the "a stale list says so rather than pretending" half of D-46 rule 2 unbuilt: the
+catalog now has a StalenessNote written the way pricing.StalenessNote is, and both surfaces that
+already print the as-of date say out loud when that date has gone old, in the warning style on the
+keys screen because a stale list is exactly when the row that takes anything typed is the row that
+matters. Held by TestAStaleListSaysSoInWords,
+TestTheModelListingSaysWhenTheCatalogHasGoneStale and TestThePickerSaysWhenTheCatalogHasGoneStale,
+each of which also checks that a stale list keeps offering what it knows, since stale is a caveat
+and never a gate.
+
+Matching compared ids normalised and then counted them raw, so a model added under a second
+spelling of an id the catalog already had made "opus 5" ambiguous between one model and itself, and
+the refusal listed that id twice as the choices. Fixed at both ends. Matching now collapses
+candidates whose ids normalise alike before judging ambiguity, and the store refuses an id that
+collides with one it already holds, naming what it collides with. Refused rather than folded into
+the existing entry on purpose: what is stored goes on the wire exactly as it was typed, and an
+unknown gateway's ids may well be case sensitive, so correcting somebody's capitalisation for them
+is how a request starts failing at the far end for a reason nothing on this side explains. Held by
+TestAmbiguityComesBackAsAmbiguityAndDuplicatesDoNot, widened past byte-identical, and by
+TestASecondSpellingOfOneModelIsRefusedRatherThanStored, which also holds that the exact id is still
+the way to correct a display name.
+
+Normalisation now splits the boundary between a letter and a digit, so "sonnet5" and "gpt5.2" arrive
+where "sonnet 5" and "gpt-5.2" already did. One directional, and the direction is the point: a digit
+followed by a letter is left alone, because "gpt-4o" is one word to the provider and splitting it
+would turn an id somebody typed correctly into one nothing answers to. Two numbers run together,
+"opus48", stay unresolvable rather than being guessed at, which is the honest answer to a phrase that
+could mean two things. Held by TestANumberRunTogetherWithTheWordBeforeItStillResolves.
+
+Normalise itself is unexported now, since nothing outside the package called it. What the outside
+needed was the question rather than the machinery, so catalog.SameModel answers it and the keys
+store asks it: the store and the matcher agreeing about what one model is has to be one piece of
+code, or the store collects rows the matcher will never let anybody choose.
 
 ### K-02 Words find the model
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`

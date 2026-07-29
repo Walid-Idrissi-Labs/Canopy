@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -134,5 +135,24 @@ func TestANameIsShownOnlyWhenItSaysSomethingTheIDDoesNot(t *testing.T) {
 	same := Model{ID: "some-model", Name: "some-model"}
 	if same.Named() {
 		t.Error("a name identical to the id would be printed twice")
+	}
+}
+
+// A date on screen is not the same as the screen saying the date is old, since reading one means
+// knowing today's and doing the subtraction, which nobody does.
+func TestAStaleListSaysSoInWords(t *testing.T) {
+	if note := StalenessNote(AsOf.Add(MaxAge - time.Hour)); note != "" {
+		t.Errorf("a list inside its own max age announced itself as stale: %q", note)
+	}
+
+	note := StalenessNote(AsOf.Add(MaxAge + 30*24*time.Hour))
+	if note == "" {
+		t.Fatal("a list well past its max age said nothing")
+	}
+	if !strings.Contains(note, AsOf.Format("2006-01-02")) {
+		t.Errorf("the note does not say when the list was true: %q", note)
+	}
+	if !strings.Contains(note, "days ago") {
+		t.Errorf("the note does not say how long ago that was: %q", note)
 	}
 }

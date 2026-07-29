@@ -86,11 +86,83 @@ func TestAmbiguityComesBackAsAmbiguityAndDuplicatesDoNot(t *testing.T) {
 		t.Errorf("two models called Fast matched %d entries, want both", len(hits))
 	}
 
-	duplicated := []Model{
-		{ID: "claude-sonnet-5", Name: "Claude Sonnet 5"},
-		{ID: "claude-sonnet-5"},
+	// Byte identical is the easy half. The half that mattered is two spellings of one id: matching
+	// compares them normalised, so counting them raw made "opus 5" ambiguous between a model and
+	// itself, and the request was refused with the same id listed twice as the choices.
+	for _, duplicated := range [][]Model{
+		{{ID: "claude-sonnet-5", Name: "Claude Sonnet 5"}, {ID: "claude-sonnet-5"}},
+		{{ID: "claude-opus-5", Name: "Claude Opus 5"}, {ID: "CLAUDE-OPUS-5"}},
+		{{ID: "claude-opus-5"}, {ID: "claude_opus_5"}},
+		{{ID: "gpt-5.2"}, {ID: "GPT 5.2"}},
+	} {
+		if hits := Match(duplicated, duplicated[0].ID); len(hits) != 1 {
+			t.Errorf("%q and %q matched %d entries, want one model",
+				duplicated[0].ID, duplicated[1].ID, len(hits))
+		}
 	}
-	if hits := Match(duplicated, "claude-sonnet-5"); len(hits) != 1 {
-		t.Errorf("one model listed twice matched %d entries, want one", len(hits))
+}
+
+// A number written up against the word before it is the same request as one written apart from it.
+// Only in that direction: a digit followed by a letter is one word to the provider, and splitting
+// "gpt-4o" would turn an id somebody typed correctly into one nothing answers to.
+func TestANumberRunTogetherWithTheWordBeforeItStillResolves(t *testing.T) {
+	anthropic := For(core.ProviderAnthropic, "")
+	openAI := For(core.ProviderOpenAICompatible, "https://api.openai.com/v1")
+
+	for _, probe := range []struct {
+		models []Model
+		spoken string
+		want   string
+	}{
+		{anthropic, "sonnet5", "claude-sonnet-5"},
+		{anthropic, "Sonnet5", "claude-sonnet-5"},
+		{anthropic, "claude-sonnet5", "claude-sonnet-5"},
+		{openAI, "gpt5.2", "gpt-5.2"},
+		{openAI, "gpt5.1 codex max", "gpt-5.1-codex-max"},
+	} {
+		hits := Match(probe.models, probe.spoken)
+		if len(hits) != 1 || hits[0].ID != probe.want {
+			t.Errorf("%q resolved to %+v, want %q", probe.spoken, hits, probe.want)
+		}
+	}
+
+	// Two numbers run together are not two numbers. "opus48" could be the eighth of four or the
+	// forty eighth of nothing, and guessing between them is exactly what this refuses to do.
+	if hits := Match(anthropic, "opus48"); len(hits) != 0 {
+		t.Errorf("opus48 was guessed at %+v rather than refused", hits)
+	}
+
+	// And an id whose letters follow its digits survives the round trip, which is the whole reason
+	// the split is one directional.
+	fourOh := []Model{{ID: "gpt-4o"}, {ID: "gpt-4o-mini"}}
+	for _, spoken := range []string{"gpt-4o", "GPT 4o", "gpt4o"} {
+		hits := Match(fourOh, spoken)
+		if len(hits) != 1 || hits[0].ID != "gpt-4o" {
+			t.Errorf("%q resolved to %+v, want gpt-4o", spoken, hits)
+		}
+	}
+}
+
+// The store and the matcher have to agree about what counts as one model, or the store collects a
+// row the matcher will never let anybody select.
+func TestTwoSpellingsOfOneIDAreOneModel(t *testing.T) {
+	for _, same := range [][2]string{
+		{"claude-opus-5", "CLAUDE-OPUS-5"},
+		{"claude-opus-5", "claude opus 5"},
+		{"gpt-5.2", "gpt5.2"},
+		{"minimaxai/minimax-m2.7", "MiniMaxAI/MiniMax-M2.7"},
+	} {
+		if !SameModel(same[0], same[1]) {
+			t.Errorf("%q and %q read as different models", same[0], same[1])
+		}
+	}
+	for _, different := range [][2]string{
+		{"claude-opus-5", "claude-opus-4-8"},
+		{"gpt-4o", "gpt-4"},
+		{"vendor-a/fast", "vendor-b/fast"},
+	} {
+		if SameModel(different[0], different[1]) {
+			t.Errorf("%q and %q read as the same model", different[0], different[1])
+		}
 	}
 }

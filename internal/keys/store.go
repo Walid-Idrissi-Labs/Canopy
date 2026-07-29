@@ -423,6 +423,22 @@ func (s *Store) AddModel(ref core.KeyRef, id, name string) error {
 				return s.save(records)
 			}
 		}
+		// An id that is not this one byte for byte but is the same model once spelling is forgiven.
+		// Refused rather than stored, because both would then be offered and the resolver would have
+		// to choose between two spellings of one thing every time somebody named it.
+		//
+		// Refused rather than quietly folded into the existing entry, too. What is stored goes on
+		// the wire exactly as it was typed: an unknown provider's ids may well be case sensitive,
+		// and correcting somebody's capitalisation for them is how a request starts failing at the
+		// far end for a reason nothing on this side explains.
+		for _, existing := range r.Models {
+			if catalog.SameModel(existing.ID, id) {
+				return fmt.Errorf(
+					"key %q already offers %q, which is the same model as %q once case and "+
+						"punctuation are forgiven. Remove that one first if this spelling is the "+
+						"one your endpoint wants", ref.Name, existing.ID, id)
+			}
+		}
 		records[i].Models = append(records[i].Models, storedModel{ID: id, Name: name})
 		return s.save(records)
 	}

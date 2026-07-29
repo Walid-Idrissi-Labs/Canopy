@@ -14,6 +14,7 @@
 package catalog
 
 import (
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
@@ -34,8 +35,28 @@ var AsOf = time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC)
 // so it keeps being offered and only stops calling itself current.
 const MaxAge = 180 * 24 * time.Hour
 
+// Age is how long ago the lineups were checked.
+func Age(now time.Time) time.Duration { return now.Sub(AsOf) }
+
 // Stale reports whether the list is old enough that saying so is honest.
-func Stale(now time.Time) bool { return now.Sub(AsOf) > MaxAge }
+func Stale(now time.Time) bool { return Age(now) > MaxAge }
+
+// StalenessNote is the line a surface shows beside an old list, empty while the list is fresh.
+//
+// The other half of D-46 rule 2, and the half that is easy to leave unbuilt: a date on the screen is
+// not the same as the screen saying the date is old. Somebody reading "last checked 2026-07-29" has
+// to know today's date and do the subtraction, which nobody does, so a list that has gone stale says
+// so in words. Written the way pricing.StalenessNote is, because a person meets both of these in the
+// same minute and two different phrasings of "this might be out of date" is one of them being
+// learned twice.
+func StalenessNote(now time.Time) string {
+	if !Stale(now) {
+		return ""
+	}
+	days := int(Age(now).Hours() / 24)
+	return fmt.Sprintf("this list was last checked %s, %d days ago, so it may be missing models",
+		AsOf.Format("2006-01-02"), days)
+}
 
 // Model is one thing a key can be pointed at.
 //
