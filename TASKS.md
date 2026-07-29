@@ -132,18 +132,19 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, in the commit these words are in, after phase K was built and reviewed:
-84 review, 40 todo, four partial, five claimed, six deferred, **zero done**. Counted rather than
-carried over, because a board quoting a number taken before the commit it sits in is the failure
-this section exists to prevent, and that has now happened twice. The figures this replaces, 81
-review and eight claimed, were true when the round was claimed and stopped being true as K-01, K-02
-and K-03 moved to review; the four U tasks claimed alongside them are on the branch stacked after
-this one and are counted there.
+Counted on this branch, in the commit these words are in, after the whole keys and surfaces round
+was built and independently reviewed: 88 review, 40 todo, four partial, one claimed, six deferred,
+**zero done**. Counted rather than carried over, because a board quoting a number taken before the
+commit it sits in is the failure this section exists to prevent, and it has now happened three
+times: the previous recount was made on the keys branch and said the four U tasks were counted on
+the branch stacked after it, then rode the merge into that very branch with the sentence intact.
+The figures this replaces, 84 review and five claimed, were true there and not here, where U-16 to
+U-19 sit at review in this same file. The one task still claimed is A8-05.
 
-The number that matters is a different one. **83 task lines carry `claude [x]` and nine carry
-`codex [x]`.** That first figure has also been recounted rather than carried: it read 77 here and
-was already wrong when it was written, the real count at the time being 80, and three of phase K
-have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
+The number that matters is a different one. **87 task lines carry `claude [x]` and nine carry
+`codex [x]`.** That first figure has been recounted rather than carried each time: it read 77 here
+and was already wrong when it was written, the real count at the time being 80, and the seven lines
+of this round have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
 the other has independently checked almost none of them, and no amount of further building changes
 it. That is why the split for this round is not another feature split: one side finishes the
 contract and safety work, the other converts `review` into `done`, and only the second of those can
