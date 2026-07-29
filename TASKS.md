@@ -132,19 +132,22 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, after phase K and four more U tasks were claimed for the keys and surfaces
-round: 81 review, 40 todo, four partial, eight claimed, six deferred, **zero done**. Counted rather
-than carried over, because a board quoting a number taken before the commit it sits in is the
-failure this section exists to prevent, and that has now happened twice. The previous figures here,
-81 review and 39 todo with one claimed, were taken before this round was claimed and are what this
-recount replaces.
+Counted on this branch, in the commit these words are in, after phase K was built and reviewed:
+84 review, 40 todo, four partial, five claimed, six deferred, **zero done**. Counted rather than
+carried over, because a board quoting a number taken before the commit it sits in is the failure
+this section exists to prevent, and that has now happened twice. The figures this replaces, 81
+review and eight claimed, were true when the round was claimed and stopped being true as K-01, K-02
+and K-03 moved to review; the four U tasks claimed alongside them are on the branch stacked after
+this one and are counted there.
 
-The number that matters is a different one. **77 task lines carry `claude [x]` and nine carry
-`codex [x]`.** By the definition in section 1.2 that means one pair has built nine phases and the
-other has independently checked almost none of them, and no amount of further building changes it. That is why
-the split for this round is not another feature split: one side finishes the contract and safety
-work, the other converts `review` into `done`, and only the second of those can produce the first
-`done` this project has ever had.
+The number that matters is a different one. **83 task lines carry `claude [x]` and nine carry
+`codex [x]`.** That first figure has also been recounted rather than carried: it read 77 here and
+was already wrong when it was written, the real count at the time being 80, and three of phase K
+have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
+the other has independently checked almost none of them, and no amount of further building changes
+it. That is why the split for this round is not another feature split: one side finishes the
+contract and safety work, the other converts `review` into `done`, and only the second of those can
+produce the first `done` this project has ever had.
 
 Nothing reaches `done` on one signature. An agent may not sign its own work, which is the whole
 mechanism, so the verification column is structurally not Claude's to fill.
@@ -5208,6 +5211,26 @@ the acceptance clause about the line saying so had nothing to say.
 Applying also moves App.usingKey, so a conversation started afterwards follows the credential you
 moved to. It follows that key's own recorded default rather than the picked model, since the picked
 model is a fact about one conversation. Store.SetModel is never called from here.
+
+Two defects found in review and fixed here, and one gap closed. A pick the engine refused still
+moved the application's own note of which credential to open the next conversation on: chat's
+UseCredential swallowed the refusal into a message and returned nothing, so the conversation
+correctly stayed where it was and the next ctrl+n opened on the credential that had just been
+declined, with no model on it. UseCredential now reports whether the engine took it and both callers
+wait for that answer, the credential screen's as well as the picker's, since the two had the same
+shape. Held by TestARefusedPickLeavesTheNextConversationWhereItWas, which fails with exactly the
+symptom that was reported when the check is removed.
+
+The gap: the picker was the only model surface with no way to name something the lists have never
+heard of, which made the one screen built to answer "what can this run" the one place a shipped list
+could stand between somebody and the model they wanted. Every section now ends in a row that takes a
+typed id, mirroring the credential screen's, feeding the same UseCredential path so a model Canopy
+has never heard of is applied exactly the way a listed one is. A section with nothing to offer keeps
+its none-set warning and gains the row underneath it, which is the state an unrecognised endpoint is
+in on the day it is added. It deliberately does not record what was typed: the credential screen
+remembers a typed model because that screen is where a key's offerings are edited, and this one
+changes this conversation and nothing on disk. Held by TestThePickerTakesAModelItHasNeverHeardOf,
+TestLeavingTheTypedRowChangesNothing and TestAKeyWithNothingToOfferCanStillBeTypedInto.
 
 Acceptance, clause by clause: opening and leaving changing nothing is
 TestOpeningTheModelPickerAndLeavingChangesNothing; picking under the same key changing the next

@@ -20,15 +20,22 @@ import (
 	"net/url"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
 
 // modelRow is one line of the picker: a model, and the credential it would run on.
+//
+// typed marks the row that takes a model from the keyboard instead of naming one. Every other model
+// surface has that escape and this one did not, which made the picker the one place where a list
+// Canopy ships could stand between somebody and the model they actually wanted. See D-46 rule 1.
 type modelRow struct {
 	key   string
 	id    string
 	label string
+	typed bool
 }
 
 // modelSection is one credential and everything it can run.
@@ -41,6 +48,10 @@ type modelSection struct {
 	provider core.Provider
 	host     string
 	rows     []modelRow
+
+	// offered is how many of the rows are models rather than the row that takes typing, so a section
+	// with nothing to offer can still say so while still being typed into.
+	offered int
 }
 
 type modelPicker struct {
@@ -55,6 +66,12 @@ type modelPicker struct {
 	// where the cursor opens.
 	currentKey   string
 	currentModel string
+
+	// typing is whether the keyboard belongs to the free text field, and draft is what has been
+	// typed into it. Entered from the row that offers it and left with esc, which is the credential
+	// screen's arrangement for the same job.
+	typing bool
+	draft  string
 
 	problem string
 }
@@ -95,6 +112,14 @@ func newModelPicker(store keysui.Store, currentKey, currentModel string) modelPi
 		if meta.Ref.Name == currentKey && currentModel != "" && !offers(section.rows, currentModel) {
 			section.rows = append(section.rows, modelRow{key: currentKey, id: currentModel, label: currentModel})
 		}
+
+		// Last in every section, so whatever the lists do not know is still one row away from the
+		// model they do. Per section rather than one at the end, because a typed model has to belong
+		// to a credential and the section it sits under is what says which.
+		section.offered = len(section.rows)
+		section.rows = append(section.rows, modelRow{
+			key: meta.Ref.Name, label: "something else, type it", typed: true,
+		})
 
 		picker.sections = append(picker.sections, section)
 		picker.rows = append(picker.rows, section.rows...)
@@ -143,6 +168,53 @@ func (p modelPicker) Chosen() (modelRow, bool) {
 	return p.rows[p.cursor], true
 }
 
+// startTyping hands the keyboard to the field, and reports whether the cursor was on the row that
+// offers it.
+func (p *modelPicker) startTyping() bool {
+	row, ok := p.Chosen()
+	if !ok || !row.typed {
+		return false
+	}
+	p.typing = true
+	p.draft = ""
+	return true
+}
+
+// typeKey edits the field, and returns the row to apply once there is something to apply.
+//
+// Esc cancels the typing rather than leaving the screen, which is the more local meaning and the
+// rule the command menu and the btw panel already follow: the way out of the picker is still one
+// more press away.
+func (p *modelPicker) typeKey(msg tea.KeyMsg) (modelRow, bool) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		id := strings.TrimSpace(p.draft)
+		if id == "" {
+			// Nothing typed is nothing chosen. Applying an empty model would leave the conversation
+			// pointed at nothing and fail on its next message, at the far end.
+			return modelRow{}, false
+		}
+		row, _ := p.Chosen()
+		p.typing, p.draft = false, ""
+		return modelRow{key: row.key, id: id, label: id}, true
+
+	case tea.KeyEsc:
+		p.typing, p.draft = false, ""
+
+	case tea.KeyBackspace:
+		if runes := []rune(p.draft); len(runes) > 0 {
+			p.draft = string(runes[:len(runes)-1])
+		}
+
+	case tea.KeyRunes:
+		p.draft += string(msg.Runes)
+
+	case tea.KeySpace:
+		p.draft += " "
+	}
+	return modelRow{}, false
+}
+
 // Body draws the picker.
 //
 // The current model is marked with a glyph and the line above says what the mark means, so the
@@ -168,30 +240,40 @@ func (p modelPicker) Body() string {
 		b.WriteString(styleHeader.Render("  " + section.title()))
 		b.WriteString("\n")
 
-		if len(section.rows) == 0 {
+		if section.offered == 0 {
 			// The same words the credential screen uses for the same state, so the two screens agree
-			// about what an empty list means rather than each inventing its own phrasing.
+			// about what an empty list means rather than each inventing its own phrasing. The row
+			// underneath still takes a model, which is what keeps an unknown endpoint usable.
 			b.WriteString(styleCaveat.Render("      none set, press ctrl+k"))
 			b.WriteString("\n")
-			continue
 		}
 
 		for _, entry := range section.rows {
+			selected := row == p.cursor
+
+			if entry.typed && selected && p.typing {
+				b.WriteString("    > " + styleSelected.Render("  "+p.draft+"_") + "\n")
+				row++
+				continue
+			}
+
 			mark := " "
 			if entry.key == p.currentKey && entry.id == p.currentModel {
 				mark = "*"
 			}
 
 			line := mark + " " + entry.label
-			if row == p.cursor {
+			if selected {
 				b.WriteString("    > " + styleSelected.Render(line))
+			} else if entry.typed {
+				b.WriteString("      " + styleMuted.Render(line))
 			} else {
 				b.WriteString("      " + line)
 			}
 			// The id after the name and dimmed, for the entries where the two differ. It has to be
 			// on screen, since it is what goes on the wire and what somebody types into the CLI,
 			// and it must not compete with the name for the eye scanning the column.
-			if entry.id != entry.label {
+			if entry.id != "" && entry.id != entry.label {
 				b.WriteString("  " + styleMuted.Render(entry.id))
 			}
 			b.WriteString("\n")

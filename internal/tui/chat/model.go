@@ -968,19 +968,26 @@ func (m *Model) SetCommands(commands config.CommandSet) { m.commands = commands 
 // Notice is what is currently being said. For tests.
 func (m Model) Notice() string { return m.notice }
 
-// UseCredential switches this conversation to a different credential and model.
+// UseCredential switches this conversation to a different credential and model, and reports whether
+// the engine accepted.
 //
 // A refusal is shown rather than swallowed. Choosing a credential and having nothing visibly happen
 // is how somebody concludes the screen does not work, which is exactly what it looked like before
 // there was any way to choose at all.
-func (m *Model) UseCredential(keyName, model string) {
+//
+// It is also returned rather than only shown. The engine refuses mid answer, and the screen around
+// this one keeps its own note of which credential is in use for the conversations it starts next; a
+// void return let that note move to a credential this conversation had just failed to switch to, so
+// the next new conversation opened on a key nobody had successfully chosen, with no model.
+func (m *Model) UseCredential(keyName, model string) bool {
 	if err := m.engine.UseCredential(m.sessionID, keyName, model); err != nil {
 		m.err = err.Error()
-		return
+		return false
 	}
 	m.keyName = keyName
 	m.err = ""
 	m.refresh()
+	return true
 }
 
 // SessionID is the conversation being shown.
