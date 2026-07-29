@@ -1026,6 +1026,42 @@ This does not weaken anything D-41 settled. The ceiling, the refusals for a miss
 "tightening takes hold on the next tool call" are all unchanged. It only decides which keystroke
 counts as the decision.
 
+## D-46 One key, many models, and the list is a convenience. Decided 2026-07-29.
+
+A named credential is the unit of authentication, not of capability. What a key can run is a
+list: a catalog for the providers whose lineups we ship knowledge of, plus whatever the user adds
+by hand, each entry an id with an optional display name. Today the program holds this knowledge
+twice, in the pricing table and the context window table, and exports it from neither, which is
+why the keys screen edits a model as free text and dispatch can only match credential names.
+
+Four rules keep the list honest:
+
+1. **The catalog never gates.** Typing a model that is on no list must always work. The day the
+   list is wrong is the day it would block the one model the person actually wants, so a miss
+   costs a warning at most. This is Q-20's question answered for the catalog case, and it is
+   answered on the side of the wire.
+2. **Knowledge carries its date.** The catalog says when it was true, the way pricing.AsOf does,
+   and a stale one says so rather than pretending. Recorded, never inferred, which is D-32
+   extended from prices to lineups.
+3. **Resolution forgives spelling and refuses ambiguity.** Case, spacing, hyphens and a missing
+   family prefix are forgiven; a bare family name means the newest member the catalog knows;
+   anything still ambiguous or unknown is refused with the real choices listed. A guess that
+   spawns the wrong model spends real money politely.
+4. **core stays out of it.** KeyMetadata keeps its single Model field as the selected default;
+   the plural lives in the keys store beside it. The frozen contract does not grow a field for a
+   feature that a layer above it can carry.
+
+## D-47 A question reaches you where you are, and only your hand answers it. Decided 2026-07-29.
+
+Extends D-43. A permission prompt raised by any agent in the project may surface on whatever
+screen you are on, named after who is asking, because walking to a subagent's screen to discover
+it was stuck is exactly the attention failure D-43 names. But a surfaced prompt from another
+conversation never owns your keyboard: an explicit focus step stands between seeing it and
+answering it, so no keystroke aimed at your own conversation can spend another agent's
+permission. Your own conversation's prompt outranks visitors, and a count of who else waits stays
+visible either way. D-43's rule that no reflex spends money is unchanged; this is that rule
+holding at one more distance.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
