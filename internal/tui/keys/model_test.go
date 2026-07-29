@@ -642,3 +642,55 @@ func TestThePickerSaysWhenTheCatalogHasGoneStale(t *testing.T) {
 		t.Errorf("a stale list stopped offering anything:\n%s", view)
 	}
 }
+
+// The wizard has to end where the person walking it thinks it ended.
+//
+// Storing a credential used to leave it unselected. It worked anyway while there was exactly one,
+// because the resolver falls back to the only credential there is, and broke the moment a second was
+// added: the conversation answered on whichever the resolver preferred rather than on the one just
+// typed in. The failure therefore appears later, on a different screen, to somebody who has no
+// reason to connect it to the wizard.
+func TestAddingACredentialSelectsIt(t *testing.T) {
+	store := &stubStore{}
+	m := New(store)
+
+	m = key(m, "a")
+	m = typeRunes(m, "claude")
+	m = press(m, tea.KeyEnter)
+	m = press(m, tea.KeyEnter) // provider list, anthropic is first
+	m = typeRunes(m, canary)
+	m = press(m, tea.KeyEnter)
+
+	chosen, ok := m.Chosen()
+	if !ok {
+		t.Fatalf("no credential is selected after adding one:\n%s", plain(m.View()))
+	}
+	if chosen != "claude" {
+		t.Errorf("selected %q after adding claude", chosen)
+	}
+	// Said on screen as well as recorded, because a selection nobody is told about is one they will
+	// make again by hand.
+	if view := plain(m.View()); !strings.Contains(view, "credential for this conversation") {
+		t.Errorf("the screen does not say the new credential is now in use:\n%s", view)
+	}
+}
+
+// A second credential added later is also the one that answers, which is the case the fallback in
+// the resolver used to hide.
+func TestAddingASecondCredentialSelectsTheNewOne(t *testing.T) {
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}},
+	}}
+	m := New(store)
+
+	m = key(m, "a")
+	m = typeRunes(m, "kimi")
+	m = press(m, tea.KeyEnter)
+	m = press(m, tea.KeyEnter)
+	m = typeRunes(m, canary)
+	m = press(m, tea.KeyEnter)
+
+	if chosen, _ := m.Chosen(); chosen != "kimi" {
+		t.Errorf("selected %q after adding kimi as a second credential", chosen)
+	}
+}

@@ -437,11 +437,32 @@ func (m *Model) afterSecret() {
 		return
 	}
 
-	m.status = fmt.Sprintf("Stored %q for %s (fingerprint %s).",
-		meta.Ref.Name, meta.Ref.Provider, meta.Fingerprint)
+	// Stored is not chosen, and it used to stop at stored.
+	//
+	// Somebody with no credentials lands on this screen, walks the wizard, types a key, and arrived
+	// back at a list with nothing selected and no sign that a further keystroke was needed. It
+	// worked anyway while there was exactly one credential, because the resolver falls back to the
+	// only one there is, and broke the moment they added a second: the conversation would answer on
+	// whichever the resolver preferred rather than on the one they had just entered.
+	//
+	// A key somebody has just typed in is the key they want to use. Selecting it here is what makes
+	// the wizard end where its user thinks it ended.
+	m.chosen = meta.Ref.Name
+
+	m.status = fmt.Sprintf("Stored %q for %s (fingerprint %s), and it is now the credential for "+
+		"this conversation.", meta.Ref.Name, meta.Ref.Provider, meta.Fingerprint)
 	m.err = nil
 	m.mode = modeList
 	m.reload()
+
+	// The cursor follows, so the row the list highlights is the credential that is actually about to
+	// answer. A selection the list disagrees with is the same lie at one remove.
+	for i, key := range m.keys {
+		if key.Ref.Name == m.chosen {
+			m.cursor = i
+			break
+		}
+	}
 }
 
 func (m *Model) handleProviderKey(msg tea.KeyMsg) {

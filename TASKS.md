@@ -5240,6 +5240,26 @@ it. The content is hashed rather than fingerprinted by length: the first version
 of a turn's parts and collided inside this package's own test suite within one run, where a session
 called s1 holding a turn called turn-1 is what nearly every test builds.
 
+### U-24 The wizard ends where its user thinks it ended
+`status: review | owner: claude | branch: tui/first-key-selects | depends: none`
+`scope: internal/tui/keys/`
+
+Deliverable: the first half of U-06. Storing a credential selects it for the conversation, and the
+list's cursor moves to the row that will actually answer.
+
+Acceptance: on a machine with no credentials, somebody adds one through the wizard and the credential
+they typed is the credential the next message runs on, with no further keystroke and no coaching. The
+same holds for a second credential added later. The screen says so rather than leaving it implied.
+
+`verify: claude [x]   codex [ ]`
+
+notes: split out of U-06 and shipped alone because it is a first-run defect and this is release week.
+The reason it survived this long is that it is invisible with one credential stored: the resolver
+falls back to the only one there is, so the wizard appeared to work, and the bug only surfaces on the
+second key, on a different screen, as a conversation answering on the wrong provider. The rest of
+U-06 stays open: the live credential check in the wizard, rate entry for OpenAI-compatible endpoints
+in the interface, and startup warnings that currently go to a stderr the alt screen erases.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 
