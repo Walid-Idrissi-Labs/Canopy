@@ -3,6 +3,7 @@ package keys
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -156,6 +157,14 @@ func (m Model) viewModelPick() string {
 		b.WriteString(styleMuted.Render("  the list was last checked on " +
 			catalog.AsOf.Format("2006-01-02") + ", and anything not on it can still be typed"))
 		b.WriteString("\n")
+
+		// In the warning style rather than the muted one once it has gone stale, because a list that
+		// is out of date is the case where the row underneath, the one that takes anything typed,
+		// is the row that matters.
+		if note := catalog.StalenessNote(time.Now()); note != "" {
+			b.WriteString(styleWarn.Render("  " + note))
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }

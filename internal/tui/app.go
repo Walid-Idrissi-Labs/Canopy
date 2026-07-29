@@ -290,12 +290,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// every key belongs to it, and the ones it does not use leave it rather than reaching a
 		// screen nobody can see. Escape changes nothing, which is what makes it safe to open.
 		if a.screen == screenModel {
+			// While a model is being typed every key belongs to the field, including the ones that
+			// would otherwise move or leave, or a model id containing j could never be written.
+			if a.picker.typing {
+				if row, ok := a.picker.typeKey(key); ok {
+					return a.applyModelRow(row)
+				}
+				return a, nil
+			}
 			switch key.String() {
 			case "j", "down":
 				a.picker.move(1)
 			case "k", "up":
 				a.picker.move(-1)
 			case "enter":
+				// The row that takes typing opens the field instead of applying, since there is
+				// nothing on it yet to apply.
+				if a.picker.startTyping() {
+					return a, nil
+				}
 				return a.applyPickedModel()
 			default:
 				a.screen = a.cameFrom
@@ -362,11 +375,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// here where the conversation lives. The screen states a preference and owns nothing.
 			if name, picked := a.keys.Chosen(); picked && name != a.usingKey {
 				model := a.keys.ModelFor(name)
-				a.usingKey = name
-				a.chat.UseCredential(name, model)
-				// Agents created after the switch inherit it too, or the next one would quietly go
-				// on using the credential somebody had just moved away from.
-				a.agents.SetDefaults(name, model, a.dir)
+				// Only once the engine has taken it. It refuses mid answer, and moving the
+				// application's own note of the credential in use on a refusal would point the next
+				// new conversation at a key this one never managed to switch to.
+				if a.chat.UseCredential(name, model) {
+					a.usingKey = name
+					// Agents created after the switch inherit it too, or the next one would quietly
+					// go on using the credential somebody had just moved away from.
+					a.agents.SetDefaults(name, model, a.dir)
+				}
 			}
 			return a, cmd
 		default:
@@ -646,11 +663,22 @@ func (a App) applyPickedModel() (tea.Model, tea.Cmd) {
 		a.screen = a.cameFrom
 		return a, nil
 	}
+	return a.applyModelRow(choice)
+}
 
-	a.chat.UseCredential(choice.key, choice.id)
-	// New conversations and new agents follow the credential, but on that key's own default model
-	// rather than this choice, which belongs to this conversation alone.
-	a.usingKey = choice.key
+// applyModelRow is applyPickedModel for a row that did not come from the list, which is the one
+// somebody typed. The same path deliberately: a model Canopy has never heard of is applied exactly
+// the way a listed one is, or the escape hatch would be a second, weaker way of choosing.
+func (a App) applyModelRow(choice modelRow) (tea.Model, tea.Cmd) {
+	if a.chat.UseCredential(choice.key, choice.id) {
+		// New conversations and new agents follow the credential, but on that key's own default
+		// model rather than this choice, which belongs to this conversation alone.
+		//
+		// Only on acceptance. The engine refuses while a turn is in flight, and this used to move
+		// regardless: the conversation correctly stayed where it was, and the next ctrl+n opened on
+		// the credential the refusal had just declined, with no model at all.
+		a.usingKey = choice.key
+	}
 	a.screen = a.cameFrom
 	return a, nil
 }
@@ -789,8 +817,11 @@ func (a App) View() string {
 			Wordmark: !a.chat.Blank(),
 		}, a.chat.Body(), footer)
 	case screenModel:
-		return Frame(a.dim, Status{Screen: "model"}, a.picker.Body(),
-			Keys(a.dim.Width, "j/k", "move", "enter", "use it here", "esc", "back, unchanged"))
+		footer := Keys(a.dim.Width, "j/k", "move", "enter", "use it here", "esc", "back, unchanged")
+		if a.picker.typing {
+			footer = Keys(a.dim.Width, "enter", "use it here", "esc", "back to the list")
+		}
+		return Frame(a.dim, Status{Screen: "model"}, a.picker.Body(), footer)
 	case screenKeys:
 		return Frame(a.dim, Status{Screen: "credentials"}, a.keys.Body(), a.keys.Footer())
 	default:

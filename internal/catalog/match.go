@@ -10,25 +10,41 @@ import "strings"
 // rule. When a step finds two things the caller is told there were two, because a guess that spawns
 // the wrong model spends real money politely.
 
-// Normalise turns what somebody said into the shape a model id has.
+// normalise turns what somebody said into the shape a model id has.
 //
 // Case, spaces, underscores, dots and hyphens are all the same separator here. "Claude Sonnet 4.6",
 // "claude sonnet 4 6" and "claude-sonnet-4-6" are one request typed three ways, and refusing two of
 // them would be refusing over a distinction nobody intends. A slash survives, because it is part of
 // the id on the gateways that namespace their models.
-func Normalise(spoken string) string {
+//
+// The boundary between a letter and a digit is a separator too, so "sonnet5" and "gpt5.2" arrive at
+// the same place "sonnet 5" and "gpt-5.2" do. Only in that direction: a digit followed by a letter
+// is left alone, because "gpt-4o" is one word to the provider and splitting it would turn an id
+// somebody typed correctly into one nothing answers to.
+//
+// Unexported, and used only by Match below. It was exported for a while with no caller outside this
+// package, which is the shape D-44 asks to be justified or removed.
+func normalise(spoken string) string {
 	var b strings.Builder
 	separated := false
+	previousLetter := false
 
 	for _, r := range strings.ToLower(strings.TrimSpace(spoken)) {
+		letter := r >= 'a' && r <= 'z'
+		digit := r >= '0' && r <= '9'
+
 		switch {
-		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '/':
+		case letter || digit || r == '/':
+			if digit && previousLetter {
+				b.WriteRune('-')
+			}
 			b.WriteRune(r)
 			separated = false
 		case !separated && b.Len() > 0:
 			b.WriteRune('-')
 			separated = true
 		}
+		previousLetter = letter
 	}
 	return strings.TrimRight(b.String(), "-")
 }
@@ -38,13 +54,20 @@ func Normalise(spoken string) string {
 // two different models answer to the same phrase.
 const familyPrefix = "claude-"
 
+// SameModel reports whether two ids are two spellings of one model.
+//
+// Exported because the keys store has to answer it at the moment somebody adds an id, and the answer
+// has to be the one Match will give later: a store that accepted two spellings the matcher then
+// treated as one would have collected a row nobody could ever select by name.
+func SameModel(one, other string) bool { return normalise(one) == normalise(other) }
+
 // Match returns the entries a spoken model name could mean.
 //
 // Zero means nobody here runs it and one means it is resolved. More than one is the answer that
 // exists so a caller can refuse: it is what "opus" would return if two different opuses were the
 // newest of their family, and picking between them is not something to do silently.
 func Match(models []Model, spoken string) []Model {
-	wanted := Normalise(spoken)
+	wanted := normalise(spoken)
 	if wanted == "" {
 		return nil
 	}
@@ -69,7 +92,7 @@ func Match(models []Model, spoken string) []Model {
 	// an ambiguity, it is a question with a known answer.
 	family := strings.TrimPrefix(wanted, familyPrefix)
 	for _, model := range models {
-		if familyOf(Normalise(model.ID)) == family {
+		if familyOf(normalise(model.ID)) == family {
 			return []Model{model}
 		}
 	}
@@ -78,20 +101,27 @@ func Match(models []Model, spoken string) []Model {
 
 // matching collects the entries a predicate accepts, with ids compared normalised.
 //
-// Entries sharing an id collapse to one, because the catalog and a key's own list can both name the
-// same model and two of the same answer is not a conflict.
+// Entries whose ids normalise to the same thing collapse to one, because the catalog and a key's own
+// list can both name the same model and two of the same answer is not a conflict. Normalised rather
+// than byte-exact, which is the comparison the matching itself uses: "claude-opus-5" and
+// "CLAUDE-OPUS-5" are one model spelled twice, and reporting them as an ambiguity would refuse a
+// request that has exactly one sensible reading.
+//
+// Only ids are collapsed on. Two models with different ids sharing a display name really are two
+// answers, and that is the ambiguity this function exists to be able to report.
 func matching(models []Model, accepts func(id, name string) bool) []Model {
 	var hits []Model
 	seen := make(map[string]bool)
 
 	for _, model := range models {
-		if !accepts(Normalise(model.ID), Normalise(model.Name)) {
+		id := normalise(model.ID)
+		if !accepts(id, normalise(model.Name)) {
 			continue
 		}
-		if seen[model.ID] {
+		if seen[id] {
 			continue
 		}
-		seen[model.ID] = true
+		seen[id] = true
 		hits = append(hits, model)
 	}
 	return hits

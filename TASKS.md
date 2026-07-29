@@ -132,19 +132,22 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, after phase K and four more U tasks were claimed for the keys and surfaces
-round: 81 review, 40 todo, four partial, eight claimed, six deferred, **zero done**. Counted rather
-than carried over, because a board quoting a number taken before the commit it sits in is the
-failure this section exists to prevent, and that has now happened twice. The previous figures here,
-81 review and 39 todo with one claimed, were taken before this round was claimed and are what this
-recount replaces.
+Counted on this branch, in the commit these words are in, after phase K was built and reviewed:
+84 review, 40 todo, four partial, five claimed, six deferred, **zero done**. Counted rather than
+carried over, because a board quoting a number taken before the commit it sits in is the failure
+this section exists to prevent, and that has now happened twice. The figures this replaces, 81
+review and eight claimed, were true when the round was claimed and stopped being true as K-01, K-02
+and K-03 moved to review; the four U tasks claimed alongside them are on the branch stacked after
+this one and are counted there.
 
-The number that matters is a different one. **77 task lines carry `claude [x]` and nine carry
-`codex [x]`.** By the definition in section 1.2 that means one pair has built nine phases and the
-other has independently checked almost none of them, and no amount of further building changes it. That is why
-the split for this round is not another feature split: one side finishes the contract and safety
-work, the other converts `review` into `done`, and only the second of those can produce the first
-`done` this project has ever had.
+The number that matters is a different one. **83 task lines carry `claude [x]` and nine carry
+`codex [x]`.** That first figure has also been recounted rather than carried: it read 77 here and
+was already wrong when it was written, the real count at the time being 80, and three of phase K
+have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
+the other has independently checked almost none of them, and no amount of further building changes
+it. That is why the split for this round is not another feature split: one side finishes the
+contract and safety work, the other converts `review` into `done`, and only the second of those can
+produce the first `done` this project has ever had.
 
 Nothing reaches `done` on one signature. An agent may not sign its own work, which is the whole
 mechanism, so the verification column is structurally not Claude's to fill.
@@ -5112,7 +5115,7 @@ before it refuses, but refuses ambiguity rather than guessing.
 
 ### K-01 A key holds models, not a model
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: none`
-`scope: internal/catalog/ (new), internal/keys/, internal/tui/keys/, cmd/canopy/`
+`scope: internal/catalog/ (new), internal/keys/, internal/pricing/ (drift test), internal/tui/keys/, internal/tui/ (fake), cmd/canopy/`
 
 Deliverable: a new internal/catalog package that answers "what can this provider run", dated the
 way the pricing table is dated: the anthropic list derived from the eight priced IDs, an
@@ -5150,8 +5153,10 @@ a model typed into the free-text escape is remembered as well as selected, which
 but is what makes the escape worth using twice.
 
 One fix taken on the way, in the function being rewired: cancelling a model edit left the screen's
-editing flag set, so the next credential added on a provider that asks for a model was stored as an
-edit of the key the cursor had been on and the credential itself was never written. Held by
+editing flag set, so the next credential added on a provider that asks for a model went down the
+edit path at the model prompt. afterModel called SetModel with the name of the credential being
+added, which is a key the store has never heard of, so the call errored, the error was shown where
+a secret prompt should have been, and the credential itself was never written. Held by
 TestLeavingAModelEditDoesNotPoisonTheNextAdd.
 
 Acceptance, clause by clause: an anthropic key offers the catalog with no setup is
@@ -5164,6 +5169,40 @@ TestTheModelKeyOffersTheCatalogBeforeTheKeyboard, which also asserts Put was nev
 on no list can still be typed is TestAModelOnNoListCanStillBeTyped; and the previous build's
 keys.json loading with nothing lost is TestAKeysFileFromThePreviousBuildLoadsWithNothingLost, which
 also holds that an empty list is still absent from the file rather than written as an empty array.
+
+Three defects found in review and fixed here. Stale and MaxAge were exported with nothing calling
+them, which left the "a stale list says so rather than pretending" half of D-46 rule 2 unbuilt: the
+catalog now has a StalenessNote written the way pricing.StalenessNote is, and both surfaces that
+already print the as-of date say out loud when that date has gone old, in the warning style on the
+keys screen because a stale list is exactly when the row that takes anything typed is the row that
+matters. Held by TestAStaleListSaysSoInWords,
+TestTheModelListingSaysWhenTheCatalogHasGoneStale and TestThePickerSaysWhenTheCatalogHasGoneStale,
+each of which also checks that a stale list keeps offering what it knows, since stale is a caveat
+and never a gate.
+
+Matching compared ids normalised and then counted them raw, so a model added under a second
+spelling of an id the catalog already had made "opus 5" ambiguous between one model and itself, and
+the refusal listed that id twice as the choices. Fixed at both ends. Matching now collapses
+candidates whose ids normalise alike before judging ambiguity, and the store refuses an id that
+collides with one it already holds, naming what it collides with. Refused rather than folded into
+the existing entry on purpose: what is stored goes on the wire exactly as it was typed, and an
+unknown gateway's ids may well be case sensitive, so correcting somebody's capitalisation for them
+is how a request starts failing at the far end for a reason nothing on this side explains. Held by
+TestAmbiguityComesBackAsAmbiguityAndDuplicatesDoNot, widened past byte-identical, and by
+TestASecondSpellingOfOneModelIsRefusedRatherThanStored, which also holds that the exact id is still
+the way to correct a display name.
+
+Normalisation now splits the boundary between a letter and a digit, so "sonnet5" and "gpt5.2" arrive
+where "sonnet 5" and "gpt-5.2" already did. One directional, and the direction is the point: a digit
+followed by a letter is left alone, because "gpt-4o" is one word to the provider and splitting it
+would turn an id somebody typed correctly into one nothing answers to. Two numbers run together,
+"opus48", stay unresolvable rather than being guessed at, which is the honest answer to a phrase that
+could mean two things. Held by TestANumberRunTogetherWithTheWordBeforeItStillResolves.
+
+Normalise itself is unexported now, since nothing outside the package called it. What the outside
+needed was the question rather than the machinery, so catalog.SameModel answers it and the keys
+store asks it: the store and the matcher agreeing about what one model is has to be one piece of
+code, or the store collects rows the matcher will never let anybody choose.
 
 ### K-02 Words find the model
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
@@ -5211,6 +5250,15 @@ dispatchTemplate inherits the model of an agent already running on the profile, 
 nobody said and wrong the moment they did: without the flag, "two sonnet agents" from a conversation
 on opus would have produced two more opus agents.
 
+What the model-aware estimate actually covers, stated plainly because the first version of this note
+was not: every spawn, not only the ones that named a model. Resolution fills the profile's own
+default in before the estimate is asked for, so a request nobody attached a model to is priced
+against the model its agents will run rather than against the project's history at large. That is
+the better answer in both cases and it is the same answer, which is why there is no branch for one
+of them, but it was a behaviour change nothing could observe: the plain fake has no EstimateOn, so
+every existing test went down the older path either way. Pinned now by
+TestASpawnWithNoModelNamedIsStillPricedOnWhatItWillRun.
+
 Acceptance, clause by clause: "spawn two sonnet agents" with no key called sonnet, landing on the
 newest sonnet and named on the confirmation before anything runs, is
 TestSonnetAgentsSpawnWithNoKeyCalledSonnet; "claude sonnet 4 6" reaching claude-sonnet-4-6 is
@@ -5223,6 +5271,18 @@ TestTheEstimatePrefersHistoryFromTheModelItWasAskedAbout at the engine. The key-
 TestTheCurrentKeyKeepsAModelItOffers, TestAModelOnlyOneKeyOffersFindsThatKeyAndTwoIsRefused and
 TestANamedProfileIsNotSwappedForOneThatHasTheModel; the grown listing is
 TestListingProfilesNamesWhatEachOneCanRun.
+
+One defect found in review and fixed here. A profile's matchable set was its list alone, and a key
+pointed at a gateway nobody here ships a lineup for has an empty list and a default its owner typed,
+so the one model that profile was certainly about to run was the one model it refused to be asked
+for. The refusal then contradicted itself in the same breath: "no profile here can run
+moonshot-v1-8k. nim runs moonshot-v1-8k." Both the matching and the listing now read one function,
+offeredBy, which is the profile's list plus its own default when the list does not already hold it,
+compared with spelling forgiven so a differently capitalised list does not gain a second row. Held
+by TestAProfilesOwnDefaultCanBeAskedForByName, which also covers a typed default reached by the
+current key rather than by being the only one that offers it, and by
+TestARefusalDoesNotOfferWhatItJustRefused, which asks for every id a refusal names and fails if any
+of them is then refused.
 
 ### K-03 The model picker is a screen
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
@@ -5271,6 +5331,26 @@ the acceptance clause about the line saying so had nothing to say.
 Applying also moves App.usingKey, so a conversation started afterwards follows the credential you
 moved to. It follows that key's own recorded default rather than the picked model, since the picked
 model is a fact about one conversation. Store.SetModel is never called from here.
+
+Two defects found in review and fixed here, and one gap closed. A pick the engine refused still
+moved the application's own note of which credential to open the next conversation on: chat's
+UseCredential swallowed the refusal into a message and returned nothing, so the conversation
+correctly stayed where it was and the next ctrl+n opened on the credential that had just been
+declined, with no model on it. UseCredential now reports whether the engine took it and both callers
+wait for that answer, the credential screen's as well as the picker's, since the two had the same
+shape. Held by TestARefusedPickLeavesTheNextConversationWhereItWas, which fails with exactly the
+symptom that was reported when the check is removed.
+
+The gap: the picker was the only model surface with no way to name something the lists have never
+heard of, which made the one screen built to answer "what can this run" the one place a shipped list
+could stand between somebody and the model they wanted. Every section now ends in a row that takes a
+typed id, mirroring the credential screen's, feeding the same UseCredential path so a model Canopy
+has never heard of is applied exactly the way a listed one is. A section with nothing to offer keeps
+its none-set warning and gains the row underneath it, which is the state an unrecognised endpoint is
+in on the day it is added. It deliberately does not record what was typed: the credential screen
+remembers a typed model because that screen is where a key's offerings are edited, and this one
+changes this conversation and nothing on disk. Held by TestThePickerTakesAModelItHasNeverHeardOf,
+TestLeavingTheTypedRowChangesNothing and TestAKeyWithNothingToOfferCanStillBeTypedInto.
 
 Acceptance, clause by clause: opening and leaving changing nothing is
 TestOpeningTheModelPickerAndLeavingChangesNothing; picking under the same key changing the next

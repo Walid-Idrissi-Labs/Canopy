@@ -572,6 +572,14 @@ func listKeyModels(name string, out io.Writer) error {
 		"\nThe catalog was last checked on %s. Any model can be set whether it is listed\n"+
 			"or not: `canopy keys model %s <id>`.\n",
 		catalog.AsOf.Format("2006-01-02"), name)
+	if err != nil {
+		return err
+	}
+	// And says out loud when that date is old, rather than leaving somebody to subtract it from
+	// today. A date on screen is not the same as the screen saying the date has gone stale.
+	if note := catalog.StalenessNote(time.Now()); note != "" {
+		_, err = fmt.Fprintf(out, "%s.\n", note)
+	}
 	return err
 }
 

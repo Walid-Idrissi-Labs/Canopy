@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 )
 
 // The plural listing is the one that answers "what could this key run", and for an Anthropic key the
@@ -94,5 +97,36 @@ func TestModelsRefusesWhatItCannotDo(t *testing.T) {
 		if err := runKeys(args, &out); err == nil {
 			t.Errorf("%s was accepted:\n%s", name, out.String())
 		}
+	}
+}
+
+// The listing says when the catalog was checked, and says out loud when that was long enough ago to
+// matter. Without the second half the date is a number somebody has to subtract from today.
+func TestTheModelListingSaysWhenTheCatalogHasGoneStale(t *testing.T) {
+	storeWithCanary(t)
+
+	fresh := catalog.AsOf
+	t.Cleanup(func() { catalog.AsOf = fresh })
+
+	var out bytes.Buffer
+	if err := runKeys([]string{"models", "claude"}, &out); err != nil {
+		t.Fatalf("keys models: %v", err)
+	}
+	if strings.Contains(out.String(), "may be missing models") {
+		t.Errorf("a fresh catalog called itself stale:\n%s", out.String())
+	}
+
+	catalog.AsOf = time.Now().Add(-2 * catalog.MaxAge)
+	out.Reset()
+	if err := runKeys([]string{"models", "claude"}, &out); err != nil {
+		t.Fatalf("keys models with a stale catalog: %v", err)
+	}
+	listing := out.String()
+	if !strings.Contains(listing, "may be missing models") {
+		t.Errorf("a stale catalog said nothing about it:\n%s", listing)
+	}
+	// And it still lists what it knows. Stale is a caveat, never a refusal.
+	if !strings.Contains(listing, "claude-sonnet-5") {
+		t.Errorf("a stale catalog stopped offering anything:\n%s", listing)
 	}
 }

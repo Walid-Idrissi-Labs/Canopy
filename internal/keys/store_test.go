@@ -617,3 +617,56 @@ func TestAKeysFileFromThePreviousBuildLoadsWithNothingLost(t *testing.T) {
 		t.Errorf("an empty model list was written to disk:\n%s", written)
 	}
 }
+
+// The store and the resolver have to agree about what counts as one model.
+//
+// Matching forgives case and punctuation, so two spellings of one id would be two rows the resolver
+// then refuses to choose between, and the request would be refused with the same model listed twice
+// as the alternatives. Refused here instead, where somebody is present to be told why, and refused
+// rather than folded into the existing entry: what is stored goes on the wire exactly as typed, and
+// an unknown provider's ids may well be case sensitive.
+func TestASecondSpellingOfOneModelIsRefusedRatherThanStored(t *testing.T) {
+	store, _ := newTestStore(t)
+	ref := core.KeyRef{Name: "nim"}
+	if _, err := store.Put(core.KeyMetadata{
+		Ref:     core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible},
+		BaseURL: "https://api.moonshot.cn/v1",
+		Model:   "moonshot-v1-8k",
+	}, core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if err := store.AddModel(ref, "minimaxai/minimax-m2.7", "MiniMax M2.7"); err != nil {
+		t.Fatalf("AddModel: %v", err)
+	}
+
+	err := store.AddModel(ref, "MiniMaxAI/MiniMax-M2.7", "")
+	if err == nil {
+		t.Fatal("a second spelling of one id was stored beside the first")
+	}
+	// The refusal names what it collided with, or somebody has to go and find it themselves.
+	if !strings.Contains(err.Error(), "minimaxai/minimax-m2.7") {
+		t.Errorf("the refusal does not say what it collides with: %v", err)
+	}
+
+	models, err := store.Models(ref)
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("the key offers %+v", models)
+	}
+	// And the one that is there is byte for byte what was typed, not a normalised version of it.
+	if models[0].ID != "minimaxai/minimax-m2.7" {
+		t.Errorf("the stored id reads %q", models[0].ID)
+	}
+
+	// The exact id is still the way to correct a name, which is a different thing from adding a
+	// second spelling and must keep working.
+	if err := store.AddModel(ref, "minimaxai/minimax-m2.7", "MiniMax"); err != nil {
+		t.Fatalf("renaming through the exact id: %v", err)
+	}
+	if models, _ := store.Models(ref); len(models) != 1 || models[0].Name != "MiniMax" {
+		t.Errorf("after renaming the key offers %+v", models)
+	}
+}
