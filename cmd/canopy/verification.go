@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"sync"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
@@ -441,8 +442,9 @@ func (p profiles) Profiles() []session.Profile {
 		_, priced := pricing.Apply(id, core.Usage{OutputTokens: 1})
 
 		out = append(out, session.Profile{
-			Name:  meta.Ref.Name,
-			Model: defaultModelFor(p.store, meta.Ref.Name),
+			Name:   meta.Ref.Name,
+			Model:  defaultModelFor(p.store, meta.Ref.Name),
+			Models: p.modelsFor(meta),
 			// Apply returns a reason when it could not price the request, so an empty reason is the
 			// only thing that means a rate is actually known. Asking the table twice, once for the
 			// rate and once for the reason, would be two places to disagree.
@@ -452,8 +454,46 @@ func (p profiles) Profiles() []session.Profile {
 	return out
 }
 
+// modelsFor is everything a credential can be asked for, assembled here for the same reason the
+// profiles are: this is the layer that knows what a credential is.
+//
+// The catalog first and what its owner added second, which is the order they are worth reading in
+// and the order a family word is resolved against. A model already in the catalog is not repeated,
+// since somebody adding a name for one they use often should get a better label rather than a
+// second row.
+func (p profiles) modelsFor(meta core.KeyMetadata) []catalog.Model {
+	models := catalog.For(meta.Ref.Provider, meta.BaseURL)
+
+	added, err := p.store.Models(meta.Ref)
+	if err != nil {
+		return models
+	}
+	for _, model := range added {
+		known := false
+		for i, existing := range models {
+			if existing.ID == model.ID {
+				known = true
+				if model.Name != "" {
+					models[i].Name = model.Name
+				}
+				break
+			}
+		}
+		if !known {
+			models = append(models, model)
+		}
+	}
+	return models
+}
+
 func (p profiles) Estimate(task string, count int) session.Estimate {
 	return p.engine.Estimate(task, count)
+}
+
+// EstimateOn is the same, for a run whose model has been resolved from what somebody said. Separate
+// because the models one key can run differ in price by a factor of ten.
+func (p profiles) EstimateOn(task string, count int, model string) session.Estimate {
+	return p.engine.EstimateOn(task, count, model)
 }
 
 func (p profiles) Concurrency() (int, int) { return p.engine.Concurrency() }

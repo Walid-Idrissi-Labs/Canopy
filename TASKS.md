@@ -5046,7 +5046,7 @@ keys.json loading with nothing lost is TestAKeysFileFromThePreviousBuildLoadsWit
 also holds that an empty list is still absent from the file rather than written as an empty array.
 
 ### K-02 Words find the model
-`status: claimed | owner: claude | branch: feat/one-key-many-models | depends: K-01`
+`status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
 `scope: internal/session/dispatch.go, cmd/canopy/verification.go, internal/catalog/`
 
 Deliverable: spawn_agents gains an optional model argument and list_profiles names what each
@@ -5062,11 +5062,47 @@ and the confirmation names it before anything runs; "claude sonnet 4 6" lands on
 claude-sonnet-4-6; a display name resolves the same as its id; asking for a model no key offers
 is refused with what does exist; the estimate prices the resolved model, not the profile default.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: internal/session/dispatch.go is outside the 2.1 lane list, same ground as U-15's engine
 change, and the additions are additive: the profile argument and every existing resolution keep
 working unchanged, held by the existing dispatch tests.
+
+Built, and additive as promised: no existing test in internal/session changed, and the plain
+fakeDispatcher is untouched, which keeps the older code path exercised.
+
+The resolution rules, as implemented. Case, spaces, underscores and dots all normalise to hyphens,
+so "Claude Sonnet 4.6" and "claude sonnet 4 6" are the same request; a missing claude- prefix is
+put back; and only then does a bare family word mean the newest member of that family, decided by
+the catalog's order rather than by parsing version numbers. Matching runs against ids and display
+names together. The key is the profile argument's when one was given, the conversation's own when
+that offers the model, and otherwise the only profile that offers it; two profiles offering it is
+refused with both named, because which credential gets billed is the same decision the key resolver
+already refuses to make silently. A named profile is never swapped for one that happens to have the
+model.
+
+Two things the ask did not name and the build needed. Estimate could not grow a model parameter
+without breaking every existing Dispatcher and its fake, so pricing the resolved model is an
+optional ModelEstimator interface that Engine and cmd/canopy's profiles implement and the spawn tool
+type asserts; a dispatcher without it is asked the older question and answers it as before.
+Engine.EstimateOn prefers turns run on that model once there are three of them and falls back to the
+project's history otherwise, saying which in the basis. And Dispatch gained ModelNamed, because
+dispatchTemplate inherits the model of an agent already running on the profile, which is right when
+nobody said and wrong the moment they did: without the flag, "two sonnet agents" from a conversation
+on opus would have produced two more opus agents.
+
+Acceptance, clause by clause: "spawn two sonnet agents" with no key called sonnet, landing on the
+newest sonnet and named on the confirmation before anything runs, is
+TestSonnetAgentsSpawnWithNoKeyCalledSonnet; "claude sonnet 4 6" reaching claude-sonnet-4-6 is
+TestTheWordsForAModelAreForgivenOnTheWayToADispatch, with the matching itself held by
+TestSpellingIsForgivenBeforeAnythingIsRefused in internal/catalog; a display name resolving as its
+id is TestADisplayNameResolvesTheSameAsItsIDWhenSpawning; a model no key offers being refused with
+what does exist is TestAModelNobodyOffersIsRefusedWithWhatDoesExist; and the estimate pricing the
+resolved model is TestTheEstimatePricesTheResolvedModelNotTheProfileDefault at the tool and
+TestTheEstimatePrefersHistoryFromTheModelItWasAskedAbout at the engine. The key-choice rules are
+TestTheCurrentKeyKeepsAModelItOffers, TestAModelOnlyOneKeyOffersFindsThatKeyAndTwoIsRefused and
+TestANamedProfileIsNotSwappedForOneThatHasTheModel; the grown listing is
+TestListingProfilesNamesWhatEachOneCanRun.
 
 ### K-03 The model picker is a screen
 `status: claimed | owner: claude | branch: feat/one-key-many-models | depends: K-01`

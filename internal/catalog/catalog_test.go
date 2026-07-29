@@ -37,7 +37,7 @@ func TestTheNewestOfEachFamilyComesFirst(t *testing.T) {
 
 	first := map[string]string{}
 	for _, model := range models {
-		family := familyOf(model.ID)
+		family := readFamily(model.ID)
 		if _, seen := first[family]; !seen {
 			first[family] = model.ID
 		}
@@ -55,9 +55,9 @@ func TestTheNewestOfEachFamilyComesFirst(t *testing.T) {
 	}
 }
 
-// familyOf is the test's own reading of a model id, deliberately not shared with the code under
+// readFamily is the test's own reading of a model id, deliberately not shared with the code under
 // test: a helper both sides used could agree with itself while being wrong about the order.
-func familyOf(id string) string {
+func readFamily(id string) string {
 	rest := id
 	if len(id) > len("claude-") && id[:len("claude-")] == "claude-" {
 		rest = id[len("claude-"):]
