@@ -4767,6 +4767,13 @@ help table and asserts none reaches a provider call without a confirmation or an
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
+notes: the binding walk this task turns on was passing for the wrong reason when first written. It
+pressed every advertised key and read the counters, but discarded the `tea.Cmd` each press returned,
+and every provider call in this program is made from inside one. A deliberately broken ctrl+r, with
+the confirmation removed, walked straight through it. The loop now runs the command it was handed,
+and anything that command batches, bounded by a timeout because some of them are timers. Verified by
+mutation both ways: the test fails with the confirmation removed and passes with it restored.
+
 notes: D-43's third rule. Whether ctrl+r, ctrl+k and ctrl+d should keep their current meanings
 at all is taste, so it is Q-21 for the supervisors rather than decided here; making the paid one
 free to press by accident is not taste.

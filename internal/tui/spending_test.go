@@ -6,6 +6,7 @@ package tui_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -59,7 +60,15 @@ func TestNoAdvertisedKeyReachesAProviderOnItsOwn(t *testing.T) {
 			engine := &stubEngine{session: manyTurns(12)}
 			app := launchWith(store, withOneKey(), engine)
 
-			app.(tui.App).Update(key)
+			// The command the press returned is run, not discarded.
+			//
+			// This is the difference between the test asserting the property and the test looking
+			// like it does. Every provider call in this program is made from inside a tea.Cmd, so a
+			// press whose command is thrown away reaches nothing by construction and a version of
+			// this loop that only calls Update passes whether or not the confirmation exists. It was
+			// written that way first, and a deliberately broken ctrl+r walked straight through it.
+			_, cmd := app.(tui.App).Update(key)
+			runCmd(t, cmd)
 
 			switch {
 			case engine.compacted != 0:
@@ -140,4 +149,33 @@ func TestTheKeyTheEmptyCredentialMessageNamesIsInTheTable(t *testing.T) {
 		}
 	}
 	t.Error("ctrl+k is not in the help table, and the resolver tells people to press it")
+}
+
+// runCmd executes a command and anything it batches, so a test can see what a keystroke actually
+// set in motion rather than only what it returned.
+//
+// Bounded by a timeout, because some of these commands are timers that would otherwise hold the
+// test for as long as the interface would have waited, and one of them waits for a person.
+func runCmd(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+	if cmd == nil {
+		return
+	}
+
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+
+	select {
+	case msg := <-done:
+		// A batch is a message carrying more commands, which have to be run too or half of what the
+		// keystroke started stays invisible.
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, inner := range batch {
+				runCmd(t, inner)
+			}
+		}
+	case <-time.After(2 * time.Second):
+		// A command still running is one that is waiting rather than spending, and the counters
+		// below are read either way.
+	}
 }
