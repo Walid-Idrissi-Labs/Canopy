@@ -59,6 +59,7 @@ func bindings() []section {
 			{"alt+enter", "a line break instead of sending"},
 			{"y", "allow a tool call once, while a question is up"},
 			{"a", "allow it for the rest of the session"},
+			{"arrows / pgup", "read on with a question up, deciding nothing"},
 			{"any other key", "refuse it"},
 		}},
 		{"another agent's question, above the box", []binding{

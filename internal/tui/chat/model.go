@@ -10,6 +10,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -577,6 +578,56 @@ func (m *Model) scrollBy(lines int) {
 	}
 }
 
+// navigation is every key that moves the conversation, and what it moves it by.
+//
+// A table rather than a switch, because the claim being made here is about the whole set. Reading a
+// prompt before answering it must be possible with the keyboard, so these keys are carved out of
+// the refusal that every other key means while a question is up, and a test walks this table to say
+// so. A switch would let a new scroll binding be added in one place and quietly join the refusal
+// path in the other.
+//
+// Left and right are in it and move nothing. They belong to the message box's caret, which is not
+// in play while a question is up, and an arrow key refusing a permission prompt because the
+// conversation does not scroll sideways is a distinction nobody watching the screen can see.
+var navigation = map[string]func(*Model){
+	"up":        func(m *Model) { m.scrollBy(1) },
+	"down":      func(m *Model) { m.scrollBy(-1) },
+	"left":      func(*Model) {},
+	"right":     func(*Model) {},
+	"pgup":      func(m *Model) { m.scrollBy(m.transcriptHeight() / 2) },
+	"pgdown":    func(m *Model) { m.scrollBy(-m.transcriptHeight() / 2) },
+	"ctrl+home": func(m *Model) { m.scroll = len(m.transcript()) },
+	// Two keys for the bottom, because ctrl+end is the one a terminal veteran reaches for and
+	// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
+	// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
+	"ctrl+end":  func(m *Model) { m.scroll = 0 },
+	"ctrl+down": func(m *Model) { m.scroll = 0 },
+}
+
+// navigate moves the conversation for a key that navigates, and reports whether it was one.
+func (m *Model) navigate(key string) bool {
+	move, ok := navigation[key]
+	if !ok {
+		return false
+	}
+	move(m)
+	return true
+}
+
+// NavigationKeys is the navigation set, in a stable order.
+//
+// Exported for the test that asserts none of these answers a permission question, for the same
+// reason HelpBindingCount is exported: the property is about every key in the set, so the test has
+// to walk the set rather than keep a copy of it that can go stale.
+func NavigationKeys() []string {
+	keys := make([]string, 0, len(navigation))
+	for key := range navigation {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // answerPrompt handles the keys that reply to a permission question.
 //
 // Deliberately few, and deliberately not a single key for the widest option. Approving once is `y`,
@@ -584,6 +635,8 @@ func (m *Model) scrollBy(lines int) {
 // including escape and enter. That last part matters: the reflex key on a prompt somebody has not
 // read is enter, and enter meaning no is the difference between a misread prompt costing a retry
 // and costing a repository.
+//
+// Everything except the navigation set, which the caller has already dealt with. See navigation.
 func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
@@ -715,6 +768,13 @@ func (m Model) promptLines() []string {
 		t.Key.Render("y")+t.Muted.Render(" once   ")+
 			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
+
+	// The keys that read rather than decide, named here because the footer goes quiet while a
+	// question is up and this panel is the only thing left saying what may be pressed. Somebody who
+	// does not know scrolling is safe will not risk it, which leaves them deciding on the part of
+	// the reasoning that happens to fit on screen.
+	body = append(body,
+		t.Key.Render("pgup")+t.Muted.Render(" and the arrows read what is above this, deciding nothing"))
 
 	return promptPanel(body, inner)
 }
@@ -917,7 +977,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
 	// into the message box, and typing an answer to a yes or no question into a text field and
 	// wondering why nothing happens is a bad minute to give somebody.
+	//
+	// Everything except navigation, which moves the conversation and decides nothing. The command
+	// being approved is often the last thing on screen and the reasoning that led to it is above,
+	// so a prompt that refused itself the moment somebody scrolled up to read it was punishing the
+	// one person who wanted to understand what they were agreeing to. See navigation.
 	if m.awaiting {
+		if m.navigate(msg.String()) {
+			return m, nil
+		}
 		return m.answerPrompt(msg)
 	}
 
@@ -1023,23 +1091,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "ctrl+r":
 		return m.compact()
 
-	case "pgup":
-		m.scrollBy(m.transcriptHeight() / 2)
-		return m, nil
-
-	case "pgdown":
-		m.scrollBy(-m.transcriptHeight() / 2)
-		return m, nil
-
-	case "ctrl+home":
-		m.scroll = len(m.transcript())
-		return m, nil
-
-	case "ctrl+end", "ctrl+down":
-		// Two keys for one thing, because ctrl+end is the one a terminal veteran reaches for and
-		// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
-		// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
-		m.scroll = 0
+	case "pgup", "pgdown", "ctrl+home", "ctrl+end", "ctrl+down":
+		// Through the same table the question above uses, so a key cannot come to mean one thing
+		// with a prompt on screen and something else without one. The arrows are deliberately not
+		// here: with no question up they belong to the message box, where up recalls what was sent
+		// last and left and right move the caret.
+		m.navigate(msg.String())
 		return m, nil
 	}
 

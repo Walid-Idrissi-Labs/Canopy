@@ -4572,8 +4572,8 @@ read what you are approving refuses it; and the screens that would tell you anot
 blocked are locked exactly when your own agent is blocked.
 
 ### U-01 Reading the prompt is not answering it
-`status: todo | owner: none | branch: none | depends: PG-M`
-`scope: internal/tui/chat/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: PG-M`
+`scope: internal/tui/chat/, internal/tui/help.go`
 
 Deliverable: while a permission prompt is pending, navigation navigates. Scroll keys, arrows,
 page keys and the wheel move the transcript so the person can reread the reasoning above the
@@ -4585,10 +4585,16 @@ non-navigation key still refuse, because the reflex key on an unread prompt mean
 safety property, and it is kept. A test enumerates the navigation set so a new binding cannot
 silently join the refusal path.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-43's first rule. Today `pgup` on a prompt is a refusal indistinguishable from a
 deliberate one, which punishes exactly the person who wanted to read before deciding.
+
+notes: left and right joined the navigation set as well, moving nothing. They belong to the
+message box's caret, which is not in play while a question is up, and an arrow refusing because
+the conversation does not scroll sideways is a distinction nobody watching the screen can see.
+The keys are named on the question's own panel, since the footer goes quiet while one is up and a
+key that is safe and unmentioned is a key nobody risks.
 
 ### U-02 The always that grants nothing
 `status: todo | owner: none | branch: none | depends: A5-08`
