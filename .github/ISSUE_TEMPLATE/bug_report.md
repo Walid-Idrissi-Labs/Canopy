@@ -6,14 +6,21 @@ labels: bug
 assignees: ''
 ---
 
-Please check [LIMITATIONS.md](../../LIMITATIONS.md) first. A lot of surprising behaviour is
-written down in there on purpose, with the reasoning. If your problem is listed and you think the
-tradeoff is wrong, say so here anyway; that is a useful issue.
+<!--
+Please check LIMITATIONS.md first:
+https://github.com/Walid-Idrissi-Labs/Canopy/blob/main/LIMITATIONS.md
+
+A lot of surprising behaviour is written down in there on purpose, with the reasoning attached. If
+your problem is listed and you think the tradeoff is wrong, open the issue anyway and argue with
+the reasoning; that is a useful issue.
+
+Not for vulnerabilities. SECURITY.md has the address for those.
+-->
 
 **Version**
 
-Paste the output of `canopy version`. It prints the version, the commit and the build date, and
-which of the three are set says how the binary was built.
+<!-- `canopy version` prints the version, commit and build date. Which of the three are set already
+says whether this came from a release, from `make install`, or from a plain `go build`. -->
 
 ```
 canopy ... (commit ..., built ...)
@@ -37,6 +44,6 @@ canopy ... (commit ..., built ...)
 
 **Anything else**
 
-Relevant output, the `canopy.json` for the project if tests or commands are involved, and whether
-it happens every time or only sometimes. Redact your API keys; Canopy cannot redact what a child
-process printed for you.
+<!-- Relevant output, the project's canopy.json if tests or commands are involved, and whether it
+happens every time or only sometimes. Redact your API keys: Canopy cannot redact what a child
+process printed for you. -->
