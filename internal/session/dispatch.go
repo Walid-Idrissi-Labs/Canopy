@@ -488,7 +488,7 @@ func (t *spawnTool) resolveModel(request *Dispatch, spoken string, named bool) s
 		if profile.Name != request.Profile {
 			continue
 		}
-		hits := catalog.Match(profile.Models, spoken)
+		hits := catalog.Match(offeredBy(profile), spoken)
 		if len(hits) == 1 {
 			request.Model, request.ModelNamed = hits[0].ID, true
 			return ""
@@ -512,7 +512,7 @@ func (t *spawnTool) resolveModel(request *Dispatch, spoken string, named bool) s
 	var offering []Profile
 	var hits []catalog.Model
 	for _, profile := range profiles {
-		if found := catalog.Match(profile.Models, spoken); len(found) > 0 {
+		if found := catalog.Match(offeredBy(profile), spoken); len(found) > 0 {
 			offering = append(offering, profile)
 			hits = found
 		}
@@ -545,6 +545,32 @@ func (t *spawnTool) resolveModel(request *Dispatch, spoken string, named bool) s
 	}
 }
 
+// offeredBy is everything a profile can be asked for by name.
+//
+// Its list plus its own default, which is not always in the list. A key pointed at a gateway nobody
+// here ships a lineup for has an empty list and a default its owner typed, and without this that
+// default was the one model the profile was certainly about to run and the one model it refused to
+// be asked for. The refusal then contradicted itself out loud: "no profile here can run
+// moonshot-v1-8k. nim runs moonshot-v1-8k."
+//
+// Matching and the refusals both read this, which is what stops them ever disagreeing again. The
+// default is compared with spelling forgiven, so a list that already holds it in another
+// capitalisation does not gain a second row for the same model.
+func offeredBy(profile Profile) []catalog.Model {
+	if profile.Model == "" {
+		return profile.Models
+	}
+	for _, model := range profile.Models {
+		if catalog.SameModel(model.ID, profile.Model) {
+			return profile.Models
+		}
+	}
+	// A fresh slice, since appending to the profile's own would write into whatever built it.
+	offered := make([]catalog.Model, 0, len(profile.Models)+1)
+	offered = append(offered, profile.Models...)
+	return append(offered, catalog.Model{ID: profile.Model})
+}
+
 // whatRuns is every profile and what it can be asked for, which is what a refusal has to carry.
 //
 // A refusal that only says no sends a model round again with another guess. A refusal that names the
@@ -552,12 +578,13 @@ func (t *spawnTool) resolveModel(request *Dispatch, spoken string, named bool) s
 func whatRuns(profiles []Profile) string {
 	lines := make([]string, 0, len(profiles))
 	for _, profile := range profiles {
-		if len(profile.Models) == 0 {
+		offered := offeredBy(profile)
+		if len(offered) == 0 {
 			lines = append(lines, fmt.Sprintf("%s runs %s", profile.Name, orDefault(profile.Model)))
 			continue
 		}
 		lines = append(lines, fmt.Sprintf("%s runs %s",
-			profile.Name, strings.Join(idsOf(profile.Models), ", ")))
+			profile.Name, strings.Join(idsOf(offered), ", ")))
 	}
 	sort.Strings(lines)
 	return strings.Join(lines, "; ") + "."
@@ -580,6 +607,12 @@ func idsOf(models []catalog.Model) []string {
 
 // estimate prices the run, on the model it will actually happen on where the dispatcher can tell
 // the difference. A dispatcher that cannot is asked the question it does understand.
+//
+// "The model it will actually happen on" is meant literally and covers the ordinary spawn as well as
+// the one that named a model: by this point resolve has filled in the profile's own default, so a
+// request nobody attached a model to is still priced against the model its agents will run rather
+// than against the project's history at large. That is the better answer in both cases, and it is
+// the same answer, which is why there is no branch here for one of them.
 func (t *spawnTool) estimate(request Dispatch) Estimate {
 	if on, ok := t.dispatcher.(ModelEstimator); ok && request.Model != "" {
 		return on.EstimateOn(request.Task, request.Count, request.Model)

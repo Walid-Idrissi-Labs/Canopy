@@ -5127,6 +5127,15 @@ dispatchTemplate inherits the model of an agent already running on the profile, 
 nobody said and wrong the moment they did: without the flag, "two sonnet agents" from a conversation
 on opus would have produced two more opus agents.
 
+What the model-aware estimate actually covers, stated plainly because the first version of this note
+was not: every spawn, not only the ones that named a model. Resolution fills the profile's own
+default in before the estimate is asked for, so a request nobody attached a model to is priced
+against the model its agents will run rather than against the project's history at large. That is
+the better answer in both cases and it is the same answer, which is why there is no branch for one
+of them, but it was a behaviour change nothing could observe: the plain fake has no EstimateOn, so
+every existing test went down the older path either way. Pinned now by
+TestASpawnWithNoModelNamedIsStillPricedOnWhatItWillRun.
+
 Acceptance, clause by clause: "spawn two sonnet agents" with no key called sonnet, landing on the
 newest sonnet and named on the confirmation before anything runs, is
 TestSonnetAgentsSpawnWithNoKeyCalledSonnet; "claude sonnet 4 6" reaching claude-sonnet-4-6 is
@@ -5139,6 +5148,18 @@ TestTheEstimatePrefersHistoryFromTheModelItWasAskedAbout at the engine. The key-
 TestTheCurrentKeyKeepsAModelItOffers, TestAModelOnlyOneKeyOffersFindsThatKeyAndTwoIsRefused and
 TestANamedProfileIsNotSwappedForOneThatHasTheModel; the grown listing is
 TestListingProfilesNamesWhatEachOneCanRun.
+
+One defect found in review and fixed here. A profile's matchable set was its list alone, and a key
+pointed at a gateway nobody here ships a lineup for has an empty list and a default its owner typed,
+so the one model that profile was certainly about to run was the one model it refused to be asked
+for. The refusal then contradicted itself in the same breath: "no profile here can run
+moonshot-v1-8k. nim runs moonshot-v1-8k." Both the matching and the listing now read one function,
+offeredBy, which is the profile's list plus its own default when the list does not already hold it,
+compared with spelling forgiven so a differently capitalised list does not gain a second row. Held
+by TestAProfilesOwnDefaultCanBeAskedForByName, which also covers a typed default reached by the
+current key rather than by being the only one that offers it, and by
+TestARefusalDoesNotOfferWhatItJustRefused, which asks for every id a refusal names and fails if any
+of them is then refused.
 
 ### K-03 The model picker is a screen
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`

@@ -364,3 +364,134 @@ func TestTheEstimatePrefersHistoryFromTheModelItWasAskedAbout(t *testing.T) {
 		t.Errorf("a model with no history did not fall back: %+v", sparse)
 	}
 }
+
+// A key on a gateway nobody here ships a lineup for has an empty list and a model its owner typed,
+// and that model is the one thing the profile is certainly about to run. It was the one thing it
+// refused to be asked for, and the refusal said so out loud: "no profile here can run
+// moonshot-v1-8k. nim runs moonshot-v1-8k."
+func TestAProfilesOwnDefaultCanBeAskedForByName(t *testing.T) {
+	dispatcher := &fakeDispatcher{
+		profiles: []Profile{{Name: "nim", Model: "moonshot-v1-8k"}},
+		limit:    8,
+	}
+	tool := &spawnTool{
+		dispatcher: dispatcher,
+		current:    func() string { return "nim" },
+		confirm:    func(Confirmation) bool { return true },
+	}
+
+	result := call(t, tool, `{"count": 2, "model": "moonshot-v1-8k", "task": "try the migration"}`)
+	if result.IsError {
+		t.Fatalf("a profile's own default was refused: %s", result.Content)
+	}
+	spawned := dispatcher.spawned[0]
+	if spawned.Profile != "nim" || spawned.Model != "moonshot-v1-8k" {
+		t.Errorf("the spawn landed on %s running %s", spawned.Profile, spawned.Model)
+	}
+	// Named rather than inherited, which is what stops a fan out onto an agent already running
+	// something else from quietly using that instead.
+	if !spawned.ModelNamed {
+		t.Error("a model asked for by name was not marked as asked for")
+	}
+
+	// Two keys pointed at the same model is the case that separates "the current one keeps what it
+	// offers" from "the only one that offers it": both offer it, and the conversation's own wins
+	// rather than the request being refused as a choice between two credentials.
+	shared := &fakeDispatcher{
+		profiles: []Profile{
+			{Name: "spare", Model: "moonshot-v1-8k"},
+			{Name: "nim", Model: "moonshot-v1-8k"},
+		},
+		limit: 8,
+	}
+	sharedTool := &spawnTool{
+		dispatcher: shared,
+		current:    func() string { return "nim" },
+		confirm:    func(Confirmation) bool { return true },
+	}
+	if result := call(t, sharedTool, `{"count": 1, "model": "moonshot-v1-8k", "task": "x"}`); result.IsError {
+		t.Fatalf("two keys on one model refused the conversation's own: %s", result.Content)
+	}
+	if got := shared.spawned[0].Profile; got != "nim" {
+		t.Errorf("the spawn went to %q, want the conversation's own credential", got)
+	}
+
+	// Spelling is forgiven on a typed default exactly as it is on a listed model.
+	for _, spoken := range []string{"Moonshot V1 8k", "moonshot v1 8k"} {
+		second := &fakeDispatcher{profiles: dispatcher.profiles, limit: 8}
+		tool := &spawnTool{
+			dispatcher: second,
+			current:    func() string { return "nim" },
+			confirm:    func(Confirmation) bool { return true },
+		}
+		if result := call(t, tool, `{"count": 1, "model": "`+spoken+`", "task": "x"}`); result.IsError {
+			t.Errorf("%q was refused: %s", spoken, result.Content)
+		}
+	}
+}
+
+// And the refusal for a model that genuinely is not there stops naming it as available, which is the
+// same defect from the other side: the listing and the matcher now read one function.
+func TestARefusalDoesNotOfferWhatItJustRefused(t *testing.T) {
+	dispatcher := &fakeDispatcher{
+		profiles: []Profile{
+			{Name: "nim", Model: "moonshot-v1-8k"},
+			{Name: "claude", Model: "claude-opus-5", Models: catalog.For(core.ProviderAnthropic, "")},
+		},
+		limit: 8,
+	}
+	tool := &spawnTool{
+		dispatcher: dispatcher,
+		current:    func() string { return "nim" },
+		confirm:    func(Confirmation) bool { return true },
+	}
+
+	result := call(t, tool, `{"count": 1, "model": "gpt-5.2", "task": "x"}`)
+	if !result.IsError {
+		t.Fatal("a model nothing runs was accepted")
+	}
+	// The listing names what does exist, including the typed default it would not have listed before.
+	if !strings.Contains(result.Content, "moonshot-v1-8k") {
+		t.Errorf("the refusal does not name the typed default that is available:\n%s", result.Content)
+	}
+	// And every id it offers is one that would actually resolve, which is the property that broke.
+	for _, offered := range []string{"moonshot-v1-8k", "claude-sonnet-5"} {
+		second := &fakeDispatcher{profiles: dispatcher.profiles, limit: 8}
+		check := &spawnTool{
+			dispatcher: second,
+			current:    func() string { return "nim" },
+			confirm:    func(Confirmation) bool { return true },
+		}
+		if again := call(t, check, `{"count": 1, "model": "`+offered+`", "task": "x"}`); again.IsError {
+			t.Errorf("the refusal offered %q and asking for it was refused: %s", offered, again.Content)
+		}
+	}
+}
+
+// Every spawn is priced against the model its agents will run, not only the ones that named one.
+//
+// By the time the estimate is asked for, an unnamed model has been filled in with the profile's own
+// default, so this path fires on the ordinary spawn too. That is deliberate and it is the better
+// answer, but it was a behaviour change nothing could see: the plain fake has no EstimateOn, so
+// every existing test went down the older path and could not have noticed either way.
+func TestASpawnWithNoModelNamedIsStillPricedOnWhatItWillRun(t *testing.T) {
+	plain := &fakeDispatcher{
+		profiles: []Profile{{Name: "claude", Model: "claude-opus-5", Priced: true}},
+		limit:    8,
+	}
+	dispatcher := &pricingDispatcher{
+		fakeDispatcher: plain,
+		onModel:        Estimate{Low: 1, High: 3, Samples: 9, Basis: "on the model", Confidence: "medium"},
+	}
+	tool := &spawnTool{
+		dispatcher: dispatcher,
+		current:    func() string { return "claude" },
+		confirm:    func(Confirmation) bool { return true },
+	}
+
+	call(t, tool, `{"count": 2, "task": "refactor the auth package"}`)
+
+	if dispatcher.askedModel != "claude-opus-5" {
+		t.Errorf("the estimate was asked about %q, want the profile's default", dispatcher.askedModel)
+	}
+}
