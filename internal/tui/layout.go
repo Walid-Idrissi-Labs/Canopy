@@ -84,6 +84,20 @@ func Frame(d Dimensions, s Status, body, footer string) string {
 	b.WriteString("\n")
 
 	bodyLines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+
+	// Clipped to the height it was given, from the top.
+	//
+	// The frame used to pad a short body and do nothing about a tall one, which meant a screen that
+	// composed more rows than it had budgeted, a task pane and a command menu and a visitor panel at
+	// once on a small terminal, pushed the header off the top and the footer off the bottom. The
+	// result was a frame with no frame in it, and the screens that can overflow are the busy ones,
+	// so it happened exactly when orientation mattered most.
+	//
+	// From the top rather than the bottom, because everything in this application that grows, grows
+	// downward towards the input box, and the rows nearest the box are the current ones.
+	if over := len(bodyLines) - d.BodyHeight(); over > 0 {
+		bodyLines = bodyLines[over:]
+	}
 	b.WriteString(strings.Join(bodyLines, "\n"))
 
 	// Pin the footer to the bottom by padding, rather than letting it float directly under

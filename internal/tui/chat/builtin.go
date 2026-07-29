@@ -101,8 +101,8 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 		m.notice = m.taskSummary()
 
 	case "pickup":
-		m.notice = "come back to this conversation with:  canopy pickup " +
-			session.Code(m.sessionID)
+		m.notice = "come back to this conversation with\n" +
+			"canopy pickup " + session.Code(m.sessionID)
 
 	case "theme":
 		m.notice = m.switchTheme(arguments)
@@ -340,8 +340,10 @@ func (m *Model) forkHere() {
 		m.err = err.Error()
 		return
 	}
-	m.notice = "branched to a new conversation with everything said so far, reach it with " +
-		"ctrl+d or:  canopy pickup " + session.Code(forked.ID)
+	// The command on its own line, so it can never be broken across a wrap. Two halves of a command
+	// are two things that each look like a shorter command, and this one exists to be copied.
+	m.notice = "branched to a new conversation with everything said so far, reach it with ctrl+d or\n" +
+		"canopy pickup " + session.Code(forked.ID)
 }
 
 // undoLastTurn puts the workspace back as it was before the last turn.

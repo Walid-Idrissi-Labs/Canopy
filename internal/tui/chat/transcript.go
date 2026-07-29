@@ -484,15 +484,20 @@ func formatDuration(d time.Duration) string {
 }
 
 // truncate shortens with an ellipsis, so a long path ends in something rather than simply stopping.
+//
+// Measured in cells rather than runes. This is used inside bordered panels, where a string counted
+// as shorter than it draws pushes the panel's right border past the edge of the terminal and takes
+// the whole frame with it. One full-width character is enough to do it.
 func truncate(s string, width int) string {
 	if width < 8 {
 		width = 8
 	}
-	runes := []rune(s)
-	if len(runes) <= width {
+	if lipgloss.Width(s) <= width {
 		return s
 	}
-	return string(runes[:width-1]) + "…"
+	// One cell held back for the ellipsis, which is itself one cell wide.
+	head, _ := cutCells(s, width-1)
+	return head + "…"
 }
 
 // statusLines say how a turn ended, or that it has not.
