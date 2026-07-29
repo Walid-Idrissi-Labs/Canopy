@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
 
@@ -33,6 +34,8 @@ func (m Model) Body() string {
 	switch m.mode {
 	case modeList, modeConfirmRemove:
 		b.WriteString(m.viewList())
+	case modeModelPick:
+		b.WriteString(m.viewModelPick())
 	default:
 		b.WriteString(m.viewAdd())
 	}
@@ -98,6 +101,61 @@ func (m Model) viewList() string {
 		b.WriteString(styleWarn.Render(fmt.Sprintf(
 			"  Remove %q? Any profile using it will stop working. y/n",
 			m.keys[m.cursor].Ref.Name)))
+	}
+	return b.String()
+}
+
+// viewModelPick is the list of models a credential can be pointed at.
+//
+// The current one is marked with a character rather than only with the selection colour, for the
+// same reason the credential list marks the chosen key: on a terminal with no colour, or for
+// somebody who cannot separate two of them, a highlight is not a mark at all. See D-10.
+func (m Model) viewModelPick() string {
+	var b strings.Builder
+	b.WriteString(styleMuted.Render("  Which model should " + m.draftName + " talk to"))
+	b.WriteString("\n\n")
+
+	if len(m.modelChoices) == 0 {
+		// The honest empty state for an endpoint nobody here has a lineup for. Said out loud,
+		// because a list with one row in it otherwise reads as a program that has lost the rest.
+		b.WriteString(styleWarn.Render(
+			"  Canopy knows no models for this endpoint, so name the one this key should use."))
+		b.WriteString("\n\n")
+	}
+
+	for i, choice := range m.modelChoices {
+		marker := "      "
+		label := choice.Label()
+		if choice.Named() {
+			label += "  " + choice.ID
+		}
+
+		current := " "
+		if choice.ID == m.draftModel {
+			current = "*"
+		}
+		line := current + " " + label
+		if i == m.modelCursor {
+			marker = "    > "
+			line = styleSelect.Render(line)
+		}
+		b.WriteString(marker + line + "\n")
+	}
+
+	// Always last and always there. The day the list above is wrong is the day it would stand
+	// between somebody and the one model they actually want.
+	typeIt := "  something else, type it"
+	if m.modelCursor >= len(m.modelChoices) {
+		b.WriteString("    > " + styleSelect.Render(typeIt) + "\n")
+	} else {
+		b.WriteString("      " + styleMuted.Render(typeIt) + "\n")
+	}
+
+	if len(m.modelChoices) > 0 {
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("  the list was last checked on " +
+			catalog.AsOf.Format("2006-01-02") + ", and anything not on it can still be typed"))
+		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -191,7 +249,7 @@ func (m Model) footer() string {
 		// The confirmation line in the body already says y or n, beside the name of the thing being
 		// removed. A footer repeating it is a second list to keep agreeing with the first.
 		return ""
-	case modeProvider:
+	case modeProvider, modeModelPick:
 		return "j/k choose   enter select   esc cancel"
 	case modeModel:
 		return "enter save   esc cancel"

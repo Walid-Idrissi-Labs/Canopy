@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
 
@@ -49,6 +50,27 @@ type record struct {
 	InputPerMTok     float64 `json:"inputPerMTok,omitempty"`
 	OutputPerMTok    float64 `json:"outputPerMTok,omitempty"`
 	CacheReadPerMTok float64 `json:"cacheReadPerMTok,omitempty"`
+
+	// Models are the models this credential's owner added by hand, beside whatever the catalog
+	// already knows about the provider. Plural here rather than in core.KeyMetadata, which keeps its
+	// single Model field as the selected default: a frozen contract does not grow a field for
+	// something the layer above it can carry. See D-46.
+	//
+	// Omitted when empty, so a file written before this existed reads back identical to one written
+	// by a build that has it and never added anything.
+	Models []storedModel `json:"models,omitempty"`
+}
+
+// storedModel is one user-added model on disk.
+//
+// Its own type rather than the catalog's, because these two field names end up in a file people
+// edit and read, and a struct meant for a Go API is not a document format.
+type storedModel struct {
+	ID string `json:"id"`
+
+	// Name is what a person reads. Optional, because "gpt-5.2" needs no help and
+	// "minimaxai/minimax-m2.7" does.
+	Name string `json:"name,omitempty"`
 }
 
 // Open returns the key store, choosing a backend from the environment.
@@ -202,6 +224,11 @@ func (s *Store) Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata
 			stored.CreatedAt = existing.CreatedAt
 			stored.LastUsedAt = existing.LastUsedAt
 
+			// The models its owner added survive too, for the same reason the creation date does.
+			// Rotating a credential is not setting up a new one, and a list somebody built by hand
+			// is not something to make them build again because their key expired.
+			stored.Models = existing.Models
+
 			// And keep the rate, unless the caller supplied one. Rotating a key does not change
 			// what the endpoint charges, so silently dropping the price would turn a working cost
 			// figure into "unknown" for no reason the user could see.
@@ -334,6 +361,102 @@ func (s *Store) SetModel(ref core.KeyRef, model string) error {
 		return s.save(records)
 	}
 	return fmt.Errorf("no credential called %q", ref.Name)
+}
+
+// Models returns the models this credential's owner added by hand.
+//
+// Only theirs. What the provider is known to run is internal/catalog's answer and is the same for
+// every key on that provider, so holding a copy per credential would be a copy that goes stale. The
+// callers that want both put the two together, in that order, which is also the order they are
+// offered in.
+func (s *Store) Models(ref core.KeyRef) ([]catalog.Model, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records, err := s.load()
+	if err != nil {
+		return nil, err
+	}
+	found, ok := findRecord(records, ref.Name)
+	if !ok {
+		return nil, fmt.Errorf("no key named %q: %w", ref.Name, ErrNotFound)
+	}
+
+	out := make([]catalog.Model, 0, len(found.Models))
+	for _, model := range found.Models {
+		out = append(out, catalog.Model{ID: model.ID, Name: model.Name})
+	}
+	return out, nil
+}
+
+// AddModel records a model this credential can be pointed at.
+//
+// Adding one does not select it. The two are separate on purpose: somebody teaching Canopy about
+// three models their gateway serves is not thereby saying which one their next conversation should
+// run on, and a call that did both would make the list impossible to build without changing what is
+// running each time.
+//
+// An id that is already there has its name updated rather than being added twice, which is what
+// makes this the way to correct a name as well as the way to add one.
+func (s *Store) AddModel(ref core.KeyRef, id, name string) error {
+	id = strings.TrimSpace(id)
+	name = strings.TrimSpace(name)
+	if id == "" {
+		return errors.New("a model id is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records, err := s.load()
+	if err != nil {
+		return err
+	}
+
+	for i, r := range records {
+		if r.Name != ref.Name {
+			continue
+		}
+		for j, existing := range r.Models {
+			if existing.ID == id {
+				records[i].Models[j].Name = name
+				return s.save(records)
+			}
+		}
+		records[i].Models = append(records[i].Models, storedModel{ID: id, Name: name})
+		return s.save(records)
+	}
+	return fmt.Errorf("no key named %q: %w", ref.Name, ErrNotFound)
+}
+
+// RemoveModel forgets a model its owner added.
+//
+// Refused rather than ignored when the id is not there, because the usual reason for a miss is a
+// typo, and a silent success would leave somebody believing they had removed something they had not.
+func (s *Store) RemoveModel(ref core.KeyRef, id string) error {
+	id = strings.TrimSpace(id)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records, err := s.load()
+	if err != nil {
+		return err
+	}
+
+	for i, r := range records {
+		if r.Name != ref.Name {
+			continue
+		}
+		for j, existing := range r.Models {
+			if existing.ID == id {
+				records[i].Models = append(r.Models[:j:j], r.Models[j+1:]...)
+				return s.save(records)
+			}
+		}
+		return fmt.Errorf("key %q has no model called %q that was added by hand", ref.Name, id)
+	}
+	return fmt.Errorf("no key named %q: %w", ref.Name, ErrNotFound)
 }
 
 // SetRate records what the user says this credential charges.

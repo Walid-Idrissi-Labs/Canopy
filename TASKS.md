@@ -4991,7 +4991,7 @@ person adds sit beside it with a display name if they want one, and resolution f
 before it refuses, but refuses ambiguity rather than guessing.
 
 ### K-01 A key holds models, not a model
-`status: claimed | owner: claude | branch: feat/one-key-many-models | depends: none`
+`status: review | owner: claude | branch: feat/one-key-many-models | depends: none`
 `scope: internal/catalog/ (new), internal/keys/, internal/tui/keys/, cmd/canopy/`
 
 Deliverable: a new internal/catalog package that answers "what can this provider run", dated the
@@ -5009,12 +5009,41 @@ model with a display name shows the name and keeps the id; picking any entry rec
 SetModel; a model on no list can still be typed; a keys.json written by the previous build loads
 with empty model lists and nothing lost.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: the catalog carries an as-of date like pricing.AsOf and goes stale the same way; that is
 the accepted cost of shipping knowledge, and the free-text escape is what keeps stale from
 meaning stuck. internal/keys and internal/pricing sit outside the 2.1 lane list; changes there
 are additive.
+
+Built. internal/catalog holds its own ordered anthropic list rather than reading one out of
+pricing, because order is meaning here (newest first within a family is how a bare family word is
+resolved) and the price table is a map with no order to give. The required drift test lives in
+internal/pricing, where the rates map is: putting it there costs no exported API, where the other
+direction would have meant exporting the map for a test's benefit. Display names are carried for
+catalog entries too, not only user-added ones, so the picker and the CLI read as English.
+
+Two divergences worth naming. The keys screen adds a model but does not remove one: the Store
+interface there is documented as narrow on purpose, and deletion of something somebody recorded by
+hand wants a confirmation step that is not in this deliverable, so removal is the CLI's alone. And
+a model typed into the free-text escape is remembered as well as selected, which is not in the ask
+but is what makes the escape worth using twice.
+
+One fix taken on the way, in the function being rewired: cancelling a model edit left the screen's
+editing flag set, so the next credential added on a provider that asks for a model was stored as an
+edit of the key the cursor had been on and the credential itself was never written. Held by
+TestLeavingAModelEditDoesNotPoisonTheNextAdd.
+
+Acceptance, clause by clause: an anthropic key offers the catalog with no setup is
+TestAnAnthropicKeyOffersTheListWithNoSetup and TestTheModelKeyOffersTheCatalogBeforeTheKeyboard; an
+unrecognised host offers only what its user added and says so is
+TestAnUnrecognisedEndpointIsOfferedNothing and TestAKeyOnAnUnknownEndpointOffersOnlyWhatItsOwnerAdded;
+a display name shows and keeps its id is TestAKeyRemembersTheModelsItsOwnerAdded and
+TestListingModelsShowsTheCatalogAndWhatWasAdded; picking records through SetModel is
+TestTheModelKeyOffersTheCatalogBeforeTheKeyboard, which also asserts Put was never called; a model
+on no list can still be typed is TestAModelOnNoListCanStillBeTyped; and the previous build's
+keys.json loading with nothing lost is TestAKeysFileFromThePreviousBuildLoadsWithNothingLost, which
+also holds that an empty list is still absent from the file rather than written as an empty array.
 
 ### K-02 Words find the model
 `status: claimed | owner: claude | branch: feat/one-key-many-models | depends: K-01`

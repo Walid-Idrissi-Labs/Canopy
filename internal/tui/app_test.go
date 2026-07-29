@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
@@ -20,7 +21,8 @@ import (
 
 // fakeKeyStore is the credential half, with no keychain involved.
 type fakeKeyStore struct {
-	keys []core.KeyMetadata
+	keys  []core.KeyMetadata
+	added map[string][]catalog.Model
 }
 
 func (f *fakeKeyStore) List() ([]core.KeyMetadata, error) { return f.keys, nil }
@@ -550,6 +552,18 @@ func (f *fakeKeyStore) SetModel(ref core.KeyRef, model string) error {
 		}
 	}
 	return errors.New("no such credential")
+}
+
+func (f *fakeKeyStore) Models(ref core.KeyRef) ([]catalog.Model, error) {
+	return f.added[ref.Name], nil
+}
+
+func (f *fakeKeyStore) AddModel(ref core.KeyRef, id, name string) error {
+	if f.added == nil {
+		f.added = map[string][]catalog.Model{}
+	}
+	f.added[ref.Name] = append(f.added[ref.Name], catalog.Model{ID: id, Name: name})
+	return nil
 }
 
 // The panic this asserts against was reachable in about four keystrokes from a fresh launch: open
