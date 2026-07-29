@@ -37,6 +37,7 @@ const (
 	ActionAgents = "agents"
 	ActionGreen  = "green"
 	ActionKeys   = "keys"
+	ActionModel  = "model"
 )
 
 // builtinInvocation reads a slash invocation, and whether it names a built-in.

@@ -5105,7 +5105,7 @@ TestANamedProfileIsNotSwappedForOneThatHasTheModel; the grown listing is
 TestListingProfilesNamesWhatEachOneCanRun.
 
 ### K-03 The model picker is a screen
-`status: claimed | owner: claude | branch: feat/one-key-many-models | depends: K-01`
+`status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
 `scope: internal/tui/, internal/tui/chat/, internal/config/commands.go, internal/session/ (additive)`
 
 Deliverable: /model, a new reserved builtin, opens a picker drawn the way help is drawn, over the
@@ -5122,11 +5122,47 @@ provider and key for the next request; the current model is marked; a key with n
 shows its section with the none-set warning rather than disappearing; /model appears in the slash
 menu; with colour off the picker is still readable.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: "overlay" in the ask, screen swap in the build: the repository has no compositing, and
 help already set the pattern for a screen that sits over everything and leaves without a trace,
 so the picker follows it rather than inventing z-order for one feature.
+
+Built as internal/tui/modelpicker.go, keyed before everything else in Update the way help is, so
+every key belongs to it while it is up and anything it does not use leaves with nothing changed.
+
+The one additive engine method turned out to exist already. Engine.UseCredential does exactly what
+the ask describes: it sets the session's key and model, refuses while a turn is in flight, and the
+next Send reads both straight off the session on its way to the resolver. Adding SetAgentModel
+beside it would have been a second name for one behaviour, so the picker calls the existing method
+through the chat screen, which is where a conversation's credential has always been changed from.
+That the change reaches the wire rather than only the snapshot is held at the session level by
+TestChangingTheModelReachesTheNextRequest, with a resolver and a provider client that both record
+what they were asked for.
+
+Two things the ask did not name. The layering test in internal/tui forbids package tui importing
+anything outside internal/core and internal/tui/*, so the "what can this key be pointed at" list is
+assembled by an exported keysui.Offered rather than by the picker calling internal/catalog itself;
+that also collapses what would have been a third copy of the merge into the one internal/tui/keys
+already had. And the chat context line grew the model beside the credential, as its own part so a
+narrow terminal drops the model and keeps the key rather than cutting one string in half; without it
+the acceptance clause about the line saying so had nothing to say.
+
+Applying also moves App.usingKey, so a conversation started afterwards follows the credential you
+moved to. It follows that key's own recorded default rather than the picked model, since the picked
+model is a fact about one conversation. Store.SetModel is never called from here.
+
+Acceptance, clause by clause: opening and leaving changing nothing is
+TestOpeningTheModelPickerAndLeavingChangesNothing; picking under the same key changing the next
+request and the context line saying so is TestPickingAModelMovesTheConversationAndTheHeaderSaysSo,
+resting on TestChangingTheModelReachesTheNextRequest for the wire; picking under a different key
+switching credential is TestPickingUnderAnotherKeySwitchesCredentialAsWell; the current model being
+marked and an empty key keeping its section with the none-set words is
+TestThePickerMarksWhereYouAreAndKeepsEmptySections; /model in the slash menu is
+TestTheModelCommandIsOfferedInTheSlashMenu; and colour-off readability is
+TestThePickerReadsWithNoColour. That the key's own default is untouched is
+TestPickingAModelNeverRewritesTheKeysDefault, and the mid-turn refusal the spec allows is
+TestChangingTheModelMidAnswerIsRefused.
 
 ### PG-K Phase K gate
 `status: todo | depends: K-01, K-02, K-03`

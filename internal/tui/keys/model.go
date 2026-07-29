@@ -244,23 +244,41 @@ func (m *Model) startModelPick(key core.KeyMetadata) {
 	m.mode = modeModelPick
 }
 
-// offered is everything this key can be pointed at, in the order it is worth reading: what the
-// catalog knows about the provider and endpoint, then what its owner added that the catalog lacks.
+// offered is Offered with this screen's error handling.
 func (m *Model) offered(key core.KeyMetadata) []catalog.Model {
-	offered := catalog.For(key.Ref.Provider, key.BaseURL)
-
-	added, err := m.store.Models(key.Ref)
+	offered, err := Offered(m.store, key)
 	if err != nil {
 		// Worth saying rather than swallowing: a key whose own list could not be read looks
 		// identical to one with nothing added, and the second is a normal state.
 		m.err = err
-		return offered
+	}
+	return offered
+}
+
+// Offered is everything a credential can be pointed at, in the order it is worth reading: what the
+// catalog knows about its provider and endpoint, then what its owner added that the catalog lacks.
+//
+// A package function, and exported, because the model picker asks this about every key at once and
+// two assemblies of one list are two lists that will eventually disagree. A name recorded for a
+// model the catalog already has improves that entry rather than adding a second row for it.
+//
+// The error is returned with the list rather than instead of it: the catalog half is still true when
+// the stored half could not be read, and showing it beats showing nothing.
+func Offered(store Store, key core.KeyMetadata) ([]catalog.Model, error) {
+	offered := catalog.For(key.Ref.Provider, key.BaseURL)
+
+	added, err := store.Models(key.Ref)
+	if err != nil {
+		return offered, err
 	}
 	for _, model := range added {
 		known := false
-		for _, existing := range offered {
+		for i, existing := range offered {
 			if existing.ID == model.ID {
 				known = true
+				if model.Name != "" {
+					offered[i].Name = model.Name
+				}
 				break
 			}
 		}
@@ -268,7 +286,7 @@ func (m *Model) offered(key core.KeyMetadata) []catalog.Model {
 			offered = append(offered, model)
 		}
 	}
-	return offered
+	return offered, nil
 }
 
 // handleModelPickKey moves through the offered models and takes one.

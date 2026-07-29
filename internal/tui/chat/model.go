@@ -986,6 +986,15 @@ func (m *Model) UseCredential(keyName, model string) {
 // SessionID is the conversation being shown.
 func (m Model) SessionID() string { return m.sessionID }
 
+// KeyName is the credential this conversation runs on.
+func (m Model) KeyName() string { return m.keyName }
+
+// ModelName is the model this conversation runs on.
+//
+// Read off the session rather than held here, because the session is the thing the engine actually
+// sends on and a second copy in this screen would be a second copy to keep in step.
+func (m Model) ModelName() string { return m.session.Model }
+
 // Awaiting reports whether a question is on screen. The frame uses it to change the footer, since
 // the keys mean something different while one is up.
 func (m Model) Awaiting() bool { return m.awaiting }
@@ -1849,6 +1858,12 @@ func (m Model) ContextParts() []string {
 		}
 		if m.keyName != "" {
 			parts = append(parts, m.keyName)
+		}
+		// The model beside the credential, because one key now runs many and the credential's name
+		// no longer answers "what am I talking to". Its own part rather than joined to the key, so a
+		// narrow terminal drops the model and keeps the key rather than cutting one string in half.
+		if m.session.Model != "" {
+			parts = append(parts, m.session.Model)
 		}
 	}
 

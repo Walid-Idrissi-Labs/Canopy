@@ -35,6 +35,7 @@ const (
 	screenReview
 	screenKeys
 	screenHelp
+	screenModel
 )
 
 // There was a launch screen here, shown for nine hundred milliseconds before the application
@@ -88,6 +89,16 @@ type App struct {
 	// helpFrom is where the help overlay returns to. Separate from cameFrom, because help is
 	// reachable from the credential screen too and one field would send you to the wrong place.
 	helpFrom screen
+
+	// keyStore is held so the model picker can be built from what is stored at the moment it is
+	// opened. The credential screen has its own copy of the same store; sharing one value rather
+	// than asking that screen for its list keeps the picker from depending on where that screen
+	// happens to have its cursor.
+	keyStore keysui.Store
+
+	// picker is the model picker while it is up, and its zero value the rest of the time. Rebuilt
+	// on every opening, so a key added since the last one is there.
+	picker modelPicker
 
 	// cameFrom is where escape goes back to. Recorded rather than assumed, because the credential
 	// screen is reachable from both chat and the dashboard, and always returning to one of them
@@ -170,6 +181,7 @@ func NewAppConfigured(
 		dashboard: New(store),
 		review:    NewReview(options.Review),
 		keys:      credentials,
+		keyStore:  keyStore,
 		cameFrom:  screenChat,
 		usingKey:  keyName,
 		dir:       dir,
@@ -266,6 +278,23 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		// The picker answers before anything else too, for the same reason help does: while it is up
+		// every key belongs to it, and the ones it does not use leave it rather than reaching a
+		// screen nobody can see. Escape changes nothing, which is what makes it safe to open.
+		if a.screen == screenModel {
+			switch key.String() {
+			case "j", "down":
+				a.picker.move(1)
+			case "k", "up":
+				a.picker.move(-1)
+			case "enter":
+				return a.applyPickedModel()
+			default:
+				a.screen = a.cameFrom
+			}
+			return a, nil
+		}
+
 		// Not while something is being typed into, or a message containing a question mark could
 		// never be written.
 		if key.String() == "?" && !a.typing() {
@@ -546,10 +575,44 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 		a.screen = screenDashboard
 	case chat.ActionKeys:
 		a.cameFrom, a.screen = screenChat, screenKeys
+	case chat.ActionModel:
+		a.openModelPicker(screenChat)
 	}
 	// The same visibility bookkeeping the key routing does, for the same reason: the agents
 	// screen animates only while it is in front.
 	return a, a.agents.SetVisible(a.screen == screenAgents)
+}
+
+// openModelPicker builds the picker from what is stored right now and shows it.
+func (a *App) openModelPicker(from screen) {
+	a.cameFrom = from
+	a.picker = newModelPicker(a.keyStore, a.chat.KeyName(), a.chat.ModelName())
+	a.screen = screenModel
+}
+
+// applyPickedModel points this conversation at the row the cursor is on.
+//
+// One call, through the chat screen, which is where a conversation's credential has always been
+// changed from: the credential screen does exactly this when somebody picks a key there. The engine
+// refuses mid answer and the refusal is shown rather than swallowed, because a choice that appears
+// to do nothing is how somebody concludes the screen is broken.
+//
+// Store.SetModel is deliberately not called. What this conversation runs on and what the key
+// defaults to are different facts, and rewriting the second from here would move every future
+// conversation on that credential because somebody tried something once.
+func (a App) applyPickedModel() (tea.Model, tea.Cmd) {
+	choice, ok := a.picker.Chosen()
+	if !ok {
+		a.screen = a.cameFrom
+		return a, nil
+	}
+
+	a.chat.UseCredential(choice.key, choice.id)
+	// New conversations and new agents follow the credential, but on that key's own default model
+	// rather than this choice, which belongs to this conversation alone.
+	a.usingKey = choice.key
+	a.screen = a.cameFrom
+	return a, nil
 }
 
 // newConversationModel is newConversation in the shape Update wants back.
@@ -681,6 +744,9 @@ func (a App) View() string {
 			// Only once the opening screen has gone, which is drawing the name itself.
 			Wordmark: !a.chat.Blank(),
 		}, a.chat.Body(), footer)
+	case screenModel:
+		return Frame(a.dim, Status{Screen: "model"}, a.picker.Body(),
+			Keys(a.dim.Width, "j/k", "move", "enter", "use it here", "esc", "back, unchanged"))
 	case screenKeys:
 		return Frame(a.dim, Status{Screen: "credentials"}, a.keys.Body(), a.keys.Footer())
 	default:
@@ -704,6 +770,8 @@ func (a App) Screen() string {
 		return "help"
 	case screenKeys:
 		return "keys"
+	case screenModel:
+		return "model"
 	default:
 		return "dashboard"
 	}

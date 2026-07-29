@@ -82,6 +82,7 @@ func Builtins() []Builtin {
 		{"help", "every key, on one screen"},
 		{"commands", "everything you can type here, and where each one came from"},
 		{"mode", "plan, build, runway or cruise, and what each one may change"},
+		{"model", "which model this conversation runs on, across every credential"},
 		{"steer", "correct the agent without throwing away what it has done"},
 		{"btw", "ask something about this conversation without joining it"},
 		{"new", "a fresh conversation, keeping this one"},
