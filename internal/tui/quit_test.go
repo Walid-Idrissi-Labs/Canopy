@@ -172,6 +172,7 @@ func TestSlashNavigationSettlesTheSelectedMode(t *testing.T) {
 		{action: chat.ActionAgents, screen: "agents"},
 		{action: chat.ActionGreen, screen: "dashboard"},
 		{action: chat.ActionKeys, screen: "keys"},
+		{action: chat.ActionModel, screen: "model"},
 	}
 
 	for _, tt := range tests {

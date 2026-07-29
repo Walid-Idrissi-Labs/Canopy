@@ -183,3 +183,59 @@ func TestAsidesWorkWithNoStorageAttached(t *testing.T) {
 		t.Errorf("an engine with no storage remembered %+v", got)
 	}
 }
+
+// A failure to write must not cost the answer.
+//
+// The person asked a question and got one; losing that because the history file could not be written
+// would be trading the thing they wanted for the thing that makes it convenient later. The failure
+// still has to reach somebody, which is what the storage error hook is for, so this holds both
+// halves at once.
+func TestAFailedRecordingDoesNotCostTheAnswer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+
+	var reported []error
+	client := &scriptedClient{name: "claude", events: reply("the parser lives in internal/config")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	if err := e.WithStorage(storage, func(err error) { reported = append(reported, err) }); err != nil {
+		t.Fatalf("WithStorage: %v", err)
+	}
+
+	s := e.Create("claude", "claude-opus-5")
+
+	// The table taken out from under a live engine, which is the cheapest honest way to make one
+	// write fail while everything around it goes on working.
+	if _, err := storage.db.Exec(`DROP TABLE asides`); err != nil {
+		t.Fatalf("dropping the table: %v", err)
+	}
+
+	answer, err := e.Aside(context.Background(), s.ID, "which file holds the parser")
+	if err != nil {
+		t.Fatalf("Aside reported %v, want the answer regardless of the write", err)
+	}
+	if answer == "" {
+		t.Fatal("the answer was lost with the write")
+	}
+
+	if len(reported) == 0 {
+		t.Fatal("the failed write reached nobody, so it is invisible as well as harmless")
+	}
+	if !strings.Contains(reported[0].Error(), "aside") {
+		t.Errorf("the reported error does not say what failed: %v", reported[0])
+	}
+
+	// And reading them back fails the same way: reported, and answered with nothing rather than
+	// with an error that would stop a conversation opening.
+	reported = nil
+	if kept := e.Asides(s.ID); len(kept) != 0 {
+		t.Errorf("asides came back from a table that is not there: %+v", kept)
+	}
+	if len(reported) == 0 {
+		t.Error("a failed read reached nobody")
+	}
+}

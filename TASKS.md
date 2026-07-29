@@ -4927,14 +4927,47 @@ The focus key is ctrl+g. Free on both counts: the message box owns ctrl+a, ctrl+
 and ctrl+j, and the screen already spends ctrl+c, ctrl+d, ctrl+k, ctrl+n and ctrl+r. It is in
 help.go under its own heading with the three answer keys.
 
-Three judgements worth recording. A visiting question does not inherit the own prompt's "any other
-key is no": your own question is one you are looking at, this one you walked to, and a stray key
-should not refuse on another agent's behalf either, so unfocused keys do nothing and focused ones
-answer only on y, a, n and esc. While this conversation has its own prompt the visitor panel shrinks
-to a single muted count line, because two heavy boxes over one message box would be two things
-competing to be answered first. And answering drops the question from the panel locally rather than
-re-reading the engine, since the entry does not leave the engine until the goroutine it unblocked
-wakes, and re-reading would put the answered question back on screen for a frame.
+Three judgements worth recording, two of them since amended by review and written here as they now
+stand. A visiting question does not inherit the own prompt's "any other key is no": your own question
+is one you are looking at, this one you walked to, and a stray key should not refuse on another
+agent's behalf either, so unfocused keys do nothing and focused ones answer only on y, a, n and esc.
+
+While this conversation has its own prompt the visitor panel shrinks to a single count line, because
+two heavy boxes over one message box would be two things competing to be answered first. The
+shrinking is unchanged; what it said was not honest. It read "ctrl+g after this one" whether or not
+the panel already held the keyboard, which is how the defect below stayed invisible, and it now
+states which of the two is true.
+
+Answering drops the question from the panel locally rather than re-reading the engine, since the
+entry does not leave the engine until the goroutine it unblocked wakes. That held for exactly one
+frame: the next engine event, and one arrives for every agent in the project, rebuilt the panel from
+PendingAll and put the answered question back with the cursor on it. The screen now remembers what it
+answered for as long as the engine goes on listing it, and forgets it the moment the engine does.
+
+Three defects found in review and fixed here, one of them breaking D-47 itself.
+
+Focus survived your own prompt taking precedence. It was cleared on esc and on an emptied queue and
+on nothing else, so a focus taken before your own question arrived sat there through the whole
+exchange: you answered yours with y, typed an ordinary sentence, and its leading y approved the
+subagent's command. Both halves are fixed. Focus is dropped in the same statement that sets awaiting,
+so no ordering of events can slip between the two, and the panel now says in words whenever it holds
+the keyboard, in both its full and its shrunk form, so a focus nobody can see is a state that cannot
+exist. Held by TestYourOwnPromptTakesTheFocusBackFromAVisitor, which is the reported scenario end to
+end down to the sentence beginning with y, and by TestTheFocusKeyDoesNothingWhileYourOwnQuestionIsUp.
+
+Focus rode the front of the queue rather than the question it was taken for, so a question answered
+on its own screen between ctrl+g and the keystroke handed that keystroke to whoever moved up. It
+pins a session id now, and a focus whose question has left drops rather than being inherited. That
+also changed how a queue is worked through: answering one no longer keeps the keyboard for the next,
+which costs a second ctrl+g per agent and is the right price, since focus is consent to answer one
+question and inheriting it is a decision nobody made. Held by
+TestAFocusedQuestionAnsweredElsewhereDoesNotPassTheKeyboardOn, with the queue behaviour in
+TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances.
+
+The answered-question flicker is fixed rather than explained: locally answered ids are filtered from
+the rebuilt list until PendingAll stops naming them, which is also when the note is dropped, so a
+later question from the same agent is not suppressed. Held by
+TestAnAnsweredQuestionDoesNotComeBackOnTheNextEvent.
 
 Acceptance, clause by clause: the panel appearing with the subagent's name and scope is
 TestASubagentsQuestionAppearsWithItsNameAndScope; typing and sending answering nothing is
@@ -5067,7 +5100,10 @@ everything else hanging off a session goes through.
 The engine records after the answer exists and never before it, since a question with no answer is
 not an exchange worth keeping and would be drawn as a question the agent ignored. A failure to write
 does not cost the answer: the write goes through the same persist path every other save uses, so a
-storage error is reported where the others are and the person still gets what they asked. The new
+storage error is reported where the others are and the person still gets what they asked. Held by
+TestAFailedRecordingDoesNotCostTheAnswer, which drops the table under a live engine and checks both
+halves, the answer coming back and the failure reaching the error hook, since a claim in a note that
+nothing tests is a claim that stops being true without anybody noticing. The new
 accessor is Asides, returning oldest first, and an engine with no storage attached still answers
 asides perfectly well and simply cannot remember them.
 

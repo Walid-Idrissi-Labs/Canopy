@@ -171,8 +171,15 @@ func TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances(t *testing.T) {
 		t.Errorf("the next question did not come forward:\n%s", next)
 	}
 
-	// The panel keeps the keyboard for the one behind it, which is what makes answering three of
-	// them three keystrokes rather than six.
+	// The keyboard goes back to the conversation with it, and the one behind needs its own ctrl+g.
+	// Two keystrokes per agent rather than one, on purpose: focus is consent to answer one question,
+	// and a panel that inherited it would spend the next keystroke on an agent nobody agreed to.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if len(engine.answered) != 1 {
+		t.Fatalf("the focus was inherited by the next question: %+v", engine.answered)
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if len(engine.answered) != 2 || engine.answered[1].session != "s3" {
 		t.Errorf("the second answer went to %+v", engine.answered)
@@ -229,5 +236,160 @@ func TestTheQuestionPanelDoesNotOverflowTheFrame(t *testing.T) {
 				t.Errorf("a line is %d columns wide: %q", width, plain(line))
 			}
 		}
+	}
+}
+
+// The scenario D-47 exists to forbid, reproduced end to end.
+//
+// Focus another agent's question, have your own arrive and take precedence, answer yours with y, and
+// then type an ordinary sentence. The leading y of that sentence used to approve the command the
+// subagent was waiting on, because focus was cleared on esc, on an emptied queue and on nothing
+// else: your own prompt took the screen and the panel kept the keyboard without saying so.
+func TestYourOwnPromptTakesTheFocusBackFromAVisitor(t *testing.T) {
+	engine, m := visited(waitingOn("worker-2", "s2", "rm -rf build"))
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if !strings.Contains(plain(m.Body()), "your keys answer this one") {
+		t.Fatalf("the panel does not say it has the keyboard:\n%s", plain(m.Body()))
+	}
+
+	// This conversation is asked something of its own, which outranks a visitor.
+	engine.prompt = pendingPrompt("make test")
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	// Answered the way it always was, and the y belongs to it.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if len(engine.answered) != 1 || engine.answered[0].session != "s1" {
+		t.Fatalf("the own prompt did not take the y: %+v", engine.answered)
+	}
+
+	// And then an ordinary sentence, which begins with the same letter.
+	m = typeText(m, "yes please carry on")
+	m = press(m, tea.KeyEnter)
+
+	for _, answer := range engine.answered {
+		if answer.session == "s2" {
+			t.Fatalf("typing spent the subagent's permission: %+v", engine.answered)
+		}
+	}
+	if m.InputValue() != "" {
+		t.Errorf("the sentence did not reach the message box, %q is left in it", m.InputValue())
+	}
+	if len(engine.sent) != 1 || engine.sent[0] != "yes please carry on" {
+		t.Errorf("the conversation received %+v", engine.sent)
+	}
+	// The subagent is still waiting, untouched, which is the whole point of it not having been
+	// answered by accident.
+	if !strings.Contains(plain(m.Body()), "worker-2") {
+		t.Errorf("the subagent's question left without anybody answering it:\n%s", plain(m.Body()))
+	}
+}
+
+// And the focus key cannot arm an invisible focus while your own question is up. Every key belongs
+// to your own prompt while it is on screen, which is what it has always meant: this one refuses it,
+// visibly, rather than quietly claiming the keyboard for somebody else.
+func TestTheFocusKeyDoesNothingWhileYourOwnQuestionIsUp(t *testing.T) {
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Turns: []core.Turn{turn("t1", "go", "", core.TurnAwaitingTools)}},
+		prompt:  pendingPrompt("make test"),
+		waiting: []session.Waiting{waitingOn("worker-2", "s2", "npm test")},
+	}
+	m := model(engine)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	// It went to the own prompt, which refuses on any key that is not y or a. That is today's
+	// behaviour and the point here is the other half: no focus was armed behind it.
+	if len(engine.answered) != 1 || engine.answered[0].session != "s1" || engine.answered[0].approved {
+		t.Fatalf("the own prompt did not treat it as a refusal: %+v", engine.answered)
+	}
+	m = typeText(m, "y")
+	for _, answer := range engine.answered {
+		if answer.session == "s2" {
+			t.Fatalf("ctrl+g armed a focus while the own prompt was up: %+v", engine.answered)
+		}
+	}
+	if m.InputValue() != "y" {
+		t.Errorf("the keystroke did not reach the message box, it holds %q", m.InputValue())
+	}
+}
+
+// Focus is a claim on one question, not on whatever is at the front of the queue when the key lands.
+// The question somebody walked to can be answered on its own screen or from the agents view in the
+// meantime, and the keystroke they were about to press must not land on whoever moved up.
+func TestAFocusedQuestionAnsweredElsewhereDoesNotPassTheKeyboardOn(t *testing.T) {
+	engine, m := visited(
+		waitingOn("worker-1", "s2", "npm test"),
+		waitingOn("worker-2", "s3", "rm -rf build"),
+	)
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	// Answered somewhere else entirely, and one ordinary event later the panel knows.
+	engine.waiting = engine.waiting[1:]
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if len(engine.answered) != 0 {
+		t.Errorf("the keystroke landed on %+v, want nothing", engine.answered)
+	}
+
+	view := plain(m.Body())
+	if !strings.Contains(view, "worker-2") {
+		t.Errorf("the next waiter is not on screen:\n%s", view)
+	}
+	if strings.Contains(view, "your keys answer this one") {
+		t.Errorf("the panel inherited a focus nobody gave it:\n%s", view)
+	}
+	// A fresh ctrl+g is what answers the one that moved up.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if len(engine.answered) != 1 || engine.answered[0].session != "s3" {
+		t.Errorf("the fresh focus answered %+v", engine.answered)
+	}
+}
+
+// A question answered from here stays gone, rather than coming back on the next event.
+//
+// The engine goes on listing it until the goroutine the answer unblocked wakes up, and an event
+// arrives for every agent in the project, so the panel used to redraw the answered question with the
+// cursor on it: an invitation to answer something twice.
+func TestAnAnsweredQuestionDoesNotComeBackOnTheNextEvent(t *testing.T) {
+	engine, m := visited(
+		waitingOn("worker-1", "s2", "npm test"),
+		waitingOn("worker-2", "s3", "rm -rf build"),
+	)
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+
+	// The fake removes the answered entry, so the engine is put back to what a real one looks like
+	// in the window before the parked goroutine wakes: still listing what was just answered.
+	answered := append([]session.Waiting(nil), engine.waiting...)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	engine.waiting = answered
+
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	view := plain(m.Body())
+	if strings.Contains(view, "worker-1") {
+		t.Errorf("the answered question came back on the next event:\n%s", view)
+	}
+	if !strings.Contains(view, "worker-2") {
+		t.Errorf("the one still waiting is not on screen:\n%s", view)
+	}
+
+	// The note lasts exactly as long as the engine goes on listing the answered question, and no
+	// longer. The parked goroutine wakes, the entry leaves, and the next question that agent raises
+	// shows like any other rather than being suppressed by a note about the last one.
+	engine.waiting = []session.Waiting{waitingOn("worker-2", "s3", "rm -rf build")}
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	engine.waiting = []session.Waiting{waitingOn("worker-1", "s2", "npm run build")}
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+
+	view = plain(m.Body())
+	if !strings.Contains(view, "worker-1") || !strings.Contains(view, "npm run build") {
+		t.Errorf("a later question from the same agent is being suppressed:\n%s", view)
 	}
 }

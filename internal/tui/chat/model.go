@@ -256,12 +256,26 @@ type Model struct {
 	// on purpose: those two own the keyboard the moment they exist, and none of these ever may.
 	visitors []session.Waiting
 
-	// visitorFocused is whether the panel has been handed the keyboard by an explicit keystroke.
+	// visitorFocus is the conversation whose question has been handed the keyboard, empty when the
+	// keyboard belongs to this conversation.
 	//
 	// The step D-47 puts between seeing another agent's question and answering it. Without it, the
 	// y somebody types into their own conversation would spend a permission in a conversation they
 	// are not even looking at, which is the same reflex D-43 forbids at one more remove.
-	visitorFocused bool
+	//
+	// A session id rather than a flag, because a flag focuses whatever is at the front of the queue
+	// at the moment the key lands, and the front can change between taking the focus and using it:
+	// the question somebody walked to can be answered on its own screen or from the agents view, and
+	// then the y they press arrives at whoever moved up. Focus is a claim on one question.
+	visitorFocus string
+
+	// answeredVisitors are questions answered from this screen that the engine still lists, because
+	// the goroutine the answer unblocked has not woken up yet.
+	//
+	// Held only for that window. Without it the next engine event, and one arrives for every agent
+	// in the project, rebuilds the panel from PendingAll and puts the just answered question back on
+	// screen with the cursor on it, which is an invitation to answer it twice.
+	answeredVisitors []string
 
 	// commands is resolved for the project this screen belongs to. Expansion happens here, at the
 	// input boundary, so the engine receives an ordinary prompt and no model or tool path gains a
@@ -591,13 +605,21 @@ func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 // that answer must be unreachable until somebody has said which question they are answering.
 const visitorFocusKey = "ctrl+g"
 
-// answerVisitor answers the question at the front of the queue, on behalf of the agent that asked.
+// answerVisitor answers the question the focus was taken for, on behalf of the agent that asked.
+//
+// The question, not the front of the queue. They are almost always the same one and the exception is
+// the one that matters: a question answered on its own screen while somebody here was reaching for
+// the keyboard leaves the queue, whoever was behind it moves up, and a focus that meant "the front"
+// would spend that keystroke on an agent nobody had looked at.
 func (m Model) answerVisitor(msg tea.KeyMsg) (Model, tea.Cmd) {
-	if len(m.visitors) == 0 {
-		m.visitorFocused = false
+	asking, ok := m.focusedVisitor()
+	if !ok {
+		// The question this focus was taken for is gone. The keyboard goes back to the conversation
+		// rather than moving on to the next waiter, because taking a focus is a decision about one
+		// agent and inheriting it is not a decision anybody made.
+		m.visitorFocus = ""
 		return m, nil
 	}
-	asking := m.visitors[0]
 
 	switch msg.String() {
 	case "y":
@@ -607,7 +629,7 @@ func (m Model) answerVisitor(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "n":
 		m.engine.Answer(asking.SessionID, false, false)
 	case "esc":
-		m.visitorFocused = false
+		m.visitorFocus = ""
 		return m, nil
 	default:
 		return m, nil
@@ -615,14 +637,41 @@ func (m Model) answerVisitor(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	// Dropped here as well as in the engine, so the panel advances on this keystroke. Answering
 	// hands the reply to a goroutine that is still parked, and the entry does not leave the engine
-	// until that goroutine wakes, so re-reading now would put the answered question back on screen
-	// and take it away again a moment later. The engine's own removal publishes an event, and the
-	// refresh that follows it is the one that has the truth.
-	m.visitors = append([]session.Waiting(nil), m.visitors[1:]...)
-	if len(m.visitors) == 0 {
-		m.visitorFocused = false
-	}
+	// until that goroutine wakes, so re-reading now would put the answered question back on screen.
+	// Remembered as answered for exactly as long as the engine goes on listing it, which is what
+	// stops the next event undoing this.
+	m.answeredVisitors = append(append([]string(nil), m.answeredVisitors...), asking.SessionID)
+	m.visitors = withoutVisitor(m.visitors, asking.SessionID)
+	m.visitorFocus = ""
 	return m, nil
+}
+
+// focusedVisitor is the question the keyboard was handed to, and whether it is still waiting.
+func (m Model) focusedVisitor() (session.Waiting, bool) {
+	if m.visitorFocus == "" {
+		return session.Waiting{}, false
+	}
+	for _, waiting := range m.visitors {
+		if waiting.SessionID == m.visitorFocus {
+			return waiting, true
+		}
+	}
+	return session.Waiting{}, false
+}
+
+// focusedOn reports whether a question is the one holding the keyboard.
+func (m Model) focusedOn(waiting session.Waiting) bool {
+	return m.visitorFocus != "" && m.visitorFocus == waiting.SessionID
+}
+
+func withoutVisitor(waiting []session.Waiting, sessionID string) []session.Waiting {
+	out := make([]session.Waiting, 0, len(waiting))
+	for _, one := range waiting {
+		if one.SessionID != sessionID {
+			out = append(out, one)
+		}
+	}
+	return out
 }
 
 // promptLines renders the question.
@@ -688,8 +737,18 @@ func (m Model) visitorPanel() []string {
 	}
 	t := theme.Current()
 	asking := m.visitors[0]
+	focused := m.focusedOn(asking)
 
 	if m.awaiting {
+		// Shrunk to a count while this conversation has a question of its own, which outranks a
+		// visitor. It says whether the panel holds the keyboard either way: a focus nobody can see
+		// is a focus that answers for somebody without their knowing, so this line is written so
+		// that state cannot exist unsaid. Your own prompt drops the focus, so the second half is
+		// belt and braces, and belt and braces is what this particular sentence is for.
+		if focused {
+			return []string{"  " + t.Warning.Render(othersWaiting(m.visitors)+
+				", and your keys still answer it, esc to stop")}
+		}
 		return []string{"  " + t.Muted.Render(othersWaiting(m.visitors)+", "+
 			visitorFocusKey+" after this one")}
 	}
@@ -716,7 +775,12 @@ func (m Model) visitorPanel() []string {
 		body = append(body, t.Muted.Render(othersWaiting(m.visitors[1:])))
 	}
 
-	if m.visitorFocused {
+	if focused {
+		// Said in words before the keys are offered. The keys alone imply the panel has the
+		// keyboard and do not state it, and the thing somebody has to be able to see at a glance is
+		// exactly that their next keystroke is going somewhere other than their own conversation.
+		body = append(body, t.Warning.Render("your keys answer this one until esc"))
+
 		const fixed = len("y once   a always,    n no   esc leave it")
 		body = append(body,
 			t.Key.Render("y")+t.Muted.Render(" once   ")+
@@ -863,11 +927,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	// means nothing here does nothing, rather than refusing on somebody else's behalf the way an
 	// unrecognised key refuses your own question above. Your own question is one you are looking
 	// at; this one you had to walk to, and a stray keystroke should not spend it either way.
-	if m.visitorFocused {
+	if m.visitorFocus != "" {
 		return m.answerVisitor(msg)
 	}
 	if msg.String() == visitorFocusKey && len(m.visitors) > 0 {
-		m.visitorFocused = true
+		// The front of the queue, which is the one the panel is showing, remembered by name so the
+		// keys that follow answer that agent and not whoever happens to be at the front by then.
+		m.visitorFocus = m.visitors[0].SessionID
 		return m, nil
 	}
 
@@ -1087,18 +1153,44 @@ func (m *Model) refresh() {
 	// everywhere and two copies sharing a backing array would let one of them rewrite the other's
 	// panel from under it.
 	var visitors []session.Waiting
+	var stillListed []string
 	for _, waiting := range m.engine.PendingAll() {
-		if waiting.SessionID != m.sessionID {
-			visitors = append(visitors, waiting)
+		if waiting.SessionID == m.sessionID {
+			continue
 		}
+		if answeredHere(m.answeredVisitors, waiting.SessionID) {
+			// Answered from this screen a moment ago and still on the engine's list, because the
+			// goroutine holding it has not woken. Kept out of the panel and kept in the note, so it
+			// stays out until the engine itself stops listing it.
+			stillListed = append(stillListed, waiting.SessionID)
+			continue
+		}
+		visitors = append(visitors, waiting)
 	}
 	m.visitors = visitors
-	if len(m.visitors) == 0 {
-		// Focus is a claim on a question that exists. Answered elsewhere, or the turn cancelled
-		// under it, and the keyboard goes back to the conversation rather than being held by a
-		// panel that has nothing left to answer.
-		m.visitorFocused = false
+	m.answeredVisitors = stillListed
+
+	// Focus is a claim on one question that is still waiting, and it survives neither that question
+	// leaving nor this conversation being asked something of its own.
+	//
+	// The second is the half that mattered. Your own prompt takes the keyboard the moment it exists,
+	// so a focus taken before it arrived would sit there invisibly through the whole exchange, and
+	// the y that answered your own question would be followed by whatever you typed next landing on
+	// somebody else's. Cleared in the same statement that sets awaiting, so no ordering of events
+	// can slip between the two.
+	if _, waiting := m.focusedVisitor(); !waiting || m.awaiting {
+		m.visitorFocus = ""
 	}
+}
+
+// answeredHere reports whether a question was answered from this screen and is still being listed.
+func answeredHere(answered []string, sessionID string) bool {
+	for _, id := range answered {
+		if id == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 // Session exposes the current session. For tests and for the screen around this one.
