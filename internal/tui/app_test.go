@@ -16,6 +16,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
+	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -862,5 +863,44 @@ func TestThePickerReadsWithNoColour(t *testing.T) {
 	}
 	if !strings.Contains(view, "> ") {
 		t.Errorf("with no colour, nothing marks the row the cursor is on:\n%s", view)
+	}
+}
+
+// The corner of the frame answers "whose conversation am I in", which is the question somebody with
+// several agents running has every time they look up, and it follows them as they move between them.
+func TestTheCornerNamesTheConversationsAgent(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Turns: []core.Turn{{
+				ID: "t1", State: core.TurnComplete,
+				Request: core.Message{Role: core.RoleUser, Text: "hello"},
+			}}},
+			"session-7": {ID: "session-7"},
+		},
+	}
+	app := tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+	sized, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	view := plain(sized.(tui.App).View())
+	if !strings.Contains(view, "main") {
+		t.Errorf("the conversation Canopy opened on is not named in the corner:\n%s", view)
+	}
+	// And it is not said twice: the facts row gave the name up when the title took it.
+	if strings.Count(view, "main") != 1 {
+		t.Errorf("the agent's name is on the header %d times:\n%s", strings.Count(view, "main"), view)
+	}
+
+	// Moving to a subagent's conversation moves the name with it.
+	switched, _ := sized.(tui.App).Update(agentsui.SwitchMsg{SessionID: "session-7", AgentName: "worker-2"})
+	moved := plain(switched.(tui.App).View())
+	if !strings.Contains(moved, "worker-2") {
+		t.Errorf("the corner still names the conversation that was left:\n%s", moved)
+	}
+	if strings.Contains(moved, "main") {
+		t.Errorf("the corner names two agents at once:\n%s", moved)
 	}
 }

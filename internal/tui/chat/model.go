@@ -1167,6 +1167,19 @@ func (m *Model) UseCredential(keyName, model string) {
 // SessionID is the conversation being shown.
 func (m Model) SessionID() string { return m.sessionID }
 
+// AgentName is whose conversation this is, empty where no agent owns it.
+//
+// Read by the frame around this screen, which writes it in the corner. It is not repeated in the
+// facts row: the same word twice on one header is one of them wasted.
+func (m Model) AgentName() string { return m.agentName }
+
+// SetAgent names the agent whose conversation this is.
+//
+// Needed because the conversation Canopy opens on is handed to this screen at construction, before
+// anything has switched into it, and the agent that owns it is named by whoever started it. Every
+// later switch carries the name through SetSession instead.
+func (m *Model) SetAgent(name string) { m.agentName = name }
+
 // KeyName is the credential this conversation runs on.
 func (m Model) KeyName() string { return m.keyName }
 
@@ -2030,12 +2043,11 @@ func (m Model) Context() string { return strings.Join(m.ContextParts(), "  ") }
 // joined string. Truncating a joined string cuts a fact in half, and half of "12.3k tokens" is a
 // number with no unit on it.
 func (m Model) ContextParts() []string {
+	// The agent's name used to be first here, and is not here at all any more: it moved into the
+	// header's title, beside the mark, where it answers "whose conversation am I in" without
+	// spending a fact slot. Written in both places it would be the same word twice on one row, and
+	// the facts row is the half that gets dropped from the right on a narrow terminal.
 	parts := []string{}
-	if m.agentName != "" {
-		// First, because with several agents the question "whose conversation am I in" comes before
-		// every other thing this line says.
-		parts = append(parts, m.agentName)
-	}
 	// The opening screen already says where the agent is working and what it is talking to, along
 	// its bottom left, so while that screen is up the header does not say the same two things three
 	// rows above it. They move up here the moment the conversation starts and takes the floor back.

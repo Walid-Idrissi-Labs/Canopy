@@ -4947,7 +4947,7 @@ TestTheQuestionPanelDoesNotOverflowTheFrame. The agents screen is untouched: no 
 internal/tui/agents changed, and its existing awaiting-permission tests still hold.
 
 ### U-17 The top left names who you are with
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/tui/header.go, internal/tui/app.go, internal/tui/chat/model.go`
 
 Deliverable: next to the triangle the header writes the name of the agent whose conversation is
@@ -4960,10 +4960,35 @@ subagent's conversation it reads that name; agents, keys, dashboard and help sti
 the tall header still shows the wordmark; at 80 columns a long agent name is truncated rather
 than pushing the facts off the row.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: the brand does not vanish, it stops squatting on the one line that could say where you
 are. The wordmark and the blank-screen mark are untouched.
+
+Built. Status gained an Agent field, and both header shapes read it through one Status.title, so the
+short and the tall version cannot come to disagree about what the corner says. Empty means the
+brand, which is what every screen that is nobody's conversation passes.
+
+The name is cut to a quarter of the row, floored at eight cells and capped at twenty four, measured
+in cells rather than runes because a name holds whatever somebody typed. The cut mark is three ASCII
+dots rather than the ellipsis this package uses elsewhere, since new bytes in this repository stay
+inside ASCII.
+
+One thing the ask did not name. The conversation Canopy opens on belongs to an agent called main,
+created by cmd/canopy a moment before the interface exists, and the chat screen learns an agent's
+name from whoever switched into it, which on that one conversation is nobody. Rather than growing
+the chat's engine interface with an agent lookup for a single string, AppOptions gained an Agent
+field that cmd/canopy fills from the agent it just created, applied beside SetCommands the same way.
+Every other route into a conversation still carries the name through SetSession, and a conversation
+no agent owns, a fresh ctrl+n among them, correctly reads as the brand.
+
+Acceptance, clause by clause: the corner reading the mark then the agent, and screens that are
+nobody's conversation keeping canopy, is TestTheHeaderNamesTheAgentInsteadOfTheBrand across both
+header heights; the name following you from main to a subagent, and being on the header exactly
+once, is TestTheCornerNamesTheConversationsAgent; truncation at eighty columns without pushing the
+screen or the mode off the row is TestALongAgentNameIsCutRatherThanPushingTheFactsOff. The wordmark
+is untouched and still held by TestAStartedConversationDrawsTheNameOnlyInTheCorner and its pair, and
+the height and width invariants by the two tests that already covered them.
 
 ### U-18 Tasks are a block whose states you can see across the room
 `status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
