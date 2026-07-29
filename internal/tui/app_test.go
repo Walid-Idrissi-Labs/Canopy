@@ -63,6 +63,7 @@ type stubEngine struct {
 	using    [2]string
 	created  int
 	asking   bool
+	waiting  []session.Waiting
 	mode     core.Mode
 	steered  []string
 	undone   []string
@@ -99,6 +100,8 @@ func (e *stubEngine) Pending(string) (session.Prompt, bool) {
 }
 
 func (e *stubEngine) Answer(string, bool, bool) bool { return false }
+
+func (e *stubEngine) PendingAll() []session.Waiting { return e.waiting }
 
 // The stub implements the agents view's engine too, so the app level tests exercise the real path
 // rather than a screen that was never constructed.

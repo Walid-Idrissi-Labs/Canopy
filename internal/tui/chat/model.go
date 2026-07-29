@@ -49,6 +49,14 @@ type Engine interface {
 	Pending(sessionID string) (session.Prompt, bool)
 	Answer(sessionID string, approved, remember bool) bool
 
+	// PendingAll is every question waiting on a person anywhere in the project, oldest first.
+	//
+	// Asked for because a question raised by another agent has to be visible from here: walking to a
+	// subagent's screen to find out it was stuck is the attention failure D-47 names. What this
+	// screen does with them is deliberately less than what it does with its own, since none of them
+	// may take the keyboard from the conversation somebody is actually in.
+	PendingAll() []session.Waiting
+
 	// UseCredential points this conversation at a different credential and model.
 	UseCredential(sessionID, keyName, model string) error
 
@@ -235,6 +243,20 @@ type Model struct {
 	// prompt is the tool call waiting on an answer, when there is one.
 	prompt   session.Prompt
 	awaiting bool
+
+	// visitors are the questions other conversations are waiting on, oldest first.
+	//
+	// Shown here so that a subagent stuck behind a permission prompt is discovered from wherever
+	// somebody is sitting rather than by going to look. They are held apart from prompt and awaiting
+	// on purpose: those two own the keyboard the moment they exist, and none of these ever may.
+	visitors []session.Waiting
+
+	// visitorFocused is whether the panel has been handed the keyboard by an explicit keystroke.
+	//
+	// The step D-47 puts between seeing another agent's question and answering it. Without it, the
+	// y somebody types into their own conversation would spend a permission in a conversation they
+	// are not even looking at, which is the same reflex D-43 forbids at one more remove.
+	visitorFocused bool
 
 	// commands is resolved for the project this screen belongs to. Expansion happens here, at the
 	// input boundary, so the engine receives an ordinary prompt and no model or tool path gains a
@@ -532,6 +554,48 @@ func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// visitorFocusKey is the one keystroke that hands the keyboard to another agent's question.
+//
+// ctrl+g because it is free: every printable key belongs to the message box, and ctrl+a, ctrl+e,
+// ctrl+u, ctrl+w and ctrl+j are the box's own editing keys, while ctrl+c, ctrl+d, ctrl+k, ctrl+n and
+// ctrl+r already mean something on this screen. It is also deliberately not y or a: the two keys
+// that answer must be unreachable until somebody has said which question they are answering.
+const visitorFocusKey = "ctrl+g"
+
+// answerVisitor answers the question at the front of the queue, on behalf of the agent that asked.
+func (m Model) answerVisitor(msg tea.KeyMsg) (Model, tea.Cmd) {
+	if len(m.visitors) == 0 {
+		m.visitorFocused = false
+		return m, nil
+	}
+	asking := m.visitors[0]
+
+	switch msg.String() {
+	case "y":
+		m.engine.Answer(asking.SessionID, true, false)
+	case "a":
+		m.engine.Answer(asking.SessionID, true, true)
+	case "n":
+		m.engine.Answer(asking.SessionID, false, false)
+	case "esc":
+		m.visitorFocused = false
+		return m, nil
+	default:
+		return m, nil
+	}
+
+	// Dropped here as well as in the engine, so the panel advances on this keystroke. Answering
+	// hands the reply to a goroutine that is still parked, and the entry does not leave the engine
+	// until that goroutine wakes, so re-reading now would put the answered question back on screen
+	// and take it away again a moment later. The engine's own removal publishes an event, and the
+	// refresh that follows it is the one that has the truth.
+	m.visitors = append([]session.Waiting(nil), m.visitors[1:]...)
+	if len(m.visitors) == 0 {
+		m.visitorFocused = false
+	}
+	return m, nil
+}
+
 // promptLines renders the question.
 func (m Model) promptLines() []string {
 	t := theme.Current()
@@ -575,6 +639,89 @@ func (m Model) promptLines() []string {
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
 
 	return promptPanel(body, inner)
+}
+
+// visitorPanel is another agent's question, above the message box.
+//
+// Deliberately smaller than the conversation's own prompt. It wears the same frame, so it is
+// recognisable as the same kind of thing from across the room, and it says four lines at most:
+// who is asking, what they want, how many others are behind them, and which key hands it the
+// keyboard. The full detail lives on that agent's own screen, which is where somebody who wants to
+// read a command in full is one keystroke away from being.
+//
+// While this conversation has a question of its own the panel shrinks to a single line. Your own
+// prompt outranks a visitor, and two heavy boxes stacked over one message box would be two things
+// competing to be answered first, but the count still has to be there or the second agent waits
+// unseen until the first is dealt with.
+func (m Model) visitorPanel() []string {
+	if len(m.visitors) == 0 {
+		return nil
+	}
+	t := theme.Current()
+	asking := m.visitors[0]
+
+	if m.awaiting {
+		return []string{"  " + t.Muted.Render(othersWaiting(m.visitors)+", "+
+			visitorFocusKey+" after this one")}
+	}
+
+	inner := m.width - promptChrome
+	if inner < 12 {
+		inner = 12
+	}
+
+	// Nothing bounds an agent's name or a scope's text, and both are drawn on a line with a wall at
+	// the end of it, so both are cut here. The full command and the full scope are on the asking
+	// agent's own screen, which is where somebody deciding on the detail should be.
+	var body []string
+	body = append(body, t.Warning.Render(truncate(asking.Agent, inner/3))+
+		t.Body.Render(" wants to "+describeRequest(asking.Request)))
+
+	// One line of what it actually is, truncated rather than wrapped. A command shown in full is
+	// what the asking agent's own screen is for; here the job is to say which agent needs a person,
+	// and a panel that grows with the command would push the conversation off the screen.
+	if what := requestSubject(asking.Request); what != "" {
+		body = append(body, t.Muted.Render(truncate(what, inner)))
+	}
+	if len(m.visitors) > 1 {
+		body = append(body, t.Muted.Render(othersWaiting(m.visitors[1:])))
+	}
+
+	if m.visitorFocused {
+		const fixed = len("y once   a always,    n no   esc leave it")
+		body = append(body,
+			t.Key.Render("y")+t.Muted.Render(" once   ")+
+				t.Key.Render("a")+t.Muted.Render(" always, "+
+				truncate(asking.Scope().String(), inner-fixed)+"   ")+
+				t.Key.Render("n")+t.Muted.Render(" no   ")+
+				t.Key.Render("esc")+t.Muted.Render(" leave it"))
+	} else {
+		body = append(body, t.Key.Render(visitorFocusKey)+
+			t.Muted.Render(" to answer it, and nothing else here will"))
+	}
+	return promptPanel(body, inner)
+}
+
+// othersWaiting is how many agents are queued behind the one being shown, in words.
+func othersWaiting(waiting []session.Waiting) string {
+	if len(waiting) == 1 {
+		return waiting[0].Agent + " is waiting on you"
+	}
+	return fmt.Sprintf("%d agents are waiting on you", len(waiting))
+}
+
+// requestSubject is the one line worth showing about a call somebody else's agent wants to make.
+func requestSubject(req permission.Request) string {
+	switch {
+	case req.Command != "":
+		return req.Command
+	case len(req.Paths) > 0:
+		return strings.Join(req.Paths, " ")
+	case req.Opaque && req.Arguments != "":
+		return req.Arguments
+	default:
+		return ""
+	}
 }
 
 // promptChrome is the columns the question's frame spends on itself: an indent, two walls and a
@@ -679,6 +826,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	// wondering why nothing happens is a bad minute to give somebody.
 	if m.awaiting {
 		return m.answerPrompt(msg)
+	}
+
+	// Another agent's question, and the two keystrokes it takes to answer one.
+	//
+	// While the panel has been focused it holds the keys that answer, and only those: a key that
+	// means nothing here does nothing, rather than refusing on somebody else's behalf the way an
+	// unrecognised key refuses your own question above. Your own question is one you are looking
+	// at; this one you had to walk to, and a stray keystroke should not spend it either way.
+	if m.visitorFocused {
+		return m.answerVisitor(msg)
+	}
+	if msg.String() == visitorFocusKey && len(m.visitors) > 0 {
+		m.visitorFocused = true
+		return m, nil
 	}
 
 	// The list takes the keys that mean something in a list, and only those, and only while it is
@@ -889,6 +1050,26 @@ func (m *Model) refresh() {
 	m.loaded = true
 	_, m.working = current.Active()
 	m.prompt, m.awaiting = m.engine.Pending(m.sessionID)
+
+	// Every other conversation's questions, read the same way and at the same moment, so the panel
+	// cannot disagree with the conversation it is drawn above. Events arrive here for every session
+	// rather than only this one, which is what makes this current without any extra plumbing.
+	// A fresh slice rather than the old one truncated, because this model is copied by value
+	// everywhere and two copies sharing a backing array would let one of them rewrite the other's
+	// panel from under it.
+	var visitors []session.Waiting
+	for _, waiting := range m.engine.PendingAll() {
+		if waiting.SessionID != m.sessionID {
+			visitors = append(visitors, waiting)
+		}
+	}
+	m.visitors = visitors
+	if len(m.visitors) == 0 {
+		// Focus is a claim on a question that exists. Answered elsewhere, or the turn cancelled
+		// under it, and the keyboard goes back to the conversation rather than being held by a
+		// panel that has nothing left to answer.
+		m.visitorFocused = false
+	}
 }
 
 // Session exposes the current session. For tests and for the screen around this one.
@@ -1204,9 +1385,10 @@ func (m Model) transcriptHeight() int {
 	h -= m.menu.height()
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
-	// same reason.
+	// same reason, and so does another agent's question.
 	h -= len(m.btwPanel())
 	h -= len(m.steeringPane())
+	h -= len(m.visitorPanel())
 
 	// The jump pill takes its rows from the conversation too, and only while it is on screen. It is
 	// keyed on the scroll position rather than on the rendered pill because the pill's height is
@@ -1235,8 +1417,10 @@ func (m Model) Body() string {
 			step:    m.markStep,
 			// Below the box here, because the box is in the middle of the screen and below is where
 			// the room is. On a conversation in progress the box is on the floor and the list goes
-			// above it instead. The btw panel goes with it, for the same reason.
-			panel: m.btwPanel(),
+			// above it instead. The btw panel goes with it, for the same reason, and so does another
+			// agent's question: a fresh conversation is exactly where somebody sits while agents they
+			// started are working, so it is the last screen that should hide one asking for a hand.
+			panel: append(m.visitorPanel(), m.btwPanel()...),
 			menu:  m.menu.lines(m.width, m.menuFilter()),
 		}.render()
 	}
@@ -1268,6 +1452,9 @@ func (m Model) Body() string {
 	// The btw panel sits above the box, where the answers to questions about the conversation are
 	// close to the conversation they are about without being in it.
 	rows = append(rows, m.btwPanel()...)
+	// Another agent's question goes closest to the box, because it is the thing on this screen most
+	// likely to be why somebody came back to it.
+	rows = append(rows, m.visitorPanel()...)
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)

@@ -4884,7 +4884,7 @@ round's file boundary in section 2.1 and the change is additive, with no existin
 touched.
 
 ### U-16 An agent's question reaches the screen you are on
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/tui/chat/, internal/tui/app.go, internal/session/approval.go (additive)`
 
 Deliverable: while you sit on one conversation, a permission prompt raised by any other agent in
@@ -4902,11 +4902,49 @@ oldest plus a count, and answering advances to the next; when this conversation'
 up while a subagent also waits, the own prompt shows and the count says the other is still there;
 answering from the agents screen still works as today.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-47. Overlaps U-03 deliberately: this block is the chat-screen surface, U-03 keeps the
 rest of the cross-screen story. The focus key must not collide with typing or an existing binding
 and must appear in help; Q-21 is where binding taste gets settled.
+
+Built. The engine gained one accessor, PendingAll, returning a new Waiting type: session id, agent
+name, request and decision, oldest first. Oldest first needed a number, since the pending map has no
+order and a wall clock cannot separate two prompts a fan out raises in the same millisecond, so
+Prompt carries an unexported install sequence set under the lock in Approve. An agent name comes
+from the agent records walked in creation order inside the same lock, falling back to the session id
+rather than to blank: a question from a conversation with no agent record is still one somebody has
+to be able to find.
+
+Nothing new was needed to make the chat notice. Engine events already arrive for every session
+rather than only the one on screen, and every event already ends in refresh, so refresh reads
+PendingAll beside Pending and the panel cannot disagree with the prompt drawn above it.
+
+The focus key is ctrl+g. Free on both counts: the message box owns ctrl+a, ctrl+e, ctrl+u, ctrl+w
+and ctrl+j, and the screen already spends ctrl+c, ctrl+d, ctrl+k, ctrl+n and ctrl+r. It is in
+help.go under its own heading with the three answer keys.
+
+Three judgements worth recording. A visiting question does not inherit the own prompt's "any other
+key is no": your own question is one you are looking at, this one you walked to, and a stray key
+should not refuse on another agent's behalf either, so unfocused keys do nothing and focused ones
+answer only on y, a, n and esc. While this conversation has its own prompt the visitor panel shrinks
+to a single muted count line, because two heavy boxes over one message box would be two things
+competing to be answered first. And answering drops the question from the panel locally rather than
+re-reading the engine, since the entry does not leave the engine until the goroutine it unblocked
+wakes, and re-reading would put the answered question back on screen for a frame.
+
+Acceptance, clause by clause: the panel appearing with the subagent's name and scope is
+TestASubagentsQuestionAppearsWithItsNameAndScope; typing and sending answering nothing is
+TestTypingAndSendingAnswersNobodyElsesQuestion; the focus key then y approving exactly that
+subagent is TestFocusingThenYesApprovesTheAgentThatAsked, with the other answers in
+TestTheFocusedPanelAlwaysAndRefuseAndLeaveIt; two waiting showing the oldest plus a count and
+advancing on an answer is TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances; the own prompt
+keeping precedence with the count still visible is
+TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted. The engine half is
+TestEveryPendingQuestionIsListedOldestFirstAndNamed and
+TestAQuestionFromAnUnnamedConversationIsStillNamed, and the frame arithmetic is
+TestTheQuestionPanelDoesNotOverflowTheFrame. The agents screen is untouched: no file under
+internal/tui/agents changed, and its existing awaiting-permission tests still hold.
 
 ### U-17 The top left names who you are with
 `status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`

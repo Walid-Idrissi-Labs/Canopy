@@ -61,6 +61,11 @@ func bindings() []section {
 			{"a", "allow it for the rest of the session"},
 			{"any other key", "refuse it"},
 		}},
+		{"another agent's question, above the box", []binding{
+			{"ctrl+g", "answer it. nothing else here can, which is the point"},
+			{"y / a / n", "once, always, or no, once it has the keyboard"},
+			{"esc", "leave it waiting and go back to typing"},
+		}},
 		{"agents", []binding{
 			{"1 to 8", "jump to that pane, and again to open it"},
 			{"enter", "open the selected agent's conversation"},

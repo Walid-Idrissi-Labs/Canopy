@@ -35,9 +35,16 @@ type fakeEngine struct {
 	applied    []session.CompactionResult
 	prompt     *session.Prompt
 	answers    [][2]bool
-	trust      core.TrustLevel
-	undone     []string
-	undoErr    error
+
+	// waiting is every question pending anywhere, including this conversation's own, which is what
+	// the engine returns. answered records who was answered as well as how, since answering the
+	// wrong agent is the failure the focus step exists to prevent and a bare yes or no cannot show
+	// it.
+	waiting  []session.Waiting
+	answered []answeredPrompt
+	trust    core.TrustLevel
+	undone   []string
+	undoErr  error
 
 	forkedThrough string
 	trail         *permission.Trail
@@ -96,11 +103,32 @@ func (e *fakeEngine) Pending(string) (session.Prompt, bool) {
 	return *e.prompt, true
 }
 
-func (e *fakeEngine) Answer(_ string, approved, remember bool) bool {
+func (e *fakeEngine) Answer(sessionID string, approved, remember bool) bool {
 	e.answers = append(e.answers, [2]bool{approved, remember})
+	e.answered = append(e.answered,
+		answeredPrompt{session: sessionID, approved: approved, remember: remember})
 	e.prompt = nil
+
+	// The answered question leaves the queue, which is what the real engine does a moment later when
+	// the goroutine it unblocked wakes up and removes it.
+	remaining := e.waiting[:0]
+	for _, w := range e.waiting {
+		if w.SessionID != sessionID {
+			remaining = append(remaining, w)
+		}
+	}
+	e.waiting = remaining
 	return true
 }
+
+// answeredPrompt is one answer and who it was given on behalf of.
+type answeredPrompt struct {
+	session  string
+	approved bool
+	remember bool
+}
+
+func (e *fakeEngine) PendingAll() []session.Waiting { return e.waiting }
 
 // The mode is what the box shows and what the permission layer decides against, so the fake holds a
 // real one rather than answering a constant: a stub that always said "build" would make the
