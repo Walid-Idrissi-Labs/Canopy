@@ -311,7 +311,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Not while something is being typed into, or a message containing a question mark could
 		// never be written.
 		if key.String() == "?" && !a.typing() {
-			a.helpFrom, a.screen = a.screen, screenHelp
+			a.helpFrom = a.screen
+			if a.screen == screenChat {
+				a.leaveChat(screenHelp)
+			} else {
+				a.screen = screenHelp
+			}
 			return a, nil
 		}
 
@@ -444,8 +449,7 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 			// A mode the key had stopped on is applied on the way out rather than left to a timer
 			// that will never fire. The mode is written down with the conversation, so abandoning it
 			// here would reopen tomorrow in the one somebody had just moved away from.
-			a.chat.SettleMode()
-			return true, a, tea.Quit
+			return a.quit()
 		case "ctrl+n":
 			if a.chat.Awaiting() {
 				return false, a, nil
@@ -470,9 +474,9 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 			}
 			if msg.String() == "ctrl+k" {
 				a.cameFrom = screenChat
-				a.screen = screenKeys
+				a.leaveChat(screenKeys)
 			} else {
-				a.screen = screenAgents
+				a.leaveChat(screenAgents)
 			}
 			return true, a, nil
 		}
@@ -506,11 +510,15 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 			// Quit works from every screen, not only the ones somebody happens to leave from. Before
 			// this it did nothing here, which on the one screen with no text field to blame looked
 			// like the program refusing to close.
-			return true, a, tea.Quit
+			return a.quit()
 		}
 
 	case screenDashboard:
 		switch msg.String() {
+		case "ctrl+c":
+			// The embedded dashboard's own handler also quits on ctrl+c, but routing it through the
+			// application first preserves any mode selection made in the conversation.
+			return a.quit()
 		case "q":
 			// Back, not quit. The dashboard's own key handler quits on `q`, which is right for the
 			// standalone monitor it was written for and wrong here: inside the application `q` means
@@ -552,7 +560,7 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 		if msg.String() == "ctrl+c" {
 			// Quit works here too, whatever pane the review is in: ctrl+c is not typable into the
 			// commit subject, so there is no field for it to belong to instead.
-			return true, a, tea.Quit
+			return a.quit()
 		}
 
 	case screenKeys:
@@ -566,10 +574,30 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 			a.screen = a.cameFrom
 			return true, a, nil
 		case "q", "ctrl+c":
-			return true, a, tea.Quit
+			return a.quit()
 		}
 	}
 	return false, a, nil
+}
+
+// leaveChat shows another screen only after applying the mode the key stopped on.
+//
+// The settle timer continues while another screen is visible, but that is not enough: somebody can
+// leave Chat and quit before the timer fires. Applying here keeps navigation from turning a visible
+// safety choice into a setting that silently disappears when the program closes.
+func (a *App) leaveChat(next screen) {
+	a.chat.SettleMode()
+	a.screen = next
+}
+
+// quit is the one application exit path.
+//
+// A pending mode belongs to the conversation even when another screen is in front. Every route to
+// tea.Quit goes through here so quitting from Agents, Review, Keys or Worktrees cannot reopen the
+// conversation later in the mode somebody had just moved away from.
+func (a App) quit() (bool, App, tea.Cmd) {
+	a.chat.SettleMode()
+	return true, a, tea.Quit
 }
 
 // runAction answers a slash command that named something the chat screen cannot do for itself.
@@ -580,18 +608,20 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 	switch action {
 	case chat.ActionHelp:
-		a.helpFrom, a.screen = screenChat, screenHelp
+		a.helpFrom = screenChat
+		a.leaveChat(screenHelp)
 		a.helpScroll = 0
 	case chat.ActionNew:
 		return a.newConversationModel()
 	case chat.ActionAgents:
-		a.screen = screenAgents
+		a.leaveChat(screenAgents)
 	case chat.ActionGreen:
 		// The worktree monitor, which is the screen that answers "is this verified, and what has
 		// gone stale". Canopy exists for that question, so it gets a word rather than a route.
-		a.screen = screenDashboard
+		a.leaveChat(screenDashboard)
 	case chat.ActionKeys:
-		a.cameFrom, a.screen = screenChat, screenKeys
+		a.cameFrom = screenChat
+		a.leaveChat(screenKeys)
 	case chat.ActionModel:
 		a.openModelPicker(screenChat)
 	}
@@ -604,7 +634,9 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 func (a *App) openModelPicker(from screen) {
 	a.cameFrom = from
 	a.picker = newModelPicker(a.keyStore, a.chat.KeyName(), a.chat.ModelName())
-	a.screen = screenModel
+	// Through leaveChat like every other way out of the conversation, so a mode the key had stopped
+	// on is applied rather than left to a timer that a quit from this screen would outrun.
+	a.leaveChat(screenModel)
 }
 
 // applyPickedModel points this conversation at the row the cursor is on.
