@@ -1025,10 +1025,14 @@ func TestAKeyWithNothingToOfferCanStillBeTypedInto(t *testing.T) {
 	for _, r := range "moonshot-v1-32k" {
 		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	applied, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if engine.using[0] != "nim" || engine.using[1] != "moonshot-v1-32k" {
 		t.Errorf("the typed model reached the conversation as %v, want it under the empty key",
 			engine.using)
+	}
+	// And it leaves the picker on the way, like any other choice taken from it.
+	if screen := applied.(tui.App).Screen(); screen != "chat" {
+		t.Errorf("applying a typed model under an empty key landed on %q", screen)
 	}
 }
