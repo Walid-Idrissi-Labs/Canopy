@@ -127,31 +127,34 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | The keys and surfaces round, claimed 2026-07-29: K-01 to K-03, then U-16 to U-19, from six asks by Walid. A8-05's visible hook-failure surface after it | `feat/one-key-many-models`, then `tui/ambient-attention` stacked on it | none |
+| Claude | The beta interface round, claimed 2026-07-29: U-20 to U-24 on one stack, U-01, U-03 and U-09 on a second, and the launch documents on a third. A8-05's visible hook-failure surface after it | `tui/what-the-agent-did` then `tui/rendered-markdown` then `fix/cell-width-and-chrome` then `perf/render-once-per-turn` then `tui/first-key-selects`, each stacked on the last; `tui/attention-and-navigation` and `docs/beta-launch` beside them | none |
 | Codex | Independent verification of the unsigned lines, the eleven phase gates, the six product runs | `verify/independent-pass` | none |
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, in the commit these words are in, after the whole keys and surfaces round
-was built and independently reviewed: 88 review, 40 todo, four partial, one claimed, six deferred,
-**zero done**. Counted rather than carried over, because a board quoting a number taken before the
-commit it sits in is the failure this section exists to prevent, and it has now happened three
-times: the previous recount was made on the keys branch and said the four U tasks were counted on
-the branch stacked after it, then rode the merge into that very branch with the sentence intact.
-The figures this replaces, 84 review and five claimed, were true there and not here, where U-16 to
-U-19 sit at review in this same file. The one task still claimed is A8-05.
+Counted on this branch, in the commit these words are in, after the beta interface round: 93 review,
+40 todo, four partial, one claimed, six deferred, **zero done**. Counted rather than carried, for the
+reason this section has now recorded three separate times: a board quoting a figure taken before the
+commit it sits in is read instead of the ledger and is wrong.
 
-The number that matters is a different one. **87 task lines carry `claude [x]` and nine carry
-`codex [x]`.** That first figure has been recounted rather than carried each time: it read 77 here
-and was already wrong when it was written, the real count at the time being 80, and the seven lines
-of this round have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
-the other has independently checked almost none of them, and no amount of further building changes
-it. That is why the split for this round is not another feature split: one side finishes the
-contract and safety work, the other converts `review` into `done`, and only the second of those can
-produce the first `done` this project has ever had.
+**This branch is the tip of a stack of five and the count is the stack's, not main's.** The five are
+listed in the board above and each contains the one before it, so merging the last one merges all of
+them; `tui/attention-and-navigation` carries U-01, U-03 and U-09 and sits beside the stack rather
+than in it, and `docs/beta-launch` is cut from main and touches no Go file. Anyone recounting on a
+different branch will get a different number and both will be right.
 
-Nothing reaches `done` on one signature. An agent may not sign its own work, which is the whole
-mechanism, so the verification column is structurally not Claude's to fill.
+**92 task lines carry `claude [x]` and nine carry `codex [x]`.** That gap is the project's actual
+state and no amount of further building changes it: one pair has built nine phases and a beta round
+on top of them, and the other has independently checked nine task lines. Nothing here reaches `done`
+on one signature, and an agent may not sign its own work, so the second column is structurally not
+Claude's to fill.
+
+The eight blocks added this round are U-20 to U-24 (the transcript showing what an agent did, a reply
+rendered as a document, four cell-width and frame defects, rendering a finished turn once, and the
+add-key wizard selecting what it stored) and U-01, U-03 and U-09 (navigation that reads a prompt
+without answering it, attention that crosses screens, and no reflex that spends money). Two of them
+overturn a rule the code held on purpose and both are recorded rather than assumed: D-48 for tool
+output, D-49 for markdown markers.
 
 ### 2.1 File boundary for this round
 
