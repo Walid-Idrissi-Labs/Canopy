@@ -129,6 +129,11 @@ func TestTheFocusedPanelAlwaysAndRefuseAndLeaveIt(t *testing.T) {
 		if got.approved != run.approved || got.remember != run.remember {
 			t.Errorf("%c gave %+v", run.key, got)
 		}
+		// And the panel goes with the answer, whichever answer it was. A question that stayed on
+		// screen after being dealt with is one somebody answers twice.
+		if view := plain(m.Body()); strings.Contains(view, "worker-2") {
+			t.Errorf("%c left the answered question on screen:\n%s", run.key, view)
+		}
 	}
 
 	// Esc hands the keyboard back without answering, and typing goes to the box again.
@@ -184,6 +189,11 @@ func TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances(t *testing.T) {
 	if len(engine.answered) != 2 || engine.answered[1].session != "s3" {
 		t.Errorf("the second answer went to %+v", engine.answered)
 	}
+	// With the queue emptied the panel goes entirely, and the rows it was spending go back to the
+	// conversation.
+	if view := plain(m.Body()); strings.Contains(view, "worker-1") || strings.Contains(view, "worker-2") {
+		t.Errorf("the panel is still up with nothing left in it:\n%s", view)
+	}
 }
 
 // Your own question outranks a visitor and keeps exactly the shape it had, and the count of who else
@@ -213,6 +223,16 @@ func TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted(t *testing.T) {
 	}
 	if len(engine.answered) != 1 || engine.answered[0].session != "s1" {
 		t.Errorf("y answered %+v, want this conversation's own question", engine.answered)
+	}
+
+	// And with your own question dealt with, the visitor stops being a count and becomes the panel
+	// again, unfocused: the transition the keyboard used to be quietly held across.
+	view = plain(m.Body())
+	if !strings.Contains(view, "worker-2") || !strings.Contains(view, "to answer it") {
+		t.Errorf("the visitor did not come forward once the own prompt was answered:\n%s", view)
+	}
+	if strings.Contains(view, "your keys answer this one") {
+		t.Errorf("the panel came forward holding the keyboard:\n%s", view)
 	}
 }
 
@@ -347,6 +367,9 @@ func TestAFocusedQuestionAnsweredElsewhereDoesNotPassTheKeyboardOn(t *testing.T)
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if len(engine.answered) != 1 || engine.answered[0].session != "s3" {
 		t.Errorf("the fresh focus answered %+v", engine.answered)
+	}
+	if view := plain(m.Body()); strings.Contains(view, "worker-2") {
+		t.Errorf("the question answered by the fresh focus is still on screen:\n%s", view)
 	}
 }
 
