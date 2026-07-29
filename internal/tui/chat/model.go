@@ -1390,9 +1390,7 @@ func (m Model) transcriptHeight() int {
 	// answer with a listing many lines tall, and budgeting one line for it pushed the box and the
 	// footer off the bottom of the frame the first time somebody ran /commands on a small terminal.
 	h := m.height - m.input.Height() - m.statusHeight()
-	if pane := m.taskPane(); pane != "" {
-		h -= strings.Count(pane, "\n") + 1
-	}
+	h -= len(m.taskPane())
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
@@ -1457,9 +1455,7 @@ func (m Model) Body() string {
 		rows = append(rows, "")
 	}
 
-	if tasks := m.taskPane(); tasks != "" {
-		rows = append(rows, strings.Split(tasks, "\n")...)
-	}
+	rows = append(rows, m.taskPane()...)
 	// Guidance waiting for the agent stays on screen until it is delivered.
 	rows = append(rows, m.steeringPane()...)
 	// The btw panel sits above the box, where the answers to questions about the conversation are
@@ -1556,44 +1552,67 @@ const maxTaskLines = 6
 // Between them rather than in the transcript, because the transcript scrolls and this must not. A
 // task list that scrolls out of view is a task list you have to go looking for, and the entire
 // value of it is answering "where is this up to" without going looking for anything.
-func (m Model) taskPane() string {
+//
+// A block with a frame around it rather than loose lines, wearing the same chrome as the btw panel,
+// because the two are the same kind of thing: a standing note above the box that is not part of the
+// conversation. Loose lines directly under the transcript read as more of what the agent was
+// saying, which is exactly what a status that must never be mistaken for prose should not do.
+//
+// The btw panel stands in its place while it is up rather than stacking under it. Both at once is
+// two framed blocks over one message box on a screen whose whole layout argument is that the
+// conversation wins ties, and the tasks come back the moment the btw is closed.
+func (m Model) taskPane() []string {
 	tasks := m.session.Tasks
-	if len(tasks) == 0 {
-		return ""
+	if len(tasks) == 0 || m.btwUp() {
+		return nil
 	}
 	t := theme.Current()
+
+	inner := m.width - boxChrome
+	if inner < 6 {
+		inner = 6
+	}
 
 	// A long list collapses to what is happening now plus the counts, rather than being cut off at
 	// an arbitrary item. Truncating would hide the end of the list, and the end is where the
 	// unfinished work is.
 	if len(tasks) > maxTaskLines {
-		return t.Info.Render("  tasks  ") + t.Body.Render(core.TaskSummary(tasks))
+		return borderedBlock("tasks", []string{t.Body.Render(
+			truncate(core.TaskSummary(tasks), inner))}, inner)
 	}
 
-	var b strings.Builder
-	for i, task := range tasks {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-
-		style := t.Muted
-		switch task.State {
-		case core.TaskInProgress:
-			// The one that is happening now is the line the eye should land on.
-			style = t.Body
-		case core.TaskDone:
-			style = t.Muted
-		}
-
-		line := "  [" + task.State.Glyph() + "] " + task.Text
+	rows := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		line := "[" + task.State.Glyph() + "] " + task.Text
 		if task.Outcome != "" {
 			// The outcome is what makes a finished list worth reading, so it is on the same line as
 			// the item rather than folded away behind a key nobody presses.
 			line += ", " + task.Outcome
 		}
-		b.WriteString(style.Render(truncate(line, m.width-2)))
+		rows = append(rows, taskStyle(t, task.State).Render(truncate(line, inner)))
 	}
-	return b.String()
+	return borderedBlock("tasks", rows, inner)
+}
+
+// taskStyle colours a row by what is happening to it.
+//
+// Three states, three colours, all from the theme and none built here, which is the rule at the top
+// of internal/tui/theme. The colour is an accelerant and never the fact: every row still carries its
+// glyph, so the list reads the same with the palette turned off, which is D-10 and the reason the
+// second theme exists at all.
+//
+// In progress takes the informational colour and done takes the success colour, which is the pairing
+// the rest of the interface already uses for "this is happening" and "this worked". Pending is muted
+// because a list is mostly pending and a screen where most rows shout has no emphasis left to spend.
+func taskStyle(t theme.Theme, state core.TaskState) lipgloss.Style {
+	switch state {
+	case core.TaskInProgress:
+		return t.Info
+	case core.TaskDone:
+		return t.Success
+	default:
+		return t.Muted
+	}
 }
 
 // btwVisible is how many content rows the panel shows at once.
@@ -1642,6 +1661,14 @@ func (m *Model) btwScrollBy(lines int) {
 	}
 }
 
+// btwUp reports whether the asides panel is showing.
+//
+// Asked in one place because two blocks depend on the answer: this one, and the task list it stands
+// in front of while it is up. Two readings of the same condition is how the height budget and the
+// rendering come to disagree, and that disagreement is a message box pushed off the bottom of the
+// screen.
+func (m Model) btwUp() bool { return m.btwOpen && len(m.asides) > 0 }
+
 // btwPanel is the asides in a box of their own, above the message box and exactly as wide.
 //
 // A bordered panel rather than a line in the status row, which is where the answer used to go and
@@ -1650,10 +1677,9 @@ func (m *Model) btwScrollBy(lines int) {
 // It is deliberately in the border colour rather than a signal colour: nothing in it is part of the
 // conversation, and the frame should say so.
 func (m Model) btwPanel() []string {
-	if !m.btwOpen || len(m.asides) == 0 {
+	if !m.btwUp() {
 		return nil
 	}
-	t := theme.Current()
 
 	inner := m.width - boxChrome
 	if inner < 6 {
@@ -1682,15 +1708,27 @@ func (m Model) btwPanel() []string {
 	}
 	label += " · esc to close"
 
+	return borderedBlock(label, content[start:end], inner)
+}
+
+// borderedBlock is the frame the panels above the message box share.
+//
+// One function rather than one per panel, because "the same chrome as the btw panel" is a claim two
+// copies would stop being true of the first time somebody adjusted one of them. The label rides the
+// top edge in the space the rule was spending anyway, and is dropped whole on a terminal too narrow
+// for it: a label that wraps the edge breaks the frame it is written on.
+func borderedBlock(label string, content []string, inner int) []string {
+	t := theme.Current()
+
 	top := " " + t.Border.Render("╭"+strings.Repeat("─", inner+2)+"╮")
 	if rest := inner - lipgloss.Width(label) - 1; rest >= 0 {
 		top = " " + t.Border.Render("╭─") + " " + t.Muted.Render(label) + " " +
 			t.Border.Render(strings.Repeat("─", rest)+"╮")
 	}
 
-	out := make([]string, 0, btwVisible+2)
+	out := make([]string, 0, len(content)+2)
 	out = append(out, top)
-	for _, line := range content[start:end] {
+	for _, line := range content {
 		pad := inner - lipgloss.Width(ansi.Strip(line))
 		if pad < 0 {
 			pad = 0

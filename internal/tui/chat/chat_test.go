@@ -64,6 +64,9 @@ type fakeEngine struct {
 	queuedSteering []string
 	asked          []string
 	asideErr       error
+	// asideText is what an aside answers with, for the tests that need to recognise the answer on
+	// screen rather than any answer at all.
+	asideText string
 }
 
 func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
@@ -948,6 +951,9 @@ func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error
 	e.asked = append(e.asked, question)
 	if e.asideErr != nil {
 		return "", e.asideErr
+	}
+	if e.asideText != "" {
+		return e.asideText, nil
 	}
 	return "the parser lives in internal/config", nil
 }

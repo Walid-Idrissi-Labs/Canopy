@@ -4,8 +4,16 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
+
+// borderTop is the top left corner of the frame the blocks above the message box share. Written as
+// the character the renderer emits, so the assertion is about what a terminal receives.
+const borderTop = "\u256d"
 
 func withTasks(tasks ...core.Task) core.Session {
 	return core.Session{
@@ -120,5 +128,152 @@ func TestNoTasksMeansNoPane(t *testing.T) {
 
 	if strings.Contains(body, "[ ]") || strings.Contains(body, "tasks") {
 		t.Errorf("a conversation with no task list drew a pane anyway:\n%s", body)
+	}
+}
+
+// The three states have to be three different things to look at, or the block is a list of items
+// that all read the same and the colour is decoration.
+//
+// Asserted on what a terminal would actually receive rather than on the style values, because the
+// question is whether the rows differ on screen. Under go test lipgloss finds no terminal and
+// strips every colour, which is why the profile is forced here and put back afterwards.
+func TestTheThreeTaskStatesAreThreeDifferentRows(t *testing.T) {
+	saved := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(saved)
+
+	engine := &fakeEngine{session: withTasks(
+		core.Task{Text: "finished thing", State: core.TaskDone},
+		core.Task{Text: "current thing", State: core.TaskInProgress},
+		core.Task{Text: "later thing", State: core.TaskPending},
+	)}
+
+	colours := map[string]string{}
+	for _, line := range strings.Split(model(engine).Body(), "\n") {
+		for _, text := range []string{"finished thing", "current thing", "later thing"} {
+			if strings.Contains(plain(line), text) {
+				colours[text] = escapes(line)
+			}
+		}
+	}
+
+	if len(colours) != 3 {
+		t.Fatalf("found %d of the three rows: %+v", len(colours), colours)
+	}
+	if colours["finished thing"] == colours["later thing"] {
+		t.Errorf("a done row and a pending row are drawn identically: %q", colours["later thing"])
+	}
+	if colours["current thing"] == colours["later thing"] {
+		t.Errorf("the row in progress looks the same as the ones not started: %q", colours["current thing"])
+	}
+	if colours["current thing"] == colours["finished thing"] {
+		t.Errorf("the row in progress looks the same as the finished one: %q", colours["current thing"])
+	}
+}
+
+// escapes is the styling of a line with the text taken out, which is what "drawn differently" means
+// once the words are the same shape.
+func escapes(line string) string {
+	var b strings.Builder
+	var inEscape bool
+	for _, r := range line {
+		switch {
+		case r == 0x1b:
+			inEscape = true
+			b.WriteRune(r)
+		case inEscape:
+			b.WriteRune(r)
+			if r == 'm' {
+				inEscape = false
+			}
+		}
+	}
+	return b.String()
+}
+
+// The list is a block with a frame, wearing the chrome the btw panel wears, because both are
+// standing notes above the box rather than part of what the agent said.
+func TestTheTaskListIsABlockAndNotLooseLines(t *testing.T) {
+	engine := &fakeEngine{session: withTasks(
+		core.Task{Text: "one", State: core.TaskInProgress},
+	)}
+	body := plain(model(engine).Body())
+
+	if !strings.Contains(body, "tasks") {
+		t.Errorf("the block is not labelled:\n%s", body)
+	}
+	// The same frame the btw panel draws, which is the claim worth holding: one function draws both.
+	if !strings.Contains(body, borderTop) {
+		t.Errorf("the task list has no frame around it:\n%s", body)
+	}
+}
+
+// Both blocks at once is two framed panels over one message box, on a screen whose whole layout
+// argument is that the conversation wins ties. The btw stands in the tasks' place and gives it back.
+func TestTheBtwPanelStandsInTheTaskBlocksPlace(t *testing.T) {
+	engine := &fakeEngine{
+		session:   withTasks(core.Task{Text: "the task item", State: core.TaskInProgress}),
+		asideText: "because the poller is slow",
+	}
+	m := model(engine)
+
+	if !strings.Contains(plain(m.Body()), "the task item") {
+		t.Fatalf("the tasks are not on screen to begin with:\n%s", plain(m.Body()))
+	}
+
+	m, cmd := run(m, "/btw why is it slow")
+	if cmd == nil {
+		t.Fatal("/btw produced no command")
+	}
+	m, _ = m.Update(cmd())
+
+	opened := plain(m.Body())
+	if !strings.Contains(opened, "because the poller is slow") {
+		t.Fatalf("the btw panel did not open:\n%s", opened)
+	}
+	if strings.Contains(opened, "the task item") {
+		t.Errorf("both blocks are up at once:\n%s", opened)
+	}
+
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	closed := plain(m.Body())
+	if !strings.Contains(closed, "the task item") {
+		t.Errorf("closing the btw did not bring the tasks back:\n%s", closed)
+	}
+	if strings.Contains(closed, "because the poller is slow") {
+		t.Errorf("the btw panel is still up after esc:\n%s", closed)
+	}
+}
+
+// Whichever block is up takes its rows from the conversation, so the message box stays on the floor
+// of the frame in either state.
+func TestEitherBlockLeavesTheFrameIntact(t *testing.T) {
+	engine := &fakeEngine{
+		session: withTasks(
+			core.Task{Text: "one", State: core.TaskDone, Outcome: "it was already there"},
+			core.Task{Text: "two", State: core.TaskInProgress},
+			core.Task{Text: "three", State: core.TaskPending},
+		),
+		asideText: strings.Repeat("a long answer that wraps several times over. ", 12),
+	}
+	m := model(engine)
+	m.SetSize(80, 24)
+
+	withTaskBlock := m.Body()
+
+	m, cmd := run(m, "/btw why")
+	m, _ = m.Update(cmd())
+	withBtw := m.Body()
+
+	for name, body := range map[string]string{"tasks": withTaskBlock, "btw": withBtw} {
+		lines := strings.Split(body, "\n")
+		if len(lines) > 24 {
+			t.Errorf("with the %s block up the body is %d rows in a 24 row frame", name, len(lines))
+		}
+		for _, line := range lines {
+			if width := len([]rune(plain(line))); width > 80 {
+				t.Errorf("with the %s block up a line is %d columns: %q", name, width, plain(line))
+			}
+		}
 	}
 }

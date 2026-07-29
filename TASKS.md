@@ -4991,7 +4991,7 @@ is untouched and still held by TestAStartedConversationDrawsTheNameOnlyInTheCorn
 the height and width invariants by the two tests that already covered them.
 
 ### U-18 Tasks are a block whose states you can see across the room
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/tui/chat/model.go`
 
 Deliverable: the agent's task list becomes a bordered block above the input box, drawn with the
@@ -5004,10 +5004,36 @@ off the glyphs alone still tell them apart; opening the btw panel hides the task
 restores it; the transcript height accounts for whichever block is up, so nothing overflows an
 80x24 frame; the six-line cap and the summary collapse behave as before.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: colours come from the theme and nowhere else, the rule at the top of
 internal/tui/theme/theme.go, and the glyph stays the state's first citizen per D-10.
+
+Built. "The same chrome as the btw panel" is one function rather than a copy of one: the btw panel's
+frame drawing moved out into borderedBlock, which takes a label, its content and a width, and both
+blocks now go through it. Two copies would have stopped being the same chrome the first time
+somebody adjusted one of them.
+
+Rows are Info for in progress, Success for done and Muted for pending, all through theme.Current().
+The glyph is untouched and still first, so with the palette off the three states are told apart
+exactly as they were before any colour existed.
+
+Which block is up is decided in one place, a btwUp method both the task block and the btw panel ask,
+because two readings of that condition is how the height budget and the rendering come to disagree,
+and that disagreement is the message box pushed off the bottom of the screen. taskPane now returns
+lines rather than a joined string, which is what the btw panel and the steering pane already did, so
+the height budget counts rows rather than counting newlines in a string.
+
+Acceptance, clause by clause: three states as three visibly different rows is
+TestTheThreeTaskStatesAreThreeDifferentRows, which forces a colour profile because under go test
+lipgloss strips styling, and which was checked by making the three styles identical and watching it
+fail; the glyphs alone telling them apart with colour off is the existing
+TestTaskStatesReadWithoutColour; the btw standing in the block's place and esc restoring it is
+TestTheBtwPanelStandsInTheTaskBlocksPlace; the transcript height accounting for whichever block is
+up, inside 80x24, is TestEitherBlockLeavesTheFrameIntact; and the six-line cap and the summary
+collapse are unchanged and still held by TestALongListCollapsesRatherThanEatingTheScreen and
+TestTheMessageBoxSurvivesATaskList. That the list is a framed block at all is
+TestTheTaskListIsABlockAndNotLooseLines.
 
 ### U-19 A btw is worth keeping
 `status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
