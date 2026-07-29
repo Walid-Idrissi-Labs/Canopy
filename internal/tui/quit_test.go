@@ -101,6 +101,34 @@ func TestCtrlCQuitsFromTheAgentsScreen(t *testing.T) {
 	}
 }
 
+// A mode the key stopped on is applied on the way out rather than left to a timer that will never
+// fire.
+//
+// The mode is written down with the conversation and restored with it, so a selection abandoned by
+// quitting would reopen tomorrow in the mode somebody had just moved away from, which is the one
+// setting where being quietly wrong matters most.
+func TestQuittingAppliesAModeTheKeyStoppedOn(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{session: core.Session{ID: "session-1"}}
+	app := launchWith(store, withOneKey(), engine).(tui.App)
+
+	next, _ := app.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := engine.Mode("session-1").Name; got != core.ModeBuild {
+		t.Fatalf("the keystroke itself changed the mode to %q", got)
+	}
+
+	next, _ = next.(tui.App).Update(stroke("ctrl+c"))
+	_, cmd := next.(tui.App).Update(stroke("ctrl+c"))
+	if !quits(cmd) {
+		t.Fatal("the second press of ctrl+c did not quit")
+	}
+	if got := engine.Mode("session-1").Name; got != core.ModeRunway {
+		t.Errorf("quitting left the conversation in %q, and the key had stopped on runway", got)
+	}
+}
+
 // Escape clears a half written message once nothing is running, which is what it means in every
 // comparable tool. Before this the only way out of a draft was ctrl+u, a key no footer mentions.
 func TestEscapeClearsAHalfWrittenMessage(t *testing.T) {

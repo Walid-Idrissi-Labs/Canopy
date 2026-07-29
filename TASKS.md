@@ -127,17 +127,18 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | A5-11, the mosaic agents view, at Walid's direction. A8-05's visible hook-failure surface after it | `tui/agent-mosaic` | none |
+| Claude | U-15, the mode key settling on what it stops on, at Walid's direction. A8-05's visible hook-failure surface after it | `tui/mode-settle` | none |
 | Codex | Independent verification of the unsigned lines, the eleven phase gates, the six product runs | `verify/independent-pass` | none |
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, after the mosaic work and the six deferrals: 84 review, 13 todo, one
-claimed, six deferred, **zero done**. Counted rather than carried over, because a board quoting a
-number taken before the commit it sits in is the failure this section exists to prevent, and that has
-now happened twice.
+Counted on this branch, after phases E and U were planned and U-15 built: 81 review, 39 todo, four
+partial, one claimed, six deferred, **zero done**. Counted rather than carried over, because a board
+quoting a number taken before the commit it sits in is the failure this section exists to prevent,
+and that has now happened twice. The previous figures here, 84 review and 13 todo, were taken before
+the two new phases existed and are what this recount replaces.
 
-The number that matters is a different one. **79 task lines carry `claude [x]` and eight carry
+The number that matters is a different one. **77 task lines carry `claude [x]` and nine carry
 `codex [x]`.** By the definition in section 1.2 that means one pair has built nine phases and the
 other has independently checked almost none of them, and no amount of further building changes it. That is why
 the split for this round is not another feature split: one side finishes the contract and safety
@@ -4853,6 +4854,34 @@ the model is thinking. The cap plus the roll-up keeps this from becoming the con
 sub-agents were deferred for in D-40, and it deliberately does not resurrect A8-01; the children
 here are the flat dispatch A5-08 already ships, not nested agents.
 
+### U-15 Cycling past a mode is not choosing it
+`status: review | owner: claude | branch: tui/mode-settle | depends: none`
+`scope: internal/tui/chat/, internal/tui/app.go, internal/session/engine.go`
+
+Deliverable: `shift+tab` moves a selection, and the mode it stops on is applied a short wait after
+the last press. Walking the ladder from cruise to build no longer puts the conversation into plan
+and confined on the way. The wait is never the last word: sending a message, naming a mode with
+`/mode`, leaving the conversation and quitting all apply the selection immediately. The box says
+what is enforced and what is coming without confusing them, `cruise → plan`, and the ladder asks
+the engine which modes it would accept rather than finding out by attempting each one.
+
+Acceptance: from cruise, three presses that land on build leave the conversation in cruise
+throughout and in build alone afterwards, with no mode entered on the way. A single press applies
+by itself with no further keystroke. A timer belonging to a mode that was passed through is
+dropped rather than applied late. Press then send, and the message is sent in the chosen mode. The
+top edge names the mode in effect first and the selection second, and the ceiling test still holds:
+no keystroke sequence promotes a read-only agent.
+
+`verify: claude [x] 2026-07-29   codex [ ]`
+
+notes: D-45, raised by Walid on 2026-07-29 and built the same day, ahead of the lane order because
+it is a defect in a shipped safety setting rather than an addition. Out of order under 1.3, which
+is recorded here rather than left to be inferred. The engine gained one exported method,
+`ModeUnusable`, which is the refusal `SetMode` already made asked as a question; a session test
+holds the two answers together so they cannot drift. `internal/session/engine.go` is outside this
+round's file boundary in section 2.1 and the change is additive, with no existing behaviour
+touched.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 
@@ -4903,3 +4932,4 @@ status or verification updates.
 | 2026-07-27 | Claude | Phase M built. Added `internal/tui/brand` for the mark, `internal/core/task.go` for the shared task shape, `cmd/canopy/worktrees.go` for a real worktree store, and `cmd/canopy/live_test.go` for the opt-in provider test. Storage schema went to version 5 for the task column. |
 | 2026-07-28 | Claude | Follow-ups from Codex's review of PRs #20 to #25, on `fix/review-followups`. Six defects fixed and two unreachable features wired. Storage schema went to version 7 for the mode column. The severe one was found on the way: the green gate never waited for the tests, so runway reverted every turn it was given. A8-05 and A8-08 were built and never called from anywhere, which is now the fourth time a complete package has shipped with nothing reaching it. |
 | 2026-07-28 | Claude | Added phases E and U after PG-A9, from an audit of the send path and of every screen rather than of this ledger: ten efficiency tasks and fourteen interface tasks, none of which blocks 0.1. Four blocks set back to partial where their prose outran the code: A3-06 (no auto compaction, meter blind to tool traffic), A2-07 (saving visible only in headless ask), A2-08 (chain has no caller), A8-03 (instructions parse and reach nothing). Notes added to A5-09 and A9-02. Principles recorded as D-42 to D-44, new questions Q-19 to Q-21. |
+| 2026-07-29 | Claude | Added U-15 from Walid using the built program: the mode key applied every rung it walked past, so cycling from cruise to build put a working agent through plan. Built the same day, out of lane order, since it is a defect in a shipped safety setting. Recorded as D-45. The engine gained `ModeUnusable`, the refusal `SetMode` already made asked as a question. Section 2.0 recounted, which the two new phases had left stale. |

@@ -67,8 +67,13 @@ type Engine interface {
 	// SetMode returns an error rather than nothing, because a mode can lower what an agent may do
 	// and can never raise it above what its configuration allows, and a key that silently declines
 	// reads as a key that is broken.
+	//
+	// ModeUnusable is that refusal asked as a question, without making the change. The key offers a
+	// mode before it applies one, and a mode offered and then refused two seconds later would be a
+	// key that appeared to work.
 	Mode(sessionID string) core.Mode
 	SetMode(sessionID string, mode core.Mode) error
+	ModeUnusable(sessionID string, mode core.Mode) error
 
 	// Fork branches a conversation at a turn, keeping everything said up to it. The original is
 	// untouched, which is what makes trying a second approach cheap enough to be worth doing.
@@ -147,6 +152,38 @@ type markTickMsg struct{ generation int }
 func markTick(generation int) tea.Cmd {
 	return tea.Tick(markInterval, func(time.Time) tea.Msg {
 		return markTickMsg{generation: generation}
+	})
+}
+
+// modeSettleDelay is how long the mode key waits after the last press before the mode it stopped on
+// is applied.
+//
+// **Cycling past a mode is not choosing it.** The key walks a ladder, so reaching build from cruise
+// goes through plan on the way, and a mode takes hold at the next tool call rather than at the next
+// message. Applying each one as it went past would hand a working agent the read-only level for a
+// fraction of a second, and whichever tool call landed in that fraction would be refused by a mode
+// nobody meant to be in. The agent then spends a turn arguing with a boundary that has already gone.
+//
+// Two seconds, which is longer than the gap between deliberate presses and short enough that the
+// mode is in effect by the time somebody has finished reading the box. The wait is never the last
+// word: sending a message, naming a mode outright, leaving the conversation and quitting all apply
+// the selection at once, because each of those is somebody who has stopped cycling.
+//
+// A variable only so the test binary can shorten it. Nothing outside a test changes it: how long
+// the key waits is a decision about how it feels, not configuration.
+var modeSettleDelay = 2 * time.Second
+
+// modeSettleMsg applies the mode the key stopped on, and says which selection it belongs to.
+//
+// The generation is what makes this a wait rather than a queue. Every press supersedes the one
+// before it, so the timer from a mode that was only passed through arrives, finds a newer
+// generation, and is dropped. Without it, walking the ladder would apply every rung along it two
+// seconds late, which is the bug this exists to prevent with a delay bolted on.
+type modeSettleMsg struct{ generation int }
+
+func settleMode(generation int) tea.Cmd {
+	return tea.Tick(modeSettleDelay, func(time.Time) tea.Msg {
+		return modeSettleMsg{generation: generation}
 	})
 }
 
@@ -236,6 +273,12 @@ type Model struct {
 	// belongs to, so the timer from an old copy cannot take down a newer one's message.
 	copied           bool
 	copiedGeneration int
+
+	// pendingMode is the mode the key has stopped on and has not applied yet, empty when the key is
+	// not in the middle of anything, and modeGeneration says which selection the outstanding timer
+	// belongs to. See modeSettleMsg.
+	pendingMode    core.Mode
+	modeGeneration int
 }
 
 // asideExchange is one btw question and the answer it got.
@@ -347,6 +390,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		m.markStep++
 		return m, markTick(m.markGeneration)
+
+	case modeSettleMsg:
+		if msg.generation != m.modeGeneration {
+			// The timer from a mode the key has already moved past. Dropped, which is the whole
+			// point: it was walked through on the way somewhere and never chosen.
+			return m, nil
+		}
+		m.applyPendingMode()
+		return m, nil
 
 	case asideMsg:
 		if msg.err != nil {
@@ -693,8 +745,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// Beside tab rather than on a letter, because every printable key belongs to the message
 		// box, and next to the key that completes a command because both are about what is going to
 		// happen rather than about what has been said.
-		m.cycleMode()
-		return m, nil
+		return m, m.cycleMode()
 
 	case "esc":
 		// Stops the turn rather than leaving the screen. With a reply streaming, escape means stop,
@@ -795,6 +846,10 @@ func (m Model) send() (Model, tea.Cmd) {
 		}
 	}
 
+	// A mode the key stopped on governs the message about to be sent, rather than arriving two
+	// seconds into it. Pressing shift+tab and then enter is somebody who has chosen.
+	m.applyPendingMode()
+
 	if _, err := m.engine.Send(m.sessionID, prompt); err != nil {
 		// The message stays in the box. Clearing it on a failure would mean somebody has to retype
 		// what they just wrote because a provider was busy.
@@ -855,6 +910,10 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	if sessionID == m.sessionID {
 		return nil
 	}
+	// A selection belongs to the conversation it was made in, so it is applied before leaving rather
+	// than carried across or thrown away. Somebody who pressed the key and then walked away still
+	// pressed the key.
+	m.applyPendingMode()
 	m.sessionID = sessionID
 	m.agentName = label
 	m.scroll = 0
@@ -990,20 +1049,47 @@ func (m Model) Planning() bool { return m.Mode() == core.ModePlan }
 // in. Two sources of truth for a mode is how an interface comes to lie about a guarantee.
 func (m Model) Mode() string { return m.engine.Mode(m.sessionID).Name }
 
-// cycleMode moves to the next mode in the ladder.
+// Selecting is the mode the key has stopped on that is not in effect yet, and whether there is one.
+//
+// Kept apart from Mode because they are different facts and an interface that ran them together
+// would be lying about the more important of the two. The mode in effect is a guarantee about what
+// the agent can do to your files. A selection is where a key has got to on the way somewhere, and
+// showing it under the same name would put "plan" over a conversation the permission layer was
+// still letting write, which is exactly the failure Mode's own comment exists to prevent.
+func (m Model) Selecting() (string, bool) {
+	if m.pendingMode.Name == "" {
+		return "", false
+	}
+	return m.pendingMode.Name, true
+}
+
+// cycleMode moves the selection to the next mode in the ladder and starts the wait before it takes
+// effect. See modeSettleDelay for why the change is not made here.
 //
 // Skips past any the agent cannot be put in rather than stopping on them, so the key always does
 // something on an agent that has a ceiling below the top of the ladder. Stopping would mean a
 // confined agent whose key appeared to have jammed, and refusing outright would mean it could not
 // reach plan mode either, which it certainly can.
-func (m *Model) cycleMode() {
+//
+// The engine is asked which modes are reachable rather than told to enter one and allowed to
+// refuse, now that entering one happens later. A key that offered a mode and then had it rejected
+// after the fact would report the refusal over a conversation that had moved on.
+func (m *Model) cycleMode() tea.Cmd {
+	// From where the key is, which is the selection while there is one. Otherwise a second press
+	// would set off from the mode still in effect and land on the same rung again.
 	current := m.Mode()
+	if m.pendingMode.Name != "" {
+		current = m.pendingMode.Name
+	}
+
 	for range core.Modes() {
 		next := core.NextMode(current)
-		if err := m.engine.SetMode(m.sessionID, next); err == nil {
+		if err := m.engine.ModeUnusable(m.sessionID, next); err == nil {
+			m.pendingMode = next
+			m.modeGeneration++
 			m.notice = next.Name + ", " + next.Description
 			m.err = ""
-			return
+			return settleMode(m.modeGeneration)
 		}
 		current = next.Name
 	}
@@ -1011,16 +1097,57 @@ func (m *Model) cycleMode() {
 	// while plan mode sits at read-only, and said plainly rather than left as a key that does
 	// nothing if that ever changes.
 	m.err = "this agent cannot be put into any of the modes"
+	return nil
 }
+
+// applyPendingMode puts the conversation in the mode the key stopped on.
+//
+// Called by the timer, and directly from everywhere that waiting any longer would be wrong: sending
+// a message, naming a mode outright, leaving the conversation, and quitting. The delay exists so
+// that cycling past a mode does not select it, and somebody who presses the key and then does
+// something has stopped cycling.
+//
+// Applied on the way out rather than dropped, wherever it is called early. Dropping it would be
+// worse than having no delay at all, since the key would have shown a mode, said what it does, and
+// then not done it.
+func (m *Model) applyPendingMode() {
+	mode := m.pendingMode
+	m.pendingMode = core.Mode{}
+	// Whatever timer is still in flight belongs to a selection that has now been dealt with.
+	m.modeGeneration++
+
+	if mode.Name == "" || mode.Name == m.Mode() {
+		// Nothing chosen, or the ladder was walked all the way round back to where it started.
+		return
+	}
+	if err := m.engine.SetMode(m.sessionID, mode); err != nil {
+		// Reachable if the safety net a mode needs went away while the selection was settling, such
+		// as the checkpoints runway and cruise are refused without.
+		m.err = err.Error()
+	}
+}
+
+// SettleMode applies a mode the key stopped on without waiting the delay out.
+//
+// For the shell, which calls it on the way out of the program. A mode is written down and restored
+// with the conversation, so a selection abandoned by quitting would be a conversation that reopened
+// in the mode somebody had just moved away from.
+func (m *Model) SettleMode() { m.applyPendingMode() }
 
 // setMode puts this conversation in a named mode, for the slash commands.
 func (m *Model) setMode(name string) {
 	mode, ok := core.ModeByName(name)
 	if !ok {
+		// The selection is left alone. A typo is not a change of mind about the mode being chosen.
 		m.err = "there is no mode called " + name + ", try one of: " +
 			strings.Join(core.ModeNames(), ", ")
 		return
 	}
+	// Naming a mode is not cycling through one, so there is nothing to wait for, and it supersedes
+	// whatever the key was in the middle of choosing.
+	m.pendingMode = core.Mode{}
+	m.modeGeneration++
+
 	if err := m.engine.SetMode(m.sessionID, mode); err != nil {
 		m.err = err.Error()
 		return
@@ -1585,6 +1712,12 @@ func (m Model) typedCommand() (string, bool) {
 	return "", false
 }
 
+// modeArrow separates the mode in effect from the one the key has stopped on.
+//
+// A direction rather than a slash or a bracket, because what it is saying is that the second one is
+// on its way. It carries the meaning without colour, which the footer's own arrow already relies on.
+const modeArrow = " → "
+
 // boxTop draws the top edge of the message box with the mode and the model written into it.
 //
 // On the edge rather than on a line of its own, which is the whole reason it is here: these two
@@ -1598,7 +1731,15 @@ func (m Model) typedCommand() (string, bool) {
 func (m Model) boxTop(left, right, horizontal string, width int) string {
 	t := theme.Current()
 
+	// While a selection is settling the edge says both, in the order they happen: the mode in effect,
+	// then the one the key has stopped on. Only the first is a guarantee, so only the first is
+	// written in the mode's own colour, and the arrow is what says the second has not landed yet.
+	// Showing the selection alone would be the box claiming a level the permission layer is not
+	// enforcing for another second and a half.
 	label := m.Mode()
+	if selecting, ok := m.Selecting(); ok {
+		label += modeArrow + selecting
+	}
 	if model := m.session.Model; model != "" {
 		label += "  " + model
 	}
@@ -1619,6 +1760,9 @@ func (m Model) boxTop(left, right, horizontal string, width int) string {
 	}
 
 	written := mode.Render(m.Mode())
+	if selecting, ok := m.Selecting(); ok {
+		written += t.Muted.Render(modeArrow + selecting)
+	}
 	if model := m.session.Model; model != "" {
 		written += t.Muted.Render("  " + model)
 	}

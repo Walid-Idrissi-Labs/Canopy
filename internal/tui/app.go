@@ -395,6 +395,10 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 				a.chat.SetNotice("ctrl+c again to quit, the conversation is kept either way")
 				return true, a, nil
 			}
+			// A mode the key had stopped on is applied on the way out rather than left to a timer
+			// that will never fire. The mode is written down with the conversation, so abandoning it
+			// here would reopen tomorrow in the one somebody had just moved away from.
+			a.chat.SettleMode()
 			return true, a, tea.Quit
 		case "ctrl+n":
 			if a.chat.Awaiting() {

@@ -994,6 +994,38 @@ The rule going forward has three parts:
 This does not supersede D-40: deferred features keep their code and their tests. It closes the
 gap D-40 left, where code that was not deferred and not finished sat in between, reading as done.
 
+## D-45 A mode is chosen where the key stops, not where it passes. Decided 2026-07-29.
+
+`shift+tab` cycles a ladder of five, so most journeys along it cross modes nobody wanted. Applied on
+the keystroke itself, walking from cruise back to build put the conversation into plan and then into
+confined on the way, each for a fraction of a second. Every one of those is a real trust level, and
+D-41's own rule is that a mode takes hold at the next tool call rather than at the next message, so
+an agent already running commands could have a call refused by a mode that existed for one frame.
+The refusal is indistinguishable from a deliberate one, and the agent then spends a turn arguing
+with a boundary that has already gone.
+
+The rule: **passing through a mode is not selecting it.** The key moves a selection. The selection
+becomes the mode a short wait after the last press, and the wait is restarted by every press, so
+walking the whole ladder applies exactly one mode, the one it stopped on.
+
+Three properties keep the delay from becoming its own defect:
+
+1. **The wait is never the last word.** Sending a message, naming a mode with `/mode`, leaving the
+   conversation and quitting all apply the selection at once. Anybody who presses the key and then
+   acts has stopped cycling. Dropping the selection in those cases would be worse than having no
+   delay at all: the key would have named a mode, said what it does, and then not done it.
+2. **The screen never claims the selection is enforced.** While it settles the box says both, in the
+   order they happen, `cruise → plan`. The mode in effect keeps the colour. A screen that showed the
+   selection alone would put "plan" over a conversation the permission layer was still letting run
+   commands, which is the failure D-41 and the mode indicator exist to prevent.
+3. **What the key offers is what the engine would accept.** The ladder skips modes this agent cannot
+   enter, and it now asks the engine rather than finding out by attempting the change. Offering a
+   mode and refusing it two seconds later is a key that appeared to work.
+
+This does not weaken anything D-41 settled. The ceiling, the refusals for a missing safety net, and
+"tightening takes hold on the next tool call" are all unchanged. It only decides which keystroke
+counts as the decision.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
