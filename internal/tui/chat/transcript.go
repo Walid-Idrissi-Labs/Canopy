@@ -80,7 +80,7 @@ func TranscriptWith(session core.Session, width int, spinner string, kinds KindO
 		if i > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, renderTurn(turn, width, spinner, kinds, detail)...)
+		lines = append(lines, cachedTurn(session.ID, turn, width, spinner, kinds, detail)...)
 	}
 	return lines
 }
