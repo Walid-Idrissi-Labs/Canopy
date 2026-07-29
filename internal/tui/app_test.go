@@ -59,12 +59,16 @@ type stubEngine struct {
 	// is asked for.
 	sessions map[string]core.Session
 	sent     []string
-	agents   []session.AgentStatus
-	added    []session.Agent
-	using    [2]string
-	created  int
-	asking   bool
-	waiting  []session.Waiting
+	// compacted and asked count the two calls that reach a provider without being a message, so a
+	// test can assert that a key started neither.
+	compacted int
+	asked     []string
+	agents    []session.AgentStatus
+	added     []session.Agent
+	using     [2]string
+	created   int
+	asking    bool
+	waiting   []session.Waiting
 	// useErr is what UseCredential answers with, for the tests about a switch the engine declines.
 	// It refuses mid answer, and what the application does with a refusal is its own decision.
 	useErr  error
@@ -90,7 +94,11 @@ func (e *stubEngine) Cancel(string) {}
 
 func (e *stubEngine) Events(uint64) <-chan core.Event { return make(chan core.Event) }
 
+// Counted, not just answered. "No unconfirmed keystroke starts a paid call" is a claim about
+// whether this was reached at all, and a stub that quietly returned an empty result would let every
+// key in the table look innocent.
 func (e *stubEngine) Compact(context.Context, string) (session.CompactionResult, error) {
+	e.compacted++
 	return session.CompactionResult{}, nil
 }
 
@@ -681,7 +689,10 @@ func (e *stubEngine) Steer(_, guidance string) error {
 	return nil
 }
 
-func (e *stubEngine) Aside(_ context.Context, _, _ string) (string, error) { return "", nil }
+func (e *stubEngine) Aside(_ context.Context, _, question string) (string, error) {
+	e.asked = append(e.asked, question)
+	return "", nil
+}
 
 func (e *stubEngine) Asides(string) []session.Aside { return nil }
 

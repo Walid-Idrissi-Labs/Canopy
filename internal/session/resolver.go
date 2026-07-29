@@ -83,7 +83,7 @@ func (r *KeyResolver) pick(name string) (core.KeyMetadata, error) {
 	switch len(all) {
 	case 0:
 		return core.KeyMetadata{}, errors.New(
-			"no credentials stored. Add one with `canopy keys add claude`, or press k")
+			"no credentials stored. Add one with `canopy keys add claude`, or press ctrl+k")
 	case 1:
 		return all[0], nil
 	default:

@@ -246,6 +246,12 @@ type Model struct {
 	// as any other. Without it the interface looks frozen and people press the key again.
 	compacting bool
 
+	// compactAsked is true when a compaction has been offered and the same key again will pay for
+	// it. Nothing has been sent while this is set, which is the whole point of it existing: ctrl+r
+	// used to reach a provider on the first press, and it is the key half the world's fingers press
+	// expecting to search their history.
+	compactAsked bool
+
 	// prompt is the tool call waiting on an answer, when there is one.
 	prompt   session.Prompt
 	awaiting bool
@@ -954,15 +960,40 @@ func describeRequest(req permission.Request) string {
 	}
 }
 
-// compact asks for a summary of the older half of the conversation.
+// compact asks for a summary of the older half of the conversation, once somebody has said so
+// twice.
 //
 // Manual, on a key, rather than only automatic at the limit. Somebody who knows they are about to
 // paste a large file has a reason to compact before it, and a tool that only acts at the threshold
 // makes them wait for the failure first.
+//
+// **No reflex spends money.** The first press offers and the second goes ahead, because this is a
+// real request to a real provider and ctrl+r is what half the world's fingers press expecting to
+// search their history. A key that costs money on the first press is one people learn to avoid
+// rather than one they learn.
 func (m Model) compact() (Model, tea.Cmd) {
 	if m.compacting || m.working {
 		return m, nil
 	}
+
+	if !m.compactAsked {
+		plan := session.PlanCompaction(m.session)
+		if !plan.Possible() {
+			// Said here rather than found out by sending. The engine refuses this too and its
+			// refusal costs nothing, but arriving at it through a confirmation would have offered to
+			// summarise nothing and then declined to do it.
+			m.err = "there is not enough of this conversation to summarise yet"
+			m.notice = ""
+			return m, nil
+		}
+		m.compactAsked = true
+		m.notice = m.compactionOffer(plan)
+		m.err = ""
+		return m, nil
+	}
+
+	m.compactAsked = false
+	m.notice = ""
 	m.compacting = true
 	m.err = ""
 
@@ -973,7 +1004,48 @@ func (m Model) compact() (Model, tea.Cmd) {
 	}
 }
 
+// compactionOffer is the sentence somebody agrees to before anything is sent.
+//
+// It has to name four things, because a confirmation that leaves any of them out is one people
+// press through: how much of the conversation goes, roughly what sending it costs, what is kept
+// whatever happens, and which key does it. The bound is the half that makes this safe to agree to
+// at all, since the recent turns are where the actual work is and summarising those is how an agent
+// loses the thread mid task.
+//
+// One line, and kept short enough to stay one at eighty columns, because it sits on the status row
+// between the conversation and the message box: a confirmation that wraps and pushes what somebody
+// is typing down the screen is one they answer without reading.
+func (m Model) compactionOffer(plan session.CompactionPlan) string {
+	return fmt.Sprintf("summarise %d of %d turns, about %s tokens, last %d kept? ctrl+r again",
+		plan.Turns, len(m.session.Turns), roughTokens(plan.Tokens), plan.Kept)
+}
+
+// roughTokens is a token count at a glance.
+//
+// Thousands and millions rather than the exact figure, and only here. The header prints the number
+// it was given because a usage total is something people compare; this one is an estimate inside a
+// sentence, and six digits of an estimate reads as precision that is not there.
+func roughTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// An offer to spend money lasts exactly one keystroke. Anything other than the same key again is
+	// a change of mind, and an offer that outlived it would eventually be taken up by a keystroke
+	// somebody meant for something else entirely, which is the failure the confirmation exists to
+	// prevent arriving a few seconds later. The same rule the application applies to ctrl+n.
+	if m.compactAsked && msg.String() != "ctrl+r" {
+		m.compactAsked = false
+		m.notice = ""
+	}
+
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
 	// into the message box, and typing an answer to a yes or no question into a text field and
 	// wondering why nothing happens is a bad minute to give somebody.
@@ -1089,6 +1161,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+r":
+		// Offers on the first press and pays on the second. See compact.
 		return m.compact()
 
 	case "pgup", "pgdown", "ctrl+home", "ctrl+end", "ctrl+down":

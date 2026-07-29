@@ -4752,8 +4752,8 @@ anyone who typed the wrong correction. The engine grew the take-back and forgot 
 interface.
 
 ### U-09 No reflex spends money
-`status: todo | owner: none | branch: none | depends: E-03`
-`scope: internal/tui/chat/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: E-03`
+`scope: internal/tui/chat/, internal/tui/help.go, internal/session/compaction.go, internal/session/resolver.go`
 
 Deliverable: no single unconfirmed keystroke starts a paid model call. ctrl+r, which half the
 world's fingers press expecting history search, currently fires a compaction, a real request on
@@ -4765,11 +4765,18 @@ Acceptance: ctrl+r alone spends nothing. The confirmation states turns, key and 
 anything is sent. /compact goes through the same confirmation. A test walks every binding in the
 help table and asserts none reaches a provider call without a confirmation or an explicit send.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-43's third rule. Whether ctrl+r, ctrl+k and ctrl+d should keep their current meanings
 at all is taste, so it is Q-21 for the supervisors rather than decided here; making the paid one
 free to press by accident is not taste.
+
+notes: the cost is named in tokens rather than in money. The screen cannot price a request without
+resolving the credential's provider, endpoint and any user rate, and a dollar figure it guessed at
+would be worse than the estimate it is standing in for. What the offer says is the same estimate
+the compaction reports afterwards, worked out by `session.PlanCompaction` so the sentence somebody
+agrees to cannot drift from what they get. A conversation too short to compact is told so on the
+first press rather than being offered a compaction of nothing.
 
 ### U-10 The input box under your fingers
 `status: todo | owner: none | branch: none | depends: M-02`
