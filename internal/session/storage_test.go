@@ -590,3 +590,83 @@ func TestAMalformedTaskListDoesNotBlockTheConversation(t *testing.T) {
 		t.Errorf("a malformed list came back as %+v", loaded.Tasks)
 	}
 }
+
+// A history file from the build before this one has to come forward without anybody noticing, which
+// is the whole reason migrations were in the first version rather than added when they were needed.
+func TestAFileAtTheOlderSchemaMigratesForward(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+
+	// A file at version seven: every migration but the last, which is where the asides table came
+	// from. Built by applying them rather than by shipping a fixture, so this keeps testing the real
+	// path as more are added.
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+	if err := storage.SaveSession(core.Session{ID: "s1", Title: "written by the older build"}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if _, err := storage.db.Exec(`DROP TABLE asides; PRAGMA user_version = 7`); err != nil {
+		t.Fatalf("winding the file back: %v", err)
+	}
+	if err := storage.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	forward, err := OpenStorage(path)
+	if err != nil {
+		t.Fatalf("opening a version seven file: %v", err)
+	}
+	defer func() { _ = forward.Close() }()
+
+	var version int
+	if err := forward.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatalf("reading the version: %v", err)
+	}
+	if version != schemaVersion {
+		t.Errorf("the file is at schema %d, want %d", version, schemaVersion)
+	}
+
+	// Nothing that was there before is gone, and the thing that was added works.
+	loaded, err := forward.Load("s1")
+	if err != nil {
+		t.Fatalf("Load after migrating: %v", err)
+	}
+	if loaded.Title != "written by the older build" {
+		t.Errorf("the conversation came back as %q", loaded.Title)
+	}
+	if err := forward.saveAside("s1", Aside{
+		Question: "does it still work", Answer: "yes", At: time.Unix(1700000000, 0),
+	}); err != nil {
+		t.Fatalf("saving an aside after migrating: %v", err)
+	}
+	if kept, err := forward.loadAsides("s1"); err != nil || len(kept) != 1 {
+		t.Errorf("asides after migrating: %+v, %v", kept, err)
+	}
+}
+
+// An aside belongs to its conversation and goes when the conversation goes, through the same foreign
+// key everything else hanging off a session goes through.
+func TestDeletingAConversationTakesItsAsidesWithIt(t *testing.T) {
+	storage := testStorage(t)
+
+	if err := storage.SaveSession(core.Session{ID: "s1", Title: "temporary"}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	if err := storage.saveAside("s1", Aside{
+		Question: "why", Answer: "because", At: time.Unix(1700000000, 0),
+	}); err != nil {
+		t.Fatalf("saveAside: %v", err)
+	}
+	if err := storage.Delete("s1"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	kept, err := storage.loadAsides("s1")
+	if err != nil {
+		t.Fatalf("loadAsides: %v", err)
+	}
+	if len(kept) != 0 {
+		t.Errorf("a deleted conversation left %+v behind", kept)
+	}
+}

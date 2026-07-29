@@ -5036,7 +5036,7 @@ TestTheMessageBoxSurvivesATaskList. That the list is a framed block at all is
 TestTheTaskListIsABlockAndNotLooseLines.
 
 ### U-19 A btw is worth keeping
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/session/storage.go, internal/session/aside.go, internal/tui/chat/`
 
 Deliverable: asides survive the screen. Schema version 8 adds an asides table keyed by session,
@@ -5049,11 +5049,42 @@ in one conversation does not appear in another; the request built after an aside
 of it, retested; a schema 7 file migrates forward and a newer file is still refused; a bare /btw
 with no history anywhere still explains itself.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: this deliberately retires the comment in internal/tui/chat/model.go that says the history
 leaves with the screen; the comment is rewritten to say what is now true. The engine recording an
 aside does not change what Aside sends: recording is storage, not context.
+
+Built. Schema 8 is one new migration appended, never an edit to an applied one, creating an asides
+table keyed by session with an index on it. A table rather than a JSON column on the session, which
+is what the task list uses: that list is read and written whole, where this one only grows and is
+appended a row at a time. The rows go when the conversation goes, through the same foreign key
+everything else hanging off a session goes through.
+
+The engine records after the answer exists and never before it, since a question with no answer is
+not an exchange worth keeping and would be drawn as a question the agent ignored. A failure to write
+does not cost the answer: the write goes through the same persist path every other save uses, so a
+storage error is reported where the others are and the person still gets what they asked. The new
+accessor is Asides, returning oldest first, and an engine with no storage attached still answers
+asides perfectly well and simply cannot remember them.
+
+The chat screen loads instead of clearing, in SetSession and in New: the conversation Canopy opens
+on arrives through the constructor rather than through a switch, so without the second call the one
+conversation somebody actually lands in would have been the one that had forgotten everything.
+
+Acceptance, clause by clause: ask, quit, reopen and it is there is
+TestAnAsideSurvivesTheProcessThatAskedIt at the engine and
+TestAsidesAreThereWhenTheConversationIsOpenedAgain at the screen, where a bare /btw opens the loaded
+history and asks the model nothing; one conversation's asides not appearing in another is
+TestAsidesBelongToOneConversation and TestMovingToAnotherConversationBringsItsOwnAsides; the request
+after an aside carrying nothing of it is TestTheRequestAfterAnAsideContainsNothingOfIt, which counts
+the messages as well as searching them, because the fixture answers an aside with the same words it
+answers a turn with; a schema 7 file migrating forward with nothing lost is
+TestAFileAtTheOlderSchemaMigratesForward and the newer-file refusal still holds in
+TestANewerSchemaIsRefusedRatherThanDowngraded; and a bare /btw with no history anywhere still
+explaining itself is TestABareBtwWithNoHistoryStillSaysWhatItWants. Order is
+TestAsidesComeBackInTheOrderTheyWereAsked, and the two states nobody asked about but which would
+have been wrong are TestAFailedAsideIsNotRecorded and TestAsidesWorkWithNoStorageAttached.
 
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`

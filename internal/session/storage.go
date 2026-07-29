@@ -34,7 +34,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 7
+const schemaVersion = 8
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -184,6 +184,25 @@ var migrations = []string{
 	// "nobody chose", which is a different thing from any particular mode and is why it is not
 	// defaulted to one.
 	`ALTER TABLE sessions ADD COLUMN mode TEXT NOT NULL DEFAULT '';`,
+
+	// Added when asides stopped being thrown away. A btw is deliberately not part of the
+	// conversation, which is exactly why it needed somewhere of its own: it cannot live in the turns
+	// table without becoming context that the next request carries, and it was living nowhere at
+	// all, so an answer somebody asked for twenty minutes ago left with the screen.
+	//
+	// A table rather than a JSON column on the session, unlike the task list, because this one only
+	// ever grows and is appended to one row at a time, where the task list is always read and
+	// written whole.
+	`
+	CREATE TABLE asides (
+		session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+		question   TEXT NOT NULL,
+		answer     TEXT NOT NULL,
+		created_at INTEGER NOT NULL
+	);
+
+	CREATE INDEX asides_by_session ON asides (session_id, created_at);
+	`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -707,6 +726,44 @@ func escapeFTS(query string) string {
 		quoted = append(quoted, `"`+strings.ReplaceAll(field, `"`, `""`)+`"`)
 	}
 	return strings.Join(quoted, " ")
+}
+
+// saveAside records one question asked on the side, and the answer that came back.
+//
+// Append only. An aside is a thing that happened at a moment, not a value that gets corrected, so
+// there is nothing to update and no key to conflict on: two identical questions asked an hour apart
+// are two entries, which is what somebody scrolling back would expect to see.
+func (s *Storage) saveAside(sessionID string, aside Aside) error {
+	if _, err := s.db.Exec(`
+		INSERT INTO asides (session_id, question, answer, created_at) VALUES (?, ?, ?, ?)`,
+		sessionID, aside.Question, aside.Answer, unix(aside.At)); err != nil {
+		return fmt.Errorf("saving an aside on session %s: %w", sessionID, err)
+	}
+	return nil
+}
+
+// loadAsides returns a conversation's asides, oldest first, which is the order they were asked in
+// and the order the panel reads them in.
+func (s *Storage) loadAsides(sessionID string) ([]Aside, error) {
+	rows, err := s.db.Query(`
+		SELECT question, answer, created_at FROM asides
+		WHERE session_id = ? ORDER BY created_at, rowid`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("loading the asides of session %s: %w", sessionID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []Aside
+	for rows.Next() {
+		var aside Aside
+		var at int64
+		if err := rows.Scan(&aside.Question, &aside.Answer, &at); err != nil {
+			return nil, err
+		}
+		aside.At = fromUnix(at)
+		out = append(out, aside)
+	}
+	return out, rows.Err()
 }
 
 // Delete removes a session and everything in it.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -25,6 +26,18 @@ import (
 // A side question that could call a tool would be a second agent operating on the same worktree with
 // no checkpoint of its own, which is exactly the situation Canopy exists to stop people getting into
 // by accident.
+
+// Aside is a question asked on the side and the answer that came back.
+//
+// Kept so that an answer from twenty minutes ago is still there after the screen has been closed and
+// reopened. It is not part of the conversation and never becomes one: nothing here is ever put in a
+// request, which is the distinction the whole file is written around and the reason this is a table
+// of its own rather than a turn with a flag on it.
+type Aside struct {
+	Question string
+	Answer   string
+	At       time.Time
+}
 
 // AsideLimit bounds the reply.
 //
@@ -85,7 +98,54 @@ func (e *Engine) Aside(ctx context.Context, sessionID, question string) (string,
 	if text == "" {
 		return "", errors.New("the model answered with nothing")
 	}
+
+	// Recorded after the answer exists and never before it. A question with no answer is not an
+	// exchange worth keeping, and writing one would put a row in the history that the panel would
+	// draw as a question the agent ignored.
+	//
+	// Recording is storage and not context: this changes nothing about what was just sent and
+	// nothing about what the next real turn will carry. The request above was built from the
+	// conversation's own history, and asides are not in it.
+	e.recordAside(sessionID, Aside{Question: question, Answer: text, At: e.events.Now()})
 	return text, nil
+}
+
+// recordAside writes an exchange down, and does not let a failure to write cost the answer.
+//
+// The person asked a question and got one; losing that because a disk was full would be trading the
+// thing they wanted for the thing that makes it convenient later. The error goes to the same place
+// every other storage failure goes, which is somewhere a person can see it without being stopped by
+// it.
+func (e *Engine) recordAside(sessionID string, aside Aside) {
+	e.persist(func(s *Storage) error { return s.saveAside(sessionID, aside) })
+}
+
+// Asides returns what a conversation has been asked on the side, oldest first.
+//
+// Empty where nothing is attached, which is a normal state rather than an error: an engine running
+// without storage answers asides perfectly well and simply cannot remember them afterwards.
+func (e *Engine) Asides(sessionID string) []Aside {
+	e.mu.Lock()
+	storage := e.storage
+	e.mu.Unlock()
+
+	if storage == nil {
+		return nil
+	}
+	asides, err := storage.loadAsides(sessionID)
+	if err != nil {
+		// Reported the same way a failed write is, and answered with nothing. A screen that refused
+		// to open because an old aside could not be read would be trading a conversation for a
+		// margin note.
+		e.mu.Lock()
+		report := e.onStorageError
+		e.mu.Unlock()
+		if report != nil {
+			report(err)
+		}
+		return nil
+	}
+	return asides
 }
 
 // asidePrompt tells the model what kind of answer this is.

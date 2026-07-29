@@ -111,10 +111,15 @@ type Engine interface {
 	// swallowed, and somebody who thinks that types it again.
 	Steering(sessionID string) []string
 
-	// Aside answers a question from this conversation's context without joining it. Nothing is
-	// recorded, no turn is created, and a turn in flight is undisturbed, which is what separates
-	// asking something from saying something.
+	// Aside answers a question from this conversation's context without joining it. No turn is
+	// created, nothing joins the conversation's history, and a turn in flight is undisturbed, which
+	// is what separates asking something from saying something.
+	//
+	// Asides is what was asked before, oldest first. The exchange is written down beside the
+	// conversation rather than in it: recording an aside and putting it in the model's context are
+	// different things, and only the second would change what the agent knows.
 	Aside(ctx context.Context, sessionID, question string) (string, error)
+	Asides(sessionID string) []session.Aside
 }
 
 // Commands is the catalog resolved for this chat's project.
@@ -275,9 +280,14 @@ type Model struct {
 	menu menu
 
 	// asides is every btw asked in this conversation, oldest first, and btwOpen is whether the panel
-	// showing them is up. Kept here and only here: the engine deliberately records nothing about an
-	// aside, so the screen remembering what was asked is the whole of the history there is, and it
-	// leaves with the screen rather than being written anywhere.
+	// showing them is up.
+	//
+	// It used to leave with the screen, because the engine deliberately recorded nothing about an
+	// aside and this slice was the whole of the history there was. Recording it turned out to be a
+	// different question from putting it in the context: an aside still never reaches the model, and
+	// it is now written down beside the conversation, so opening one tomorrow opens its side
+	// questions with it. This is loaded from the engine when the screen moves to a conversation, and
+	// appended to as answers arrive.
 	asides []asideExchange
 
 	btwOpen bool
@@ -309,6 +319,21 @@ type asideExchange struct {
 	answer   string
 }
 
+// loadAsides reads what this conversation has been asked on the side.
+//
+// Replaces rather than merges, because the answer the engine holds is the whole history and anything
+// already on screen is part of it. Called wherever the screen changes which conversation it is
+// showing, so the panel is about the conversation in front of somebody and never about the last one.
+func (m *Model) loadAsides() {
+	stored := m.engine.Asides(m.sessionID)
+
+	asides := make([]asideExchange, 0, len(stored))
+	for _, aside := range stored {
+		asides = append(asides, asideExchange{question: aside.Question, answer: aside.Answer})
+	}
+	m.asides = asides
+}
+
 // New builds a chat model over an engine and a session.
 //
 // Reads the session immediately rather than waiting for the first event. Resuming a conversation
@@ -328,6 +353,10 @@ func New(engine Engine, sessionID, dir, keyName string) Model {
 	m.refresh()
 	m.markRunning = m.markVisible()
 	m.input.LoadHistory(promptsOf(m.session))
+	// The conversation Canopy opens on arrives here rather than through SetSession, so its side
+	// questions are read here too. Without this the one conversation somebody actually lands in
+	// would be the one that had forgotten them.
+	m.loadAsides()
 	return m
 }
 
@@ -1101,9 +1130,10 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	m.err = ""
 	m.notice = ""
 	// The asides go with the conversation they were asked about. Carrying them across would show
-	// answers about one agent's work over another agent's conversation. The selection goes too,
-	// since it is a place in a transcript that is no longer on screen.
-	m.asides = nil
+	// answers about one agent's work over another agent's conversation, so the ones on screen are
+	// dropped and that conversation's own are read in their place. The selection goes too, since it
+	// is a place in a transcript that is no longer on screen.
+	m.loadAsides()
 	m.btwOpen = false
 	m.btwScroll = 0
 	m.sel = selection{}

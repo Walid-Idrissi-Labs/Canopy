@@ -67,9 +67,21 @@ type fakeEngine struct {
 	// asideText is what an aside answers with, for the tests that need to recognise the answer on
 	// screen rather than any answer at all.
 	asideText string
+	// asides is the recorded history, per conversation, which is what a screen opening on one reads,
+	// and sessions is for the tests that move between two conversations rather than sitting in one.
+	asides   map[string][]session.Aside
+	sessions map[string]core.Session
 }
 
-func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
+func (e *fakeEngine) Session(id string) (core.Session, bool) {
+	// Most of these tests have one conversation and do not care which id they are asked for. The few
+	// that move between two put them here instead.
+	if e.sessions != nil {
+		s, ok := e.sessions[id]
+		return s, ok
+	}
+	return e.session, true
+}
 
 func (e *fakeEngine) Send(_, prompt string) (string, error) {
 	if e.sendErr != nil {
@@ -946,6 +958,10 @@ func (e *fakeEngine) Steer(_, guidance string) error {
 }
 
 func (e *fakeEngine) Steering(string) []string { return e.queuedSteering }
+
+// asides is what this conversation was asked on the side before the screen opened, which is the
+// half that used to be thrown away.
+func (e *fakeEngine) Asides(sessionID string) []session.Aside { return e.asides[sessionID] }
 
 func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error) {
 	e.asked = append(e.asked, question)
