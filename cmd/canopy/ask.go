@@ -17,6 +17,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
 
@@ -311,9 +312,31 @@ func clientFor(
 	// is nearly out is renewed before the request is built rather than discovered as a 401 after it
 	// was sent. `canopy ask` and the interface have to agree about what a credential is worth, and
 	// the one place that decides is keys.Refresher.
-	secret, err := keys.NewRefresher(store).Credential(meta)
+	// The refresher is told which routes exist before it is asked for anything, so a Copilot grant
+	// close to expiry is renewed here exactly as it would be inside the interface. Without this the
+	// two surfaces would disagree about a credential, which is the thing S-02 exists to prevent.
+	refresher := keys.NewRefresher(store)
+	refresher.Renews(signInSources())
+	secret, err := refresher.Credential(meta)
 	if err != nil {
 		return nil, pricing.ModelID{}, err
+	}
+
+	if in.Route == copilot.Route {
+		if model == "" {
+			model = meta.Model
+		}
+		// One conversation, one message, and then the process ends, which is the one case where the
+		// session-per-conversation arrangement costs nothing: there is no second turn to remember.
+		// Named after the credential rather than after the provider so that somebody with two seats
+		// can see which answered.
+		//
+		// Delegated for the same reason the interface marks it so: a Copilot seat is billed monthly
+		// and these tokens are metered against it, so a per-token figure would be arithmetic
+		// presented as somebody's spend. See pricing.ModelID.Delegated.
+		client := copilot.New(meta.Ref.Name, copilot.Conversation{Token: secret, Model: model})
+		id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
+		return client, id, nil
 	}
 
 	client, err := newClient(meta, secret, model)

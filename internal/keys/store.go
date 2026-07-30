@@ -57,6 +57,19 @@ type record struct {
 	Account   string     `json:"account,omitempty"`
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 
+	// Route is which way in produced this grant: "copilot", and whatever S-04 and S-05 call theirs.
+	//
+	// Here rather than derived from Provider because Provider cannot answer it. Copilot and Codex are
+	// both openai-compatible, so the moment the second of them lands a switch on Provider sends one
+	// of them to the other's client and to the other's token endpoint. SourceFor at refresh.go:93 was
+	// written as a function rather than a map for exactly this, and this is the field it keys on.
+	//
+	// Optional, and an absent route is not damage. A credential signed in on a build that predates
+	// this field is still a credential, and the place that needs the route says so plainly rather
+	// than guessing. Requiring it would also mean rewriting tests belonging to two tasks currently
+	// in review, which is a worse trade than one legible error.
+	Route string `json:"route,omitempty"`
+
 	// Rate is the user's own price for this credential, per million tokens. Absent until they set
 	// one, which is why every field is omitempty: a rate of zero written to disk and a rate never
 	// set would otherwise be the same document.

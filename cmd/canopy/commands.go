@@ -44,6 +44,11 @@ func runChat(resume string) error {
 	}
 
 	resolver := session.NewKeyResolver(keyStore)
+	// Where a signed-in credential buys a new token, told to the resolver before any turn starts.
+	// A setter rather than a constructor argument because the routes arrive one task at a time, and
+	// the same function is handed to `canopy ask` so the two surfaces cannot disagree about when a
+	// grant is too old to send.
+	resolver.Renews(signInSources())
 	engine := session.New(resolver)
 	defer engine.Close()
 

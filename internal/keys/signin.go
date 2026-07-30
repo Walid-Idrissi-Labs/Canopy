@@ -74,6 +74,10 @@ type SignIn struct {
 	// time" and "the vendor never said" are different facts, and something deciding whether to
 	// refresh has to be able to tell them apart before it acts.
 	ExpiresAt *time.Time
+
+	// Route is which way in produced this grant. See record.Route in store.go for why it exists and
+	// why it is allowed to be empty.
+	Route string
 }
 
 // Tokens are the secrets behind a sign-in.
@@ -151,7 +155,7 @@ func (r record) signIn() SignIn {
 	if kind == "" {
 		kind = KindPasted
 	}
-	return SignIn{Kind: kind, Account: r.Account, ExpiresAt: r.ExpiresAt}
+	return SignIn{Kind: kind, Account: r.Account, ExpiresAt: r.ExpiresAt, Route: r.Route}
 }
 
 // validate checks a sign-in and its tokens agree with each other before anything is written.
@@ -238,6 +242,7 @@ func (s *Store) PutSignIn(meta core.KeyMetadata, in SignIn, tokens Tokens) (core
 		Kind:             string(in.Kind),
 		Account:          in.Account,
 		ExpiresAt:        in.ExpiresAt,
+		Route:            in.Route,
 		InputPerMTok:     meta.Rate.InputPerMTok,
 		OutputPerMTok:    meta.Rate.OutputPerMTok,
 		CacheReadPerMTok: meta.Rate.CacheReadPerMTok,

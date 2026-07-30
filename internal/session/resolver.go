@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -12,6 +13,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
 
@@ -23,33 +25,74 @@ import (
 type KeyResolver struct {
 	store       *keys.Store
 	credentials *keys.Refresher
+
+	// sessions holds the clients that are conversations rather than callers.
+	//
+	// Every provider before phase S was stateless, and a map like this would have been an oddity: a
+	// second turn on one credential is served perfectly well by a second client. GitHub's Copilot
+	// agent is not like that. It owns the conversation, it has no API for being handed a history,
+	// and so a client that was rebuilt every turn would open a session that had never heard of the
+	// previous message. Asking twice has to give back the same one.
+	//
+	// Keyed on the conversation and the credential together. Changing which subscription a
+	// conversation runs on starts a new conversation with the vendor, which is the honest outcome:
+	// the alternative is a turn billed to one account arriving in a session opened by another.
+	mu       sync.Mutex
+	sessions map[string]conversationClient
+	closed   bool
 }
 
-var _ Resolver = (*KeyResolver)(nil)
+// conversationClient is a provider client that holds a conversation and has to be shut down.
+type conversationClient interface {
+	core.ProviderClient
+	Close() error
+}
+
+var (
+	_ Resolver             = (*KeyResolver)(nil)
+	_ conversationResolver = (*KeyResolver)(nil)
+	_ resolverCloser       = (*KeyResolver)(nil)
+)
 
 // NewKeyResolver builds a resolver over a key store.
 func NewKeyResolver(store *keys.Store) *KeyResolver {
-	return &KeyResolver{store: store, credentials: keys.NewRefresher(store)}
+	return &KeyResolver{
+		store:       store,
+		credentials: keys.NewRefresher(store),
+		sessions:    map[string]conversationClient{},
+	}
 }
 
 // Renews says where a signed-in credential buys a new token when its own is nearly out.
 //
-// Called at wiring time. Until a route calls it there is nothing to renew, because nothing can be
-// signed in to until S-03 adds the first way in.
+// Called at wiring time, by the composition root that knows which routes this build has.
 func (r *KeyResolver) Renews(sources keys.SourceFor) { r.credentials.Renews(sources) }
 
-// Resolve returns the client for a credential name.
+// Resolve returns the client for a credential name, for a caller with no conversation of its own.
 //
-// The secret is fetched at the moment of use rather than held, so a key removed while Canopy is
-// running stops working on the next turn rather than the next restart.
+// An aside and a compaction both come through here, and on a route that holds its own history that
+// is the right answer rather than a limitation: an aside is a separate conversation by definition,
+// and a compaction is one question asked once about a transcript. Giving either the conversation's
+// own session would put a summarisation request into the middle of somebody's session.
+func (r *KeyResolver) Resolve(name, model string) (core.ProviderClient, pricing.ModelID, error) {
+	return r.ResolveFor("", name, model)
+}
+
+// ResolveFor returns the client a named conversation's next turn runs on.
 //
-// A signed-in credential is renewed here too, before the request exists rather than after one comes
-// back rejected. That order is what keeps a 401 meaning what core says it means: an expired token
-// and a wrong one arrive as the same status, and the only way to tell them apart without teaching a
-// frozen package a new distinction is to make sure the token was valid when it went out.
-func (r *KeyResolver) Resolve(
-	name, model string,
+// The conversation is empty for anything that is not one, and a route that does not care ignores it,
+// which is every route but Copilot's. See conversationResolver in engine.go for why it exists.
+func (r *KeyResolver) ResolveFor(
+	conversation, name, model string,
 ) (core.ProviderClient, pricing.ModelID, error) {
+	// The secret is fetched at the moment of use rather than held, so a key removed while Canopy is
+	// running stops working on the next turn rather than the next restart.
+	//
+	// A signed-in credential is renewed here too, before the request exists rather than after one
+	// comes back rejected. That order is what keeps a 401 meaning what core says it means: an expired
+	// token and a wrong one arrive as the same status, and the only way to tell them apart without
+	// teaching a frozen package a new distinction is to make sure the token was valid when it went
+	// out.
 	meta, err := r.pick(name)
 	if err != nil {
 		return nil, pricing.ModelID{}, err
@@ -70,6 +113,14 @@ func (r *KeyResolver) Resolve(
 	secret, err := r.credentials.Credential(meta)
 	if err != nil {
 		return nil, pricing.ModelID{}, err
+	}
+
+	// Before the provider switch, and it has to be, for the reason internal/keys wrote SourceFor as
+	// a function rather than a map: a Copilot credential and an OpenAI one are both
+	// openai-compatible, so a switch on provider alone would send a Copilot turn to a chat
+	// completions client pointed at a host that does not serve one.
+	if in.Route == copilot.Route {
+		return r.copilot(conversation, meta, in, secret, model)
 	}
 
 	id := pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, model).WithUserRate(meta.Rate)
@@ -122,6 +173,87 @@ func (r *KeyResolver) delegate(
 	// Neither of them prices anything, because Delegated is checked first.
 	id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
 	return acp.New(found), id, nil
+}
+
+// copilot builds, or finds again, the client that holds this conversation's Copilot session.
+//
+// This is the one place in the tree where resolving twice has to answer twice with the same object,
+// and it is worth being explicit about why rather than leaving it to be inferred from the map.
+// GitHub's SDK is session-shaped: a session is the conversation, it accumulates the history, and
+// there is no call that seeds one. Canopy's contract is request-shaped and hands over the whole
+// message list every turn. A resolver that built a fresh client per turn would therefore open a
+// fresh session per turn, and every message after the first would be answered by an agent with
+// amnesia while the transcript on screen said otherwise. Holding the client is what makes the two
+// shapes meet.
+//
+// The consequence is written down in LIMITATIONS.md rather than hidden here: on this route the
+// history lives in GitHub's runtime, so Canopy's history editing, re-rolls and compaction do not
+// reach it.
+//
+// A conversation with no name gets a client of its own that nothing keeps. That is an aside or a
+// compaction, both of which want a fresh agent and neither of which wants to be remembered, and
+// caching them under one key would have every aside in the program share a session.
+func (r *KeyResolver) copilot(
+	conversation string, meta core.KeyMetadata, in keys.SignIn, secret core.Secret, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
+	if model == "" {
+		model = meta.Model
+	}
+
+	// Delegated for the reason S-04's route is: the tokens are real and are counted, and their list
+	// price is a number about an invoice nobody receives, because a Copilot seat is charged monthly
+	// and this usage is metered against it. See pricing.ModelID.Delegated.
+	id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
+
+	build := func() conversationClient {
+		return copilot.New(meta.Ref.Name, copilot.Conversation{
+			Token: secret,
+			Model: model,
+		})
+	}
+
+	if conversation == "" {
+		return build(), id, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.closed {
+		return nil, pricing.ModelID{}, errors.New(
+			"this Canopy is shutting down, so no new conversation is being started")
+	}
+
+	// The account is in the key, not only the credential name, so that a credential which was signed
+	// in again as somebody else does not inherit the previous person's session.
+	at := conversation + "\x00" + meta.Ref.Name + "\x00" + in.Account
+	if existing, ok := r.sessions[at]; ok {
+		return existing, id, nil
+	}
+	client := build()
+	r.sessions[at] = client
+	return client, id, nil
+}
+
+// Close ends every conversation this resolver is holding open.
+//
+// Called by Engine.Close after the turns have settled. Each of these is a child process on the
+// machine and a session GitHub believes is open, and a program that exits without saying so leaves
+// one of each behind, one of them on somebody else's server.
+//
+// Failures are counted rather than returned. There is nothing a caller could do with them at the
+// moment the program is ending, and refusing to close the rest because one would not close is the
+// worst available answer.
+func (r *KeyResolver) Close() {
+	r.mu.Lock()
+	holding := r.sessions
+	r.sessions = map[string]conversationClient{}
+	r.closed = true
+	r.mu.Unlock()
+
+	for _, client := range holding {
+		_ = client.Close()
+	}
 }
 
 // delegateTimeout bounds looking for the delegated agent before a turn.
