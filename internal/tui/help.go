@@ -50,9 +50,9 @@ func bindings() []section {
 			{"esc", "interrupt the turn, or clear a half written message"},
 			{"ctrl+c", "stop the turn, then twice to quit"},
 			{"ctrl+n", "a new conversation, keeping this one"},
-			{"ctrl+d", "agents"},
+			{"ctrl+d", "agents, and it works with a question waiting here"},
 			{"ctrl+k", "credentials"},
-			{"ctrl+r", "compact the conversation"},
+			{"ctrl+r", "compact the conversation, asked twice because it spends"},
 			{"ctrl+o", "show tool output and diffs in full, and fold them back"},
 			{"pgup / pgdown", "scroll the conversation, or the btw panel while it is up"},
 			{"mouse drag", "select conversation text, copied when you let go"},
@@ -60,12 +60,12 @@ func bindings() []section {
 			{"alt+enter", "a line break instead of sending"},
 			{"y", "allow a tool call once, while a question is up"},
 			{"a", "allow it for the rest of the session"},
+			{"arrows / pgup", "read on with a question up, deciding nothing"},
 			{"any other key", "refuse it"},
 		}},
 		{"another agent's question, above the box", []binding{
-			{"ctrl+g", "answer it. nothing else here can, which is the point"},
-			{"y / a / n", "once, always, or no, once it has the keyboard"},
-			{"esc", "leave it waiting and go back to typing"},
+			{"ctrl+g", "open its conversation and full request"},
+			{"y / a / n", "once, always, or no, on that full prompt only"},
 		}},
 		{"agents", []binding{
 			{"1 to 8", "jump to that pane, and again to open it"},
@@ -290,4 +290,20 @@ func HelpBindingCount() int {
 		total += len(s.bindings)
 	}
 	return total
+}
+
+// HelpKeys is the key column of every binding, exactly as the overlay prints it.
+//
+// For the test that walks the table pressing each one and asserts that none of them reaches a
+// provider without a confirmation or an explicit send. Exported for the same reason the count is:
+// the claim is about the whole table, and a test with its own copy of the list would go on passing
+// about the keys somebody added last week.
+func HelpKeys() []string {
+	var keys []string
+	for _, s := range bindings() {
+		for _, b := range s.bindings {
+			keys = append(keys, b.keys)
+		}
+	}
+	return keys
 }

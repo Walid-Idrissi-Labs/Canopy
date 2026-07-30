@@ -38,6 +38,16 @@ type Resolver interface {
 	Resolve(name, model string) (client core.ProviderClient, id pricing.ModelID, err error)
 }
 
+// usageMarker is a resolver that can record which credential answered.
+//
+// Optional rather than part of Resolver, because a resolver is a way to reach a provider and
+// remembering things about credentials is not something every one of them can do: the fakes the
+// engine is driven with in tests hold no store to write to. A resolver that cannot record is not a
+// broken resolver, it is one whose credentials nothing is keeping notes on.
+type usageMarker interface {
+	MarkUsed(name string)
+}
+
 // Engine holds every session and runs their turns.
 type Engine struct {
 	mu       sync.Mutex
@@ -818,6 +828,20 @@ func (e *Engine) run(
 		// something the user did on purpose.
 		e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, client.Name())
 		return
+	}
+
+	// The credential answered, so it is written down as the one last used.
+	//
+	// Here rather than at Resolve, because resolving proves a credential is stored and nothing else: a
+	// revoked key resolves perfectly and then fails at the far end, and recording that as the
+	// credential this machine runs on would point the next launch at the one thing known not to work.
+	//
+	// This is what makes the next launch open on a conversation rather than on the credential list.
+	// Before it, only `canopy ask` ever marked a key used, so somebody who works in the interface had
+	// two credentials, no record of either, and no way to express which one they meant except by
+	// picking it again every single time.
+	if marker, ok := e.resolver.(usageMarker); ok {
+		marker.MarkUsed(keyName)
 	}
 
 	usage, _ := pricing.Apply(id, outcome.Usage)

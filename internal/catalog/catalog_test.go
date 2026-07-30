@@ -83,6 +83,22 @@ func TestOnlyOpenAIsOwnHostIsGivenTheOpenAIList(t *testing.T) {
 	}
 }
 
+// The picker is a capability claim about this program, not a copy of everything the provider
+// advertises. Canopy currently posts to /chat/completions, so offering a Responses-only model would
+// lead somebody through a valid-looking choice to a request this adapter cannot make.
+func TestOpenAIListDoesNotOfferModelsThisAdapterCannotCall(t *testing.T) {
+	responsesOnly := map[string]bool{
+		"gpt-5.2-pro":       true,
+		"gpt-5.1-codex-max": true,
+	}
+
+	for _, model := range For(core.ProviderOpenAICompatible, "https://api.openai.com/v1") {
+		if responsesOnly[model.ID] {
+			t.Errorf("%s is Responses-only but was offered by the Chat Completions adapter", model.ID)
+		}
+	}
+}
+
 // An unrecognised gateway gets nothing, which is what lets the screen say so out loud rather than
 // offering GPT ids to an endpoint that has never heard of them.
 func TestAnUnrecognisedEndpointIsOfferedNothing(t *testing.T) {

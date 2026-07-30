@@ -700,19 +700,15 @@ func (m Model) summary(status session.AgentStatus) string {
 }
 
 // Context is what the frame shows beside the title.
+//
+// The count of who needs a person used to be here, first, because it is the reason somebody would
+// look at this screen at all. It is in the header itself now, on every screen rather than on this
+// one, which is what D-43 asks for: an indicator that lives only on the agent list is a smoke alarm
+// installed inside the fire. Kept in one place rather than both, because the header counts every
+// conversation waiting on somebody and this could only ever count agents, and two numbers a row
+// apart disagreeing about the same question is worse than either of them alone.
 func (m Model) Context() string {
-	needing := 0
-	for _, status := range m.statuses {
-		if status.State.NeedsAttention() {
-			needing++
-		}
-	}
-
 	summary := fmt.Sprintf("%d agents", len(m.statuses))
-	if needing > 0 {
-		// Said first, because it is the reason somebody would look at this screen at all.
-		summary = fmt.Sprintf("%d need you, %d agents", needing, len(m.statuses))
-	}
 	summary += "  " + m.mode.String()
 	if m.mode == ModeMosaic && m.pages() > 1 {
 		summary += fmt.Sprintf(" %d/%d", m.page()+1, m.pages())
