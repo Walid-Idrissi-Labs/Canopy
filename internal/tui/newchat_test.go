@@ -115,7 +115,7 @@ func TestANewConversationShowsTheMarkAgain(t *testing.T) {
 	if !strings.Contains(view, "█") {
 		t.Errorf("the new conversation has no mark on it:\n%s", view)
 	}
-	if !strings.Contains(view, "Canopy") {
+	if !strings.Contains(view, "canopy") {
 		t.Errorf("the new conversation does not name the program:\n%s", view)
 	}
 }

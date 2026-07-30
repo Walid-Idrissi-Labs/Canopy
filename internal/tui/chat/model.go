@@ -1417,12 +1417,6 @@ func (m Model) blank() bool {
 	return (!m.loaded || len(m.session.Turns) == 0) && !m.awaiting
 }
 
-// Blank reports whether this conversation is still on its opening screen.
-//
-// Exported for the shell, which draws the name in the header only once the opening screen has gone.
-// Two copies of the name on one screen, one in the middle and one in the corner, is one too many.
-func (m Model) Blank() bool { return m.blank() }
-
 func (m Model) transcript() []string {
 	var lines []string
 	if len(m.session.Turns) > 0 {

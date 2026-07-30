@@ -44,8 +44,10 @@ const (
 // for it was recognition, which the opening screen already does while being usable. Every terminal
 // tool worth being measured against opens on something you can type into.
 //
-// The mark and the drawn name did not go with it. They are on the screen a conversation opens on,
-// which is where somebody is looking anyway.
+// The mark did not go with it: it is on the screen a conversation opens on, in the corner, which is
+// where somebody is looking anyway. The drawn name was there too and no longer is. The header
+// carries it in the top right of every screen instead, so it is on screen constantly rather than
+// large for a moment and then gone.
 
 // App is the top level model. It owns which screen is showing and routes messages to it.
 //
@@ -933,8 +935,6 @@ func (a App) View() string {
 			Attention: needing,
 			Parts:     a.chat.ContextParts(),
 			Mode:      a.chat.Mode(),
-			// Only once the opening screen has gone, which is drawing the name itself.
-			Wordmark: !a.chat.Blank(),
 		}, a.chat.Body(), footer)
 	case screenModel:
 		footer := Keys(a.dim.Width, "j/k", "move", "enter", "use it here", "esc", "back, unchanged")

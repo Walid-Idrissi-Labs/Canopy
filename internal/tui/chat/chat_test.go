@@ -256,12 +256,14 @@ func turn(id, ask, reply string, state core.TurnState) core.Turn {
 // tool is worth their time.
 //
 // What to press is not checked here any more, because it is not on this screen: the frame's footer
-// owns it and this renders the body alone. It is asserted at the level where both are on screen at
-// once, in TestWithKeysOpensOnChat.
+// owns it and this renders the body alone. The name is not checked here either, and for the same
+// reason: the header owns it now, in the corner of every screen, and this screen stopped drawing one
+// of its own. Both are asserted at the level where they are on screen together, in
+// TestWithKeysOpensOnChat.
 func TestTheEmptyScreenIntroducesItself(t *testing.T) {
 	view := plain(model(&fakeEngine{}).Body())
 
-	for _, want := range []string{"Canopy", "myproject", "claude"} {
+	for _, want := range []string{"myproject", "claude"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the opening screen does not mention %q:\n%s", want, view)
 		}
