@@ -1051,6 +1051,13 @@ Four rules keep the list honest:
    the plural lives in the keys store beside it. The frozen contract does not grow a field for a
    feature that a layer above it can carry.
 
+“What can this provider run” means what Canopy can invoke through the provider transport it ships,
+not every model name the provider publishes. In particular, the current OpenAI-compatible client
+uses Chat Completions. A model documented as requiring Responses is not offered by that catalog
+until Canopy has a Responses transport for it. The free-text rule still accepts unlisted model ids
+so a dated list cannot gate a newly compatible model, but accepting an id is not a claim that the
+current transport implements an API the model requires.
+
 ## D-47 A question reaches you where you are, and only your hand answers it. Decided 2026-07-29.
 
 Extends D-43. A permission prompt raised by any agent in the project may surface on whatever

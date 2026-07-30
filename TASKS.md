@@ -4997,20 +4997,22 @@ before it refuses, but refuses ambiguity rather than guessing.
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: none`
 `scope: internal/catalog/ (new), internal/keys/, internal/pricing/ (drift test), internal/tui/keys/, internal/tui/ (fake), cmd/canopy/`
 
-Deliverable: a new internal/catalog package that answers "what can this provider run", dated the
-way the pricing table is dated: the anthropic list derived from the eight priced IDs, an
-api.openai.com base URL recognised and given the OpenAI list, any other openai-compatible host
-given nothing. The keys store learns user-added models per key, an id plus an optional display
-name, editable from the CLI and the keys screen, and the keys screen's model edit becomes a
-picker over catalog plus user-added entries with free text still available for anything not
-listed. core.KeyMetadata is not touched: its Model field remains the selected default, and the
-plural lives in the keys record beside it.
+Deliverable: a new internal/catalog package that answers "what can this provider run through
+Canopy's current transport", dated the way the pricing table is dated: the anthropic list derived
+from the eight priced IDs, an api.openai.com base URL recognised and given the models compatible
+with Canopy's OpenAI Chat Completions adapter, any other openai-compatible host given nothing.
+The keys store learns user-added models per key, an id plus an optional display name, editable from
+the CLI and the keys screen, and the keys screen's model edit becomes a picker over catalog plus
+user-added entries with free text still available for anything not listed. core.KeyMetadata is not
+touched: its Model field remains the selected default, and the plural lives in the keys record
+beside it.
 
 Acceptance: an anthropic key offers the catalog with no setup; an openai-compatible key on an
 unrecognised host offers only what its user added, and says so when that is nothing; adding a
 model with a display name shows the name and keeps the id; picking any entry records it through
-SetModel; a model on no list can still be typed; a keys.json written by the previous build loads
-with empty model lists and nothing lost.
+SetModel; a model on no list can still be typed; a model requiring a provider API Canopy does not
+implement is not offered as a working choice; a keys.json written by the previous build loads with
+empty model lists and nothing lost.
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
@@ -5018,6 +5020,13 @@ notes: the catalog carries an as-of date like pricing.AsOf and goes stale the sa
 the accepted cost of shipping knowledge, and the free-text escape is what keeps stale from
 meaning stuck. internal/keys and internal/pricing sit outside the 2.1 lane list; changes there
 are additive.
+
+Review correction, 2026-07-30: the first OpenAI list copied two Responses-only models into a
+catalog consumed by Canopy's Chat Completions client. That made the picker promise choices the
+active adapter could not invoke. The list now records transport capability, not merely provider
+availability, and TestOpenAIListDoesNotOfferModelsThisAdapterCannotCall holds the boundary. Free
+text remains deliberately ungated for compatible models that arrive before the dated list is
+refreshed.
 
 Built. internal/catalog holds its own ordered anthropic list rather than reading one out of
 pricing, because order is meaning here (newest first within a family is how a bare family word is
