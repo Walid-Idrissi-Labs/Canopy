@@ -19,18 +19,32 @@ import (
 // its provider and its endpoint. Nothing above this has to be told which vendor it is talking to,
 // which is the point of naming keys in the first place.
 type KeyResolver struct {
-	store *keys.Store
+	store       *keys.Store
+	credentials *keys.Refresher
 }
 
 var _ Resolver = (*KeyResolver)(nil)
 
 // NewKeyResolver builds a resolver over a key store.
-func NewKeyResolver(store *keys.Store) *KeyResolver { return &KeyResolver{store: store} }
+func NewKeyResolver(store *keys.Store) *KeyResolver {
+	return &KeyResolver{store: store, credentials: keys.NewRefresher(store)}
+}
+
+// Renews says where a signed-in credential buys a new token when its own is nearly out.
+//
+// Called at wiring time. Until a route calls it there is nothing to renew, because nothing can be
+// signed in to until S-03 adds the first way in.
+func (r *KeyResolver) Renews(sources keys.SourceFor) { r.credentials.Renews(sources) }
 
 // Resolve returns the client for a credential name.
 //
 // The secret is fetched at the moment of use rather than held, so a key removed while Canopy is
 // running stops working on the next turn rather than the next restart.
+//
+// A signed-in credential is renewed here too, before the request exists rather than after one comes
+// back rejected. That order is what keeps a 401 meaning what core says it means: an expired token
+// and a wrong one arrive as the same status, and the only way to tell them apart without teaching a
+// frozen package a new distinction is to make sure the token was valid when it went out.
 func (r *KeyResolver) Resolve(
 	name, model string,
 ) (core.ProviderClient, pricing.ModelID, error) {
@@ -39,7 +53,7 @@ func (r *KeyResolver) Resolve(
 		return nil, pricing.ModelID{}, err
 	}
 
-	secret, err := r.store.Get(meta.Ref)
+	secret, err := r.credentials.Credential(meta)
 	if err != nil {
 		return nil, pricing.ModelID{}, err
 	}

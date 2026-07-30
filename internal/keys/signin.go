@@ -270,6 +270,59 @@ func (s *Store) writeTokens(name string, tokens Tokens) error {
 	return s.backend.Set(name, string(encoded))
 }
 
+// Renew replaces a sign-in's tokens and the moment they expire, and touches nothing else.
+//
+// Separate from PutSignIn rather than a call to it, because renewing is not authenticating again and
+// the difference shows up under concurrency. PutSignIn is handed a whole record and writes back
+// whatever the caller was holding, so a renewal that arrived beside a rate change or a model
+// selection would put back the values it read before that change and lose the other one silently.
+// This owns two fields and edits two fields, which is the same rule SetModel and SetRate follow.
+//
+// The tokens reach the backend before the record reaches disk, as in Put, but the reason is this
+// task's rather than Put's. Failing between the two leaves a record whose expiry is older than the
+// tokens behind it, which costs one unnecessary renewal on the next turn and nothing else. The other
+// order leaves a record promising another hour with the old, now dead token still in the keychain:
+// a request rejected as unauthenticated, and a user told to replace a credential that only needed
+// renewing. That is the exact failure the refresher exists to remove.
+func (s *Store) Renew(ref core.KeyRef, renewal Renewal) error {
+	if renewal.Tokens.Access.IsZero() {
+		return fmt.Errorf("renewing key %q needs an access token to renew it with", ref.Name)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records, err := s.load()
+	if err != nil {
+		return err
+	}
+
+	for i, existing := range records {
+		if existing.Name != ref.Name {
+			continue
+		}
+		// Refused rather than converted. A credential that was signed in when the renewal started
+		// and is a pasted secret now had its value replaced while this was in flight, and writing a
+		// grant over that would undo a change somebody made deliberately, in favour of one nobody
+		// asked for.
+		if in := existing.signIn(); in.Kind != KindSignedIn {
+			return fmt.Errorf(
+				"key %q is no longer a sign-in Canopy holds tokens for, so there is nothing to renew",
+				ref.Name)
+		}
+
+		if err := s.writeTokens(ref.Name, renewal.Tokens); err != nil {
+			return err
+		}
+		records[i].ExpiresAt = renewal.ExpiresAt
+		return s.save(records)
+	}
+
+	// Removed while the renewal was in flight. Reported rather than appended: a credential somebody
+	// deleted must not come back because a request that outlived it succeeded.
+	return fmt.Errorf("no key named %q: %w", ref.Name, ErrNotFound)
+}
+
 // SignIn returns what is known about a credential's sign-in without touching the backend.
 //
 // Separate from Tokens on purpose. Everything here is safe to display, so a list can say who a

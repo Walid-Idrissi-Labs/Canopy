@@ -76,7 +76,11 @@ func runAsk(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	secret, err := store.Get(meta.Ref)
+	// Through the refresher rather than straight to the store, so a signed-in credential whose token
+	// is nearly out is renewed before the request is built rather than discovered as a 401 after it
+	// was sent. `canopy ask` and the interface have to agree about what a credential is worth, and
+	// the one place that decides is keys.Refresher.
+	secret, err := keys.NewRefresher(store).Credential(meta)
 	if err != nil {
 		return err
 	}
