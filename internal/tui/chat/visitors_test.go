@@ -40,25 +40,25 @@ func visited(waiting ...session.Waiting) (*fakeEngine, chat.Model) {
 	return engine, m
 }
 
-// The panel says who is asking and what approving would cover, because "an agent needs you" with no
-// name is a message that sends somebody to look through every screen they have open.
+// The panel says who is asking and what they want, but remains a summary rather than an approval
+// surface. The focus key names the exact conversation whose full prompt must be opened.
 func TestASubagentsQuestionAppearsWithItsNameAndScope(t *testing.T) {
 	_, m := visited(waitingOn("worker-2", "s2", "npm test"))
 
 	view := plain(m.Body())
-	for _, want := range []string{"worker-2", "needs you", "npm test", "ctrl+g"} {
+	for _, want := range []string{"worker-2", "needs you", "npm test", "ctrl+g", "full request"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the panel is missing %q:\n%s", want, view)
 		}
 	}
 
-	// The scope is what the always key would cover, so it belongs on the line that offers it, which
-	// is only drawn once the panel has the keyboard.
-	focused, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	scope := waitingOn("worker-2", "s2", "npm test").Scope().String()
-	if !strings.Contains(plain(focused.Body()), scope) {
-		t.Errorf("the focused panel does not say what always would cover (%q):\n%s",
-			scope, plain(focused.Body()))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if cmd == nil {
+		t.Fatal("ctrl+g did not ask the application to open the request")
+	}
+	target, ok := cmd().(chat.SwitchMsg)
+	if !ok || target.SessionID != "s2" || target.AgentName != "worker-2" {
+		t.Fatalf("ctrl+g targeted %#v, want worker-2's conversation", target)
 	}
 }
 
@@ -84,69 +84,56 @@ func TestTypingAndSendingAnswersNobodyElsesQuestion(t *testing.T) {
 	}
 }
 
-// The focus key is the step between seeing and answering, and after it y approves exactly the agent
-// that asked rather than the conversation on screen.
-func TestFocusingThenYesApprovesTheAgentThatAsked(t *testing.T) {
-	engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
+// The focus step opens the asking conversation. Only its ordinary, full prompt may accept y, so the
+// command on the wire and the command on screen cannot diverge through the compact visitor panel.
+func TestFocusingOpensTheFullRequestBeforeYesCanApprove(t *testing.T) {
+	const command = "deploy --region eu-west-1 --account production --confirm irreversible"
+	engine, m := visited(waitingOn("worker-2", "s2", command))
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	unchanged, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if cmd == nil {
+		t.Fatal("ctrl+g did not produce a switch")
+	}
+	target := cmd().(chat.SwitchMsg)
 
+	// The compact panel never owns y, even after the focus keystroke. Until the application applies
+	// the switch, it remains ordinary text in this conversation.
+	unchanged, _ = unchanged.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if len(engine.answered) != 0 {
+		t.Fatalf("the summary panel approved a request: %+v", engine.answered)
+	}
+
+	// Simulate the application opening the destination. The engine now exposes that conversation's
+	// real prompt; SetSession renders the same full request the permission layer will answer.
+	engine.prompt = pendingPrompt(command)
+	unchanged.SetSession(target.SessionID, target.AgentName)
+	view := plain(unchanged.Body())
+	if !strings.Contains(view, command) {
+		t.Fatalf("the asking conversation did not show the canonical command in full:\n%s", view)
+	}
+
+	unchanged, _ = unchanged.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if len(engine.answered) != 1 {
 		t.Fatalf("%d questions were answered", len(engine.answered))
 	}
 	answer := engine.answered[0]
-	if answer.session != "s2" {
-		t.Errorf("the answer went to %q, want the session that asked", answer.session)
-	}
-	if !answer.approved || answer.remember {
-		t.Errorf("y gave %+v, want approved once", answer)
-	}
-	if strings.Contains(plain(m.Body()), "worker-2") {
-		t.Errorf("the panel is still up after the question was answered:\n%s", plain(m.Body()))
+	if answer.session != "s2" || !answer.approved || answer.remember {
+		t.Errorf("y gave %+v, want worker-2 approved once", answer)
 	}
 }
 
-// The other two answers, and the one that changes nothing. Refusing has to be reachable or the only
-// way to say no to another agent is to walk to its screen.
-func TestTheFocusedPanelAlwaysAndRefuseAndLeaveIt(t *testing.T) {
-	for _, run := range []struct {
-		key      rune
-		approved bool
-		remember bool
-	}{
-		{'a', true, true},
-		{'n', false, false},
-	} {
+// None of the approval alphabet is active on the compact surface. It may summarize a long request
+// to protect the frame, because the only action it can take is opening the canonical prompt.
+func TestTheCompactPanelNeverAcceptsAnApprovalAnswer(t *testing.T) {
+	for _, key := range []rune{'y', 'a', 'n'} {
 		engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{run.key}})
-
-		if len(engine.answered) != 1 {
-			t.Fatalf("%c answered %d questions", run.key, len(engine.answered))
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		if len(engine.answered) != 0 {
+			t.Errorf("%c answered a compact visitor prompt: %+v", key, engine.answered)
 		}
-		got := engine.answered[0]
-		if got.approved != run.approved || got.remember != run.remember {
-			t.Errorf("%c gave %+v", run.key, got)
+		if m.InputValue() != string(key) {
+			t.Errorf("%c did not remain ordinary conversation input, box holds %q", key, m.InputValue())
 		}
-		// And the panel goes with the answer, whichever answer it was. A question that stayed on
-		// screen after being dealt with is one somebody answers twice.
-		if view := plain(m.Body()); strings.Contains(view, "worker-2") {
-			t.Errorf("%c left the answered question on screen:\n%s", run.key, view)
-		}
-	}
-
-	// Esc hands the keyboard back without answering, and typing goes to the box again.
-	engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	m = typeText(m, "y")
-
-	if len(engine.answered) != 0 {
-		t.Errorf("leaving the panel answered something: %+v", engine.answered)
-	}
-	if m.InputValue() != "y" {
-		t.Errorf("after esc the keyboard is still the panel's, the box holds %q", m.InputValue())
 	}
 }
 
@@ -166,29 +153,39 @@ func TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances(t *testing.T) {
 		t.Errorf("the second agent is not counted:\n%s", view)
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	first := cmd().(chat.SwitchMsg)
+	if first.SessionID != "s2" {
+		t.Fatalf("the focus target was %q, want the oldest question", first.SessionID)
+	}
+	engine.prompt = pendingPrompt("npm test")
+	m.SetSession(first.SessionID, first.AgentName)
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 
 	if engine.answered[0].session != "s2" {
 		t.Errorf("the first answer went to %q", engine.answered[0].session)
 	}
+	m.SetSession("s1", "")
 	if next := plain(m.Body()); !strings.Contains(next, "worker-2") {
 		t.Errorf("the next question did not come forward:\n%s", next)
 	}
 
-	// The keyboard goes back to the conversation with it, and the one behind needs its own ctrl+g.
-	// Two keystrokes per agent rather than one, on purpose: focus is consent to answer one question,
-	// and a panel that inherited it would spend the next keystroke on an agent nobody agreed to.
+	// Returning to the original conversation does not focus whoever moved up. It remains ordinary
+	// conversation input until a fresh ctrl+g opens that agent's own prompt.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if len(engine.answered) != 1 {
 		t.Fatalf("the focus was inherited by the next question: %+v", engine.answered)
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	second := cmd().(chat.SwitchMsg)
+	engine.prompt = pendingPrompt("rm -rf build")
+	m.SetSession(second.SessionID, second.AgentName)
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if len(engine.answered) != 2 || engine.answered[1].session != "s3" {
 		t.Errorf("the second answer went to %+v", engine.answered)
 	}
+	m.SetSession("s1", "")
 	// With the queue emptied the panel goes entirely, and the rows it was spending go back to the
 	// conversation.
 	if view := plain(m.Body()); strings.Contains(view, "worker-1") || strings.Contains(view, "worker-2") {
@@ -226,13 +223,13 @@ func TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted(t *testing.T) {
 	}
 
 	// And with your own question dealt with, the visitor stops being a count and becomes the panel
-	// again, unfocused: the transition the keyboard used to be quietly held across.
+	// again. It still only offers to open the asking conversation.
 	view = plain(m.Body())
-	if !strings.Contains(view, "worker-2") || !strings.Contains(view, "to answer it") {
+	if !strings.Contains(view, "worker-2") || !strings.Contains(view, "open the full request") {
 		t.Errorf("the visitor did not come forward once the own prompt was answered:\n%s", view)
 	}
-	if strings.Contains(view, "your keys answer this one") {
-		t.Errorf("the panel came forward holding the keyboard:\n%s", view)
+	if strings.Contains(view, "y once") || strings.Contains(view, "a always") {
+		t.Errorf("the compact panel offered approval keys:\n%s", view)
 	}
 }
 
@@ -259,31 +256,26 @@ func TestTheQuestionPanelDoesNotOverflowTheFrame(t *testing.T) {
 	}
 }
 
-// The scenario D-47 exists to forbid, reproduced end to end.
-//
-// Focus another agent's question, have your own arrive and take precedence, answer yours with y, and
-// then type an ordinary sentence. The leading y of that sentence used to approve the command the
-// subagent was waiting on, because focus was cleared on esc, on an emptied queue and on nothing
-// else: your own prompt took the screen and the panel kept the keyboard without saying so.
-func TestYourOwnPromptTakesTheFocusBackFromAVisitor(t *testing.T) {
+// Producing a switch message does not give the compact panel a hidden claim on later keystrokes.
+// Until the application actually opens the destination, this conversation remains the sole owner
+// of its prompt and input box.
+func TestAQueuedSwitchCannotRouteLaterTypingToAVisitor(t *testing.T) {
 	engine, m := visited(waitingOn("worker-2", "s2", "rm -rf build"))
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	if !strings.Contains(plain(m.Body()), "your keys answer this one") {
-		t.Fatalf("the panel does not say it has the keyboard:\n%s", plain(m.Body()))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	if cmd == nil {
+		t.Fatal("ctrl+g did not produce a switch message")
 	}
 
-	// This conversation is asked something of its own, which outranks a visitor.
+	// Before the application handles that message, this conversation is asked something of its own.
 	engine.prompt = pendingPrompt("make test")
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	// Answered the way it always was, and the y belongs to it.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	if len(engine.answered) != 1 || engine.answered[0].session != "s1" {
 		t.Fatalf("the own prompt did not take the y: %+v", engine.answered)
 	}
 
-	// And then an ordinary sentence, which begins with the same letter.
 	m = typeText(m, "yes please carry on")
 	m = press(m, tea.KeyEnter)
 
@@ -335,78 +327,60 @@ func TestTheFocusKeyDoesNothingWhileYourOwnQuestionIsUp(t *testing.T) {
 	}
 }
 
-// Focus is a claim on one question, not on whatever is at the front of the queue when the key lands.
-// The question somebody walked to can be answered on its own screen or from the agents view in the
-// meantime, and the keystroke they were about to press must not land on whoever moved up.
-func TestAFocusedQuestionAnsweredElsewhereDoesNotPassTheKeyboardOn(t *testing.T) {
+// The switch message names the question visible when ctrl+g was pressed. If that question leaves
+// before the application handles the message, it does not silently retarget whoever moved forward.
+func TestAQueuedSwitchDoesNotRetargetTheNextWaitingAgent(t *testing.T) {
 	engine, m := visited(
 		waitingOn("worker-1", "s2", "npm test"),
 		waitingOn("worker-2", "s3", "rm -rf build"),
 	)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
 
 	// Answered somewhere else entirely, and one ordinary event later the panel knows.
 	engine.waiting = engine.waiting[1:]
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	if len(engine.answered) != 0 {
-		t.Errorf("the keystroke landed on %+v, want nothing", engine.answered)
+	target := cmd().(chat.SwitchMsg)
+	if target.SessionID != "s2" {
+		t.Errorf("the queued switch retargeted %q, want the question originally shown", target.SessionID)
 	}
 
 	view := plain(m.Body())
 	if !strings.Contains(view, "worker-2") {
 		t.Errorf("the next waiter is not on screen:\n%s", view)
 	}
-	if strings.Contains(view, "your keys answer this one") {
-		t.Errorf("the panel inherited a focus nobody gave it:\n%s", view)
-	}
-	// A fresh ctrl+g is what answers the one that moved up.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	if len(engine.answered) != 1 || engine.answered[0].session != "s3" {
-		t.Errorf("the fresh focus answered %+v", engine.answered)
-	}
-	if view := plain(m.Body()); strings.Contains(view, "worker-2") {
-		t.Errorf("the question answered by the fresh focus is still on screen:\n%s", view)
+
+	_, nextCmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	next := nextCmd().(chat.SwitchMsg)
+	if next.SessionID != "s3" {
+		t.Errorf("a fresh focus targeted %q, want the question now shown", next.SessionID)
 	}
 }
 
-// A question answered from here stays gone, rather than coming back on the next event.
-//
-// The engine goes on listing it until the goroutine the answer unblocked wakes up, and an event
-// arrives for every agent in the project, so the panel used to redraw the answered question with the
-// cursor on it: an invitation to answer something twice.
-func TestAnAnsweredQuestionDoesNotComeBackOnTheNextEvent(t *testing.T) {
+// Answering happens on the asking conversation. Returning to the original one rebuilds its compact
+// queue from engine truth, and a later question from the same agent remains visible.
+func TestReturningAfterAnAnswerReadsTheCurrentQueue(t *testing.T) {
 	engine, m := visited(
 		waitingOn("worker-1", "s2", "npm test"),
 		waitingOn("worker-2", "s3", "rm -rf build"),
 	)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
-
-	// The fake removes the answered entry, so the engine is put back to what a real one looks like
-	// in the window before the parked goroutine wakes: still listing what was just answered.
-	answered := append([]session.Waiting(nil), engine.waiting...)
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	target := cmd().(chat.SwitchMsg)
+	engine.prompt = pendingPrompt("npm test")
+	m.SetSession(target.SessionID, target.AgentName)
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	engine.waiting = answered
-
+	m.SetSession("s1", "")
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
 	view := plain(m.Body())
 	if strings.Contains(view, "worker-1") {
-		t.Errorf("the answered question came back on the next event:\n%s", view)
+		t.Errorf("the answered question is still in the queue:\n%s", view)
 	}
 	if !strings.Contains(view, "worker-2") {
 		t.Errorf("the one still waiting is not on screen:\n%s", view)
 	}
-
-	// The note lasts exactly as long as the engine goes on listing the answered question, and no
-	// longer. The parked goroutine wakes, the entry leaves, and the next question that agent raises
-	// shows like any other rather than being suppressed by a note about the last one.
-	engine.waiting = []session.Waiting{waitingOn("worker-2", "s3", "rm -rf build")}
-	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
 	engine.waiting = []session.Waiting{waitingOn("worker-1", "s2", "npm run build")}
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})

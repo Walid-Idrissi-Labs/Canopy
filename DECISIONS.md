@@ -1062,6 +1062,12 @@ permission. Your own conversation's prompt outranks visitors, and a count of who
 visible either way. D-43's rule that no reflex spends money is unchanged; this is that rule
 holding at one more distance.
 
+The focus step opens the conversation that owns the prompt; it does not route approval keys from
+the compact visitor panel. That panel may truncate a command to protect the current conversation's
+frame, so allowing `y` or `a` there would contradict D-35's rule that the canonical arguments shown
+are the arguments approved. On the asking conversation, the ordinary prompt shows the full request
+and only then owns the answer keys.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

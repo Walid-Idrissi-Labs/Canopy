@@ -74,6 +74,9 @@ real keys, and a misread number should be a question rather than an invoice.
 ## Watch them, and steer without stopping them
 
 Split panes show several agents working at once. Move between them by keyboard or by clicking.
+If another agent needs permission, a compact notice reaches the conversation you are on. The
+notice cannot approve anything: `ctrl+g` opens the asking conversation, where the complete
+canonical request is shown before `y` or `a` can act.
 
 Steering and interrupting are deliberately two different things:
 
