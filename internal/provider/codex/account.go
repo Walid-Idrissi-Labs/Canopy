@@ -167,26 +167,13 @@ func (v Vendor) open(ctx context.Context) (*session, error) {
 	return start(ctx, launch, version)
 }
 
-// Account asks who is signed in, and says plainly when nobody is.
+// account asks who is signed in, and says plainly when nobody is.
 //
-// Refresh renews the app server's own grant before answering. It is off for a question somebody
-// asked and on before a sign-in is recorded, and the difference is not fussiness: OpenAI rotates
-// refresh tokens, so a probe that renews spends the token the user's own Codex was going to use
-// next. Renewing is worth that when the answer is about to be written down as a credential and is
-// not worth it to draw a line in a report.
-func (v Vendor) Account(ctx context.Context, refresh bool) (Account, error) {
-	ctx, cancel := withVendorTimeout(ctx)
-	defer cancel()
-
-	s, err := v.open(ctx)
-	if err != nil {
-		return Account{}, err
-	}
-	defer func() { _ = s.Close() }()
-
-	return v.account(s, refresh)
-}
-
+// Refresh renews the app server's own grant before answering, and it is off everywhere in this
+// package. That is a decision rather than an oversight: OpenAI rotate refresh tokens, so a probe
+// that renews spends the token the user's own Codex was going to use next, and nothing Canopy does
+// here is worth signing somebody out of their own tools for. The parameter stays because the day
+// something genuinely needs a fresh grant, the argument above should be read before it is passed.
 func (v Vendor) account(s *session, refresh bool) (Account, error) {
 	var result accountReadResult
 	if err := s.call(methodAccountRead, accountReadParams{RefreshToken: refresh}, &result); err != nil {
@@ -270,21 +257,12 @@ func readWindow(w *rateLimitWindow) *Window {
 	return window
 }
 
-// SignOut tells the app server to forget the grant it holds.
+// There is deliberately no SignOut here, and no revokesCredentials on the route that uses this.
 //
-// It is the app server's login, not Canopy's, so this really does sign the user's own Codex out.
-// That is the honest meaning of signing out of a delegated credential and it is said out loud
-// wherever it is offered, because somebody who expected only Canopy to forget something would
-// otherwise find their next `codex` asking them to log in.
-func (v Vendor) SignOut(ctx context.Context) error {
-	ctx, cancel := withVendorTimeout(ctx)
-	defer cancel()
-
-	s, err := v.open(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = s.Close() }()
-
-	return s.call(methodLogout, struct{}{}, nil)
-}
+// The protocol has `account/logout` and calling it would work, which is exactly the problem: the
+// grant belongs to the app server rather than to Canopy, and the user's own `codex` uses the same
+// one. Somebody running `canopy keys signout` is asking Canopy to forget a credential, not asking
+// to be signed out of their terminal's Codex, and doing the second because the first was requested
+// is a surprise nobody can undo without signing in again. `canopy keys signout` removes Canopy's
+// record and says the ChatGPT login is still there; LIMITATIONS.md names `codex logout` for anybody
+// who wants it gone.

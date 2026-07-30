@@ -242,33 +242,72 @@ func TestCanopyNeverAsksToOwnTheTokenLifecycleItself(t *testing.T) {
 	}
 }
 
-// The account asked for after a sign-in is asked for without spending the user's refresh token.
-func TestReadingTheAccountDoesNotRenewAGrantCanopyDoesNotOwn(t *testing.T) {
-	server := &appServer{account: chatgpt("someone@example.com", "plus")}
-	if _, err := server.vendor().Account(context.Background(), false); err != nil {
-		t.Fatalf("reading the account failed: %v", err)
+// Nothing in this package asks the app server to renew the grant, on any path.
+func TestNothingHereSpendsTheRefreshTokenTheUsersOwnCodexIsGoingToNeed(t *testing.T) {
+	server := &appServer{
+		login:        deviceLogin(),
+		loginOutcome: &loginCompletedParams{LoginID: "login-1", Success: true},
+		account:      chatgpt("someone@example.com", "plus"),
 	}
 
-	frame, ok := server.sentMethod(methodAccountRead)
-	if !ok {
-		t.Fatal("the account was never asked for")
+	login, err := server.vendor().Begin(context.Background(), ModeDeviceCode)
+	if err != nil {
+		t.Fatalf("starting the sign-in failed: %v", err)
 	}
-	var params accountReadParams
-	_ = json.Unmarshal(frame.Params, &params)
-	if params.RefreshToken {
-		t.Error("reading the account renewed the grant. OpenAI rotates refresh tokens, so a probe " +
-			"that renews spends the token the user's own Codex was going to use next")
+	if _, err := login.Wait(context.Background()); err != nil {
+		t.Fatalf("the sign-in failed: %v", err)
+	}
+
+	// A second fake rather than the same one again, because each of these really is a second
+	// process: a fake reused across two connections is one struct with two sets of pipes written
+	// over it.
+	reporting := &appServer{account: chatgpt("someone@example.com", "plus")}
+	if _, _, err := reporting.vendor().Limits(context.Background()); err != nil {
+		t.Fatalf("reading the limits failed: %v", err)
+	}
+
+	var asked int
+	for _, from := range []*appServer{server, reporting} {
+		for _, frame := range from.sent() {
+			if frame.Method != methodAccountRead {
+				continue
+			}
+			asked++
+			var params accountReadParams
+			_ = json.Unmarshal(frame.Params, &params)
+			if params.RefreshToken {
+				t.Error("something asked the app server to renew the grant before answering. " +
+					"OpenAI rotate refresh tokens, so whichever process redeems one last wins, and " +
+					"Canopy spending it would sign somebody out of their own Codex")
+			}
+		}
+	}
+	if asked < 2 {
+		t.Fatalf("the account was asked for %d times across a sign-in and a report, want both, so "+
+			"this proves less than it claims", asked)
 	}
 }
 
-// Signing out is the app server's own logout, which is somebody's whole Codex and not only Canopy's
-// record of it.
-func TestSigningOutTellsTheAppServerRatherThanOnlyForgetting(t *testing.T) {
-	server := &appServer{account: chatgpt("someone@example.com", "plus")}
-	if err := server.vendor().SignOut(context.Background()); err != nil {
-		t.Fatalf("signing out failed: %v", err)
+// Canopy does not sign somebody out of their own Codex, and there is no way for it to try.
+func TestNothingHereCanSignTheUsersOwnCodexOut(t *testing.T) {
+	server := &appServer{
+		login:        deviceLogin(),
+		loginOutcome: &loginCompletedParams{LoginID: "login-1", Success: true},
+		account:      chatgpt("someone@example.com", "plus"),
 	}
-	if _, ok := server.sentMethod(methodLogout); !ok {
-		t.Error("nothing reached the app server, so the grant would still be sitting in ~/.codex")
+
+	login, err := server.vendor().Begin(context.Background(), ModeDeviceCode)
+	if err != nil {
+		t.Fatalf("starting the sign-in failed: %v", err)
+	}
+	if _, err := login.Wait(context.Background()); err != nil {
+		t.Fatalf("the sign-in failed: %v", err)
+	}
+	login.Cancel()
+
+	if _, ok := server.sentMethod(methodLogout); ok {
+		t.Error("account/logout reached the app server. The grant belongs to the app server and " +
+			"the user's own `codex` uses the same one, so signing it out because somebody asked " +
+			"Canopy to forget a credential is a surprise they cannot undo without signing in again")
 	}
 }

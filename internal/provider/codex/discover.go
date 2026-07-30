@@ -228,19 +228,6 @@ func (d Discovery) existingLogin(home string) (storedLogin, bool) {
 	return login, true
 }
 
-// ExistingLogin reports what a Codex login left on this machine says, without running anything.
-//
-// Exported so a sign-in and a `canopy keys test` can both say the same true thing about a machine
-// whose binary has gone missing. It answers who, not whether: a grant recorded here may have been
-// revoked since, and nothing short of asking OpenAI would know.
-func (d Discovery) ExistingLogin() (storedLogin, bool) {
-	home, err := d.codexHome()
-	if err != nil {
-		return storedLogin{}, false
-	}
-	return d.existingLogin(home)
-}
-
 // storedLogin is what $CODEX_HOME/auth.json says, minus the tokens.
 //
 // The tokens are read, because the account and the plan are inside one of them, and they are not

@@ -32,7 +32,12 @@ const (
 	methodAccountRateLimits = "account/rateLimits/read"
 	methodLoginStart        = "account/login/start"
 	methodLoginCancel       = "account/login/cancel"
-	methodLogout            = "account/logout"
+
+	// methodLogout is named so a test can assert Canopy never sends it. The grant belongs to the app
+	// server and the user's own `codex` uses the same one, so signing it out because somebody asked
+	// Canopy to forget a credential is a surprise. See the note where SignOut would have been, in
+	// account.go.
+	methodLogout = "account/logout"
 
 	methodThreadStart   = "thread/start"
 	methodTurnStart     = "turn/start"

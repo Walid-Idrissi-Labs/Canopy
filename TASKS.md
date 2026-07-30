@@ -6846,11 +6846,11 @@ system prompt goes in as the thread's developer instructions;
 usage is attributed by provider name and a delegated turn calling itself "openai" would be
 indistinguishable from a metered one; `TestAnAppServerThatReportsNoUserAgentIsNotAccusedOfLying`,
 because silence is not evidence; `TestASignInOpenAIRefusedSaysWhatOpenAISaid`,
-`TestASignInThatCompletesWithNoAccountBehindItIsRefused`,
-`TestCancellingASignInStopsThePollingAndSaysItWasStoppedRatherThanThatItFailed` and
-`TestReadingTheAccountDoesNotRenewAGrantCanopyDoesNotOwn`, that last one holding that a probe does
-not spend the refresh token the user's own Codex was going to use;
-`TestSigningOutTellsTheAppServerRatherThanOnlyForgetting`;
+`TestASignInThatCompletesWithNoAccountBehindItIsRefused` and
+`TestCancellingASignInStopsThePollingAndSaysItWasStoppedRatherThanThatItFailed`;
+`TestNothingHereSpendsTheRefreshTokenTheUsersOwnCodexIsGoingToNeed` and
+`TestNothingHereCanSignTheUsersOwnCodexOut`, which hold the two things this route deliberately does
+not do to a login it does not own;
 `TestAnOverriddenBinaryIsCheckedRatherThanTrusted`,
 `TestCodexHomeIsWhereCodexSaysItIsRatherThanWhereCanopyGuesses` and
 `TestTheBinaryIsFoundOnTheMachineRatherThanShippedInside`;
@@ -6902,6 +6902,17 @@ cannot be satisfied by deleting it.
 Both ids still store the same route, because how somebody signed in is not a property of the
 credential and where its turns go is. The second exists so a person the browser guess got wrong can
 ask for the code instead.
+
+Two things this route deliberately does not do, said here because the code no longer contains them
+to be read. It never asks the app server to renew the grant before answering a question, because
+OpenAI rotate refresh tokens and whichever process redeems one last wins, so a probe that renewed
+would spend the token the user's own `codex` was about to use. And it implements no
+`revokesCredentials`, so `canopy keys signout` removes Canopy's record and leaves the ChatGPT login
+in `~/.codex` where that same `codex` uses it; `account/logout` exists in the protocol and calling
+it is exactly the surprise nobody asked for. Held from the outside by
+`TestNothingHereSpendsTheRefreshTokenTheUsersOwnCodexIsGoingToNeed` and
+`TestNothingHereCanSignTheUsersOwnCodexOut`, and LIMITATIONS.md names `codex logout` for anybody who
+does want it gone.
 
 Run before ticking, in a clean clone at this commit rather than in the shared worktree, because
 `internal/provider/copilot` and the two switches were in flight there for S-03 while this was
