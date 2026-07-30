@@ -5229,6 +5229,40 @@ carrying a `canopy pickup` command were moved onto their own line, because the w
 would otherwise break a command across two rows, and half a command is a command that looks like a
 shorter one.
 
+### U-23 A finished turn is rendered once
+`status: review | owner: claude | branch: perf/render-once-per-turn | depends: U-20, U-21`
+`scope: internal/tui/chat/`
+
+Deliverable: the transcript keeps being rebuilt from the session on every frame, which is the
+property that makes a dropped or coalesced event unable to lose a token, and stops paying full price
+for it. A turn that has reached a terminal state is rendered once and reused, keyed by session, turn,
+content hash, width and whether the detail view is open. A turn still arriving is never cached,
+because it changes on every frame by definition and it is exactly one turn: the last one. The cache
+is bounded and is emptied when the theme changes.
+
+Acceptance: two hundred turns of ordinary replies render in under a millisecond per frame, where the
+measurement before this task was a hundred and five. A streaming turn's text keeps growing on screen.
+Two sessions whose turns are both numbered from one are never shown each other's answers. The same
+turn at a second width, or with `ctrl+o` open, is drawn again rather than reused. Nothing rendered in
+one palette survives a switch to the other. If two surfaces resolve a call to different tool kinds,
+each renders the label and colour from its own registry rather than reusing the other's cached line.
+
+`verify: claude [x]   codex [ ]`
+
+notes: the cost was measured before the fix rather than assumed: one full render of a two hundred
+turn session took 105ms, against a 120ms redraw tick and two full renders per scroll notch, so a long
+conversation spent most of a core drawing itself and answered a keystroke a tenth of a second late.
+Both figures grow with the conversation, which means the product got worse the longer somebody used
+it. The content is hashed rather than fingerprinted by length: the first version compared the lengths
+of a turn's parts and collided inside this package's own test suite within one run, where a session
+called s1 holding a turn called turn-1 is what nearly every test builds.
+
+Review correction, 2026-07-30: the cache key omitted the result of KindOf even though kindLabel uses
+it to choose visible text and colour. A turn first rendered with a nil, read, or stale registry could
+therefore retain that classification when another surface knew the call was execute, network, write,
+or Git. turnKey now hashes the resolved known/unknown kind for every call.
+TestAChangedToolClassificationRendersAgain holds the cross-surface regression.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 
