@@ -54,14 +54,30 @@ checksum:
   name_template: "checksums.txt"
 
 release:
-  # Without this a tag like v0.1.0-alpha.1 publishes as a normal release and GitHub shows it as the
-  # latest stable version, which for a project whose own README says pre-alpha is a claim it does
-  # not want to make. `auto` reads the semver prerelease suffix and marks the release accordingly.
+  # Not a prerelease, and the latest release, from the beta onwards.
   #
-  # Worth knowing that this is a separate mechanism from the one that skips the Homebrew cask.
-  # That one looks at the parsed version directly and was already doing the right thing, so the
-  # first release skipped the tap correctly while still being labelled stable.
-  prerelease: auto
+  # This was `auto`, which marks any tag carrying a suffix as a GitHub prerelease. That was right
+  # while the tags were alphas: a build the two of us were trying is not something to put in front of
+  # a visitor as the current version. It became wrong the moment the point of a tag was that somebody
+  # else installs it, because **GitHub refuses to call a prerelease the latest release**. It says so
+  # in as many words if you try: "Latest release cannot be draft or prerelease." With every release
+  # flagged, the repository had no latest release at all and the API answered 404, so the release
+  # page and every install instruction that resolves "latest" pointed at nothing.
+  #
+  # The maturity signal did not move, it just stopped being carried by this flag. It is in the tag
+  # name, `v0.1.0-beta.1`, which is the first thing anybody reads; in the README's status line and the
+  # paragraph under it saying the phase gates are unsigned; and in LIMITATIONS. A flag that hides the
+  # release is not honesty, it is only invisibility.
+  #
+  # If an alpha is ever cut again, set this back to `auto` for that tag. The suffix alone will not do
+  # it any more, which is the cost of this change and is worth stating rather than discovering.
+  #
+  # Independent of the Homebrew cask, which is the mechanism people confuse this with. That one reads
+  # the parsed version directly, not this flag, so a `-beta` tag still skips the tap. The alpha.3 run
+  # proved the two are separate: it logged "prerelease detected with 'auto' upload, skipping homebrew
+  # publish" while the GitHub release itself was labelled stable.
+  prerelease: false
+  make_latest: true
 
 changelog:
   sort: asc
