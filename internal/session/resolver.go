@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
@@ -97,10 +98,21 @@ func (r *KeyResolver) pick(name string) (core.KeyMetadata, error) {
 	}
 }
 
-// MarkUsed records that a credential answered, so the key list can show when each was last used.
+// MarkUsed records that a credential answered.
+//
+// Two things read it: the key list, which shows when each credential was last used, and
+// DefaultKeyName, which is why a second launch opens on a conversation rather than on the credential
+// list.
 func (r *KeyResolver) MarkUsed(name string) {
 	if name == "" {
-		return
+		// An unnamed credential is the one pick resolved for the turn, and it only resolves when
+		// there is exactly one. Asked again here rather than assumed, so the record names the
+		// credential that actually answered instead of nothing at all.
+		meta, err := r.pick("")
+		if err != nil {
+			return
+		}
+		name = meta.Ref.Name
 	}
 	// A failure here is not worth surfacing: the answer is what the user asked for, and losing the
 	// last-used timestamp costs them nothing they would notice.
@@ -109,12 +121,40 @@ func (r *KeyResolver) MarkUsed(name string) {
 
 // DefaultKeyName returns the credential a new session should use when the user has not chosen one.
 //
-// Empty when there is no obvious answer, which the engine turns into an error naming the choice
-// rather than making it.
+// With one stored the choice is obvious. With several the one last used is the answer, because the
+// credential somebody has been running on is a choice they already made, and asking them to make it
+// again on every launch is not caution, it is amnesia. This used to return empty for any count other
+// than one, which meant that adding a second credential turned every subsequent `canopy` into the
+// credential list rather than a conversation, with no way to say "this one, from now on".
+//
+// It is not a silent choice. The screen a conversation opens on says "using <name>" along its
+// bottom left, and ctrl+k changes it, so the credential about to be billed is on screen before the
+// first message is typed.
+//
+// Empty is still a legitimate answer, and it means one of two things: nothing is stored, or several
+// are and none of them has ever answered. The second is the only case where there is genuinely
+// nothing to go on, and it is the one the credential screen exists for.
 func (r *KeyResolver) DefaultKeyName() string {
 	all, err := r.store.List()
-	if err != nil || len(all) != 1 {
+	if err != nil || len(all) == 0 {
 		return ""
 	}
-	return all[0].Ref.Name
+	if len(all) == 1 {
+		return all[0].Ref.Name
+	}
+
+	name := ""
+	var used time.Time
+	for _, meta := range all {
+		if meta.LastUsedAt == nil {
+			continue
+		}
+		if name == "" || meta.LastUsedAt.After(used) {
+			name, used = meta.Ref.Name, *meta.LastUsedAt
+		}
+	}
+	// List is ordered by name, and the comparison above is strictly later, so two credentials sharing
+	// a timestamp resolve the same way on every run. A default that changed between launches would be
+	// worse than having none.
+	return name
 }
