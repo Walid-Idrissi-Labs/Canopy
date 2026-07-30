@@ -112,12 +112,14 @@ func bindings() []section {
 		{"the model picker, on /model", []binding{
 			{"j / k", "move, across credentials as well as within one"},
 			{"enter", "run this conversation on it from the next message"},
+			{"ctrl+k", "credentials, to change what a key defaults to"},
 			{"any other key", "back, with nothing changed"},
 		}},
 		{"credentials", []binding{
 			{"j / k", "move"},
 			{"enter", "use this one for the conversation"},
 			{"m", "set which model it talks to"},
+			{"e", "rename it. the value is not asked for again"},
 			{"a / n", "add one"},
 			{"d / x", "remove one"},
 			{"r", "reload the list"},

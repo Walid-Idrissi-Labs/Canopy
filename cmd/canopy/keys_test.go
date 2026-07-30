@@ -2,11 +2,14 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
 
 // The plural listing is the one that answers "what could this key run", and for an Anthropic key the
@@ -128,5 +131,83 @@ func TestTheModelListingSaysWhenTheCatalogHasGoneStale(t *testing.T) {
 	// And it still lists what it knows. Stale is a caveat, never a refusal.
 	if !strings.Contains(listing, "claude-sonnet-5") {
 		t.Errorf("a stale catalog stopped offering anything:\n%s", listing)
+	}
+}
+
+// Renaming from the command line moves the credential and the conversations recorded on it. A
+// rename that stopped at the key store would leave every one of them pointing at a name nothing
+// answers to, and the failure would arrive one message later from somebody else's gateway.
+func TestRenamingAKeyMovesItAndTheConversationsOnIt(t *testing.T) {
+	store := storeWithCanary(t)
+	t.Setenv(session.PathEnvVar, filepath.Join(t.TempDir(), "history.db"))
+
+	// Seeded through the same path the command will use, so the test is about the command rather
+	// than about which file it opened.
+	path, err := session.DefaultPath()
+	if err != nil {
+		t.Fatalf("DefaultPath: %v", err)
+	}
+	history, err := session.OpenStorage(path)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+	if err := history.SaveSession(core.Session{
+		ID: "session-1", KeyName: "claude", Model: "claude-opus-5"}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	_ = history.Close()
+
+	var out bytes.Buffer
+	if err := runKeys([]string{"rename", "claude", "anthropic"}, &out); err != nil {
+		t.Fatalf("keys rename: %v", err)
+	}
+	said := out.String()
+	for _, want := range []string{"now called", "anthropic", "conversation"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the output is missing %q:\n%s", want, said)
+		}
+	}
+	// And says what it cannot reach, which is a Canopy already running beside it holding the same
+	// conversations in memory.
+	if !strings.Contains(said, "restart") {
+		t.Errorf("the output does not say a running Canopy will not follow:\n%s", said)
+	}
+	assertClean(t, "keys rename", said)
+
+	// The credential moved, value and all, without ever being asked for again.
+	secret, err := store.Get(core.KeyRef{Name: "anthropic"})
+	if err != nil {
+		t.Fatalf("the credential is not readable under its new name: %v", err)
+	}
+	if secret.Reveal() != canary {
+		t.Error("the value changed in the move")
+	}
+
+	// And the conversation followed.
+	reopened, err := session.OpenStorage(path)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	loaded, err := reopened.Load("session-1")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if loaded.KeyName != "anthropic" {
+		t.Errorf("the stored conversation still names %q", loaded.KeyName)
+	}
+}
+
+// The value is never asked for and the arguments are two names, so there is nothing here that could
+// put a credential into shell history. Worth a test because the whole `keys` command is built around
+// that rule.
+func TestRenamingAKeyRefusesWithoutTwoNames(t *testing.T) {
+	storeWithCanary(t)
+
+	for _, args := range [][]string{{"rename"}, {"rename", "claude"}, {"rename", "a", "b", "c"}} {
+		var out bytes.Buffer
+		if err := runKeys(args, &out); err == nil {
+			t.Errorf("%v was accepted", args)
+		}
 	}
 }

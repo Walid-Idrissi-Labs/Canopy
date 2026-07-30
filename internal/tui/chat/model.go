@@ -1418,6 +1418,25 @@ func (m *Model) UseCredential(keyName, model string) bool {
 	return true
 }
 
+// FollowCredentialRename moves this conversation's note of its credential onto the new name.
+//
+// Not UseCredential, deliberately, and the difference is the whole point. UseCredential asks the
+// engine to change what a conversation runs on, which it may refuse mid answer. This changes nothing
+// about what it runs on: it is the same credential, the same secret and the same endpoint, and only
+// the name has moved. Routing it through the switch would put a rename behind a refusal that has
+// nothing to say about it, and leave the header naming a credential that no longer exists until the
+// turn happened to end.
+//
+// Guarded on the name, because a conversation on a different credential must not be dragged onto
+// this one by a rename it has nothing to do with.
+func (m *Model) FollowCredentialRename(from, to string) {
+	if from == "" || to == "" || m.keyName != from {
+		return
+	}
+	m.keyName = to
+	m.refresh()
+}
+
 // SessionID is the conversation being shown.
 func (m Model) SessionID() string { return m.sessionID }
 

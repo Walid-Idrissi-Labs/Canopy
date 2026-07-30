@@ -35,6 +35,11 @@ type Store interface {
 	// spent effort recording wants a confirmation of its own before it is worth having.
 	AddModel(ref core.KeyRef, id, name string) error
 
+	// Rename changes what a credential is called. It returns the metadata under the new name, which
+	// is what lets the screen put its cursor back on the row somebody was looking at rather than on
+	// whichever key the alphabet has moved into its place.
+	Rename(ref core.KeyRef, to string) (core.KeyMetadata, error)
+
 	BackendName() string
 	UsingInsecureBackend() bool
 }
@@ -50,6 +55,7 @@ const (
 	modeModel
 	modeSecret
 	modeConfirmRemove
+	modeRename
 )
 
 // Model is the credential screen.
@@ -81,6 +87,19 @@ type Model struct {
 	// editing is set when the model prompt was reached from the list rather than from the add flow,
 	// so committing it changes one field instead of trying to store a credential with no secret.
 	editing bool
+
+	// renamingFrom is what the credential being renamed is called now, empty when nothing is being
+	// renamed. Held rather than read back off the cursor, because the list is sorted by name and
+	// reloads under it: after the rename the row the cursor is on is whichever key the alphabet has
+	// moved into that position.
+	renamingFrom string
+
+	// renamed is a rename this screen has done and the application has not been told about yet.
+	//
+	// It exists because the store is only half of a rename. A credential's name is what every
+	// conversation writes down, so the conversations have to follow it, and this screen owns none of
+	// them. Taken once, by whoever does.
+	renamed Rename
 
 	// chosen is the credential the user picked for this conversation. The application reads it and
 	// clears nothing: the screen states a preference, and switching sessions is the parent's job.
@@ -171,6 +190,25 @@ func (m *Model) SelectionRefused(name, reason string) {
 	m.status = ""
 }
 
+// Rename is a credential that was called one thing and is now called another.
+type Rename struct{ From, To string }
+
+// TakeRename reports a rename that has happened here, once.
+//
+// Once, because acting on it twice would be re-pointing conversations at a name they already carry,
+// and because the second caller to ask would be told about a move that is already everywhere. There
+// is nothing to accept or refuse: unlike a credential selection, the store has already been written
+// and the old name has already stopped resolving, so a parent that declined would only be declining
+// to keep up.
+func (m *Model) TakeRename() (Rename, bool) {
+	if m.renamed.From == "" {
+		return Rename{}, false
+	}
+	done := m.renamed
+	m.renamed = Rename{}
+	return done, true
+}
+
 // Model returns the model the chosen credential talks to, for the caller that has to set both.
 func (m Model) ModelFor(name string) string {
 	for _, key := range m.keys {
@@ -212,6 +250,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		m.handleTextKey(msg, &m.draftBaseURL, (*Model).afterBaseURL)
 	case modeModel:
 		m.handleTextKey(msg, &m.draftModel, (*Model).afterModel)
+	case modeRename:
+		m.handleTextKey(msg, &m.draftName, (*Model).afterRename)
 	case modeSecret:
 		m.handleTextKey(msg, &m.draftSecret, (*Model).afterSecret)
 	case modeProvider:
@@ -252,6 +292,16 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 		if len(m.keys) > 0 {
 			m.startModelPick(m.keys[m.cursor])
 		}
+	case "e":
+		// Renaming, for the same reason and with the same rule: no secret is asked for. A name is the
+		// one field on this screen somebody is guaranteed to get wrong eventually, because it is
+		// chosen before the credential has been used for anything, and until now the only way to
+		// correct it was to remove the credential and paste the key in again. That is a flow where
+		// people go and find an API key, which is a flow where keys end up in shell history and in
+		// clipboards.
+		if len(m.keys) > 0 {
+			m.startRename(m.keys[m.cursor])
+		}
 	case "enter":
 		// Choosing which credential the conversation runs on. Without this the list was somewhere to
 		// add and remove keys and nowhere to pick one, so with two stored, nothing could run at all.
@@ -260,6 +310,79 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 			m.storedChoice = false
 			m.status = fmt.Sprintf("Selecting %s for this conversation...", m.chosen)
 			m.err = nil
+		}
+	}
+}
+
+// startRename opens the name field on a credential that already exists.
+//
+// Opened on the current name rather than empty, which is the difference between renaming and naming.
+// Most renames change a word of what is there, and an empty field asks somebody to type the parts
+// they were happy with again, from memory, on the one field where a typo silently points every
+// conversation at nothing.
+func (m *Model) startRename(key core.KeyMetadata) {
+	m.renamingFrom = key.Ref.Name
+	m.draftName = key.Ref.Name
+	m.draftProvider = key.Ref.Provider
+	m.draftBaseURL = key.BaseURL
+	m.draftModel = key.Model
+	m.status, m.err = "", nil
+	m.mode = modeRename
+}
+
+// afterRename commits the new name.
+//
+// A failure keeps the field open rather than throwing the attempt away. Every reason this can fail
+// is one somebody can fix by typing something else, a name that is taken or a name with a character
+// in it that a name may not have, and cancelling their attempt to tell them so would make them start
+// again to read the answer.
+func (m *Model) afterRename() {
+	to := strings.TrimSpace(m.draftName)
+	if err := core.ValidateKeyName(to); err != nil {
+		m.err = err
+		// The same rule the add flow follows: a value that has stopped looking like a name is most
+		// likely a credential pasted into the wrong field, and it should not sit on screen while
+		// somebody reads the rejection.
+		if core.LooksLikeCredential(to) {
+			m.draftName = ""
+		}
+		return
+	}
+
+	from := m.renamingFrom
+	meta, err := m.store.Rename(core.KeyRef{Name: from}, to)
+	if meta.Ref.Name == "" {
+		// It did not happen. The field stays open on what was typed.
+		m.err = err
+		return
+	}
+
+	// It did happen, and may still have something to say: the store reports a rename that landed
+	// while leaving the old secret behind it, which is a credential nobody would think to revoke and
+	// is worth more than a silent success.
+	m.renamed = Rename{From: from, To: meta.Ref.Name}
+	m.renamingFrom = ""
+	m.draftName, m.draftBaseURL, m.draftModel = "", "", ""
+	m.mode = modeList
+	m.err = err
+	if err == nil {
+		m.status = fmt.Sprintf("%q is now called %q. Every conversation on it followed.", from, meta.Ref.Name)
+	}
+
+	// A selection outstanding under the old name would be applied by the parent as a credential that
+	// no longer exists, so it moves with everything else.
+	if m.chosen == from {
+		m.chosen = meta.Ref.Name
+	}
+	m.reload()
+
+	// The cursor follows the credential rather than the position. The list is sorted by name, so a
+	// rename usually moves the row, and a cursor that stayed put would leave somebody looking at a
+	// different key with no sign that anything had moved.
+	for i, key := range m.keys {
+		if key.Ref.Name == meta.Ref.Name {
+			m.cursor = i
+			break
 		}
 	}
 }
@@ -561,6 +684,9 @@ func (m *Model) handleConfirmKey(msg tea.KeyMsg) {
 func (m *Model) cancelDraft() {
 	m.draftName, m.draftBaseURL, m.draftSecret = "", "", ""
 	m.providerCursor = 0
+	// An abandoned rename leaves nothing behind either, or the next one would open believing it was
+	// continuing this one and rename the wrong credential.
+	m.renamingFrom = ""
 	// Cleared here too, or an abandoned model edit leaves the flag set and the next credential added
 	// on a provider that asks for a model gets its model prompt treated as an edit of the last key
 	// somebody looked at, storing nothing.

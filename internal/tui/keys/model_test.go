@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -24,12 +25,13 @@ func plain(s string) string { return ansiCodes.ReplaceAllString(s, "") }
 
 // stubStore records what it was asked to do, without any keychain involved.
 type stubStore struct {
-	keys     []core.KeyMetadata
-	added    map[string][]catalog.Model
-	putErr   error
-	lastPut  core.KeyMetadata
-	lastSeen core.Secret
-	insecure bool
+	keys      []core.KeyMetadata
+	added     map[string][]catalog.Model
+	putErr    error
+	renameErr error
+	lastPut   core.KeyMetadata
+	lastSeen  core.Secret
+	insecure  bool
 }
 
 func (s *stubStore) List() ([]core.KeyMetadata, error) { return s.keys, nil }
@@ -54,6 +56,37 @@ func (s *stubStore) Remove(ref core.KeyRef) error {
 	}
 	s.keys = remaining
 	return nil
+}
+
+// Rename moves the record, and refuses a name already in use, which is the one rule of the real
+// store the screen has any behaviour of its own about.
+func (s *stubStore) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
+	if s.renameErr != nil {
+		return core.KeyMetadata{}, s.renameErr
+	}
+	for _, k := range s.keys {
+		if k.Ref.Name == to {
+			return core.KeyMetadata{}, errors.New("there is already a credential called " + to)
+		}
+	}
+	for i, k := range s.keys {
+		if k.Ref.Name != ref.Name {
+			continue
+		}
+		s.keys[i].Ref.Name = to
+		// Sorted by name, like the store on disk, because the screen puts its cursor back on the
+		// credential rather than on the position and a fake that never reorders would never test it.
+		sort.Slice(s.keys, func(a, b int) bool { return s.keys[a].Ref.Name < s.keys[b].Ref.Name })
+		if s.added != nil {
+			if models, ok := s.added[ref.Name]; ok {
+				delete(s.added, ref.Name)
+				s.added[to] = models
+			}
+		}
+		return core.KeyMetadata{Ref: core.KeyRef{Name: to, Provider: k.Ref.Provider},
+			BaseURL: k.BaseURL, Model: k.Model, Fingerprint: k.Fingerprint}, nil
+	}
+	return core.KeyMetadata{}, errors.New("no key named " + ref.Name)
 }
 
 func (s *stubStore) BackendName() string        { return "test-backend" }
@@ -727,4 +760,144 @@ func TestARefusedSelectionStaysStoredButIsNotRetriedOrClaimed(t *testing.T) {
 	if strings.Contains(view, "now the credential") {
 		t.Errorf("the refused switch is presented as applied:\n%s", view)
 	}
+}
+
+// twoStored is the list a rename is worth testing against: sorted by name, so a rename can move a
+// row and the cursor has something to fail to follow.
+func twoStored() *stubStore {
+	return &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}, Model: "claude-opus-5"},
+		{Ref: core.KeyRef{Name: "kimi", Provider: core.ProviderOpenAICompatible},
+			BaseURL: "https://api.moonshot.cn/v1", Model: "moonshot-v1-8k"},
+	}}
+}
+
+// A name is the one field on this screen somebody is guaranteed to get wrong eventually, because it
+// is chosen before the credential has been used for anything. Until this existed the only way to
+// correct one was to remove the credential and paste the key in again.
+func TestRenamingACredentialNeverAsksForTheValueAgain(t *testing.T) {
+	store := twoStored()
+	m := New(store)
+
+	m = key(m, "j") // onto kimi
+	m = key(m, "e")
+
+	// Opened on what it is called now, rather than empty. Renaming changes a word of what is there;
+	// an empty field asks somebody to retype the parts they were happy with, from memory.
+	view := plain(m.Body())
+	if !strings.Contains(view, "Renaming kimi") {
+		t.Fatalf("e did not open the name field on the credential under the cursor:\n%s", view)
+	}
+	if !strings.Contains(view, "kimi_") {
+		t.Errorf("the field did not open on the current name:\n%s", view)
+	}
+	// And says the thing somebody is actually wondering before they press enter.
+	if !strings.Contains(view, "the value is not asked for again") {
+		t.Errorf("the screen does not say the secret is safe:\n%s", view)
+	}
+
+	for range len("kimi") {
+		m = press(m, tea.KeyBackspace)
+	}
+	m = typeRunes(m, "moonshot")
+	m = press(m, tea.KeyEnter)
+
+	if store.keys[1].Ref.Name != "moonshot" {
+		t.Fatalf("the store holds %v", store.keys)
+	}
+	// Never through Put, which is the call that needs a secret. Reaching it would be the flow that
+	// sends somebody back to find their API key.
+	if store.lastSeen.Reveal() != "" {
+		t.Error("a secret was handed to the store during a rename")
+	}
+
+	// The cursor follows the credential rather than the position. The list is sorted by name, so
+	// "moonshot" is still second here, and a rename that moved it would have to move with it.
+	if got := m.keys[m.cursor].Ref.Name; got != "moonshot" {
+		t.Errorf("the cursor is on %q after the rename, so the list moved and it did not", got)
+	}
+	if !strings.Contains(plain(m.Body()), "now called") {
+		t.Errorf("the screen does not say what happened:\n%s", plain(m.Body()))
+	}
+}
+
+// The screen renames the key and cannot reach a single conversation, so it has to report the move to
+// whoever owns them. Once: acting on it twice would re-point conversations at a name they already
+// carry.
+func TestARenameIsReportedOnceForTheConversationsToFollow(t *testing.T) {
+	m := New(twoStored())
+
+	m = key(m, "e")
+	for range len("claude") {
+		m = press(m, tea.KeyBackspace)
+	}
+	m = typeRunes(m, "anthropic")
+	m = press(m, tea.KeyEnter)
+
+	renamed, ok := m.TakeRename()
+	if !ok {
+		t.Fatal("the rename was not reported, so every conversation on it would keep the old name")
+	}
+	if renamed.From != "claude" || renamed.To != "anthropic" {
+		t.Errorf("the rename was reported as %+v", renamed)
+	}
+	if _, again := m.TakeRename(); again {
+		t.Error("the same rename was reported twice")
+	}
+}
+
+// A rename that the store refuses keeps the field open on what was typed. Every reason it can fail
+// is one somebody fixes by typing something else, and throwing the attempt away to tell them so
+// would make them start again in order to read the answer.
+func TestARefusedRenameKeepsTheFieldOpen(t *testing.T) {
+	store := twoStored()
+	m := New(store)
+
+	m = key(m, "e")
+	for range len("claude") {
+		m = press(m, tea.KeyBackspace)
+	}
+	m = typeRunes(m, "kimi")
+	m = press(m, tea.KeyEnter)
+
+	if !m.Adding() {
+		t.Fatal("the screen left the name field after refusing the name in it")
+	}
+	view := plain(m.Body())
+	if !strings.Contains(view, "already a credential") {
+		t.Errorf("the screen does not say why it refused:\n%s", view)
+	}
+	if !strings.Contains(view, "kimi_") {
+		t.Errorf("what was typed was thrown away:\n%s", view)
+	}
+	if _, reported := m.TakeRename(); reported {
+		t.Error("a refused rename was reported as one that happened")
+	}
+	if store.keys[0].Ref.Name != "claude" {
+		t.Errorf("the refused rename was written anyway: %v", store.keys)
+	}
+}
+
+// The same masking the add form applies, for the same reason: a value that has stopped looking like
+// a name is most likely a credential pasted into the wrong field, and it must not sit on screen
+// while somebody reads the rejection.
+func TestACredentialPastedIntoTheRenameFieldIsNeverRendered(t *testing.T) {
+	m := New(twoStored())
+
+	m = key(m, "e")
+	for range len("claude") {
+		m = press(m, tea.KeyBackspace)
+	}
+	// Checked every keystroke, because the leak that matters is the one visible mid paste rather
+	// than the one left on screen at the end.
+	for _, r := range canary {
+		m = typeRunes(m, string(r))
+		assertNoCanary(t, "while typing into the rename field", m.Body())
+	}
+
+	m = press(m, tea.KeyEnter)
+	if m.err == nil {
+		t.Fatal("a credential used as a name was accepted")
+	}
+	assertNoCanary(t, "after the rename was refused", m.Body())
 }

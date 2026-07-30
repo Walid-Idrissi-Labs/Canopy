@@ -17,6 +17,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
 
 const keysUsage = `canopy keys - manage provider credentials
@@ -26,6 +27,7 @@ usage:
   canopy keys model <name> <model>   change which model this credential talks to
   canopy keys models <name>  show every model this credential can be pointed at
   canopy keys list           show stored credentials, never their values
+  canopy keys rename <old> <new>     change what a credential is called
   canopy keys remove <name>  delete a credential
   canopy keys test <name>    check that a credential can be read back
   canopy keys rate <name>    record what this credential charges, so turns show a cost
@@ -52,6 +54,7 @@ history and in the process list, where any other user on the machine can read th
 examples:
   canopy keys add claude
   canopy keys add kimi -provider openai-compatible -base-url https://api.moonshot.cn/v1 -model moonshot-v1-8k
+  canopy keys rename kimi moonshot
   canopy keys model kimi moonshot-v1-32k
   canopy keys models claude
   canopy keys models add kimi minimaxai/minimax-m2.7 "MiniMax M2.7"
@@ -92,6 +95,8 @@ func runKeys(args []string, out io.Writer) error {
 		return runKeysAdd(rest, out)
 	case "list", "ls":
 		return runKeysList(rest, out)
+	case "rename", "mv":
+		return runKeysRename(rest, out)
 	case "remove", "rm", "delete":
 		return runKeysRemove(rest, out)
 	case "test":
@@ -415,6 +420,88 @@ func formatLastUsed(at *time.Time) string {
 		return "never"
 	}
 	return at.Format("2006-01-02")
+}
+
+// runKeysRename changes what a credential is called, without asking for its value again.
+//
+// Its own command rather than a flag on add, for the reason every other correction here has one:
+// re-entering a secret to fix something that is not the secret is a flow where people go and find an
+// API key, and that is a flow where keys end up in shell history and in clipboards.
+//
+// The conversations move with it. A credential's name is what each one writes down and what the
+// resolver looks up on its next message, so a rename that stopped at the key store would leave every
+// conversation started on it pointing at a name nothing answers to, and the failure would arrive one
+// message later from somebody else's gateway. What this cannot reach is a Canopy already running
+// beside it, which is holding those conversations in memory, so it says so.
+func runKeysRename(args []string, out io.Writer) error {
+	if len(args) != 2 {
+		return errors.New("usage: canopy keys rename <old> <new>, " +
+			"for example `canopy keys rename kimi moonshot`")
+	}
+	from, to := args[0], args[1]
+
+	store, err := openStore(out)
+	if err != nil {
+		return err
+	}
+	meta, renameErr := store.Rename(core.KeyRef{Name: from}, to)
+	if meta.Ref.Name == "" {
+		return renameErr
+	}
+
+	// The rename landed and may still have something to report: the store says so when the old
+	// secret could not be taken out of the backend, which leaves the same value readable under a name
+	// nothing else knows about. Said before the conversations are moved, because it is about the
+	// credential and moving them does not make it less true.
+	if _, err := fmt.Fprintf(out, "%q is now called %q.\n", from, meta.Ref.Name); err != nil {
+		return err
+	}
+	if renameErr != nil {
+		return renameErr
+	}
+
+	moved, err := renameInHistory(from, meta.Ref.Name)
+	if err != nil {
+		// Not a failure of the rename, which has already happened, so it is reported as what it is:
+		// the credential moved and the conversations did not, with the way to finish it.
+		return fmt.Errorf(
+			"the credential was renamed, but the conversations recorded on it could not be moved "+
+				"with it: %w. They will look for %q until this is repeated", err, from)
+	}
+
+	_, err = fmt.Fprintf(out, "%s followed it. A Canopy already running will not, so restart it.\n",
+		conversations(moved))
+	return err
+}
+
+// renameInHistory moves the stored conversations onto the new credential name.
+//
+// No history at all is not a failure. Renaming a credential before ever having a conversation on it
+// is an ordinary thing to do, and the first run of Canopy has no database to open.
+func renameInHistory(from, to string) (int, error) {
+	path, err := session.DefaultPath()
+	if err != nil {
+		return 0, err
+	}
+	storage, err := session.OpenStorage(path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = storage.Close() }()
+
+	return storage.RenameCredential(from, to)
+}
+
+// conversations counts in words, so the line reads as a sentence rather than as a log entry.
+func conversations(n int) string {
+	switch n {
+	case 0:
+		return "No conversation was recorded on it, so nothing else"
+	case 1:
+		return "The one conversation on it"
+	default:
+		return fmt.Sprintf("All %d conversations on it", n)
+	}
 }
 
 func runKeysRemove(args []string, out io.Writer) error {

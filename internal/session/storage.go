@@ -778,6 +778,33 @@ func (s *Storage) Delete(id string) error {
 	return nil
 }
 
+// RenameCredential re-points every stored conversation naming a credential, and reports how many
+// moved.
+//
+// Here as well as on the Engine because the two have different reach and both are needed. The engine
+// moves what it is holding, which is every conversation a running Canopy has loaded, and is what
+// keeps the screen honest the moment somebody renames a credential in the interface. This moves what
+// is on disk from a process with no engine at all, which is what `canopy keys rename` is.
+//
+// One statement rather than a read, a loop and a write, because the rename is one fact about many
+// rows and a loop would leave the file half moved if it stopped in the middle.
+func (s *Storage) RenameCredential(from, to string) (int, error) {
+	if from == "" || to == "" || from == to {
+		return 0, nil
+	}
+	result, err := s.db.Exec(`UPDATE sessions SET key_name = ? WHERE key_name = ?`, to, from)
+	if err != nil {
+		return 0, fmt.Errorf("re-pointing conversations from %q to %q: %w", from, to, err)
+	}
+	moved, err := result.RowsAffected()
+	if err != nil {
+		// The rows moved either way. A driver that will not say how many is not a reason to report a
+		// failure, only a reason not to quote a number.
+		return 0, nil
+	}
+	return int(moved), nil
+}
+
 // unix stores a time as nanoseconds, or zero for the zero time.
 //
 // Zero rather than the Unix epoch, because "this turn has not ended" and "this turn ended in 1970"

@@ -342,6 +342,94 @@ func (s *Store) Remove(ref core.KeyRef) error {
 	return s.save(remaining)
 }
 
+// Rename changes what a credential is called, keeping the credential.
+//
+// A name here is not a label, it is the identifier the secret is filed under in the backend and the
+// one every conversation writes down, so this is a move rather than an edit of a field. The old name
+// stops resolving the moment it returns, which is why the callers that hold conversations are
+// expected to follow it: see Engine.RenameCredential.
+//
+// The order is the one Put and Remove already argue for, in both directions. The secret is written
+// under the new name before anything else changes, so a failure there leaves the credential exactly
+// as it was. The metadata moves next, because that is the step that makes the new name real. Only
+// then is the old secret deleted, because a delete that ran first and was followed by a failure
+// would have thrown away a credential to rename it.
+//
+// Two failures leave something behind and both say so rather than being swallowed. A metadata write
+// that fails takes the freshly written secret with it, so nothing is left under a name the records
+// have never heard of. A delete that fails afterwards leaves the same value readable under the old
+// name, which is a credential nobody would think to revoke, so it is reported as exactly that.
+func (s *Store) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
+	to = strings.TrimSpace(to)
+	if err := core.ValidateKeyName(to); err != nil {
+		return core.KeyMetadata{}, err
+	}
+	if to == ref.Name {
+		// Not an error. Somebody who opened the field, changed their mind and pressed enter has asked
+		// for the state the store is already in, and failing them would be inventing a problem.
+		return s.Metadata(ref)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records, err := s.load()
+	if err != nil {
+		return core.KeyMetadata{}, err
+	}
+	found, ok := findRecord(records, ref.Name)
+	if !ok {
+		return core.KeyMetadata{}, fmt.Errorf("no key named %q: %w", ref.Name, ErrNotFound)
+	}
+	if _, taken := findRecord(records, to); taken {
+		// Refused rather than merged. Two credentials with one name is one credential, and which of
+		// the two secrets survived would be decided by the order of a loop.
+		return core.KeyMetadata{}, fmt.Errorf(
+			"there is already a credential called %q, so pick another name or remove that one first", to)
+	}
+
+	secret, err := s.backend.Get(ref.Name)
+	if errors.Is(err, ErrNotFound) {
+		// The same disagreement Get explains, said here rather than reported as a rename failure: a
+		// record whose secret has gone is not a record that can be moved anywhere useful.
+		return core.KeyMetadata{}, fmt.Errorf(
+			"key %q is recorded but its secret is missing from the %s backend, so there is nothing to "+
+				"rename. Add it again with `canopy keys add %s`", ref.Name, s.backend.Name(), ref.Name)
+	}
+	if err != nil {
+		return core.KeyMetadata{}, err
+	}
+
+	if err := s.backend.Set(to, secret); err != nil {
+		return core.KeyMetadata{}, err
+	}
+
+	for i := range records {
+		if records[i].Name == ref.Name {
+			records[i].Name = to
+			break
+		}
+	}
+	if err := s.save(records); err != nil {
+		// Nothing claims the new name, so the secret written under it is unreachable and is taken
+		// back. Best effort: a failure here leaves an orphan, and reporting the first failure is more
+		// use than reporting the cleanup of it.
+		_ = s.backend.Delete(to)
+		return core.KeyMetadata{}, err
+	}
+
+	if err := s.backend.Delete(ref.Name); err != nil {
+		found.Name = to
+		return found.toMetadata(), fmt.Errorf(
+			"%q is now called %q, but its old secret could not be removed from the %s backend: %w. "+
+				"The same value is still readable under %q, so revoke or delete it there",
+			ref.Name, to, s.backend.Name(), err, ref.Name)
+	}
+
+	found.Name = to
+	return found.toMetadata(), nil
+}
+
 // SetModel records which model this credential talks to.
 //
 // Separate from Put because changing the model must not require re-entering the secret. Somebody

@@ -670,3 +670,153 @@ func TestASecondSpellingOfOneModelIsRefusedRatherThanStored(t *testing.T) {
 		t.Errorf("after renaming the key offers %+v", models)
 	}
 }
+
+// Renaming keeps the credential and moves everything that names it. The name is the identifier the
+// secret is filed under, so this is a move rather than an edit of a field, and the value has to come
+// back out from under the new name unchanged.
+func TestRenamingMovesTheCredentialAndItsSecret(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	if _, err := store.Put(anthropic("kimi"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := store.SetModel(core.KeyRef{Name: "kimi"}, "claude-opus-5"); err != nil {
+		t.Fatalf("SetModel: %v", err)
+	}
+	if err := store.AddModel(core.KeyRef{Name: "kimi"}, "some/model", "Some Model"); err != nil {
+		t.Fatalf("AddModel: %v", err)
+	}
+
+	meta, err := store.Rename(core.KeyRef{Name: "kimi"}, "moonshot")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if meta.Ref.Name != "moonshot" {
+		t.Errorf("the rename returned %q", meta.Ref.Name)
+	}
+
+	secret, err := store.Get(core.KeyRef{Name: "moonshot"})
+	if err != nil {
+		t.Fatalf("the credential is not readable under its new name: %v", err)
+	}
+	if secret.Reveal() != planted {
+		t.Error("the value changed in the move")
+	}
+
+	// Everything recorded about it comes too. A rename that reset the model or forgot the models
+	// somebody added by hand would be a remove and an add wearing another name.
+	moved, err := store.Metadata(core.KeyRef{Name: "moonshot"})
+	if err != nil {
+		t.Fatalf("Metadata: %v", err)
+	}
+	if moved.Model != "claude-opus-5" {
+		t.Errorf("the model became %q", moved.Model)
+	}
+	if moved.Fingerprint == "" {
+		t.Error("the fingerprint was lost, so the credential looks unverifiable")
+	}
+	added, err := store.Models(core.KeyRef{Name: "moonshot"})
+	if err != nil || len(added) != 1 || added[0].ID != "some/model" {
+		t.Errorf("the models added by hand did not come with it: %v, %v", added, err)
+	}
+
+	// And the old name stops resolving, which is the half that makes the callers holding
+	// conversations have to follow it.
+	if _, err := store.Metadata(core.KeyRef{Name: "kimi"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the old name still resolves: %v", err)
+	}
+	if _, err := store.Get(core.KeyRef{Name: "kimi"}); err == nil {
+		t.Error("the old name still reads a secret, so the same value is in the backend twice")
+	}
+}
+
+// Two credentials with one name is one credential, and which of the two secrets survived would be
+// decided by the order of a loop.
+func TestRenamingRefusesANameAlreadyInUse(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if _, err := store.Put(anthropic("kimi"), core.NewSecret("second-value")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if _, err := store.Rename(core.KeyRef{Name: "kimi"}, "claude"); err == nil {
+		t.Fatal("renaming onto a name already in use was allowed")
+	}
+
+	// And neither credential moved. A refusal that had already written half of itself would be
+	// worse than the collision it was refusing.
+	for name, want := range map[string]string{"claude": planted, "kimi": "second-value"} {
+		got, err := store.Get(core.KeyRef{Name: name})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.Reveal() != want {
+			t.Errorf("%s now holds the wrong value", name)
+		}
+	}
+}
+
+// A name is validated on the way in here for the same reason it is on the way in to Put: it travels,
+// into a file, into a conversation and into the backend's own account list.
+func TestRenamingRefusesANameThatIsNotOne(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	for _, to := range []string{"", "  ", "Not A Name", strings.Repeat("x", 40)} {
+		if _, err := store.Rename(core.KeyRef{Name: "claude"}, to); err == nil {
+			t.Errorf("%q was accepted as a credential name", to)
+		}
+	}
+	if _, err := store.Get(core.KeyRef{Name: "claude"}); err != nil {
+		t.Errorf("a refused rename disturbed the credential: %v", err)
+	}
+}
+
+// Renaming to the name it already has is what somebody who opened the field and changed their mind
+// asks for, and failing them would be inventing a problem.
+func TestRenamingToTheSameNameIsNotAnError(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	meta, err := store.Rename(core.KeyRef{Name: "claude"}, "claude")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if meta.Ref.Name != "claude" {
+		t.Errorf("the no-op rename returned %q", meta.Ref.Name)
+	}
+	got, err := store.Get(core.KeyRef{Name: "claude"})
+	if err != nil || got.Reveal() != planted {
+		t.Errorf("the credential did not survive being renamed to itself: %v", err)
+	}
+}
+
+// A record whose secret has gone is not a record that can be moved anywhere useful, and the message
+// has to name the disagreement rather than report a rename failure.
+func TestRenamingSaysWhenTheSecretIsGone(t *testing.T) {
+	store, _ := newTestStore(t)
+
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// Removed behind the store's back, which is what happens when somebody deletes an entry in their
+	// keychain application.
+	if err := store.backend.Delete("claude"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	_, err := store.Rename(core.KeyRef{Name: "claude"}, "anthropic")
+	if err == nil {
+		t.Fatal("a credential with no secret was renamed")
+	}
+	if !strings.Contains(err.Error(), "missing") {
+		t.Errorf("the message does not say what is actually wrong: %v", err)
+	}
+}

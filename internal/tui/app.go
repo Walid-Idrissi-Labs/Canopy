@@ -23,6 +23,16 @@ type Engine interface {
 	// Create starts a fresh conversation and returns it. The old one is left alone: it keeps its
 	// history, keeps running any turn that is in flight, and is still in the session list.
 	Create(keyName, model string) core.Session
+
+	// RenameCredential re-points every conversation and agent naming a credential at its new name,
+	// and reports how many conversations moved.
+	//
+	// Here because a credential's name is what a conversation writes down and what the resolver
+	// dereferences on the next message. The credential screen can rename the key and cannot reach a
+	// single conversation, so a rename that stopped there would leave every conversation started on
+	// it pointing at a name nothing answers to, and the failure would arrive one message later from
+	// the far end.
+	RenameCredential(from, to string) int
 }
 
 // screen identifies which view is in front.
@@ -396,6 +406,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
 
+			// A credential renamed on that screen is followed here, before anything else this
+			// keystroke produced is read: what a conversation runs on is named, and the name it holds
+			// has just stopped resolving. Before the selection below, because a selection made on the
+			// same keystroke would otherwise be applied under whichever of the two names got there
+			// first.
+			if renamed, ok := a.keys.TakeRename(); ok {
+				a.followRename(renamed)
+			}
+
 			// A credential chosen on that screen is a fact about the conversation, so it is applied
 			// here where the conversation lives. The screen states a preference and owns nothing.
 			if name, picked := a.keys.Chosen(); picked {
@@ -754,6 +773,26 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 	// The same visibility bookkeeping the key routing does, for the same reason: the agents
 	// screen animates only while it is in front.
 	return a, a.agents.SetVisible(a.screen == screenAgents)
+}
+
+// followRename moves everything that names a credential onto its new name.
+//
+// Four things hold one, and all four are here rather than in the screen that did the renaming,
+// because that screen owns credentials and none of these. The engine's conversations and agent
+// records, which is what the next message actually looks up. The chat screen's own copy, which is
+// what the header shows and what the model picker opens on. What a new conversation and a new agent
+// inherit. Miss any one and the rename is half done in a way that only shows up later: a header
+// naming a credential that is gone, or a ctrl+n opening on one.
+//
+// Nothing is refused and nothing can be. The old name stopped resolving when the store wrote, so
+// this is keeping up rather than deciding.
+func (a *App) followRename(renamed keysui.Rename) {
+	a.engine.RenameCredential(renamed.From, renamed.To)
+	a.chat.FollowCredentialRename(renamed.From, renamed.To)
+	if a.usingKey == renamed.From {
+		a.usingKey = renamed.To
+		a.agents.SetDefaults(renamed.To, a.keys.ModelFor(renamed.To), a.dir)
+	}
 }
 
 // openModelPicker builds the picker from what is stored right now and shows it.
