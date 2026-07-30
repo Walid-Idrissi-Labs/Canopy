@@ -9,17 +9,45 @@ Pushing a tag matching `v*` runs `.github/workflows/release.yml`, which runs GoR
 builds four binaries, packs them into tar.gz archives with a checksums file, and attaches them to a
 GitHub release with a changelog grouped by conventional commit prefix.
 
-A tag containing a hyphen is a prerelease, and two separate mechanisms act on that, which is worth
-knowing because the first release got one of them wrong.
+A tag containing a hyphen is a prerelease to GoReleaser, and two separate mechanisms read that. They
+are constantly confused with each other, and each has been wrong once.
 
 `homebrew_casks.skip_upload: auto` reads the parsed version, so the cask is skipped for any tag with
-a prerelease suffix. That worked on the first release, which is why it published with no tap and no
-token.
+a suffix. This one has always worked, which is why the first release published with no tap and no
+token and nothing broke.
 
-`release.prerelease: auto` is what marks the GitHub release itself. It is not the default, and
-without it v0.1.0-alpha.1 published as a normal release and showed on GitHub as the latest stable
-version. It is set now. A release already published with the wrong label can be corrected in the
-GitHub release editor by ticking "Set as a pre-release"; the tag and the assets are untouched.
+`release.prerelease` marks the GitHub release itself, and it is **no longer `auto`**. It is `false`,
+with `make_latest: true` beside it, and the reason is worth understanding before anybody sets it back.
+
+**GitHub refuses to call a prerelease the latest release.** The API says so if you try:
+`Latest release cannot be draft or prerelease`. So while every tag was flagged, the repository had no
+latest release at all, `GET /releases/latest` answered 404, and the release page showed nothing as
+current. That is not caution, it is the release being invisible to anybody who lands on the
+repository.
+
+The maturity signal did not go anywhere; it stopped being carried by that flag. It is in the tag
+name, which is the first thing anybody reads, in the README status line and the paragraph under it
+saying the phase gates are unsigned, and in LIMITATIONS.
+
+The cost, stated rather than left to be discovered: **a suffix no longer marks a release as a
+prerelease by itself.** If an alpha is ever cut again, set `prerelease: auto` for that tag or flip the
+flag afterwards.
+
+Either way, a release published with the wrong label can be corrected without touching the tag or the
+assets:
+
+```sh
+gh release edit v0.1.0-alpha.9 --prerelease          # mark it
+gh release edit v0.1.0-beta.9 --latest --prerelease=false   # or make it the current one
+```
+
+Check it afterwards rather than trusting it, because this is the step that has silently gone wrong
+more than once:
+
+```sh
+gh release list --limit 5
+gh api repos/Walid-Idrissi-Labs/Canopy/releases/latest -q .tag_name
+```
 
 ## Before the first tag
 
