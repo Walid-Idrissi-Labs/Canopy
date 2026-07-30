@@ -105,7 +105,7 @@ func (c *Client) Account() Account { return c.install.Account }
 
 // Stream sends a turn to the delegated agent and returns the reply as it arrives.
 func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, error) {
-	if err := req.Validate(); err != nil {
+	if err := validate(req); err != nil {
 		return nil, err
 	}
 
@@ -126,6 +126,40 @@ func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, err
 		return nil, err
 	}
 	return s, nil
+}
+
+// validate checks what a delegated turn needs, which is not quite what core.Request.Validate checks.
+//
+// The difference is the model, and it is the one place this route legitimately parts company with the
+// contract every other provider follows. core.Request.Validate requires one, correctly, because for
+// everybody else the model goes on the request and a request without one fails at the far end with a
+// message about the request rather than about the setting. Here the model is Claude Code's own: it is
+// asked for only when the bridge offers that exact choice, and a turn that names none is the ordinary
+// case rather than a malformed one. Enforcing the rule would mean inventing a model id for a
+// credential whose whole point is that the vendor picks, and then reporting that invention on screen.
+//
+// Everything else Validate holds that can matter here is held here. MaxTokens and DisableThinking are
+// not checked because there is no field in the protocol to put them in and they are silently the
+// agent's own; that is said in the doc comment on this package rather than enforced as an error,
+// because refusing a request over a field that would have been ignored helps nobody.
+func validate(req core.Request) error {
+	fail := func(format string, args ...any) error {
+		err := fmt.Errorf(format, args...)
+		return &core.ProviderError{
+			Kind: core.ErrInvalidRequest, Provider: "claude-code", Message: err.Error(), Err: err,
+		}
+	}
+
+	if !req.Effort.Valid() {
+		return fail("unknown effort %q", req.Effort)
+	}
+	if len(req.Messages) == 0 {
+		return fail("at least one message is required")
+	}
+	if req.Messages[0].Role != core.RoleUser {
+		return fail("the first message must be from the user, got %q", req.Messages[0].Role)
+	}
+	return nil
 }
 
 // begin does the handshake, opens a session, applies what it can of the request and asks the

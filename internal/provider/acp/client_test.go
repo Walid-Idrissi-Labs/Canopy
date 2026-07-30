@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -732,11 +733,61 @@ func TestATurnWithNoMessagesIsRefusedBeforeAnyProcessIsStarted(t *testing.T) {
 		return nil, nil
 	}
 
-	if _, err := client.Stream(context.Background(), core.Request{Model: "sonnet"}); err == nil {
+	err := func() error { _, err := client.Stream(context.Background(), core.Request{Model: "sonnet"}); return err }()
+	if err == nil {
 		t.Fatal("an empty request was accepted")
+	}
+	var refused *core.ProviderError
+	if !errors.As(err, &refused) || refused.Kind != core.ErrInvalidRequest {
+		t.Errorf("a malformed request was reported as %v rather than as an invalid request", err)
 	}
 	if started {
 		t.Error("a bridge was started for a request that could never be sent")
+	}
+}
+
+// The one rule this route does not enforce, and the reason it does not.
+func TestATurnThatNamesNoModelIsTheOrdinaryCaseRatherThanAMalformedOne(t *testing.T) {
+	t.Parallel()
+
+	a := &agent{t: t, script: func(a *agent) {
+		a.text("answered on whatever I am set to")
+		a.end(stopEndTurn, nil)
+	}}
+	client := New(installed(), WithWorkspace(t.TempDir()))
+	a.launch(client)
+
+	// No model, which is what a delegated credential's session carries: the vendor chooses, so
+	// Canopy records none and must not invent one.
+	stream, err := client.Stream(context.Background(), core.Request{
+		Messages: []core.Message{{Role: core.RoleUser, Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("a turn naming no model was refused: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+
+	got := drain(t, stream)
+	if got.text != "answered on whatever I am set to" {
+		t.Errorf("the reply was %q", got.text)
+	}
+	for _, sent := range a.sent() {
+		if sent.Method == methodSetConfigOption {
+			t.Errorf("a model was asked for when none was named: %s", sent.Params)
+		}
+	}
+}
+
+// A first message from the assistant is still refused, because that one is genuinely malformed.
+func TestATurnThatDoesNotStartWithTheUserIsRefused(t *testing.T) {
+	t.Parallel()
+
+	client := New(installed(), WithWorkspace(t.TempDir()))
+	_, err := client.Stream(context.Background(), core.Request{
+		Messages: []core.Message{{Role: core.RoleAssistant, Text: "hello"}},
+	})
+	if err == nil {
+		t.Fatal("a conversation starting with the assistant was accepted")
 	}
 }
 

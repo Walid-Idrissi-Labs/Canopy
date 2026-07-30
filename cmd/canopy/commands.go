@@ -404,6 +404,13 @@ func defaultModelFor(store *keys.Store, name string) string {
 	if meta.Model != "" {
 		return meta.Model
 	}
+	// A delegated credential is Anthropic by provider and chooses nothing: the agent Canopy drives
+	// picks its own model, so filling in this build's Anthropic default would put a model name on
+	// screen that has no effect on a single message. Empty is the same answer `canopy keys list`
+	// gives in that column, and for the same reason.
+	if in, err := store.SignIn(meta.Ref); err == nil && in.Kind == keys.KindDelegated {
+		return ""
+	}
 	if meta.Ref.Provider == core.ProviderAnthropic {
 		return anthropic.DefaultModel
 	}

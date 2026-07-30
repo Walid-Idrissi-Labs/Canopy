@@ -236,11 +236,6 @@ type toolCallUpdate struct {
 	Status     string `json:"status,omitempty"`
 }
 
-type usageUpdate struct {
-	Used int `json:"used"`
-	Size int `json:"size"`
-}
-
 // permissionParams is the bridge asking Canopy to approve one of its own tool calls.
 type permissionParams struct {
 	SessionID string             `json:"sessionId"`

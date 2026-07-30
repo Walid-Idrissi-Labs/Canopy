@@ -408,3 +408,45 @@ func TestWhatIsWrittenToDiskForADelegatedCredentialIsThreeFactsAndNoCredential(t
 		t.Errorf("the record carries the fingerprint %v of a value that does not exist", got)
 	}
 }
+
+// A conversation on a delegated credential must not open naming a model Canopy chose, because
+// choosing it changes nothing: the agent Canopy drives picks its own.
+func TestAConversationOnADelegatedCredentialStartsWithNoModelOfCanopysChoosing(t *testing.T) {
+	store, _ := claudeRouteOn(t, signedInMachine())
+
+	if err := runKeys([]string{"signin", "claude"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("signing in through Claude Code: %v", err)
+	}
+	if got := defaultModelFor(store, "claude"); got != "" {
+		t.Errorf("a delegated credential opened a session on %q, which has no effect on a single "+
+			"message and is a model name on screen that nothing honours", got)
+	}
+
+	// The regression that matters beside it: an ordinary Anthropic key still gets the default.
+	if _, err := store.Put(
+		core.KeyMetadata{Ref: core.KeyRef{Name: "api", Provider: core.ProviderAnthropic}},
+		core.NewSecret("sk-ant-not-a-real-key"),
+	); err != nil {
+		t.Fatalf("storing a pasted credential: %v", err)
+	}
+	if got := defaultModelFor(store, "api"); got == "" {
+		t.Error("a pasted Anthropic credential stopped getting this build's default model")
+	}
+}
+
+// Which way in produced a credential has to be recorded, or `canopy keys test` asks the wrong vendor
+// on a machine with more than one route built.
+func TestADelegatedClaudeCredentialRecordsThatItCameFromTheClaudeCodeRoute(t *testing.T) {
+	store, _ := claudeRouteOn(t, signedInMachine())
+
+	if err := runKeys([]string{"signin", "claude"}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("signing in through Claude Code: %v", err)
+	}
+	in, err := store.SignIn(core.KeyRef{Name: "claude"})
+	if err != nil {
+		t.Fatalf("reading the stored credential: %v", err)
+	}
+	if in.Route != claudeCodeRouteID {
+		t.Errorf("the credential records route %q, want %q", in.Route, claudeCodeRouteID)
+	}
+}
