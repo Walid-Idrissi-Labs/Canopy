@@ -144,6 +144,54 @@ func TestAnInFlightTurnIsNeverSummarised(t *testing.T) {
 	}
 }
 
+// The confirmation on the key that starts a compaction has to say what it is about to spend before
+// it spends it, and it has to be describing the compaction that would actually happen. Worked out
+// from the same split, so the sentence somebody agrees to cannot drift from what they get.
+func TestACompactionCanBeDescribedBeforeAnythingIsSent(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+
+	conversation := answered(t, e, client, 10)
+	current, _ := e.Session(conversation.ID)
+
+	plan := PlanCompaction(current)
+	if !plan.Possible() {
+		t.Fatal("a ten turn conversation has something to compact")
+	}
+	if plan.Turns+plan.Kept != len(current.Turns) {
+		t.Errorf("the plan accounts for %d of %d turns", plan.Turns+plan.Kept, len(current.Turns))
+	}
+	if plan.Kept != keepRecentTurns {
+		t.Errorf("the plan keeps %d turns, and compaction keeps %d", plan.Kept, keepRecentTurns)
+	}
+	if plan.Tokens <= 0 {
+		t.Error("the plan says compacting would send nothing, so the offer names no cost")
+	}
+
+	// And it agrees with what the compaction then does, which is the whole reason it is worked out
+	// here rather than by the screen that asks.
+	result, err := e.Compact(context.Background(), conversation.ID)
+	if err != nil {
+		t.Fatalf("compacting: %v", err)
+	}
+	if result.Through != plan.Turns {
+		t.Errorf("the offer said %d turns and %d were summarised", plan.Turns, result.Through)
+	}
+}
+
+// A conversation short enough that everything in it is inside the window kept verbatim has nothing
+// to offer, and offering to summarise none of it and then refusing would be worse than saying so.
+func TestAShortConversationHasNoCompactionToOffer(t *testing.T) {
+	short := core.Session{Turns: []core.Turn{
+		{ID: "t1", State: core.TurnComplete},
+		{ID: "t2", State: core.TurnComplete},
+	}}
+	if PlanCompaction(short).Possible() {
+		t.Error("a two turn conversation was offered a compaction")
+	}
+}
+
 func TestThereIsNothingToCompactInAShortConversation(t *testing.T) {
 	client := &scriptedClient{name: "claude", events: reply("answer")}
 	e := New(fixedResolver{client: client, id: anthropicID()})

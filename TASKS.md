@@ -4572,8 +4572,8 @@ read what you are approving refuses it; and the screens that would tell you anot
 blocked are locked exactly when your own agent is blocked.
 
 ### U-01 Reading the prompt is not answering it
-`status: todo | owner: none | branch: none | depends: PG-M`
-`scope: internal/tui/chat/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: PG-M`
+`scope: internal/tui/chat/, internal/tui/help.go`
 
 Deliverable: while a permission prompt is pending, navigation navigates. Scroll keys, arrows,
 page keys and the wheel move the transcript so the person can reread the reasoning above the
@@ -4585,10 +4585,16 @@ non-navigation key still refuse, because the reflex key on an unread prompt mean
 safety property, and it is kept. A test enumerates the navigation set so a new binding cannot
 silently join the refusal path.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-43's first rule. Today `pgup` on a prompt is a refusal indistinguishable from a
 deliberate one, which punishes exactly the person who wanted to read before deciding.
+
+notes: left and right joined the navigation set as well, moving nothing. They belong to the
+message box's caret, which is not in play while a question is up, and an arrow refusing because
+the conversation does not scroll sideways is a distinction nobody watching the screen can see.
+The keys are named on the question's own panel, since the footer goes quiet while one is up and a
+key that is safe and unmentioned is a key nobody risks.
 
 ### U-02 The always that grants nothing
 `status: todo | owner: none | branch: none | depends: A5-08`
@@ -4610,8 +4616,8 @@ notes: found by reading the render path, not by a report from a user, which is t
 find it.
 
 ### U-03 Attention crosses screens
-`status: todo | owner: none | branch: none | depends: PG-M`
-`scope: internal/tui/, internal/tui/chat/, internal/tui/agents/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: PG-M`
+`scope: internal/tui/, internal/tui/agents/, README.md`
 
 Deliverable: an agent needing a person is visible from every screen, and no screen is ever
 locked. The header carries "N need you" everywhere, not only inside the agents screen's own
@@ -4624,11 +4630,23 @@ says so within a second, in a word and a glyph that survive NO_COLOR. ctrl+d, ct
 work while the current chat has a pending prompt. The pending prompt is unchanged on return. The
 bell fires once per transition, never per frame, and can be turned off.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-43's second rule, and the one the product's premise depends on. The current behaviour
 is the worst combination: the only screen that shows who needs you is unreachable exactly when
 someone needs you.
+
+notes: three refinements, each reversing something that was written down. The count left the
+agents screen's context line rather than being written in both places: the header counts every
+conversation waiting on a person and that line could only ever count agents, and two numbers a row
+apart disagreeing about the same question is worse than either alone. The comment in `app.go`
+arguing that leaving a screen with a tool call waiting would hide what is blocking is deleted, and
+the test asserting it (`TestANewConversationIsRefusedWhileAQuestionIsUp`) is reversed, because
+what the lock actually hid was every other blocked agent. The bell is configured through
+`CANOPY_BELL` rather than through `canopy.json`, following the argument theme.go already makes
+about the palette: how loud a program is belongs to the person at the terminal, not to the
+repository they happen to have open. It rings once per agent that starts needing somebody, so a
+second agent joining the queue rings again; only the same agent going on waiting is silent.
 
 ### U-04 A way back to every conversation
 `status: todo | owner: none | branch: none | depends: A3-02`
@@ -4734,8 +4752,8 @@ anyone who typed the wrong correction. The engine grew the take-back and forgot 
 interface.
 
 ### U-09 No reflex spends money
-`status: todo | owner: none | branch: none | depends: E-03`
-`scope: internal/tui/chat/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: E-03`
+`scope: internal/tui/chat/, internal/tui/help.go, internal/session/compaction.go, internal/session/resolver.go`
 
 Deliverable: no single unconfirmed keystroke starts a paid model call. ctrl+r, which half the
 world's fingers press expecting history search, currently fires a compaction, a real request on
@@ -4747,11 +4765,25 @@ Acceptance: ctrl+r alone spends nothing. The confirmation states turns, key and 
 anything is sent. /compact goes through the same confirmation. A test walks every binding in the
 help table and asserts none reaches a provider call without a confirmation or an explicit send.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
+
+notes: the binding walk this task turns on was passing for the wrong reason when first written. It
+pressed every advertised key and read the counters, but discarded the `tea.Cmd` each press returned,
+and every provider call in this program is made from inside one. A deliberately broken ctrl+r, with
+the confirmation removed, walked straight through it. The loop now runs the command it was handed,
+and anything that command batches, bounded by a timeout because some of them are timers. Verified by
+mutation both ways: the test fails with the confirmation removed and passes with it restored.
 
 notes: D-43's third rule. Whether ctrl+r, ctrl+k and ctrl+d should keep their current meanings
 at all is taste, so it is Q-21 for the supervisors rather than decided here; making the paid one
 free to press by accident is not taste.
+
+notes: the cost is named in tokens rather than in money. The screen cannot price a request without
+resolving the credential's provider, endpoint and any user rate, and a dollar figure it guessed at
+would be worse than the estimate it is standing in for. What the offer says is the same estimate
+the compaction reports afterwards, worked out by `session.PlanCompaction` so the sentence somebody
+agrees to cannot drift from what they get. A conversation too short to compact is told so on the
+first press rather than being offered a compaction of nothing.
 
 ### U-10 The input box under your fingers
 `status: todo | owner: none | branch: none | depends: M-02`
@@ -4894,17 +4926,18 @@ touched.
 Deliverable: while you sit on one conversation, a permission prompt raised by any other agent in
 the project appears as a compact needs-you panel above the input box, named after the agent that
 asked, oldest first with a count when more are waiting. It never owns the keyboard by itself: one
-explicit key focuses it, and only then do the usual answer keys act, routed to the agent that
-asked. The conversation's own prompt keeps its current shape and takes precedence. The engine
-gains one additive accessor that lists pending prompts across sessions; the agents screen is
-unchanged.
+explicit key opens the conversation that owns it, and only that conversation's full canonical
+prompt receives the usual answer keys. The conversation's own prompt keeps its current shape and
+takes precedence. The engine gains one additive accessor that lists pending prompts across
+sessions; the agents screen is unchanged.
 
 Acceptance: with this conversation idle and a subagent awaiting, the panel appears with the
-subagent's name and scope; typing and sending a message here answers nothing; the focus key then
-`y` approves exactly that subagent's tool and the panel leaves; two waiting subagents show the
-oldest plus a count, and answering advances to the next; when this conversation's own prompt is
-up while a subagent also waits, the own prompt shows and the count says the other is still there;
-answering from the agents screen still works as today.
+subagent's name and a compact subject; typing and sending a message here answers nothing; the focus
+key opens exactly that subagent's conversation, where the canonical request is shown in full before
+`y` or `a` can approve; two waiting subagents show the oldest plus a count, and returning after an
+answer advances to the next; when this conversation's own prompt is up while a subagent also waits,
+the own prompt shows and the count says the other is still there; answering from the agents screen
+still works as today.
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
@@ -4926,62 +4959,28 @@ PendingAll beside Pending and the panel cannot disagree with the prompt drawn ab
 
 The focus key is ctrl+g. Free on both counts: the message box owns ctrl+a, ctrl+e, ctrl+u, ctrl+w
 and ctrl+j, and the screen already spends ctrl+c, ctrl+d, ctrl+k, ctrl+n and ctrl+r. It is in
-help.go under its own heading with the three answer keys.
+help.go under its own heading.
 
-Three judgements worth recording, two of them since amended by review and written here as they now
-stand. A visiting question does not inherit the own prompt's "any other key is no": your own question
-is one you are looking at, this one you walked to, and a stray key should not refuse on another
-agent's behalf either, so unfocused keys do nothing and focused ones answer only on y, a, n and esc.
+Review correction, 2026-07-30: the original focused panel kept its one-line, truncated request but
+then enabled `y` and `a`. That contradicted D-35: the approval could remember a full command the
+person was never shown. Focus now emits a switch to the exact session and agent named by the visible
+question. The application opens that conversation, whose existing prompt displays the canonical
+arguments in full and owns the answer keys. The compact visitor panel never accepts an approval
+answer, so it is safe for that panel to remain bounded.
 
-While this conversation has its own prompt the visitor panel shrinks to a single count line, because
-two heavy boxes over one message box would be two things competing to be answered first. The
-shrinking is unchanged; what it said was not honest. It read "ctrl+g after this one" whether or not
-the panel already held the keyboard, which is how the defect below stayed invisible, and it now
-states which of the two is true.
-
-Answering drops the question from the panel locally rather than re-reading the engine, since the
-entry does not leave the engine until the goroutine it unblocked wakes. That held for exactly one
-frame: the next engine event, and one arrives for every agent in the project, rebuilt the panel from
-PendingAll and put the answered question back with the cursor on it. The screen now remembers what it
-answered for as long as the engine goes on listing it, and forgets it the moment the engine does.
-
-Three defects found in review and fixed here, one of them breaking D-47 itself.
-
-Focus survived your own prompt taking precedence. It was cleared on esc and on an emptied queue and
-on nothing else, so a focus taken before your own question arrived sat there through the whole
-exchange: you answered yours with y, typed an ordinary sentence, and its leading y approved the
-subagent's command. Both halves are fixed. Focus is dropped in the same statement that sets awaiting,
-so no ordering of events can slip between the two, and the panel now says in words whenever it holds
-the keyboard, in both its full and its shrunk form, so a focus nobody can see is a state that cannot
-exist. Held by TestYourOwnPromptTakesTheFocusBackFromAVisitor, which is the reported scenario end to
-end down to the sentence beginning with y, and by TestTheFocusKeyDoesNothingWhileYourOwnQuestionIsUp.
-
-Focus rode the front of the queue rather than the question it was taken for, so a question answered
-on its own screen between ctrl+g and the keystroke handed that keystroke to whoever moved up. It
-pins a session id now, and a focus whose question has left drops rather than being inherited. That
-also changed how a queue is worked through: answering one no longer keeps the keyboard for the next,
-which costs a second ctrl+g per agent and is the right price, since focus is consent to answer one
-question and inheriting it is a decision nobody made. Held by
-TestAFocusedQuestionAnsweredElsewhereDoesNotPassTheKeyboardOn, with the queue behaviour in
-TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances.
-
-The answered-question flicker is fixed rather than explained: locally answered ids are filtered from
-the rebuilt list until PendingAll stops naming them, which is also when the note is dropped, so a
-later question from the same agent is not suppressed. Held by
-TestAnAnsweredQuestionDoesNotComeBackOnTheNextEvent.
-
-Acceptance, clause by clause: the panel appearing with the subagent's name and scope is
+Acceptance, clause by clause: the panel appearing with the subagent's name and compact subject is
 TestASubagentsQuestionAppearsWithItsNameAndScope; typing and sending answering nothing is
-TestTypingAndSendingAnswersNobodyElsesQuestion; the focus key then y approving exactly that
-subagent is TestFocusingThenYesApprovesTheAgentThatAsked, with the other answers in
-TestTheFocusedPanelAlwaysAndRefuseAndLeaveIt; two waiting showing the oldest plus a count and
-advancing on an answer is TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances; the own prompt
-keeping precedence with the count still visible is
-TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted. The engine half is
+TestTypingAndSendingAnswersNobodyElsesQuestion and TestTheCompactPanelNeverAcceptsAnApprovalAnswer;
+the focus key opening the exact asking conversation and showing its complete request before `y`
+acts is TestFocusingOpensTheFullRequestBeforeYesCanApprove and
+TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt; two waiters preserving order is
+TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances and
+TestAQueuedSwitchDoesNotRetargetTheNextWaitingAgent; the own prompt keeping precedence with the
+count still visible is TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted. The engine half is
 TestEveryPendingQuestionIsListedOldestFirstAndNamed and
 TestAQuestionFromAnUnnamedConversationIsStillNamed, and the frame arithmetic is
-TestTheQuestionPanelDoesNotOverflowTheFrame. The agents screen is untouched: no file under
-internal/tui/agents changed, and its existing awaiting-permission tests still hold.
+TestTheQuestionPanelDoesNotOverflowTheFrame. The agents screen's existing awaiting-permission tests
+still hold.
 
 ### U-17 The top left names who you are with
 `status: review | owner: claude | branch: tui/ambient-attention | depends: none`
@@ -5142,7 +5141,8 @@ a `+` for the line that came in, with the unchanged lines around it unmarked. A 
 read shows a bounded head, states the full size, and names `ctrl+o`. A build failure shows more than
 its opening line. A tool whose arguments this code does not understand gets no diff, because a diff
 drawn from arguments nothing can read is a confident lie about somebody's repository. `ctrl+o` twice
-returns to where it started. Every marker survives NO_COLOR.
+returns to where it started. Tool output and diff content render terminal controls as visible text
+rather than executing them. Every marker survives NO_COLOR.
 
 `verify: claude [x]   codex [ ]`
 
@@ -5154,6 +5154,13 @@ output belongs to the model and not to the screen, and keeps the half of it that
 bounding what is shown. Recorded as D-48. The running clock is the screen's own, first-seen rather
 than started, because a `ToolCall` carries no timestamp and `internal/core` is frozen; the label says
 "running for" rather than "took" for exactly that reason.
+
+Review correction, 2026-07-30: the new previews passed tool output and file content directly into
+the terminal renderer. That made OSC 52 clipboard writes, CSI screen changes, BEL, carriage return
+and similar controls executable terminal input. terminalSafe now escapes all C0 controls except
+newline and tab, plus DEL and C1, before styling. TestToolOutputCannotEmitTerminalControlSequences
+and TestADiffCannotEmitTerminalControlSequences hold both public render paths; the package-level
+tests hold the complete control ranges and ordinary Unicode.
 
 ### U-21 A reply that reads like a document
 `status: review | owner: claude | branch: tui/rendered-markdown | depends: none`
@@ -5171,8 +5178,9 @@ Acceptance: `**bold**` renders as bold with no asterisks on screen. A three colu
 three columns whose second column starts at the same screen column on every row. `#### Detail` is a
 heading. `read_file_range` is not italicised. A link shows both its text and its target. An inline
 code span is never broken across a wrap. No rendered line exceeds the width it was given, at every
-width the existing property test tries. Every structural block still carries a plain-text mark that
-survives escape stripping.
+width the existing property test tries, including a table with more columns than can fit at the
+preferred floor; an impossibly narrow horizontal table becomes lossless labelled rows. Every
+structural block still carries a plain-text mark that survives escape stripping.
 
 `verify: claude [x]   codex [ ]`
 
@@ -5182,6 +5190,14 @@ moves where a line wraps: the text is now split into styled runs, wrapped by mea
 styled last, which enforces by construction the ordering rule the file previously kept by hand. Code
 fences are deliberately left visible, so a reply copied out of the terminal is still valid markdown;
 that is the one marker whose round trip is worth its columns.
+
+Review correction, 2026-07-30: fit raised its available width to three cells per column even when
+the caller had fewer cells, then renderTable added the inter-column gaps on top. Six long columns at
+width twenty therefore rendered twenty-eight columns. The fitter now lowers its floor to one without
+ever increasing the caller's budget; gaps narrow where needed; and a column count that cannot fit
+horizontally becomes labelled rows. TestANarrowMultiColumnTableNeverExceedsItsWidth holds the
+reported regression and TestATableTooNarrowForItsColumnCountBecomesLabelledRows holds the
+mathematically impossible case without dropping data.
 
 ### U-22 A column is not a rune, and a frame is not a suggestion
 `status: review | owner: claude | branch: fix/cell-width-and-chrome | depends: none`
@@ -5275,20 +5291,22 @@ before it refuses, but refuses ambiguity rather than guessing.
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: none`
 `scope: internal/catalog/ (new), internal/keys/, internal/pricing/ (drift test), internal/tui/keys/, internal/tui/ (fake), cmd/canopy/`
 
-Deliverable: a new internal/catalog package that answers "what can this provider run", dated the
-way the pricing table is dated: the anthropic list derived from the eight priced IDs, an
-api.openai.com base URL recognised and given the OpenAI list, any other openai-compatible host
-given nothing. The keys store learns user-added models per key, an id plus an optional display
-name, editable from the CLI and the keys screen, and the keys screen's model edit becomes a
-picker over catalog plus user-added entries with free text still available for anything not
-listed. core.KeyMetadata is not touched: its Model field remains the selected default, and the
-plural lives in the keys record beside it.
+Deliverable: a new internal/catalog package that answers "what can this provider run through
+Canopy's current transport", dated the way the pricing table is dated: the anthropic list derived
+from the eight priced IDs, an api.openai.com base URL recognised and given the models compatible
+with Canopy's OpenAI Chat Completions adapter, any other openai-compatible host given nothing.
+The keys store learns user-added models per key, an id plus an optional display name, editable from
+the CLI and the keys screen, and the keys screen's model edit becomes a picker over catalog plus
+user-added entries with free text still available for anything not listed. core.KeyMetadata is not
+touched: its Model field remains the selected default, and the plural lives in the keys record
+beside it.
 
 Acceptance: an anthropic key offers the catalog with no setup; an openai-compatible key on an
 unrecognised host offers only what its user added, and says so when that is nothing; adding a
 model with a display name shows the name and keeps the id; picking any entry records it through
-SetModel; a model on no list can still be typed; a keys.json written by the previous build loads
-with empty model lists and nothing lost.
+SetModel; a model on no list can still be typed; a model requiring a provider API Canopy does not
+implement is not offered as a working choice; a keys.json written by the previous build loads with
+empty model lists and nothing lost.
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
@@ -5296,6 +5314,13 @@ notes: the catalog carries an as-of date like pricing.AsOf and goes stale the sa
 the accepted cost of shipping knowledge, and the free-text escape is what keeps stale from
 meaning stuck. internal/keys and internal/pricing sit outside the 2.1 lane list; changes there
 are additive.
+
+Review correction, 2026-07-30: the first OpenAI list copied two Responses-only models into a
+catalog consumed by Canopy's Chat Completions client. That made the picker promise choices the
+active adapter could not invoke. The list now records transport capability, not merely provider
+availability, and TestOpenAIListDoesNotOfferModelsThisAdapterCannotCall holds the boundary. Free
+text remains deliberately ungated for compatible models that arrive before the dated list is
+refreshed.
 
 Built. internal/catalog holds its own ordered anthropic list rather than reading one out of
 pricing, because order is meaning here (newest first within a family is how a bare family word is

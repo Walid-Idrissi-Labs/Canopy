@@ -10,6 +10,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -130,6 +131,17 @@ type Commands = config.CommandSet
 
 // EventMsg carries an engine notification into the update loop.
 type EventMsg struct{ Event core.Event }
+
+// SwitchMsg asks the application to open the conversation that owns a surfaced question.
+//
+// The chat can identify the destination, but only the application owns which conversation is on
+// screen. Keeping that boundary also makes the focus step literal: answer keys are not routed
+// across conversations from a compact summary; the person is taken to the full canonical prompt
+// and answers it there.
+type SwitchMsg struct {
+	SessionID string
+	AgentName string
+}
 
 // tickMsg advances the spinner.
 type tickMsg struct{}
@@ -268,6 +280,12 @@ type Model struct {
 	// as any other. Without it the interface looks frozen and people press the key again.
 	compacting bool
 
+	// compactAsked is true when a compaction has been offered and the same key again will pay for
+	// it. Nothing has been sent while this is set, which is the whole point of it existing: ctrl+r
+	// used to reach a provider on the first press, and it is the key half the world's fingers press
+	// expecting to search their history.
+	compactAsked bool
+
 	// prompt is the tool call waiting on an answer, when there is one.
 	prompt   session.Prompt
 	awaiting bool
@@ -278,27 +296,6 @@ type Model struct {
 	// somebody is sitting rather than by going to look. They are held apart from prompt and awaiting
 	// on purpose: those two own the keyboard the moment they exist, and none of these ever may.
 	visitors []session.Waiting
-
-	// visitorFocus is the conversation whose question has been handed the keyboard, empty when the
-	// keyboard belongs to this conversation.
-	//
-	// The step D-47 puts between seeing another agent's question and answering it. Without it, the
-	// y somebody types into their own conversation would spend a permission in a conversation they
-	// are not even looking at, which is the same reflex D-43 forbids at one more remove.
-	//
-	// A session id rather than a flag, because a flag focuses whatever is at the front of the queue
-	// at the moment the key lands, and the front can change between taking the focus and using it:
-	// the question somebody walked to can be answered on its own screen or from the agents view, and
-	// then the y they press arrives at whoever moved up. Focus is a claim on one question.
-	visitorFocus string
-
-	// answeredVisitors are questions answered from this screen that the engine still lists, because
-	// the goroutine the answer unblocked has not woken up yet.
-	//
-	// Held only for that window. Without it the next engine event, and one arrives for every agent
-	// in the project, rebuilds the panel from PendingAll and puts the just answered question back on
-	// screen with the cursor on it, which is an invitation to answer it twice.
-	answeredVisitors []string
 
 	// commands is resolved for the project this screen belongs to. Expansion happens here, at the
 	// input boundary, so the engine receives an ordinary prompt and no model or tool path gains a
@@ -600,6 +597,56 @@ func (m *Model) scrollBy(lines int) {
 	}
 }
 
+// navigation is every key that moves the conversation, and what it moves it by.
+//
+// A table rather than a switch, because the claim being made here is about the whole set. Reading a
+// prompt before answering it must be possible with the keyboard, so these keys are carved out of
+// the refusal that every other key means while a question is up, and a test walks this table to say
+// so. A switch would let a new scroll binding be added in one place and quietly join the refusal
+// path in the other.
+//
+// Left and right are in it and move nothing. They belong to the message box's caret, which is not
+// in play while a question is up, and an arrow key refusing a permission prompt because the
+// conversation does not scroll sideways is a distinction nobody watching the screen can see.
+var navigation = map[string]func(*Model){
+	"up":        func(m *Model) { m.scrollBy(1) },
+	"down":      func(m *Model) { m.scrollBy(-1) },
+	"left":      func(*Model) {},
+	"right":     func(*Model) {},
+	"pgup":      func(m *Model) { m.scrollBy(m.transcriptHeight() / 2) },
+	"pgdown":    func(m *Model) { m.scrollBy(-m.transcriptHeight() / 2) },
+	"ctrl+home": func(m *Model) { m.scroll = len(m.transcript()) },
+	// Two keys for the bottom, because ctrl+end is the one a terminal veteran reaches for and
+	// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
+	// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
+	"ctrl+end":  func(m *Model) { m.scroll = 0 },
+	"ctrl+down": func(m *Model) { m.scroll = 0 },
+}
+
+// navigate moves the conversation for a key that navigates, and reports whether it was one.
+func (m *Model) navigate(key string) bool {
+	move, ok := navigation[key]
+	if !ok {
+		return false
+	}
+	move(m)
+	return true
+}
+
+// NavigationKeys is the navigation set, in a stable order.
+//
+// Exported for the test that asserts none of these answers a permission question, for the same
+// reason HelpBindingCount is exported: the property is about every key in the set, so the test has
+// to walk the set rather than keep a copy of it that can go stale.
+func NavigationKeys() []string {
+	keys := make([]string, 0, len(navigation))
+	for key := range navigation {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // answerPrompt handles the keys that reply to a permission question.
 //
 // Deliberately few, and deliberately not a single key for the widest option. Approving once is `y`,
@@ -607,6 +654,8 @@ func (m *Model) scrollBy(lines int) {
 // including escape and enter. That last part matters: the reflex key on a prompt somebody has not
 // read is enter, and enter meaning no is the difference between a misread prompt costing a retry
 // and costing a repository.
+//
+// Everything except the navigation set, which the caller has already dealt with. See navigation.
 func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
@@ -620,82 +669,14 @@ func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// visitorFocusKey is the one keystroke that hands the keyboard to another agent's question.
+// visitorFocusKey is the one keystroke that opens another agent's question.
 //
 // ctrl+g because it is free: every printable key belongs to the message box, and ctrl+a, ctrl+e,
 // ctrl+u, ctrl+w and ctrl+j are the box's own editing keys, while ctrl+c, ctrl+d, ctrl+k, ctrl+n and
-// ctrl+r already mean something on this screen. It is also deliberately not y or a: the two keys
-// that answer must be unreachable until somebody has said which question they are answering.
+// ctrl+r already mean something on this screen. It is also deliberately not y or a: the answer
+// keys must remain unreachable until the asking conversation, with its full canonical request, is
+// the conversation on screen.
 const visitorFocusKey = "ctrl+g"
-
-// answerVisitor answers the question the focus was taken for, on behalf of the agent that asked.
-//
-// The question, not the front of the queue. They are almost always the same one and the exception is
-// the one that matters: a question answered on its own screen while somebody here was reaching for
-// the keyboard leaves the queue, whoever was behind it moves up, and a focus that meant "the front"
-// would spend that keystroke on an agent nobody had looked at.
-func (m Model) answerVisitor(msg tea.KeyMsg) (Model, tea.Cmd) {
-	asking, ok := m.focusedVisitor()
-	if !ok {
-		// The question this focus was taken for is gone. The keyboard goes back to the conversation
-		// rather than moving on to the next waiter, because taking a focus is a decision about one
-		// agent and inheriting it is not a decision anybody made.
-		m.visitorFocus = ""
-		return m, nil
-	}
-
-	switch msg.String() {
-	case "y":
-		m.engine.Answer(asking.SessionID, true, false)
-	case "a":
-		m.engine.Answer(asking.SessionID, true, true)
-	case "n":
-		m.engine.Answer(asking.SessionID, false, false)
-	case "esc":
-		m.visitorFocus = ""
-		return m, nil
-	default:
-		return m, nil
-	}
-
-	// Dropped here as well as in the engine, so the panel advances on this keystroke. Answering
-	// hands the reply to a goroutine that is still parked, and the entry does not leave the engine
-	// until that goroutine wakes, so re-reading now would put the answered question back on screen.
-	// Remembered as answered for exactly as long as the engine goes on listing it, which is what
-	// stops the next event undoing this.
-	m.answeredVisitors = append(append([]string(nil), m.answeredVisitors...), asking.SessionID)
-	m.visitors = withoutVisitor(m.visitors, asking.SessionID)
-	m.visitorFocus = ""
-	return m, nil
-}
-
-// focusedVisitor is the question the keyboard was handed to, and whether it is still waiting.
-func (m Model) focusedVisitor() (session.Waiting, bool) {
-	if m.visitorFocus == "" {
-		return session.Waiting{}, false
-	}
-	for _, waiting := range m.visitors {
-		if waiting.SessionID == m.visitorFocus {
-			return waiting, true
-		}
-	}
-	return session.Waiting{}, false
-}
-
-// focusedOn reports whether a question is the one holding the keyboard.
-func (m Model) focusedOn(waiting session.Waiting) bool {
-	return m.visitorFocus != "" && m.visitorFocus == waiting.SessionID
-}
-
-func withoutVisitor(waiting []session.Waiting, sessionID string) []session.Waiting {
-	out := make([]session.Waiting, 0, len(waiting))
-	for _, one := range waiting {
-		if one.SessionID != sessionID {
-			out = append(out, one)
-		}
-	}
-	return out
-}
 
 // promptLines renders the question.
 func (m Model) promptLines() []string {
@@ -739,6 +720,13 @@ func (m Model) promptLines() []string {
 			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
 
+	// The keys that read rather than decide, named here because the footer goes quiet while a
+	// question is up and this panel is the only thing left saying what may be pressed. Somebody who
+	// does not know scrolling is safe will not risk it, which leaves them deciding on the part of
+	// the reasoning that happens to fit on screen.
+	body = append(body,
+		t.Key.Render("pgup")+t.Muted.Render(" and the arrows read what is above this, deciding nothing"))
+
 	return promptPanel(body, inner)
 }
 
@@ -746,9 +734,10 @@ func (m Model) promptLines() []string {
 //
 // Deliberately smaller than the conversation's own prompt. It wears the same frame, so it is
 // recognisable as the same kind of thing from across the room, and it says four lines at most:
-// who is asking, what they want, how many others are behind them, and which key hands it the
-// keyboard. The full detail lives on that agent's own screen, which is where somebody who wants to
-// read a command in full is one keystroke away from being.
+// who is asking, what they want, how many others are behind them, and which key opens the asking
+// conversation. The full canonical request lives on that agent's own screen, one keystroke away.
+// No answer key is accepted here: a compact summary and an approval can never share a surface,
+// which preserves D-35's rule that what is displayed is what is remembered.
 //
 // While this conversation has a question of its own the panel shrinks to a single line. Your own
 // prompt outranks a visitor, and two heavy boxes stacked over one message box would be two things
@@ -760,18 +749,10 @@ func (m Model) visitorPanel() []string {
 	}
 	t := theme.Current()
 	asking := m.visitors[0]
-	focused := m.focusedOn(asking)
 
 	if m.awaiting {
 		// Shrunk to a count while this conversation has a question of its own, which outranks a
-		// visitor. It says whether the panel holds the keyboard either way: a focus nobody can see
-		// is a focus that answers for somebody without their knowing, so this line is written so
-		// that state cannot exist unsaid. Your own prompt drops the focus, so the second half is
-		// belt and braces, and belt and braces is what this particular sentence is for.
-		if focused {
-			return []string{"  " + t.Warning.Render(othersWaiting(m.visitors)+
-				", and your keys still answer it, esc to stop")}
-		}
+		// visitor. The focus key is unavailable while the own prompt owns the keyboard.
 		return []string{"  " + t.Muted.Render(othersWaiting(m.visitors)+", "+
 			visitorFocusKey+" after this one")}
 	}
@@ -798,23 +779,8 @@ func (m Model) visitorPanel() []string {
 		body = append(body, t.Muted.Render(othersWaiting(m.visitors[1:])))
 	}
 
-	if focused {
-		// Said in words before the keys are offered. The keys alone imply the panel has the
-		// keyboard and do not state it, and the thing somebody has to be able to see at a glance is
-		// exactly that their next keystroke is going somewhere other than their own conversation.
-		body = append(body, t.Warning.Render("your keys answer this one until esc"))
-
-		const fixed = len("y once   a always,    n no   esc leave it")
-		body = append(body,
-			t.Key.Render("y")+t.Muted.Render(" once   ")+
-				t.Key.Render("a")+t.Muted.Render(" always, "+
-				truncate(asking.Scope().String(), inner-fixed)+"   ")+
-				t.Key.Render("n")+t.Muted.Render(" no   ")+
-				t.Key.Render("esc")+t.Muted.Render(" leave it"))
-	} else {
-		body = append(body, t.Key.Render(visitorFocusKey)+
-			t.Muted.Render(" to answer it, and nothing else here will"))
-	}
+	body = append(body, t.Key.Render(visitorFocusKey)+
+		t.Muted.Render(" to open the full request and answer it there"))
 	return promptPanel(body, inner)
 }
 
@@ -917,15 +883,40 @@ func describeRequest(req permission.Request) string {
 	}
 }
 
-// compact asks for a summary of the older half of the conversation.
+// compact asks for a summary of the older half of the conversation, once somebody has said so
+// twice.
 //
 // Manual, on a key, rather than only automatic at the limit. Somebody who knows they are about to
 // paste a large file has a reason to compact before it, and a tool that only acts at the threshold
 // makes them wait for the failure first.
+//
+// **No reflex spends money.** The first press offers and the second goes ahead, because this is a
+// real request to a real provider and ctrl+r is what half the world's fingers press expecting to
+// search their history. A key that costs money on the first press is one people learn to avoid
+// rather than one they learn.
 func (m Model) compact() (Model, tea.Cmd) {
 	if m.compacting || m.working {
 		return m, nil
 	}
+
+	if !m.compactAsked {
+		plan := session.PlanCompaction(m.session)
+		if !plan.Possible() {
+			// Said here rather than found out by sending. The engine refuses this too and its
+			// refusal costs nothing, but arriving at it through a confirmation would have offered to
+			// summarise nothing and then declined to do it.
+			m.err = "there is not enough of this conversation to summarise yet"
+			m.notice = ""
+			return m, nil
+		}
+		m.compactAsked = true
+		m.notice = m.compactionOffer(plan)
+		m.err = ""
+		return m, nil
+	}
+
+	m.compactAsked = false
+	m.notice = ""
 	m.compacting = true
 	m.err = ""
 
@@ -936,28 +927,71 @@ func (m Model) compact() (Model, tea.Cmd) {
 	}
 }
 
+// compactionOffer is the sentence somebody agrees to before anything is sent.
+//
+// It has to name four things, because a confirmation that leaves any of them out is one people
+// press through: how much of the conversation goes, roughly what sending it costs, what is kept
+// whatever happens, and which key does it. The bound is the half that makes this safe to agree to
+// at all, since the recent turns are where the actual work is and summarising those is how an agent
+// loses the thread mid task.
+//
+// One line, and kept short enough to stay one at eighty columns, because it sits on the status row
+// between the conversation and the message box: a confirmation that wraps and pushes what somebody
+// is typing down the screen is one they answer without reading.
+func (m Model) compactionOffer(plan session.CompactionPlan) string {
+	return fmt.Sprintf("summarise %d of %d turns, about %s tokens, last %d kept? ctrl+r again",
+		plan.Turns, len(m.session.Turns), roughTokens(plan.Tokens), plan.Kept)
+}
+
+// roughTokens is a token count at a glance.
+//
+// Thousands and millions rather than the exact figure, and only here. The header prints the number
+// it was given because a usage total is something people compare; this one is an estimate inside a
+// sentence, and six digits of an estimate reads as precision that is not there.
+func roughTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// An offer to spend money lasts exactly one keystroke. Anything other than the same key again is
+	// a change of mind, and an offer that outlived it would eventually be taken up by a keystroke
+	// somebody meant for something else entirely, which is the failure the confirmation exists to
+	// prevent arriving a few seconds later. The same rule the application applies to ctrl+n.
+	if m.compactAsked && msg.String() != "ctrl+r" {
+		m.compactAsked = false
+		m.notice = ""
+	}
+
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
 	// into the message box, and typing an answer to a yes or no question into a text field and
 	// wondering why nothing happens is a bad minute to give somebody.
+	//
+	// Everything except navigation, which moves the conversation and decides nothing. The command
+	// being approved is often the last thing on screen and the reasoning that led to it is above,
+	// so a prompt that refused itself the moment somebody scrolled up to read it was punishing the
+	// one person who wanted to understand what they were agreeing to. See navigation.
 	if m.awaiting {
+		if m.navigate(msg.String()) {
+			return m, nil
+		}
 		return m.answerPrompt(msg)
 	}
 
-	// Another agent's question, and the two keystrokes it takes to answer one.
-	//
-	// While the panel has been focused it holds the keys that answer, and only those: a key that
-	// means nothing here does nothing, rather than refusing on somebody else's behalf the way an
-	// unrecognised key refuses your own question above. Your own question is one you are looking
-	// at; this one you had to walk to, and a stray keystroke should not spend it either way.
-	if m.visitorFocus != "" {
-		return m.answerVisitor(msg)
-	}
+	// Another agent's question takes one explicit key to open, and no answer is routed from this
+	// compact panel. The asking conversation renders the full canonical arguments and owns the
+	// ordinary answer keys once the application switches to it.
 	if msg.String() == visitorFocusKey && len(m.visitors) > 0 {
-		// The front of the queue, which is the one the panel is showing, remembered by name so the
-		// keys that follow answer that agent and not whoever happens to be at the front by then.
-		m.visitorFocus = m.visitors[0].SessionID
-		return m, nil
+		asking := m.visitors[0]
+		return m, func() tea.Msg {
+			return SwitchMsg{SessionID: asking.SessionID, AgentName: asking.Agent}
+		}
 	}
 
 	// The list takes the keys that mean something in a list, and only those, and only while it is
@@ -1044,6 +1078,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+r":
+		// Offers on the first press and pays on the second. See compact.
 		return m.compact()
 
 	case "ctrl+o":
@@ -1058,23 +1093,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "pgup":
-		m.scrollBy(m.transcriptHeight() / 2)
-		return m, nil
-
-	case "pgdown":
-		m.scrollBy(-m.transcriptHeight() / 2)
-		return m, nil
-
-	case "ctrl+home":
-		m.scroll = len(m.transcript())
-		return m, nil
-
-	case "ctrl+end", "ctrl+down":
-		// Two keys for one thing, because ctrl+end is the one a terminal veteran reaches for and
-		// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
-		// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
-		m.scroll = 0
+	case "pgup", "pgdown", "ctrl+home", "ctrl+end", "ctrl+down":
+		// Through the same table the question above uses, so a key cannot come to mean one thing
+		// with a prompt on screen and something else without one. The arrows are deliberately not
+		// here: with no question up they belong to the message box, where up recalls what was sent
+		// last and left and right move the caret.
+		m.navigate(msg.String())
 		return m, nil
 	}
 
@@ -1196,34 +1220,13 @@ func (m *Model) refresh() {
 	// everywhere and two copies sharing a backing array would let one of them rewrite the other's
 	// panel from under it.
 	var visitors []session.Waiting
-	var stillListed []string
 	for _, waiting := range m.engine.PendingAll() {
 		if waiting.SessionID == m.sessionID {
-			continue
-		}
-		if answeredHere(m.answeredVisitors, waiting.SessionID) {
-			// Answered from this screen a moment ago and still on the engine's list, because the
-			// goroutine holding it has not woken. Kept out of the panel and kept in the note, so it
-			// stays out until the engine itself stops listing it.
-			stillListed = append(stillListed, waiting.SessionID)
 			continue
 		}
 		visitors = append(visitors, waiting)
 	}
 	m.visitors = visitors
-	m.answeredVisitors = stillListed
-
-	// Focus is a claim on one question that is still waiting, and it survives neither that question
-	// leaving nor this conversation being asked something of its own.
-	//
-	// The second is the half that mattered. Your own prompt takes the keyboard the moment it exists,
-	// so a focus taken before it arrived would sit there invisibly through the whole exchange, and
-	// the y that answered your own question would be followed by whatever you typed next landing on
-	// somebody else's. Cleared in the same statement that sets awaiting, so no ordering of events
-	// can slip between the two.
-	if _, waiting := m.focusedVisitor(); !waiting || m.awaiting {
-		m.visitorFocus = ""
-	}
 }
 
 // noteCalls remembers when each unanswered tool call was first seen, and forgets the answered ones.
@@ -1251,16 +1254,6 @@ func (m *Model) noteCalls(current core.Session) {
 		}
 	}
 	m.callSeen = seen
-}
-
-// answeredHere reports whether a question was answered from this screen and is still being listed.
-func answeredHere(answered []string, sessionID string) bool {
-	for _, id := range answered {
-		if id == sessionID {
-			return true
-		}
-	}
-	return false
 }
 
 // Session exposes the current session. For tests and for the screen around this one.

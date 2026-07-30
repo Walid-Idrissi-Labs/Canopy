@@ -18,6 +18,7 @@ package tui
 // cost together, and five where there is room for the drawn name in the corner.
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -65,6 +66,17 @@ type Status struct {
 	// Empty on the screens that are nobody's conversation, and they keep the name.
 	Agent string
 
+	// Attention is how many conversations are waiting on a person anywhere in the project.
+	//
+	// On every screen, never dropped, and next to the name rather than among the details, because
+	// the details are what a narrow terminal throws away and this is the one fact whose whole value
+	// is that it reaches somebody who is looking at something else. An indicator that lived only on
+	// the screen listing agents would be a smoke alarm installed inside the fire.
+	//
+	// Zero draws nothing at all. A count that is always there is chrome, and chrome is what people
+	// stop seeing.
+	Attention int
+
 	// Parts are the details, most important first.
 	Parts []string
 
@@ -89,6 +101,32 @@ func (s Status) title(width int) string {
 		return "canopy"
 	}
 	return shorten(s.Agent, titleBudget(width))
+}
+
+// attentionLabel is what the count says, before anything is done to it.
+//
+// A word and a glyph, and never colour alone. The whole thing has to read correctly with colour
+// disabled, for the same reason the agent list spells out "needs you" beside its badge: a coloured
+// mark is meaningless under NO_COLOR, in a monochrome palette, and in a pasted bug report.
+//
+// The exclamation mark rather than a drawn symbol, because this appears on every screen and a
+// header that opens with a missing glyph box on somebody's terminal is worse than one with no
+// picture in it, which is brand.go's argument about the mark and is right here too.
+func attentionLabel(n int) string {
+	if n == 1 {
+		return " ! 1 needs you "
+	}
+	return fmt.Sprintf(" ! %d need you ", n)
+}
+
+// attentionChip is that label, drawn to be found from across a room.
+//
+// Reverse video, which is what the permission panel uses and for the same reason: it is the one
+// emphasis that survives NO_COLOR, a monochrome theme and a terminal palette that renders the
+// warning colour dull. Somebody glancing at a screen they left should find this before anything
+// else on it.
+func attentionChip(n int) string {
+	return theme.Current().Warning.Reverse(true).Bold(true).Render(attentionLabel(n))
 }
 
 // titleBudget is how many cells the name may take.
@@ -172,6 +210,13 @@ func shortHeader(inner int, s Status) string {
 	name := s.title(inner)
 	left := t.Logo.Render(badge) + " " + t.Title.Render(name)
 	used := lipgloss.Width(badge) + 1 + lipgloss.Width(name)
+
+	// Immediately after the name, ahead of the screen and the mode. On the row that says where you
+	// are, who is stuck waiting for you comes before either of them.
+	if label := attentionLabel(s.Attention); s.Attention > 0 && used+1+lipgloss.Width(label) <= inner {
+		left += " " + attentionChip(s.Attention)
+		used += 1 + lipgloss.Width(label)
+	}
 
 	if s.Screen != "" {
 		left += "  " + t.Heading.Render(s.Screen)
@@ -301,6 +346,13 @@ func headerFacts(s Status, width int) [3]string {
 	name := s.title(width)
 	rows[0] = t.Logo.Render(badge) + " " + t.Title.Render(name)
 	used := lipgloss.Width(badge) + 1 + lipgloss.Width(name)
+
+	// Ahead of the screen and the mode here too, so the two headers put it in the same place and
+	// somebody resizing a window does not have to look for it again.
+	if label := attentionLabel(s.Attention); s.Attention > 0 && used+1+lipgloss.Width(label) <= width {
+		rows[0] += " " + attentionChip(s.Attention)
+		used += 1 + lipgloss.Width(label)
+	}
 
 	if s.Screen != "" && used+2+lipgloss.Width(s.Screen) <= width {
 		rows[0] += "  " + t.Heading.Render(s.Screen)

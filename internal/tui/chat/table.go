@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -159,9 +160,16 @@ func renderTable(table tableBlock, width int) []string {
 		}
 	}
 
-	// Two spaces between columns, which is enough to separate them without a vertical rule. A drawn
-	// grid costs three cells per boundary and buys nothing a gap does not.
-	const gap = 2
+	// Two spaces between columns where they fit, one where that is the difference between a table
+	// and overflow. If even one cell plus one separator per column cannot fit, no horizontal table
+	// exists at this width; render the same information as labelled rows instead.
+	gap := 2
+	if columns+gap*(columns-1) > width {
+		gap = 1
+	}
+	if columns+gap*(columns-1) > width {
+		return renderStackedTable(header, body, width)
+	}
 	widths = fit(widths, width-gap*(columns-1))
 
 	var out []string
@@ -179,6 +187,42 @@ func renderTable(table tableBlock, width int) []string {
 	return out
 }
 
+// renderStackedTable is the lossless narrow-screen form of a table.
+//
+// A horizontal table needs at least one cell per column and one separator per boundary. When the
+// terminal is narrower than that, pretending it still fits either overflows the frame or gives a
+// column zero width. Each record becomes a short labelled list instead. It is taller, but every
+// header and value survives and every line remains inside the width.
+func renderStackedTable(header []string, body [][]string, width int) []string {
+	t := theme.Current()
+	if width < 1 {
+		width = 1
+	}
+
+	rows := body
+	if len(rows) == 0 {
+		rows = [][]string{make([]string, len(header))}
+	}
+
+	var out []string
+	for rowIndex, row := range rows {
+		if rowIndex > 0 {
+			out = append(out, t.Muted.Render(strings.Repeat("─", width)))
+		}
+		for column, value := range row {
+			label := header[column]
+			if label == "" {
+				label = "column " + strconv.Itoa(column+1)
+			}
+			out = append(out, renderListItem(&listItem{
+				marker: "• ",
+				text:   label + ": " + value,
+			}, width)...)
+		}
+	}
+	return out
+}
+
 // plainCells pads a row to the column count and strips inline markers from each cell.
 func plainCells(row []string, columns int) []string {
 	out := make([]string, columns)
@@ -192,26 +236,37 @@ func plainCells(row []string, columns int) []string {
 
 // fit shrinks column widths until they add up to the space available.
 //
-// Proportional rather than equal, and never below a floor, so a column of one-word values keeps its
-// width while the column of sentences gives up the room. A table that cannot fit at all still gets
-// one column of a few cells rather than nothing.
+// Proportional rather than equal. Three cells is the preferred floor, reduced as far as one when a
+// narrow but still valid horizontal table needs it. A table that cannot give every column one cell
+// never reaches this function; renderTable uses the stacked form instead.
 func fit(widths []int, available int) []int {
-	const floor = 3
+	if len(widths) == 0 {
+		return nil
+	}
+	floor := 3
+	if available/len(widths) < floor {
+		floor = available / len(widths)
+	}
+	if floor < 1 {
+		floor = 1
+	}
 
+	desired := make([]int, len(widths))
 	total := 0
-	for _, w := range widths {
+	for i, w := range widths {
+		if w < 1 {
+			w = 1
+		}
+		desired[i] = w
 		total += w
 	}
-	if available < len(widths)*floor {
-		available = len(widths) * floor
-	}
 	if total <= available {
-		return widths
+		return desired
 	}
 
 	out := make([]int, len(widths))
 	assigned := 0
-	for i, w := range widths {
+	for i, w := range desired {
 		scaled := w * available / total
 		if scaled < floor {
 			scaled = floor
@@ -234,6 +289,25 @@ func fit(widths []int, available int) []int {
 		}
 		out[widest]--
 		assigned--
+	}
+
+	// Proportional rounding can also leave cells unused. Give them to the column furthest below
+	// what its content wanted, so the table uses the width it was given without changing order.
+	for assigned < available {
+		neediest := -1
+		for i := range out {
+			if out[i] >= desired[i] {
+				continue
+			}
+			if neediest < 0 || desired[i]-out[i] > desired[neediest]-out[neediest] {
+				neediest = i
+			}
+		}
+		if neediest < 0 {
+			break
+		}
+		out[neediest]++
+		assigned++
 	}
 	return out
 }

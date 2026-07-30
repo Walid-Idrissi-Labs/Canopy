@@ -38,6 +38,25 @@ func TestAnEditShowsWhatChanged(t *testing.T) {
 	}
 }
 
+// File content is no more trusted than command output. A diff that forwards an escape sequence can
+// rewrite the terminal at the exact point somebody is trying to inspect what changed.
+func TestADiffCannotEmitTerminalControlSequences(t *testing.T) {
+	engine := &fakeEngine{session: withCall(
+		"edit_file",
+		`{"path":"message.txt","old_text":"safe","new_text":"unsafe\u001b[2J\u0007"}`,
+		core.ToolResult{Content: "ok", Duration: time.Millisecond},
+	)}
+
+	body := model(engine).Body()
+	if strings.Contains(body, "\x1b[2J") || strings.ContainsRune(body, '\a') {
+		t.Fatalf("file content reached the terminal as an active control sequence: %q", body)
+	}
+	view := plain(body)
+	if !strings.Contains(view, `unsafe\x1b[2J\x07`) {
+		t.Errorf("the diff did not make its control characters visible:\n%s", view)
+	}
+}
+
 // marked reports whether some line of the body carries a diff marker against a piece of text.
 //
 // A scan rather than a substring match on the whole body, because the gap between the marker and the
