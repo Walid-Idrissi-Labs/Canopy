@@ -11,17 +11,22 @@ import (
 // Markdown rendering for a model's reply.
 //
 // A reply is read once and shown many times: scrolled past, searched, resumed after a restart. It
-// has to survive all of that as plain, readable text, which is why every structural marker here is
-// kept literally in the output (the "#", the "- ", the "> ", the "**") rather than replaced by
-// colour alone. Strip every escape code from a rendered line and the structure is still there.
+// has to survive all of that as plain, readable text, so every structural block carries a mark that
+// is itself plain text and not a colour: a rule under the top two heading levels, a round bullet, a
+// gutter bar on a quote, a box on a task. Strip every escape code from a rendered line and the
+// structure is still there.
+//
+// The marks are no longer the source's own. Emphasis, which carries no structure, loses its markers
+// entirely and is drawn with weight, slant and line. D-49 has the reasoning and the boundary between
+// the two.
 //
 // This also settles the one real safety question in the file: styling is always applied to text
 // that has already been wrapped to width, never the other way round. wrapLine's hard break path
-// cuts a too-long word by rune position, and a rune position computed against a plain string is not
-// the same position once ANSI codes are spliced in around part of it. Style first, wrap second would
+// cuts a too-long word by cell position, and a position computed against a plain string is not the
+// same position once ANSI codes are spliced in around part of it. Style first, wrap second would
 // let a cut land inside an escape sequence and corrupt everything after it on that line. wrap.go's
-// own wrapWithMarkers works around exactly this for the input cursor, and the same reasoning applies
-// here: wrap the plain text, then colour the pieces of the line that resulted.
+// own wrapWithMarkers works around exactly this for the input cursor, and inline.go does it for
+// emphasis by wrapping styled runs rather than a styled string.
 
 // RenderMarkdown turns a model's markdown reply into display lines of at most width columns.
 func RenderMarkdown(s string, width int) []string {
@@ -46,6 +51,15 @@ func RenderMarkdown(s string, width int) []string {
 
 		case strings.TrimSpace(line) == "":
 			out = append(out, "")
+			i++
+
+		case isTableStart(lines[i:]):
+			table, consumed := collectTable(lines[i:])
+			out = append(out, renderTable(table, width)...)
+			i += consumed
+
+		case isRule(line):
+			out = append(out, theme.Current().Muted.Render(strings.Repeat("─", width)))
 			i++
 
 		case headingLevel(line) > 0:
@@ -90,7 +104,14 @@ func isParagraphLine(line string) bool {
 	if strings.TrimSpace(line) == "" {
 		return false
 	}
-	return !isFence(line) && headingLevel(line) == 0 && !isQuoteLine(line) && listMarker(line) == nil
+	return !isFence(line) && headingLevel(line) == 0 && !isQuoteLine(line) &&
+		listMarker(line) == nil && !isRule(line) && !isTableRow(line)
+}
+
+// isTableRow reports whether a line looks like it belongs to a table, which is what stops a
+// paragraph from swallowing the rows under a header it already consumed.
+func isTableRow(line string) bool {
+	return len(splitRow(line)) > 1
 }
 
 // renderParagraph reflows a block of source lines into wrapped display lines.
@@ -99,22 +120,22 @@ func isParagraphLine(line string) bool {
 // it felt like, and preserving those breaks would wrap the reply twice, at two different widths, and
 // produce a ragged paragraph that has nothing to do with the terminal it is actually shown in.
 func renderParagraph(text string, width int, base lipgloss.Style) []string {
-	var out []string
-	for _, line := range wrap(text, width) {
-		out = append(out, renderInline(line, base))
-	}
-	return out
+	return renderInlineText(text, width, base)
 }
 
-// headingLevel reports 1, 2 or 3 for a line starting with that many "#" characters followed by a
-// space, and 0 for anything else. Four or more is left as a paragraph: the vocabulary this project
-// asked for stops at h3, and a stray "####" reads more like emphasis than structure.
+// headingLevel reports 1 to 6 for a line starting with that many "#" characters followed by a space,
+// and 0 for anything else.
+//
+// All six, where this used to stop at three and leave "#### Detail" to render as a paragraph with
+// its hashes showing. The vocabulary this project writes in stops at h3; the vocabulary a model
+// replies in does not, and a level nobody asked for is still better read as a heading than as prose
+// that happens to begin with four hashes.
 func headingLevel(line string) int {
 	n := 0
 	for n < len(line) && line[n] == '#' {
 		n++
 	}
-	if n < 1 || n > 3 {
+	if n < 1 || n > 6 {
 		return 0
 	}
 	rest := line[n:]
@@ -127,20 +148,62 @@ func headingLevel(line string) int {
 	return n
 }
 
+// renderHeading draws a heading without its hashes.
+//
+// The hashes used to stay in the text, so that a heading still read as a heading once every escape
+// code had been stripped. The rule is kept and the mark is changed: the top two levels are underlined
+// with a rule, which is itself plain text and survives stripping exactly as the hashes did, and reads
+// as a heading to somebody who has never seen markdown. Below that the weight carries it, which is
+// where every competitor also lands.
 func renderHeading(line string, width int) []string {
 	t := theme.Current()
+	level := headingLevel(line)
 	style := t.Heading
-	if headingLevel(line) == 1 {
+	if level == 1 {
 		style = t.Title
 	}
 
-	var out []string
-	// The hashes stay in the text. They are what makes a heading still read as a heading once every
-	// escape code has been stripped, which is the only thing colour can be trusted to survive.
-	for _, wrapped := range wrap(line, width) {
-		out = append(out, style.Render(wrapped))
+	text := strings.TrimSpace(strings.TrimPrefix(line, strings.Repeat("#", level)))
+
+	out := renderInlineText(text, width, style)
+	if level <= 2 && len(out) > 0 {
+		rule := lipgloss.Width(plainWidthOf(text))
+		if rule > width {
+			rule = width
+		}
+		if rule > 0 {
+			out = append(out, t.Muted.Render(strings.Repeat("─", rule)))
+		}
 	}
 	return out
+}
+
+// plainWidthOf is the heading's text with its inline markers removed, which is what the rule under it
+// has to match. Measuring the source would draw a rule two columns too long for every bold word.
+func plainWidthOf(text string) string {
+	var b strings.Builder
+	for _, run := range parseInline(text) {
+		b.WriteString(run.visible())
+	}
+	return b.String()
+}
+
+// isRule reports a thematic break: three or more of -, * or _ on a line of their own.
+func isRule(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if len(trimmed) < 3 {
+		return false
+	}
+	mark := trimmed[0]
+	if mark != '-' && mark != '*' && mark != '_' {
+		return false
+	}
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] != mark && trimmed[i] != ' ' {
+			return false
+		}
+	}
+	return true
 }
 
 // isQuoteLine reports whether a line opens with a block quote marker, allowing up to three leading
@@ -168,9 +231,14 @@ func quoteContent(line string) string {
 	return rest
 }
 
+// renderQuote draws a quoted block behind a gutter bar.
+//
+// The bar replaces the "> " the source carried. It is still a plain-text mark, so the block still
+// reads as quoted with every escape stripped, and it is the mark a reader recognises without having
+// to know that markdown spells a quote with a greater-than sign.
 func renderQuote(lines []string, width int) []string {
 	t := theme.Current()
-	const prefix = "> "
+	const prefix = "│ "
 	inner := width - lipgloss.Width(prefix)
 	if inner < 1 {
 		inner = 1
@@ -186,8 +254,8 @@ func renderQuote(lines []string, width int) []string {
 	}
 
 	var out []string
-	for _, wrapped := range wrap(strings.Join(text, " "), inner) {
-		out = append(out, t.Muted.Render(prefix)+renderInline(wrapped, t.Muted))
+	for _, wrapped := range renderInlineText(strings.Join(text, " "), inner, t.Muted) {
+		out = append(out, t.Muted.Render(prefix)+wrapped)
 	}
 	if len(out) == 0 {
 		out = append(out, t.Muted.Render(strings.TrimRight(prefix, " ")))
@@ -215,7 +283,16 @@ func listMarker(line string) *listItem {
 	}
 
 	if (rest[0] == '-' || rest[0] == '*' || rest[0] == '+') && startsWithMarkerSpace(rest[1:]) {
-		return &listItem{marker: "- ", indent: spaces, text: strings.TrimPrefix(rest[1:], " ")}
+		text := strings.TrimPrefix(rest[1:], " ")
+		// A task list is a bullet whose text opens with a box. Drawn as a box rather than left as
+		// "[ ]", because a list of things to do with three of them ticked is a thing somebody reads
+		// at a glance, and the glance is what the brackets cost.
+		if box, rest, ok := taskBox(text); ok {
+			return &listItem{marker: box, indent: spaces, text: rest}
+		}
+		// A round bullet rather than the hyphen the source used. Still a plain-text mark, so the
+		// list still reads as a list once every escape code is stripped.
+		return &listItem{marker: "• ", indent: spaces, text: text}
 	}
 
 	digits := 0
@@ -233,6 +310,17 @@ func listMarker(line string) *listItem {
 		}
 	}
 	return nil
+}
+
+// taskBox recognises the "[ ]" or "[x]" a task list item opens with, and returns the mark to draw.
+func taskBox(text string) (marker, rest string, ok bool) {
+	switch {
+	case strings.HasPrefix(text, "[ ] "):
+		return "☐ ", text[4:], true
+	case strings.HasPrefix(text, "[x] "), strings.HasPrefix(text, "[X] "):
+		return "☑ ", text[4:], true
+	}
+	return "", "", false
 }
 
 // startsWithMarkerSpace requires a marker to be followed by a space or nothing, so "3.14" in the
@@ -282,12 +370,11 @@ func renderListItem(item *listItem, width int) []string {
 		inner = 1
 	}
 
-	wrapped := wrap(item.text, inner)
+	wrapped := renderInlineText(item.text, inner, t.Body)
 	indentSpaces := strings.Repeat(" ", item.indent)
 
 	var out []string
-	for i, line := range wrapped {
-		body := renderInline(line, t.Body)
+	for i, body := range wrapped {
 		if i == 0 {
 			out = append(out, indentSpaces+t.Key.Render(item.marker)+body)
 			continue
@@ -297,63 +384,6 @@ func renderListItem(item *listItem, width int) []string {
 		out = append(out, indentSpaces+strings.Repeat(" ", markerWidth)+body)
 	}
 	return out
-}
-
-// renderInline finds bold, italic and inline code spans in an already-wrapped plain-text line and
-// styles them, leaving every marker character in place in the output.
-//
-// Run after wrapping rather than before, for the reason at the top of this file: a style applied
-// before wrapping can end up split by a hard break landing inside its own escape codes. Run per
-// line instead, a span that straddles a wrap point simply fails to find its closing marker on that
-// line and falls back to literal text, the same graceful behaviour an unclosed marker gets anywhere
-// else in a reply.
-func renderInline(line string, base lipgloss.Style) string {
-	t := theme.Current()
-	runes := []rune(line)
-	var out strings.Builder
-	var plain strings.Builder
-
-	flush := func() {
-		if plain.Len() > 0 {
-			out.WriteString(base.Render(plain.String()))
-			plain.Reset()
-		}
-	}
-
-	i := 0
-	for i < len(runes) {
-		if runes[i] == '`' {
-			if end := indexRune(runes, i+1, '`'); end >= 0 {
-				flush()
-				out.WriteString(t.InlineCode.Render(string(runes[i : end+1])))
-				i = end + 1
-				continue
-			}
-		}
-
-		if i+1 < len(runes) && runes[i] == '*' && runes[i+1] == '*' && flanking(runes, i+2) {
-			if end := indexPair(runes, i+2, '*', '*'); end >= 0 && flanking(runes, end-1) {
-				flush()
-				out.WriteString(base.Bold(true).Render(string(runes[i : end+2])))
-				i = end + 2
-				continue
-			}
-		}
-
-		if runes[i] == '*' && flanking(runes, i+1) {
-			if end := indexSingleStar(runes, i+1); end >= 0 && flanking(runes, end-1) {
-				flush()
-				out.WriteString(base.Italic(true).Render(string(runes[i : end+1])))
-				i = end + 1
-				continue
-			}
-		}
-
-		plain.WriteRune(runes[i])
-		i++
-	}
-	flush()
-	return out.String()
 }
 
 // flanking reports whether the rune at pos exists and is not a space, which is what stops
@@ -367,33 +397,6 @@ func indexRune(runes []rune, from int, r rune) int {
 		if runes[i] == r {
 			return i
 		}
-	}
-	return -1
-}
-
-// indexPair finds the next occurrence of two runes back to back, starting at from, and returns the
-// index of the first of the pair.
-func indexPair(runes []rune, from int, a, b rune) int {
-	for i := from; i+1 < len(runes); i++ {
-		if runes[i] == a && runes[i+1] == b {
-			return i
-		}
-	}
-	return -1
-}
-
-// indexSingleStar finds the next '*' that does not belong to a "**" pair, so an italic search does
-// not stop at the opening of a bold span nested inside it.
-func indexSingleStar(runes []rune, from int) int {
-	for i := from; i < len(runes); i++ {
-		if runes[i] != '*' {
-			continue
-		}
-		if i+1 < len(runes) && runes[i+1] == '*' {
-			i++ // part of a "**" pair, not a lone star
-			continue
-		}
-		return i
 	}
 	return -1
 }
@@ -531,6 +534,32 @@ func languageRules(lang string) (langRules, bool) {
 		return langRules{quotes: "\"", keywords: jsonKeywords}, true
 	case "shell":
 		return langRules{lineComment: "#", quotes: "\"'", keywords: shellKeywords}, true
+	case "rust":
+		return langRules{
+			lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+			quotes: "\"'", keywords: rustKeywords,
+		}, true
+	case "c":
+		return langRules{
+			lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+			quotes: "\"'", keywords: cKeywords,
+		}, true
+	case "java":
+		return langRules{
+			lineComment: "//", blockCommentStart: "/*", blockCommentEnd: "*/",
+			quotes: "\"'", keywords: javaKeywords,
+		}, true
+	case "ruby":
+		return langRules{lineComment: "#", quotes: "\"'", keywords: rubyKeywords}, true
+	case "yaml":
+		return langRules{lineComment: "#", quotes: "\"'", keywords: yamlKeywords}, true
+	case "sql":
+		return langRules{lineComment: "--", quotes: "'\"", keywords: sqlKeywords}, true
+	case "css":
+		return langRules{
+			blockCommentStart: "/*", blockCommentEnd: "*/",
+			quotes: "\"'", keywords: cssKeywords,
+		}, true
 	}
 	return langRules{}, false
 }
@@ -549,8 +578,25 @@ func normalizeLang(lang string) string {
 		return "javascript"
 	case "json", "jsonc", "json5":
 		return "json"
-	case "shell", "sh", "bash", "zsh", "console":
+	case "shell", "sh", "bash", "zsh", "console", "fish", "shell-session":
 		return "shell"
+	case "rust", "rs":
+		return "rust"
+	// C, C++ and the two families that share their comment and string rules closely enough that a
+	// four category lexer cannot tell them apart anyway. Go, Java and Rust are separate above because
+	// their keyword lists differ enough to be worth their own tables.
+	case "c", "h", "cpp", "c++", "cc", "hpp", "cxx", "objc", "m":
+		return "c"
+	case "java", "kotlin", "kt", "scala", "groovy", "cs", "csharp":
+		return "java"
+	case "ruby", "rb":
+		return "ruby"
+	case "yaml", "yml":
+		return "yaml"
+	case "sql", "psql", "mysql", "sqlite":
+		return "sql"
+	case "css", "scss", "sass", "less":
+		return "css"
 	}
 	return ""
 }
@@ -799,4 +845,62 @@ var shellKeywords = keywordSet(
 	"if", "then", "elif", "else", "fi", "for", "while", "until", "do", "done", "case", "esac",
 	"function", "in", "select", "time", "return", "break", "continue",
 	"local", "export", "readonly", "declare",
+)
+
+// The languages below were added because a coding agent's replies are not written in five languages.
+// Each one is the same four categories the lexer above draws, which is all this highlighter has ever
+// claimed: a keyword from an identifier, a string from a comment, a number from either. Anything
+// still unlisted renders as plain text, which stays the honest fallback rather than a guess.
+
+var rustKeywords = keywordSet(
+	"as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum", "extern",
+	"fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
+	"return", "self", "Self", "static", "struct", "super", "trait", "type", "unsafe", "use", "where",
+	"while", "true", "false",
+	"bool", "char", "str", "String", "Vec", "Option", "Result", "Some", "None", "Ok", "Err",
+	"i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64", "u128", "usize",
+	"f32", "f64",
+)
+
+var cKeywords = keywordSet(
+	"auto", "break", "case", "char", "const", "continue", "default", "do", "double", "else", "enum",
+	"extern", "float", "for", "goto", "if", "inline", "int", "long", "register", "restrict",
+	"return", "short", "signed", "sizeof", "static", "struct", "switch", "typedef", "union",
+	"unsigned", "void", "volatile", "while",
+	"bool", "true", "false", "nullptr", "NULL",
+	"class", "namespace", "template", "typename", "public", "private", "protected", "virtual",
+	"new", "delete", "this", "using", "friend", "operator", "constexpr", "noexcept", "override",
+)
+
+var javaKeywords = keywordSet(
+	"abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const",
+	"continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float",
+	"for", "goto", "if", "implements", "import", "instanceof", "int", "interface", "long", "native",
+	"new", "package", "private", "protected", "public", "return", "short", "static", "strictfp",
+	"super", "switch", "synchronized", "this", "throw", "throws", "transient", "try", "var", "void",
+	"volatile", "while", "record", "sealed", "true", "false", "null", "String",
+)
+
+var rubyKeywords = keywordSet(
+	"alias", "and", "begin", "break", "case", "class", "def", "defined?", "do", "else", "elsif",
+	"end", "ensure", "false", "for", "if", "in", "module", "next", "nil", "not", "or", "redo",
+	"rescue", "retry", "return", "self", "super", "then", "true", "undef", "unless", "until",
+	"when", "while", "yield", "require", "require_relative", "attr_accessor", "attr_reader",
+)
+
+var yamlKeywords = keywordSet("true", "false", "null", "yes", "no", "on", "off", "~")
+
+var sqlKeywords = keywordSet(
+	"select", "from", "where", "insert", "into", "values", "update", "set", "delete", "create",
+	"table", "index", "view", "drop", "alter", "add", "column", "primary", "key", "foreign",
+	"references", "join", "inner", "left", "right", "outer", "full", "on", "group", "by", "order",
+	"having", "limit", "offset", "distinct", "as", "and", "or", "not", "null", "is", "in", "like",
+	"between", "exists", "union", "all", "case", "when", "then", "else", "end", "with",
+	"SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE", "CREATE",
+	"TABLE", "JOIN", "LEFT", "GROUP", "BY", "ORDER", "LIMIT", "AND", "OR", "NOT", "NULL", "AS",
+)
+
+var cssKeywords = keywordSet(
+	"important", "inherit", "initial", "unset", "none", "auto", "flex", "grid", "block", "inline",
+	"absolute", "relative", "fixed", "sticky", "hidden", "visible", "solid", "dashed", "dotted",
 )

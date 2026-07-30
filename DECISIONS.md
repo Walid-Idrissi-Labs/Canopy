@@ -1115,6 +1115,52 @@ frame, so allowing `y` or `a` there would contradict D-35's rule that the canoni
 are the arguments approved. On the asking conversation, the ordinary prompt shows the full request
 and only then owns the answer keys.
 
+## D-49 Structure keeps a plain-text mark, emphasis does not. Decided 2026-07-29.
+
+The markdown renderer kept every marker in its output. `**bold**` rendered as `**bold**` in bold,
+`## Section` kept its hashes, inline code kept its backticks. The rule behind it is written at the
+top of the file and it is a good one: strip every escape code from a rendered line and the structure
+is still there, which is what makes a reply readable to somebody running NO_COLOR, copying text out,
+or reading it back out of the search index.
+
+That rule is kept. What changes is which marks carry it.
+
+A heading, a list item and a quote mean something a stripped line needs. They keep a plain-text mark
+and it is no longer the markdown source's: the top two heading levels are underlined with a rule, a
+bullet is a round mark, a quote is a gutter bar. All three are plain text, all three survive
+stripping, and all three read as what they are to somebody who has never seen markdown, which the
+hashes and greater-than signs did not.
+
+Emphasis carries no structure. A pair of asterisks around a word means read this harder, and a reader
+who has lost the styling has lost nothing further by losing the asterisks. Bold, italic,
+strikethrough and inline code therefore drop their markers and are carried by weight, slant, line and
+colour. Every competitor does this, and a reply full of visible asterisks was the loudest way this
+interface announced it was not one.
+
+Removing markers moves where a line has to be wrapped, so the text is now split into styled runs
+first, wrapped by measured cell width, and styled last, per line. That is the same ordering rule the
+file always had, now enforced by construction rather than by a comment: there is no longer any point
+at which a wrap position is computed against a string that contains escape codes. Code spans and link
+targets are never broken across a wrap, because two halves of a command each look like a shorter
+command.
+
+Three gaps closed in the same pass, all of them cases a model produces constantly. Tables were being
+joined with spaces and reflowed into a run-on paragraph, which is worse than leaving them alone, and
+are now laid out in fitted columns. Headings stopped at level three and rendered `#### Detail` as
+prose with its hashes showing. Underscore emphasis, strikethrough, task list boxes, thematic breaks
+and links were not recognised at all. Underscores are only a marker at a word boundary, because
+snake_case identifiers are commoner in a coding agent's output than underscore emphasis and
+italicising the middle of one is the worse error.
+
+A table never widens the frame to preserve a preferred column floor. Gaps shrink from two cells to
+one, column floors shrink from three cells to one, and when the terminal is too narrow to give each
+column even one cell and each boundary one separator, the table becomes labelled rows. That fallback
+is taller but lossless: every header and value remains, and no rendered line exceeds the width.
+
+Supersedes the marker rule in `internal/tui/chat/markdown.go` and the five tests that asserted it,
+which are rewritten to assert the new marks rather than deleted. The vocabulary changed; the property
+did not.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

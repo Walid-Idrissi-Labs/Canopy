@@ -5162,6 +5162,43 @@ newline and tab, plus DEL and C1, before styling. TestToolOutputCannotEmitTermin
 and TestADiffCannotEmitTerminalControlSequences hold both public render paths; the package-level
 tests hold the complete control ranges and ordinary Unicode.
 
+### U-21 A reply that reads like a document
+`status: review | owner: claude | branch: tui/rendered-markdown | depends: none`
+`scope: internal/tui/chat/`
+
+Deliverable: the markdown a model actually writes, rendered. Emphasis loses its markers and is
+carried by weight, slant, line and colour. Headings lose their hashes, gain the levels four to six
+they never had, and the top two are underlined with a rule. Bullets are a round mark, quotes a gutter
+bar, task list items a box. Tables are laid out in fitted columns instead of being joined with spaces
+and reflowed into one run-on line. Thematic breaks, strikethrough, underscore emphasis and links are
+recognised. The highlighter learns rust, c and its family, java and its family, ruby, yaml, sql and
+css, where it knew five languages.
+
+Acceptance: `**bold**` renders as bold with no asterisks on screen. A three column table renders as
+three columns whose second column starts at the same screen column on every row. `#### Detail` is a
+heading. `read_file_range` is not italicised. A link shows both its text and its target. An inline
+code span is never broken across a wrap. No rendered line exceeds the width it was given, at every
+width the existing property test tries, including a table with more columns than can fit at the
+preferred floor; an impossibly narrow horizontal table becomes lossless labelled rows. Every
+structural block still carries a plain-text mark that survives escape stripping.
+
+`verify: claude [x]   codex [ ]`
+
+notes: recorded as D-49, which keeps the principle the old renderer stated and changes the marks that
+carry it. The reason removing markers is a new file rather than four deleted characters is that it
+moves where a line wraps: the text is now split into styled runs, wrapped by measured cell width, and
+styled last, which enforces by construction the ordering rule the file previously kept by hand. Code
+fences are deliberately left visible, so a reply copied out of the terminal is still valid markdown;
+that is the one marker whose round trip is worth its columns.
+
+Review correction, 2026-07-30: fit raised its available width to three cells per column even when
+the caller had fewer cells, then renderTable added the inter-column gaps on top. Six long columns at
+width twenty therefore rendered twenty-eight columns. The fitter now lowers its floor to one without
+ever increasing the caller's budget; gaps narrow where needed; and a column count that cannot fit
+horizontally becomes labelled rows. TestANarrowMultiColumnTableNeverExceedsItsWidth holds the
+reported regression and TestATableTooNarrowForItsColumnCountBecomesLabelledRows holds the
+mathematically impossible case without dropping data.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 

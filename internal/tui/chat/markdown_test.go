@@ -121,16 +121,115 @@ func TestAnUnknownLanguageFallsBackToPlainCode(t *testing.T) {
 	}
 }
 
-// "#", "##" and "###" are the vocabulary this project asked for. Keeping the hash in the rendered
-// text is what makes a heading still read as a heading once every escape code is gone.
+// A heading keeps a mark that survives escape stripping, and it is no longer the hash the source
+// wrote. The top two levels are underlined with a rule, which is plain text and reads as a heading
+// to somebody who has never seen markdown; below that the weight carries it, which is where every
+// competitor also lands. See D-49.
 func TestHeadingsStayMarkedWithColourDisabled(t *testing.T) {
 	reply := "# Title\n\n## Section\n\n### Detail\n\nordinary paragraph"
 	view := plain(strings.Join(chat.RenderMarkdown(reply, 60), "\n"))
 
-	for _, want := range []string{"# Title", "## Section", "### Detail"} {
+	for _, want := range []string{"Title", "Section", "Detail"} {
 		if !strings.Contains(view, want) {
-			t.Errorf("a heading lost its marker, so it cannot be told apart from a paragraph once "+
-				"colour is gone:\n%s", view)
+			t.Errorf("a heading lost its text:\n%s", view)
+		}
+	}
+	if strings.Contains(view, "# Title") {
+		t.Errorf("the heading still shows its markdown hashes:\n%s", view)
+	}
+	// Two rules, one under each of the top two levels, and none under the third.
+	if rules := strings.Count(view, "─"); rules == 0 {
+		t.Errorf("no heading was underlined, so a stripped heading reads as a paragraph:\n%s", view)
+	}
+}
+
+// A table used to fall through to the paragraph branch, where its rows were joined with spaces and
+// reflowed into one run-on line. That is worse than leaving it alone.
+func TestATableKeepsItsRowsAndColumns(t *testing.T) {
+	reply := "| name | state |\n|---|---|\n| alpha | idle |\n| beta | working |"
+	lines := chat.RenderMarkdown(reply, 60)
+	view := plain(strings.Join(lines, "\n"))
+
+	for _, want := range []string{"name", "state", "alpha", "idle", "beta", "working"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the table lost %q:\n%s", want, view)
+		}
+	}
+	// One line per row, not every cell on one line. The header, its rule and two body rows.
+	if len(lines) < 4 {
+		t.Errorf("the table was collapsed onto %d lines:\n%s", len(lines), view)
+	}
+	for _, line := range lines {
+		if strings.Contains(plain(line), "alpha") && strings.Contains(plain(line), "beta") {
+			t.Errorf("two rows were reflowed onto one line:\n%s", view)
+		}
+	}
+}
+
+// Columns line up, which is the only reason to draw a table rather than a list.
+func TestTableColumnsLineUp(t *testing.T) {
+	reply := "| a | b |\n|---|---|\n| short | x |\n| much longer cell | y |"
+	lines := chat.RenderMarkdown(reply, 60)
+
+	var second []int
+	for _, line := range lines {
+		text := plain(line)
+		if i := strings.Index(text, "x"); i >= 0 && strings.Contains(text, "short") {
+			second = append(second, i)
+		}
+		if i := strings.Index(text, "y"); i >= 0 && strings.Contains(text, "much longer") {
+			second = append(second, i)
+		}
+	}
+	if len(second) != 2 {
+		t.Fatalf("expected to find both body rows, found %d:\n%s", len(second),
+			plain(strings.Join(lines, "\n")))
+	}
+	if second[0] != second[1] {
+		t.Errorf("the second column starts at column %d on one row and %d on the other",
+			second[0], second[1])
+	}
+}
+
+// Six columns still fit at twenty cells, but not with the preferred three-cell floor plus gaps.
+// The old fitter silently enlarged its budget and produced lines wider than the terminal.
+func TestANarrowMultiColumnTableNeverExceedsItsWidth(t *testing.T) {
+	const width = 20
+	reply := "| alpha | beta | gamma | delta | epsilon | zeta |\n" +
+		"|---|---|---|---|---|---|\n" +
+		"| one | two | three | four | five | six |"
+	lines := chat.RenderMarkdown(reply, width)
+
+	for _, line := range lines {
+		if got := len([]rune(plain(line))); got > width {
+			t.Errorf("a six-column table rendered %d cells at width %d: %q", got, width, plain(line))
+		}
+	}
+	view := plain(strings.Join(lines, "\n"))
+	if !strings.Contains(view, "eps") || !strings.Contains(view, "fiv") {
+		t.Errorf("the fitted table did not retain content from its wide columns:\n%s", view)
+	}
+}
+
+// Some tables are mathematically impossible to draw horizontally: twelve columns need at least
+// twenty-three cells even if every cell and gap is one wide. Those become labelled records instead
+// of overflowing or discarding columns.
+func TestATableTooNarrowForItsColumnCountBecomesLabelledRows(t *testing.T) {
+	const width = 20
+	reply := "| a | b | c | d | e | f | g | h | i | j | k | l |\n" +
+		"|---|---|---|---|---|---|---|---|---|---|---|---|\n" +
+		"| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |"
+	lines := chat.RenderMarkdown(reply, width)
+	view := plain(strings.Join(lines, "\n"))
+
+	for _, line := range lines {
+		if got := len([]rune(plain(line))); got > width {
+			t.Errorf("a stacked table rendered %d cells at width %d: %q", got, width, plain(line))
+		}
+	}
+	for _, want := range []string{"• a: 1", "• f: 6", "• l: 12"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the stacked table lost %q:\n%s", want, view)
 		}
 	}
 }
@@ -145,7 +244,7 @@ func TestBulletListHangingIndentLinesUpUnderTheTextNotTheBullet(t *testing.T) {
 		t.Fatalf("expected the item to wrap onto more than one line, got %d: %v", len(lines), lines)
 	}
 	first := plain(lines[0])
-	if !strings.HasPrefix(first, "- ") {
+	if !strings.HasPrefix(first, "\u2022 ") {
 		t.Fatalf("first line does not start with the bullet: %q", first)
 	}
 	for _, line := range lines[1:] {
@@ -216,14 +315,59 @@ func TestAnUnclosedItalicMarkerRendersAsLiteralText(t *testing.T) {
 
 // Closed emphasis keeps its markers too. Losing them once colour is stripped would mean the only
 // evidence that a word was ever emphasised is a colour, which the acceptance criteria forbids.
-func TestClosedBoldAndItalicKeepTheirMarkersWithColourDisabled(t *testing.T) {
+func TestClosedEmphasisDropsItsMarkersAndKeepsItsWords(t *testing.T) {
 	reply := "plain **bold word** and plain *italic word* plain"
 	view := plain(strings.Join(chat.RenderMarkdown(reply, 60), " "))
 
-	for _, want := range []string{"**bold word**", "*italic word*"} {
+	for _, want := range []string{"bold word", "italic word"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("missing %q in %q", want, view)
 		}
+	}
+	// The markers go, because a pair of asterisks around a word carries no structure a stripped
+	// line needs to keep. Structure keeps a plain-text mark elsewhere: a bullet, a gutter, a rule.
+	// See D-49.
+	for _, gone := range []string{"**", "*italic"} {
+		if strings.Contains(view, gone) {
+			t.Errorf("emphasis kept its markdown markers, which no competitor shows: %q", view)
+		}
+	}
+}
+
+// Underscore emphasis, which models write as often as asterisks and the renderer used to ignore.
+func TestUnderscoreEmphasisIsRecognised(t *testing.T) {
+	view := plain(strings.Join(chat.RenderMarkdown("an _italic_ and a __bold__ word", 60), " "))
+	for _, want := range []string{"italic", "bold"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q in %q", want, view)
+		}
+	}
+	if strings.Contains(view, "_") {
+		t.Errorf("underscore emphasis kept its markers: %q", view)
+	}
+}
+
+// An identifier is not emphasis. snake_case names are far more common in a coding agent's output
+// than underscore emphasis, and italicising the middle of one is the worse error.
+func TestSnakeCaseIsNotItalicised(t *testing.T) {
+	view := plain(strings.Join(chat.RenderMarkdown("call read_file_range on it", 60), " "))
+	if !strings.Contains(view, "read_file_range") {
+		t.Errorf("an identifier was eaten by underscore emphasis: %q", view)
+	}
+}
+
+// A link keeps its destination visible. A terminal hyperlink is invisible to anybody whose terminal
+// does not draw one, and a link whose target cannot be seen or copied is worse than a longer line.
+func TestALinkShowsItsTarget(t *testing.T) {
+	view := plain(strings.Join(chat.RenderMarkdown("see [the readme](https://example.com/r) first", 80), " "))
+	if !strings.Contains(view, "the readme") {
+		t.Errorf("the link text is missing: %q", view)
+	}
+	if !strings.Contains(view, "https://example.com/r") {
+		t.Errorf("the link target is unreachable: %q", view)
+	}
+	if strings.Contains(view, "](") {
+		t.Errorf("the link kept its markdown punctuation: %q", view)
 	}
 }
 
@@ -239,11 +383,25 @@ func TestAStandaloneAsteriskSurroundedBySpacesIsNotTreatedAsEmphasis(t *testing.
 
 // Backticks stay in the output for the same reason "#" and "**" do: without colour, they are the
 // only thing telling a reader this word is code rather than prose.
-func TestInlineCodeKeepsItsBackticksWithColourDisabled(t *testing.T) {
+func TestInlineCodeKeepsItsTextWithColourDisabled(t *testing.T) {
 	reply := "run `go test ./...` before you push"
 	view := plain(strings.Join(chat.RenderMarkdown(reply, 60), " "))
-	if !strings.Contains(view, "`go test ./...`") {
-		t.Errorf("inline code lost its backticks: %q", view)
+	if !strings.Contains(view, "go test ./...") {
+		t.Errorf("inline code lost its text: %q", view)
+	}
+	if strings.Contains(view, "`") {
+		t.Errorf("inline code kept its backticks: %q", view)
+	}
+}
+
+// A command must never be broken across a wrap. Two halves of a command each look like a shorter
+// command, which is how a copied line silently becomes the wrong line.
+func TestInlineCodeIsNotBrokenAcrossLines(t *testing.T) {
+	reply := "before it, run `go test ./internal/session/...` and then read the output"
+	lines := chat.RenderMarkdown(reply, 40)
+	joined := plain(strings.Join(lines, "\n"))
+	if !strings.Contains(joined, "go test ./internal/session/...") {
+		t.Errorf("the command was split across a wrap:\n%s", joined)
 	}
 }
 
@@ -257,8 +415,10 @@ func TestBlockQuotePrefixesEveryWrappedLine(t *testing.T) {
 		t.Fatalf("expected the quote to wrap onto more than one line, got %d", len(lines))
 	}
 	for _, line := range lines {
-		if got := plain(line); !strings.HasPrefix(got, "> ") {
-			t.Errorf("a wrapped quote line lost its marker: %q", got)
+		// A gutter bar rather than the "> " the source carried. Still plain text, so the block
+		// still reads as quoted with every escape stripped. See D-49.
+		if got := plain(line); !strings.HasPrefix(got, "\u2502 ") {
+			t.Errorf("a wrapped quote line lost its gutter: %q", got)
 		}
 	}
 }

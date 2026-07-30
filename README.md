@@ -127,6 +127,9 @@ real keys, and a misread number should be a question rather than an invoice.
 ## Watch them, and steer without stopping them
 
 Split panes show several agents working at once. Move between them by keyboard or by clicking.
+Replies render as terminal-width documents: tables fit their columns where possible and become
+labelled rows when the screen is too narrow to preserve every column horizontally.
+
 The transcript shows bounded tool output and file diffs. Control characters from commands or file
 content are printed as visible escapes before terminal styling, so viewed output cannot act as a
 second terminal program.
