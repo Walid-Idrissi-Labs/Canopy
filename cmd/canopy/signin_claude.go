@@ -186,7 +186,14 @@ func (a *claudeCodeAttempt) Wait() (keysui.Outcome, error) {
 	// enforces, and this call is the only place in Canopy that exercises it.
 	meta, err := a.store.PutSignIn(
 		core.KeyMetadata{Ref: ref},
-		keys.SignIn{Kind: keys.KindDelegated, Account: found.Account.Email},
+		keys.SignIn{
+			Kind:    keys.KindDelegated,
+			Account: found.Account.Email,
+			// Which way in this came, so routeSet knows which vendor to ask about it later. The
+			// field is S-03's and arrived after this route did: with one registry there was nothing
+			// to dispatch between, and with two there is.
+			Route: claudeCodeRouteID,
+		},
 		keys.Tokens{},
 	)
 	if err != nil {

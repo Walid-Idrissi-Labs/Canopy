@@ -351,3 +351,47 @@ func TestASubAgentsOutputIsNotPresentedAsTheAnswer(t *testing.T) {
 	default:
 	}
 }
+
+// The trap S-04 found on their route, checked on this one because the cost of getting it wrong is
+// the same and worse. internal/agent/loop.go invokes every tool call event it is handed, so any
+// vendor event that becomes core.EventToolCall for a tool the vendor already ran would have Canopy
+// run it a second time.
+//
+// The only event here that becomes a tool call is the one that means "I am waiting for you to run
+// this", which is the whole reason Canopy's tools are declared with no handler. The events that mean
+// "I am running this" and "I have run this" produce nothing at all. In this session they cannot fire
+// for anything but Canopy's own tools anyway, since ModeEmpty and the allowlist leave the vendor
+// with none of its own, but the mapping is what makes that a property rather than a coincidence.
+func TestNoEventThatMeansAToolAlreadyRanBecomesAToolCallCanopyWouldRunAgain(t *testing.T) {
+	agent := &sdkAgent{events: make(chan Event, 8)}
+
+	for _, data := range []sdk.SessionEventData{
+		&rpc.ToolExecutionStartData{ToolCallID: "call-1", ToolName: "read_file"},
+		&rpc.ToolExecutionProgressData{ToolCallID: "call-1", ProgressMessage: "reading"},
+		&rpc.ToolExecutionCompleteData{ToolCallID: "call-1", Success: true},
+		&rpc.ExternalToolCompletedData{RequestID: "request-1"},
+		&rpc.PermissionRequestedData{RequestID: "perm-1"},
+		&rpc.PermissionCompletedData{RequestID: "perm-1"},
+	} {
+		agent.handle(sdk.SessionEvent{Data: data})
+		select {
+		case event := <-agent.events:
+			t.Errorf("%T produced %+v, and a tool call here would be run a second time by "+
+				"internal/agent/loop.go", data, event)
+		default:
+		}
+	}
+
+	// The one that does, and must.
+	agent.handle(sdk.SessionEvent{Data: &rpc.ExternalToolRequestedData{
+		RequestID: "request-2", ToolName: "read_file",
+	}})
+	select {
+	case event := <-agent.events:
+		if event.Kind != EventToolCall {
+			t.Errorf("a pending tool request produced %+v", event)
+		}
+	default:
+		t.Error("a pending tool request produced nothing, so the turn waits forever")
+	}
+}
