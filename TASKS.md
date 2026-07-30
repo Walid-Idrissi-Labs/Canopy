@@ -5814,6 +5814,13 @@ TestASignInWithoutTheAccountItBelongsToIsRefused.
 Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
 `golangci-lint run ./...` reports no issues.
 
+verification (claude, 2026-07-31): acceptance re-run and holds, with no changes needed. Two guards
+were mutation tested rather than read. Removing the refusal in `SignIn.validate` that stops a
+delegated credential being handed tokens fails TestADelegatedSignInRefusesToBeGivenTokens. Adding a
+`core.Secret` field to the `SignIn` record, which is the shape of the mistake that would put a token
+on a published type, fails TestTheFactsBehindASignInAreSafeToDisplay. The `internal/core` claim is
+directly checkable and true: `git diff origin/main -- internal/core` is empty.
+
 ### S-02 A token is refreshed before it is needed, not after it fails
 
 `status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
@@ -5968,9 +5975,29 @@ Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, 
 than in the shared worktree, because S-06 and S-07 are in flight in the same tree and
 internal/tui/keys does not compile between their edits.
 
+verification (claude, 2026-07-31): acceptance re-run and holds, with no changes needed. Both of this
+task's load-bearing numbers were mutation tested in both directions. `RefreshMargin` at ten seconds
+fails seven tests and at sixty minutes fails three, so the shipped five minutes is pinned from above
+and below rather than merely asserted once. The lapsed-versus-transient split was collapsed each
+way: making every refresh failure transient fails
+TestARefusedRenewalIsALapsedSignInThatNamesItsRemedy, and making every one lapsed fails
+TestARenewalThatCouldNotReachTheVendorIsNotALapsedSignIn.
+
+One thing found outside this task's clauses but at its seam, recorded for the supervisors rather
+than fixed here, because it is a resolver change rather than a refresher one. The refresher seam
+genuinely is shared: both `cmd/canopy/ask.go` and `internal/session/resolver.go` reach
+`Refresher.Credential`, which is what this task promised. But the delegated fork beside it is not.
+`ask.go` builds both delegated clients with `WithVersion(version)`, at :311 and :322, and
+`resolver.go` builds them with neither, at :180 and :191, so the client defaults to the literal
+"dev". The interface therefore identifies itself to Anthropic's bridge and to OpenAI's app server as
+version "dev" while `canopy ask` sends the real build version. S-05's own notes record that backend
+model routing is cohort-keyed on originator plus version, and its handshake test asserts only that
+the version is non-empty, which "dev" satisfies. That is constraint 4's divergence in a new place:
+the provider switch exists twice and the two copies disagree.
+
 ### S-03 GitHub Copilot signs in through its own SDK
 
-`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`status: blocked | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
 `scope: internal/provider/copilot/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
 
 Deliverable: the Copilot route, first of the three because it is the one whose vendor documents this
@@ -6254,6 +6281,34 @@ Run before ticking, in a clean clone at this commit rather than in the shared wo
 `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
 ./...` reports no issues.
 
+verification (claude, 2026-07-31): blocked, and the reason is the resource story rather than any
+acceptance clause. The notes above say "a session per conversation and a process per client both end
+at Engine.Close, which calls the resolver's Close after the turns have settled". Three call paths
+build a Copilot client that Close never reaches, because `ResolveFor` returns before the map is
+touched when the conversation is empty, at internal/session/resolver.go:231. Every aside
+(internal/session/aside.go:68), every compaction (internal/session/compaction.go:112) and `canopy
+ask` (cmd/canopy/ask.go:89) take that branch. All three close only the stream, and this route's
+`stream.Close` deliberately does not end the session, at internal/provider/copilot/stream.go:147, so
+each one leaves a `copilot` CLI subprocess resident for the life of the program and a session GitHub
+believes is open. The package's own test closes those clients by hand
+(internal/session/copilot_test.go:87), so the need was known; production has no caller that does it.
+The cache also has no eviction at all: nothing anywhere calls `delete(r.sessions`, so ending,
+forking or walking away from a conversation leaves its process live until the program exits.
+
+Not fixed here, because it is a change to the `Resolve` contract rather than a defect inside a
+function: `Resolve` hands back a `core.ProviderClient`, which has no Close, so either the two
+callers learn to close a `conversationClient` or the resolver tracks what it hands them. That is a
+design decision for the pair that owns this route, not a verifier's edit.
+
+Everything else in this block was re-run and holds. The double-execution guard was mutation tested
+by mapping a vendor tool-execution event onto `core.EventToolCall`, and
+TestNoEventThatMeansAToolAlreadyRanBecomesAToolCallCanopyWouldRunAgain fails on it. ModeEmpty's
+hardening flags and the allowlist were both mutated and both are held. The permission handler was
+mutated to approve everything and is held. What was missing was the Cancel contract: this route had
+no cancellation test at all, where the other two have both halves, and it is the only route of the
+three whose credential holds real tokens. Both halves added in a separate commit, and the completed
+half fails against the mutation that removes Cancel's undo.
+
 ### S-04 Claude runs through the user's own Claude Code
 
 `status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
@@ -6530,6 +6585,21 @@ Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, 
 `golangci-lint run ./...` reports no issues. Run against a clone of this branch at this commit rather
 than in the shared worktree, because `internal/provider/copilot` is in flight there for S-03 and does
 not build until its dependency is added.
+
+verification (claude, 2026-07-31): acceptance re-run and holds. The load-bearing guard was mutation
+tested rather than read: mapping a `tool_call` update onto `core.EventToolCall` fails
+TestAToolTheDelegatedAgentRanIsReportedAndNeverHandedBackToBeRun, and changing the refusal to match
+on the option's label instead of its kind fails TestARefusalIsChosenByItsKindRatherThanItsLabel.
+
+One defect found and fixed in its own commit, in this route's process handling rather than its
+protocol. The bridge was started through internal/exec, asked to stop, and then reaped with the raw
+`cmd.Wait` instead of `Child.Wait`. Only `Child.Wait` sets `reaped`, and it does so under the lock
+that guards the group signal, so reaping the other way left `Stop`'s escalation armed against a pid
+the kernel had already been free to reissue. Every delegated turn sent SIGKILL to a process group
+250ms after Close, and on a busy machine that group need not have been the bridge's. The process
+Canopy meant to kill did die, which is why the suite never saw it. Held now by a source sweep in
+each package, because both spellings compile and the difference is only ever visible as somebody
+else's job dying.
 
 ### S-05 OpenAI signs in through the Codex app server
 
@@ -6919,6 +6989,20 @@ Run before ticking, in a clean clone at this commit rather than in the shared wo
 written: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
 `golangci-lint run ./...` reports no issues.
 
+verification (claude, 2026-07-31): acceptance re-run and holds, and the route's behaviour was right
+everywhere it was checked. One test was not, and it was the most load-bearing one in the block.
+
+TestCanopyDeclinesEveryApprovalTheDelegatedAgentAsksFor read the decision off the wire and compared
+it against `decisionDecline`, the constant that produced it. Setting that constant to "approve" left
+the whole suite green. Canopy would then have approved every command execution and every file change
+the app server asked about, while the conversation showed Canopy's own permission mode: the exact
+failure this block quotes Q-23 as forbidding. The assertion now names the protocol's own word, and
+fails against the mutation. Nothing about the shipped behaviour changed; what changed is that it is
+now held. The sibling ACP test was checked for the same shape and does assert literals.
+
+The `cmd.Wait` defect recorded under S-04 was present in this route's server.go too and is fixed in
+the same commit, with the same source sweep added here.
+
 ### S-06 The wizard has a path that never asks for a secret
 
 `status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
@@ -7062,6 +7146,26 @@ Run before ticking, in a clean clone at this commit rather than in the shared wo
 `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
 ./...` reports no issues.
 
+verification (claude, 2026-07-31): acceptance re-run and holds. Two properties this block argues for
+in prose were not held by anything, and both are now, in a separate commit. No production code
+changed for either: the build was already correct and nothing would have reported it going.
+
+The refusal protocol. `applyCredentialChoice` is the merge of two call paths, and the model picker's
+path has TestARefusedPickLeavesTheNextConversationWhereItWas holding that a refusal leaves
+`usingKey` alone. The sign-in path had no equivalent. Moving `a.usingKey = name` above the
+`UseCredential` guard left every test green, and the consequence is the one the picker's test was
+written for: ctrl+n after a refused sign-in opens a conversation on the credential just declined.
+TestASignInRefusedByTheConversationIsStoredAndNotClaimed now carries that assertion.
+
+The stale attempt. These notes say a `signInStartedMsg` with a stale number "is not merely dropped,
+it is cancelled", with the reason: an abandoned device code otherwise polls a vendor every few
+seconds for as long as the program runs. Deleting the cancellation left the suite green, because the
+sibling test holds only that the screen is not disturbed.
+TestASignInThatArrivesAfterEscapeIsStoppedRatherThanLeftPolling holds the other half.
+
+A third mutation was tried and is held: dropping the stale-number check in `signInDone` fails two
+existing tests.
+
 ### S-07 The command line signs in, and a test says what it can
 
 `status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
@@ -7189,9 +7293,26 @@ Run before ticking, in a clean clone at this commit rather than in the shared wo
 `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
 ./...` reports no issues.
 
+verification (claude, 2026-07-31): acceptance re-run and holds, with no changes needed here. The
+no-token clause was mutation tested: printing `tokens.Access.Reveal()` beside the storage line fails
+TestKeysTestOnASignedInCredentialReportsTheAccountAndTheStateOfTheGrant, so the output is genuinely
+swept rather than merely inspected.
+
+Two observations for whoever signs this off, neither a defect in this task. `revokesCredentials` has
+no production implementor at all, so the assertion at :293 never succeeds and `canopy keys signout`
+always reports the local half only. That matches what this block says it built, and it was SECURITY
+that described it as revoking "where it can"; the document is corrected under S-08 rather than the
+command. And `routeSet.Report`'s fallback for a credential with no route recorded is safer than the
+S-03 notes claim but not safe: the argument given is that a registry handed a credential that is not
+its own "fails on the credential rather than answering about it", which holds for the Copilot route
+because it reads tokens, and does not hold for the ChatGPT route, whose Report ignores the metadata
+and answers from whatever the machine's Codex is signed in as. A pre-Route delegated Claude
+credential on a machine with Codex installed can therefore be reported on by the wrong vendor. Left
+unfixed because it is the two routes' shared dispatch rather than this task's output.
+
 ### S-08 The documents say what is permitted and what is not
 
-`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
+`status: blocked | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
 `scope: README.md, INSTALL.md, LIMITATIONS.md, SECURITY.md`
 
 Deliverable: the documents move with the code, and for this phase they carry more weight than usual,
@@ -7378,6 +7499,54 @@ only the Copilot route because it is the only route where Canopy holds a token.
 
 Run before ticking: `make test` green, `gofmt -l .` empty, `grep -rnP '[^\x00-\x7F]'` over all four
 documents finding only the pre-existing arrow at README.md:319 described above.
+
+verification (claude, 2026-07-31): blocked. The acceptance clause "none of them contradicts another
+or contradicts D-51" was not met, in four places, and the notes above claim a read of all four
+against D-51 that cannot have happened as described. Each was verified against the code or against
+DECISIONS.md and each is fixed in its own commit, but the density is the reason this is blocked
+rather than ticked: a reviewer should assume the pass was partial and look again.
+
+README opened the sign-in section with "each because the vendor's own terms allow that particular
+shape". D-51 says that of exactly one route, at DECISIONS.md:1180, "the only one of the three that
+is unambiguously invited". For OpenAI it argues from negative space, and LIMITATIONS:436 says
+plainly that reasonable people read those terms the other way and that Charm's Crush refused this
+route twice on them. So the first paragraph a person read about signing in contradicted both the
+decision and the file that carries the counter-position, in the direction that tells them they are
+safer than this project believes.
+
+SECURITY's known-behaviour list said the vendor's agent "read or wrote files" on both delegated
+routes. LIMITATIONS:267 says the ChatGPT thread is opened read-only so a delegated Codex turn cannot
+write at all, and internal/provider/codex/client.go:164 agrees. Two of the four documents disagreed
+about what one route can do to somebody's disk.
+
+SECURITY said `core.Secret` "refuses to be serialised at all". It refuses to be deserialised;
+MarshalJSON succeeds and emits `[redacted]`, at internal/core/secret.go:74. The conclusion holds for
+a better reason, that the record has no field to put a token in, and the file now says both.
+
+SECURITY described signing out as ending the vendor's grant "only where it can", and promised a
+per-route sentence naming `$CODEX_HOME` and `codex logout`. No production route implements
+`revokesCredentials`, so the assertion at cmd/canopy/signin.go:293 never succeeds and there is no
+route that can; and the delegated branch prints one shared message naming neither. Both corrected to
+what the build prints.
+
+One more, in the code rather than the documents and fixed with them: the caveat printed before a
+ChatGPT sign-in still said `~/.codex` where discovery reads and honours `CODEX_HOME`. The notes
+above record fixing exactly that in LIMITATIONS and the user-visible copy was left behind.
+
+Two things looked at and left alone. The undated vendor claims at LIMITATIONS:340 and :388 each
+carry a `(D-51, S-03)` or `(D-51, S-05)` citation, and the notes state the dating convention is
+attribution by reference; that is a judgement call for a supervisor rather than a defect. And
+LIMITATIONS:361 leads with "a GitHub app of its own" before explaining two lines later that it must
+be an OAuth App; loose, but it does explain itself.
+
+Not verified, and flagged rather than smoothed over: LIMITATIONS:241 describes the Copilot allowlist
+as "naming Canopy's own tools and no vendor source at all". What ships is `custom:*`, which names a
+source with a wildcard rather than any tool, and the SDK's own documentation for `AddCustom` says it
+matches tools registered via `SessionConfig.Tools` *or via custom agents*. What actually keeps a
+custom-agent tool out appears to be ModeEmpty's own defaults rather than the allowlist. The claim
+may still be true of this configuration; it is not true for the reason the document gives. Left for
+whoever owns S-03, because establishing it needs the SDK read properly rather than a verifier's
+reading of one method's doc comment.
 
 ### PG-S Phase S gate
 
