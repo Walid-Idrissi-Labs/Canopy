@@ -6120,8 +6120,8 @@ call there was, and the permission mode on screen is the one in force. Q-23 is u
 with what it leaves open, which is narrower than before: not whether a delegated turn can be
 governed, but whether a route that cannot be should ship beside one that can.
 
-The trap S-04 found, checked rather than assumed, because the coordinator was right that the cost is
-the same here. `internal/agent/loop.go` invokes every tool call event it is handed, so any vendor
+The trap S-04 found, checked rather than assumed, because the cost of getting it wrong is the same
+here. `internal/agent/loop.go` invokes every tool call event it is handed, so any vendor
 event mapped onto `core.EventToolCall` for a tool the vendor already ran would have Canopy run it a
 second time. How I convinced myself: the adapter's type switch names seven event types and
 `*ExternalToolRequestedData` is the only one that produces a tool call, which is the event that means
@@ -6133,7 +6133,7 @@ unreachable for a second reason worth stating: with ModeEmpty and the allowlist 
 the session that the vendor can execute, so a tool-execution event could only ever describe one of
 Canopy's, and Canopy's have no handler. The test makes that a property rather than a coincidence.
 
-Cost, which the coordinator asked to be decided rather than inherited. A Copilot turn is reported as
+Cost, which is decided here rather than inherited. A Copilot turn is reported as
 unpriced, using S-04's `pricing.ModelID.Delegated` rather than a parallel concept, and the sentence
 that field prints is true of this route too: the user did sign in themselves, at github.com, with a
 device code. The tokens are real and are reported, because the vendor sends them per model call and
@@ -6142,27 +6142,27 @@ Copilot seat is billed monthly and metered per prompt rather than per token, so 
 token counts would not merely be an invoice nobody receives, it would be computed from the wrong
 unit. Held by TestATurnOnACopilotSeatIsReportedAsUnpricedRatherThanAsFree.
 
-The credential's shape, and the one field this adds. A Copilot credential is `ProviderOpenAICompatible`
-because that is the closer of the two shapes core knows and core is frozen, which means a route
-marker was unavoidable: Copilot and a future Codex are both openai-compatible, so a switch on
-provider alone would send a Copilot turn to a chat completions client pointed at a host that does not
-serve one. `keys.SignIn.Route` is that marker, and it is exactly the field S-02 anticipated when it
-wrote `SourceFor` as a function rather than a map. It is optional rather than required, deliberately:
-requiring it would mean rewriting tests belonging to tasks in review, and an absent route is not
-damage, it is a credential from a build that predated the field. The base URL is
-`https://api.githubcopilot.com`, which `RequiresBaseURL` forces to be non-empty and which is where the
-turn genuinely ends up even though Canopy never dials it, rather than a placeholder somebody would
-read in `canopy keys test`.
+The credential's shape, and the one field this adds. A Copilot credential is
+`ProviderOpenAICompatible`, because that is the closer of the two shapes core knows and core is
+frozen, which is what made a route marker unavoidable: Copilot and a future Codex are both
+openai-compatible, so a switch on provider alone would send a Copilot turn to a chat completions
+client pointed at a host that does not serve one. `keys.SignIn.Route` is that marker, and it is
+exactly the field S-02 anticipated when it wrote `SourceFor` as a function rather than a map. It is
+optional rather than required, deliberately: requiring it would mean rewriting tests belonging to
+tasks in review, and an absent route is not damage, it is a credential from a build that predated
+the field. The base URL is `https://api.githubcopilot.com`, which `RequiresBaseURL` forces to be
+non-empty and which is where the turn genuinely ends up even though Canopy never dials it, rather
+than a placeholder somebody would read in `canopy keys test`.
 
 Two things landed in neighbouring files and both are flagged rather than done quietly. S-04's
 delegated sign-in now records `Route: claudeCodeRouteID`, one line, without which `routeSet` cannot
-tell `canopy keys test` which vendor to ask about a credential; the coordinator asked for it and
-their own note records it. And `signInRoutes` became `routeSet`, the composition S-04's note left for
-whoever landed second, dispatching `Begin` on the route named and `Report` on the route recorded with
-the credential. `Report` keeps a fallback that asks each vendor in turn for a credential with no route
-recorded, and that fallback is safe rather than lucky: a registry handed a credential that is not its
-own fails on the credential rather than answering about it, since the Copilot route reads tokens and a
-delegated credential has none by design.
+tell `canopy keys test` which vendor to ask about a credential, and S-04's own notes record that it
+was left for whoever landed the field. And `signInRoutes` became `routeSet`, the composition S-04's
+note left for whoever landed second, dispatching `Begin` on the route named and `Report` on the
+route recorded with the credential. `Report` keeps a fallback that asks each vendor in turn for a
+credential with no route recorded, and that fallback is safe rather than lucky: a registry handed a
+credential that is not its own fails on the credential rather than answering about it, since the
+Copilot route reads tokens and a delegated credential has none by design.
 
 Acceptance, clause by clause: signing in on a machine with no GitHub credentials producing a user
 code and a verification URL, waiting, and completing when the user authorises is
@@ -6179,9 +6179,10 @@ GitHub will not name one; a turn running through the SDK and streaming back is
 TestATurnRunsOnTheDelegatedAgentAndStreamsBack against the agent seam and
 TestLiveATurnRunsOnTheSubscriptionAndStreamsBack against a real seat, skipped without one; refresh
 following S-02 is TestARenewalGoesThroughTheRefresherAndReplacesTheStoredToken, driven through
-keys.Refresher rather than by calling Refresh directly, with TestAGrantWithNoStatedExpiryIsNeverRenewed
-for the recommended registration's ordinary case, TestARefusedRenewalIsLapsedAndAnUnreachableVendorIsNot
-for S-02's two-failure split, and TestRenewingWithoutAClientSecretSaysWhatToChangeRatherThanAskingForAnotherTry;
+keys.Refresher rather than by calling Refresh directly, with
+TestAGrantWithNoStatedExpiryIsNeverRenewed for the recommended registration's ordinary case,
+TestARefusedRenewalIsLapsedAndAnUnreachableVendorIsNot for S-02's two-failure split, and
+TestRenewingWithoutAClientSecretSaysWhatToChangeRatherThanAskingForAnotherTry;
 a GitHub account with no Copilot seat being told exactly that is
 TestAnAccountWithNoCopilotSeatIsToldThatRatherThanThatItsCredentialIsWrong, which also holds that the
 message does not send somebody to replace a credential that is fine, with
@@ -6194,8 +6195,8 @@ would price it.
 Nine more that cover behaviour the clauses imply rather than name.
 TestOnlyTheNewestMessageReachesASessionThatHeardTheRest and
 TestAConversationThatStartedElsewhereIsSeededAsALabelledTranscript are the two halves of the
-session-versus-request translation, and TestAnEditedHistoryIsRefusedRatherThanAnsweredFromTheVendorsCopy
-is its cost.
+session-versus-request translation, and
+TestAnEditedHistoryIsRefusedRatherThanAnsweredFromTheVendorsCopy is its cost.
 TestAToolCallLeavesTheAgentAndItsResultComesBackToTheSameTurn is Q-23's answer as a test, with
 TestARefusedToolIsReportedToTheAgentAsAFailureRatherThanAsSilence for what a gated refusal does.
 TestTheToolAllowlistNamesCanopysOwnToolsAndNoVendorSourceAtAll and
@@ -6203,8 +6204,8 @@ TestASessionIsCreatedWithEveryFeatureThatTouchesTheMachineSwitchedOff are the Mo
 TestCancellingATurnStopsTheVendorRatherThanAbandoningIt holds that a stopped turn stops spending
 somebody's allowance and leaves the conversation usable, and
 TestClosingTheResolverEndsEveryConversationItWasHolding is the resource story: a session per
-conversation and a process per client both end at Engine.Close, which calls the resolver's Close after
-the turns have settled.
+conversation and a process per client both end at Engine.Close, which calls the resolver's Close
+after the turns have settled.
 
 Considered and rejected. A session per turn with the whole history rendered into every prompt, which
 would have kept Canopy's history editing, re-rolls and compaction working: rejected because it makes
@@ -6213,13 +6214,15 @@ context handling and caching, and is not what the task describes. Changing `Reso
 instead of adding an optional interface: rejected for S-02's stated reason, four callers and every
 fake. Refusing to run at all on a conversation with unseen history: rejected because a Copilot
 conversation that cannot survive closing the program is a worse product than one whose restored
-context is slightly weaker, and the transcript is labelled so the model is told it is reading a record
-rather than being given instructions. Draining every pending tool request into one step: rejected
-because "however many happened to have arrived by now" is a rule whose answer depends on scheduling,
+context is slightly weaker, and the transcript is labelled so the model is told it is reading a
+record rather than being given instructions. Draining every pending tool request into one step:
+rejected because "however many happened to have arrived by now" is a rule whose answer depends on
+scheduling,
 which is a test that passes on one machine and fails on another; one per step is deterministic and
 costs a round trip. Restarting the session when a request names a different model: rejected, it
-throws the conversation away to honour a flag, and the limit is written down instead. Asking the SDK's
-`account.getQuota` to check for a seat at sign-in: rejected because it is defined in the schema and
+throws the conversation away to honour a flag, and the limit is written down instead. Asking the
+SDK's `account.getQuota` to check for a seat at sign-in: rejected because it is defined in the
+schema and
 not implemented in the CLI as of v1.0.8, which GitHub's own e2e test skips over, so it would be a
 check that silently never worked. Starting a runtime during sign-in to read the login from
 `GetAuthStatus`: rejected because somebody on a machine without the CLI can still complete a sign-in
