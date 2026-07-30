@@ -449,30 +449,58 @@ func runKeysRename(args []string, out io.Writer) error {
 		return renameErr
 	}
 
-	// The rename landed and may still have something to report: the store says so when the old
-	// secret could not be taken out of the backend, which leaves the same value readable under a name
-	// nothing else knows about. Said before the conversations are moved, because it is about the
-	// credential and moving them does not make it less true.
+	// A backend cleanup warning means the rename still landed: metadata and the new secret agree,
+	// while the old backend entry is an extra copy to remove. Stored conversations must still
+	// follow. Returning the warning before moving them would turn a recoverable duplicate into a
+	// credential whose sessions all point at the wrong name.
+	moved, err := moveCredentialHistory(from, meta.Ref.Name)
+	if err != nil {
+		// The history update is one SQLite statement, so an error means no conversation was moved.
+		// Put the credential back as well; only then is "fix the cause and repeat" truthful.
+		rolledBack, rollbackErr := store.Rename(meta.Ref, from)
+		switch {
+		case rolledBack.Ref.Name == from && rollbackErr == nil:
+			return fmt.Errorf(
+				"the conversations could not be moved from %q to %q: %w. The credential was "+
+					"restored to %q, so fix the history error and repeat the rename",
+				from, meta.Ref.Name, err, from)
+		case rolledBack.Ref.Name == from:
+			return fmt.Errorf(
+				"the conversations could not be moved from %q to %q: %v. The credential metadata "+
+					"was restored to %q, but cleaning up the new backend entry also failed: %w",
+				from, meta.Ref.Name, err, from, rollbackErr)
+		default:
+			// The rollback did not land. Name the split state rather than suggesting a repeat with
+			// an old name the store no longer has.
+			return fmt.Errorf(
+				"the credential is now called %q, but its conversations still use %q because "+
+					"their history update failed: %v. Restoring the credential name also failed: "+
+					"%v. Do not repeat the old command; repair one side before sending another "+
+					"message on those conversations",
+				meta.Ref.Name, from, err, rollbackErr)
+		}
+	}
+
 	if _, err := fmt.Fprintf(out, "%q is now called %q.\n", from, meta.Ref.Name); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintf(out, "%s followed it. A Canopy already running will not, so restart it.\n",
+		conversations(moved)); err != nil {
+		return err
+	}
 	if renameErr != nil {
-		return renameErr
-	}
-
-	moved, err := renameInHistory(from, meta.Ref.Name)
-	if err != nil {
-		// Not a failure of the rename, which has already happened, so it is reported as what it is:
-		// the credential moved and the conversations did not, with the way to finish it.
+		// The operation is complete, but an old duplicate secret remains in the backend. Preserve
+		// the store's actionable warning and a non-zero exit instead of hiding it behind success.
 		return fmt.Errorf(
-			"the credential was renamed, but the conversations recorded on it could not be moved "+
-				"with it: %w. They will look for %q until this is repeated", err, from)
+			"the credential and its conversations were renamed, but backend cleanup needs attention: %w",
+			renameErr)
 	}
-
-	_, err = fmt.Fprintf(out, "%s followed it. A Canopy already running will not, so restart it.\n",
-		conversations(moved))
-	return err
+	return nil
 }
+
+// moveCredentialHistory is replaceable in the command tests so the failure between the secret
+// store and SQLite can be exercised without corrupting a real history file.
+var moveCredentialHistory = renameInHistory
 
 // renameInHistory moves the stored conversations onto the new credential name.
 //

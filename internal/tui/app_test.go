@@ -1383,7 +1383,7 @@ func TestARenameIsNotRefusedByARunningTurn(t *testing.T) {
 	for _, r := range "moonshot" {
 		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
 
 	if engine.session.KeyName != "moonshot" {
 		t.Errorf("a running turn stopped the conversation following the rename, leaving it on %q",

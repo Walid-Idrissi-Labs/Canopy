@@ -412,9 +412,15 @@ func (s *Store) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
 	}
 	if err := s.save(records); err != nil {
 		// Nothing claims the new name, so the secret written under it is unreachable and is taken
-		// back. Best effort: a failure here leaves an orphan, and reporting the first failure is more
-		// use than reporting the cleanup of it.
-		_ = s.backend.Delete(to)
+		// back. If that cleanup fails too, both facts matter: the metadata and old secret still name
+		// the credential correctly, but an untracked copy is now live under the proposed name.
+		if cleanupErr := s.backend.Delete(to); cleanupErr != nil {
+			return core.KeyMetadata{}, fmt.Errorf(
+				"saving the rename from %q to %q failed: %v; cleanup also failed, so an "+
+					"untracked copy of the secret remains under %q in the %s backend: %w. "+
+					"Delete or revoke that copy there",
+				ref.Name, to, err, to, s.backend.Name(), cleanupErr)
+		}
 		return core.KeyMetadata{}, err
 	}
 

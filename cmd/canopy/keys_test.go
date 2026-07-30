@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
 
@@ -209,5 +211,157 @@ func TestRenamingAKeyRefusesWithoutTwoNames(t *testing.T) {
 		if err := runKeys(args, &out); err == nil {
 			t.Errorf("%v was accepted", args)
 		}
+	}
+}
+
+// SQLite and the secret backend are two stores. If the second step fails, the CLI must put the
+// first one back before inviting somebody to repeat a command whose old name otherwise no longer
+// exists.
+func TestAHistoryFailureRestoresTheCredentialNameBeforeSuggestingARetry(t *testing.T) {
+	store := storeWithCanary(t)
+
+	original := moveCredentialHistory
+	moveCredentialHistory = func(_, _ string) (int, error) {
+		return 0, errors.New("history is locked")
+	}
+	t.Cleanup(func() { moveCredentialHistory = original })
+
+	var out bytes.Buffer
+	err := runKeys([]string{"rename", "claude", "anthropic"}, &out)
+	if err == nil {
+		t.Fatal("the history failure was reported as success")
+	}
+	for _, want := range []string{"history is locked", "restored", "repeat"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the failure does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(out.String(), "now called") {
+		t.Errorf("the command printed success before the operation was complete:\n%s", out.String())
+	}
+	if _, err := store.Get(core.KeyRef{Name: "claude"}); err != nil {
+		t.Errorf("the original name was not restored: %v", err)
+	}
+	if _, err := store.Get(core.KeyRef{Name: "anthropic"}); !errors.Is(err, keys.ErrNotFound) {
+		t.Errorf("the proposed name still resolves after rollback: %v", err)
+	}
+}
+
+type rollbackFailureBackend struct {
+	keys.Backend
+	newNameSeen bool
+}
+
+func (b *rollbackFailureBackend) Set(account, secret string) error {
+	if account == "claude" && b.newNameSeen {
+		return errors.New("test backend refused to restore the old account")
+	}
+	if err := b.Backend.Set(account, secret); err != nil {
+		return err
+	}
+	if account == "anthropic" {
+		b.newNameSeen = true
+	}
+	return nil
+}
+
+// The compensation can fail too. In that case "try again" would still be wrong: the credential is
+// already under the new name while history remains on the old one, and the message must describe
+// both halves before any further message spends against them.
+func TestAHistoryAndRollbackFailureNamesTheSplitState(t *testing.T) {
+	backend := &rollbackFailureBackend{Backend: keys.NewMemoryBackend()}
+	store := keys.NewStore(backend, filepath.Join(t.TempDir(), "keys.json"))
+	if _, err := store.Put(core.KeyMetadata{
+		Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic},
+	}, core.NewSecret(canary)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	originalStore := openKeyStore
+	openKeyStore = func() (*keys.Store, error) { return store, nil }
+	t.Cleanup(func() { openKeyStore = originalStore })
+
+	originalHistory := moveCredentialHistory
+	moveCredentialHistory = func(_, _ string) (int, error) {
+		return 0, errors.New("history is locked")
+	}
+	t.Cleanup(func() { moveCredentialHistory = originalHistory })
+
+	err := runKeys([]string{"rename", "claude", "anthropic"}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("the double failure was reported as success")
+	}
+	for _, want := range []string{"now called \"anthropic\"", "still use \"claude\"", "Do not repeat"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the split-state error does not name %q: %v", want, err)
+		}
+	}
+	if _, err := store.Get(core.KeyRef{Name: "anthropic"}); err != nil {
+		t.Errorf("the message said the new name was live, but it was not: %v", err)
+	}
+	if _, err := store.Get(core.KeyRef{Name: "claude"}); !errors.Is(err, keys.ErrNotFound) {
+		t.Errorf("the message said the old name was gone, but it resolves: %v", err)
+	}
+}
+
+type deleteFailureBackend struct {
+	keys.Backend
+	account string
+}
+
+func (b *deleteFailureBackend) Delete(account string) error {
+	if account == b.account {
+		return errors.New("test backend refused to remove the old copy")
+	}
+	return b.Backend.Delete(account)
+}
+
+// Failure to remove the old backend entry is a warning after the new name and metadata are already
+// live. It must not stop the conversation migration and leave every stored session broken.
+func TestAnOldSecretCleanupWarningDoesNotStopConversationMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.json")
+	backend := &deleteFailureBackend{Backend: keys.NewMemoryBackend(), account: "claude"}
+	store := keys.NewStore(backend, path)
+	if _, err := store.Put(core.KeyMetadata{
+		Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic},
+	}, core.NewSecret(canary)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	originalStore := openKeyStore
+	openKeyStore = func() (*keys.Store, error) { return store, nil }
+	t.Cleanup(func() { openKeyStore = originalStore })
+
+	historyPath := filepath.Join(t.TempDir(), "history.db")
+	t.Setenv(session.PathEnvVar, historyPath)
+	history, err := session.OpenStorage(historyPath)
+	if err != nil {
+		t.Fatalf("OpenStorage: %v", err)
+	}
+	if err := history.SaveSession(core.Session{
+		ID: "session-1", KeyName: "claude", Model: "claude-opus-5",
+	}); err != nil {
+		t.Fatalf("SaveSession: %v", err)
+	}
+	_ = history.Close()
+
+	var out bytes.Buffer
+	err = runKeys([]string{"rename", "claude", "anthropic"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "cleanup") {
+		t.Fatalf("the duplicate old secret warning was lost: %v", err)
+	}
+	if !strings.Contains(out.String(), "conversation") {
+		t.Errorf("the command did not report the completed history move:\n%s", out.String())
+	}
+
+	reopened, err := session.OpenStorage(historyPath)
+	if err != nil {
+		t.Fatalf("reopen history: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	saved, err := reopened.Load("session-1")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if saved.KeyName != "anthropic" {
+		t.Errorf("the cleanup warning stranded the conversation on %q", saved.KeyName)
 	}
 }

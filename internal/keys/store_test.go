@@ -820,3 +820,65 @@ func TestRenamingSaysWhenTheSecretIsGone(t *testing.T) {
 		t.Errorf("the message does not say what is actually wrong: %v", err)
 	}
 }
+
+type renameCleanupFailureBackend struct {
+	Backend
+	metadataPath string
+	newName      string
+}
+
+func (b *renameCleanupFailureBackend) Set(account, secret string) error {
+	if err := b.Backend.Set(account, secret); err != nil {
+		return err
+	}
+	if account != b.newName {
+		return nil
+	}
+	// The store has already loaded the old metadata before Set. Replacing its file with a directory
+	// makes the following atomic rename fail, which puts the operation on its cleanup path.
+	if err := os.Remove(b.metadataPath); err != nil {
+		return err
+	}
+	return os.Mkdir(b.metadataPath, 0o700)
+}
+
+func (b *renameCleanupFailureBackend) Delete(account string) error {
+	if account == b.newName {
+		return errors.New("test backend refused cleanup")
+	}
+	return b.Backend.Delete(account)
+}
+
+// If writing the moved metadata and removing the newly copied secret both fail, returning only the
+// metadata error hides a live credential copy under a name the store cannot list.
+func TestRenameReportsAnOrphanWhenMetadataAndCleanupBothFail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.json")
+	backend := &renameCleanupFailureBackend{
+		Backend:      NewMemoryBackend(),
+		metadataPath: path,
+		newName:      "anthropic",
+	}
+	store := NewStore(backend, path)
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	meta, err := store.Rename(core.KeyRef{Name: "claude"}, backend.newName)
+	if meta.Ref.Name != "" {
+		t.Fatalf("a failed metadata move returned a live rename: %+v", meta)
+	}
+	if err == nil {
+		t.Fatal("the failed metadata write and cleanup were both hidden")
+	}
+	for _, want := range []string{"saving the rename", "cleanup also failed", "anthropic", "untracked copy"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error does not name %q: %v", want, err)
+		}
+	}
+	if _, err := backend.Get("claude"); err != nil {
+		t.Errorf("the original credential was disturbed: %v", err)
+	}
+	if _, err := backend.Get("anthropic"); err != nil {
+		t.Errorf("the error claimed an orphan but none remained: %v", err)
+	}
+}
