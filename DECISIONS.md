@@ -1192,6 +1192,10 @@ that reversal, and a surface that drops any of them is wrong even if every test 
    shows; the agents screen answers the cursor's pane, which is the one lit blue. Nothing answers
    an agent that is not on screen.
 
+Every compact answer is conditional on that request still being pending when the key arrives. A
+request can disappear between drawing and input because its turn stopped elsewhere. In that case
+the surface says it is no longer waiting and never claims that an approval or refusal succeeded.
+
 Declining stays cheap and stays wide: backspace declines inline, and a decline costs the asking
 agent a retry, which is the safe direction to be wrong in. Your own conversation's prompt still
 outranks visitors on the shared key. D-43's other two rules, ambient attention and no reflex

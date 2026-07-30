@@ -155,6 +155,8 @@ declines it. The same two keys answer for the selected pane on the agents screen
 is always a single yes or no, never a standing approval, because the notice may summarise the
 request; `a`, the answer that is remembered for the session, only works on the asking
 conversation's own prompt, one `ctrl+g` away, where the complete canonical request is shown.
+If the request stops waiting between being shown and the keypress, Canopy says so instead of
+claiming that it was approved or declined.
 
 Steering and interrupting are deliberately two different things:
 

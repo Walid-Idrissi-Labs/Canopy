@@ -756,8 +756,8 @@ func (m Model) promptLines() []string {
 // recognisable as the same kind of thing from across the room, and it says four lines at most:
 // who is asking, what they want, how many others are behind them, and which key opens the asking
 // conversation. The full canonical request lives on that agent's own screen, one keystroke away.
-// No answer key is accepted here: a compact summary and an approval can never share a surface,
-// which preserves D-35's rule that what is displayed is what is remembered.
+// A once-only answer is accepted here under D-50. A standing approval is not: the compact summary
+// may truncate the request, so D-35 still requires the full canonical prompt for anything remembered.
 //
 // While this conversation has a question of its own the panel shrinks to a single line. Your own
 // prompt outranks a visitor, and two heavy boxes stacked over one message box would be two things
@@ -1032,13 +1032,22 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		asking := m.visitors[0]
 		switch msg.String() {
 		case "enter":
-			m.engine.Answer(asking.SessionID, true, false)
-			m.notice = "approved " + asking.Agent + "'s request, once"
+			if m.engine.Answer(asking.SessionID, true, false) {
+				m.notice = "approved " + asking.Agent + "'s request, once"
+			} else {
+				// The turn may have stopped after the panel was drawn and before the key arrived.
+				// Answer reports that race explicitly; claiming success here would leave the user
+				// believing a call was released when nothing was waiting to receive the answer.
+				m.notice = asking.Agent + "'s request is no longer waiting"
+			}
 			m.refresh()
 			return m, nil
 		case "backspace":
-			m.engine.Answer(asking.SessionID, false, false)
-			m.notice = "declined " + asking.Agent + "'s request"
+			if m.engine.Answer(asking.SessionID, false, false) {
+				m.notice = "declined " + asking.Agent + "'s request"
+			} else {
+				m.notice = asking.Agent + "'s request is no longer waiting"
+			}
 			m.refresh()
 			return m, nil
 		}

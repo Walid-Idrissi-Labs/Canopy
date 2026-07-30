@@ -5364,15 +5364,19 @@ enter approves the selected waiting agent once, backspace declines, the answer f
 and not the queue, and enter opens as before when nothing waits; the selected waiting pane names
 both keys and unselected waiting panes name their request only; the footer relabels enter while
 the selection waits; no inline answer ever carries remember; the full prompt still refuses on
-every non-answer key.
+every non-answer key. If a request stops waiting between being drawn and the answer key arriving,
+both compact surfaces say it is no longer waiting and never claim that an approval or refusal
+succeeded.
 
 `verify: claude [x] 2026-07-30   codex [ ]`
 
 notes: D-50. The chat surface is TestEnterOnAnEmptyBoxApprovesTheVisitorOnce,
 TestBackspaceOnAnEmptyBoxDeclinesTheVisitor, TestATypedMessageKeepsEnterAndBackspaceToItself,
 TestEnterAnswersTheOldestVisitorAndTheNextComesForward, TestYourOwnPromptTakesEnterBeforeAnyVisitor
-and TestThePanelNamesTheKeysOnlyWhileTheyAreLive in inline_answer_test.go; the agents surface is
-answer_test.go entire; the own-prompt key rename and the preserved refusal default are the
+and TestThePanelNamesTheKeysOnlyWhileTheyAreLive in inline_answer_test.go; stale panels are held by
+TestAVisitorThatStoppedWaitingIsNotClaimedAsAnswered and
+TestASelectedAgentThatStoppedWaitingIsNotClaimedAsAnswered; the agents surface is answer_test.go
+entire; the own-prompt key rename and the preserved refusal default are the
 rewritten TestEveryKeyThatIsNotNavigationStillRefuses. U-16's own tests still hold unchanged
 except that rewrite, which is the supersession made visible. The agents Engine grew Answer, wired
 to the same engine method the chat already used; nothing additive was needed engine-side.

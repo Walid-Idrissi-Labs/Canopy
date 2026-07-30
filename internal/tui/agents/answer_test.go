@@ -82,6 +82,33 @@ func TestBackspaceDeclinesTheSelectedWaitingAgent(t *testing.T) {
 	}
 }
 
+// A pane can become stale between drawing and input. Answer reports that race as false, and the grid
+// must not silently consume the key as a successful approval or refusal.
+func TestASelectedAgentThatStoppedWaitingIsNotClaimedAsAnswered(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyType
+	}{
+		{name: "approve", key: tea.KeyEnter},
+		{name: "decline", key: tea.KeyBackspace},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := engine(stuck("blocked", "run_command: npm test"))
+			e.staleAnswer = true
+			m := model(e)
+
+			m, _ = press(m, tc.key)
+
+			if len(e.answered) != 0 {
+				t.Fatalf("a stale request was recorded as answered: %+v", e.answered)
+			}
+			if !strings.Contains(m.Notice(), "no longer waiting") {
+				t.Errorf("the grid does not explain that the request disappeared: %q", m.Notice())
+			}
+		})
+	}
+}
+
 // The answer goes to the agent under the cursor, never to whoever happens to be waiting loudest.
 func TestTheAnswerFollowsTheCursorNotTheQueue(t *testing.T) {
 	e := engine(

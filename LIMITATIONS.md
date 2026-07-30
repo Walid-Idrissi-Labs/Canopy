@@ -252,6 +252,8 @@ be rediscovered by getting burned by it.
   another agent's prompt, and a waiting pane on the agents screen, accept a once-only enter or
   backspace while nothing is being typed; both may summarise the request they answer for. The
   remembered approval can still only be given on the owning conversation's full canonical prompt.
+  A compact request that stops waiting before the key arrives is reported as gone; the surface does
+  not claim that the stale approval or refusal succeeded.
 
 - A field can be set on an agent, stored, displayed, and never actually consulted by the code
   responsible for enforcing it. This already happened with per-agent trust. A deliberate review
