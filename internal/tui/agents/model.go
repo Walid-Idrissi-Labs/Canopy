@@ -141,6 +141,9 @@ type Model struct {
 	confirmingDirect bool
 	draft            string
 	err              string
+	// notice is a one-keystroke outcome from the grid, such as a request disappearing before an
+	// answer arrived. The application draws it in the footer, where it cannot disturb pane geometry.
+	notice string
 
 	// defaults are what a new agent inherits, since there is nowhere to choose them yet.
 	keyName string
@@ -194,6 +197,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// work, so every refresh is a chance to relight the fires.
 		return m, m.ensureFlame()
 	}
+	// A grid outcome lasts until the next deliberate action. Keeping it longer would leave a stale
+	// warning under an unrelated selection; clearing it before dispatch lets this key replace it.
+	m.notice = ""
 
 	// The creation flow takes the keyboard while it is happening, or the letters of the name would
 	// be read as layout commands and typing "vim" would change the layout twice.
@@ -521,7 +527,14 @@ func (m *Model) answerSelected(approved bool) bool {
 		return false
 	}
 	status, _ := m.Selected()
-	m.engine.Answer(status.Agent.SessionID, approved, false)
+	if !m.engine.Answer(status.Agent.SessionID, approved, false) {
+		// A turn can stop between the pane being drawn and this key arriving. The engine reports that
+		// stale answer rather than silently accepting it, and the screen must do the same: otherwise
+		// enter appears to release a call that was no longer waiting.
+		m.refresh()
+		m.notice = status.Agent.Name + "'s request is no longer waiting"
+		return true
+	}
 	// Read back at once rather than waiting for the engine's event, so the popup and the state
 	// badge cannot spend a frame claiming a question that has just been answered.
 	m.refresh()
@@ -755,3 +768,7 @@ func (m Model) Context() string {
 	}
 	return summary
 }
+
+// Notice is the last grid-level outcome the frame should say. It is separate from err, which belongs
+// to the new-agent form and is rendered inside that form.
+func (m Model) Notice() string { return m.notice }

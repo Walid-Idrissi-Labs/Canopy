@@ -57,6 +57,37 @@ func TestBackspaceOnAnEmptyBoxDeclinesTheVisitor(t *testing.T) {
 	}
 }
 
+// A panel is a snapshot. The asking turn can stop after it was drawn and before the key arrives, and
+// Answer returns false for exactly that race. The screen must not turn that refusal into a success
+// sentence: nobody received the answer and no tool call was released.
+func TestAVisitorThatStoppedWaitingIsNotClaimedAsAnswered(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyType
+	}{
+		{name: "approve", key: tea.KeyEnter},
+		{name: "decline", key: tea.KeyBackspace},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
+			engine.staleAnswer = true
+
+			m = press(m, tc.key)
+
+			if len(engine.answered) != 0 {
+				t.Fatalf("a stale request was recorded as answered: %+v", engine.answered)
+			}
+			view := plain(m.Body())
+			if strings.Contains(view, "approved worker-2") || strings.Contains(view, "declined worker-2") {
+				t.Errorf("the screen claims a stale answer succeeded:\n%s", view)
+			}
+			if !strings.Contains(view, "no longer waiting") {
+				t.Errorf("the screen does not explain where the request went:\n%s", view)
+			}
+		})
+	}
+}
+
 // With anything in the box the keys belong to the message: enter sends and backspace deletes, and
 // neither goes anywhere near the visitor. The box being non-empty is what protects a message being
 // typed from spending another agent's permission mid word.

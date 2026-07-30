@@ -878,7 +878,11 @@ func (a App) View() string {
 				"1-8", "jump, again to open", "v", "layout", "esc", "chat", "?", "help",
 				"hjkl", "move", "[ ]", "page")
 		}
-		if a.agents.ConfirmingDirect() {
+		if notice := a.agents.Notice(); notice != "" {
+			// A stale compact answer is an outcome, not a key hint. It gets the whole footer for one
+			// keystroke so the screen cannot imply an approval succeeded when the request was gone.
+			footer = notice
+		} else if a.agents.ConfirmingDirect() {
 			// The confirmation panel in the body already names its keys, with more room to say what
 			// they mean. A footer repeating them is two lists to keep agreeing, so the footer goes
 			// quiet for the one keystroke the panel is up.
