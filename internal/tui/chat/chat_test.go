@@ -35,9 +35,16 @@ type fakeEngine struct {
 	applied    []session.CompactionResult
 	prompt     *session.Prompt
 	answers    [][2]bool
-	trust      core.TrustLevel
-	undone     []string
-	undoErr    error
+
+	// waiting is every question pending anywhere, including this conversation's own, which is what
+	// the engine returns. answered records who was answered as well as how, since answering the
+	// wrong agent is the failure the focus step exists to prevent and a bare yes or no cannot show
+	// it.
+	waiting  []session.Waiting
+	answered []answeredPrompt
+	trust    core.TrustLevel
+	undone   []string
+	undoErr  error
 
 	forkedThrough string
 	trail         *permission.Trail
@@ -57,9 +64,24 @@ type fakeEngine struct {
 	queuedSteering []string
 	asked          []string
 	asideErr       error
+	// asideText is what an aside answers with, for the tests that need to recognise the answer on
+	// screen rather than any answer at all.
+	asideText string
+	// asides is the recorded history, per conversation, which is what a screen opening on one reads,
+	// and sessions is for the tests that move between two conversations rather than sitting in one.
+	asides   map[string][]session.Aside
+	sessions map[string]core.Session
 }
 
-func (e *fakeEngine) Session(string) (core.Session, bool) { return e.session, true }
+func (e *fakeEngine) Session(id string) (core.Session, bool) {
+	// Most of these tests have one conversation and do not care which id they are asked for. The few
+	// that move between two put them here instead.
+	if e.sessions != nil {
+		s, ok := e.sessions[id]
+		return s, ok
+	}
+	return e.session, true
+}
 
 func (e *fakeEngine) Send(_, prompt string) (string, error) {
 	if e.sendErr != nil {
@@ -96,11 +118,32 @@ func (e *fakeEngine) Pending(string) (session.Prompt, bool) {
 	return *e.prompt, true
 }
 
-func (e *fakeEngine) Answer(_ string, approved, remember bool) bool {
+func (e *fakeEngine) Answer(sessionID string, approved, remember bool) bool {
 	e.answers = append(e.answers, [2]bool{approved, remember})
+	e.answered = append(e.answered,
+		answeredPrompt{session: sessionID, approved: approved, remember: remember})
 	e.prompt = nil
+
+	// The answered question leaves the queue, which is what the real engine does a moment later when
+	// the goroutine it unblocked wakes up and removes it.
+	remaining := e.waiting[:0]
+	for _, w := range e.waiting {
+		if w.SessionID != sessionID {
+			remaining = append(remaining, w)
+		}
+	}
+	e.waiting = remaining
 	return true
 }
+
+// answeredPrompt is one answer and who it was given on behalf of.
+type answeredPrompt struct {
+	session  string
+	approved bool
+	remember bool
+}
+
+func (e *fakeEngine) PendingAll() []session.Waiting { return e.waiting }
 
 // The mode is what the box shows and what the permission layer decides against, so the fake holds a
 // real one rather than answering a constant: a stub that always said "build" would make the
@@ -916,10 +959,17 @@ func (e *fakeEngine) Steer(_, guidance string) error {
 
 func (e *fakeEngine) Steering(string) []string { return e.queuedSteering }
 
+// asides is what this conversation was asked on the side before the screen opened, which is the
+// half that used to be thrown away.
+func (e *fakeEngine) Asides(sessionID string) []session.Aside { return e.asides[sessionID] }
+
 func (e *fakeEngine) Aside(_ context.Context, _, question string) (string, error) {
 	e.asked = append(e.asked, question)
 	if e.asideErr != nil {
 		return "", e.asideErr
+	}
+	if e.asideText != "" {
+		return e.asideText, nil
 	}
 	return "the parser lives in internal/config", nil
 }

@@ -120,6 +120,13 @@ type AppOptions struct {
 	Commands chat.Commands
 	Costs    CostOutcomeSource
 
+	// Agent names the agent whose conversation is being opened, for the corner of the header.
+	//
+	// Handed in rather than looked up, because the conversation Canopy opens on belongs to an agent
+	// that whoever started the program has just created, and every other way into a conversation
+	// carries the name with it already. Empty is a legitimate state and reads as the brand.
+	Agent string
+
 	// Session is the conversation to open. Empty starts a new one.
 	//
 	// Which conversation you land in is a decision for whoever ran Canopy, not for the interface, so
@@ -188,6 +195,7 @@ func NewAppConfigured(
 		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
+	app.chat.SetAgent(options.Agent)
 	app.review.SetCostOutcomes(options.Costs)
 	// What a new agent inherits. Without it every agent created from that screen was built with an
 	// empty credential and an empty working directory, which fails on its first message.
@@ -220,6 +228,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentsui.SwitchMsg:
 		// The agents view asks and the application decides, which is what keeps "which screen is
 		// showing" in one place.
+		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
+		a.screen = screenChat
+		a.agents.SetVisible(false)
+		return a, cmd
+
+	case chat.SwitchMsg:
+		// A surfaced permission summary is intentionally not an approval surface. Opening the
+		// conversation that owns it puts the full canonical request on screen before y or a can
+		// spend anything, preserving the same ownership boundary as a switch from the agents view.
 		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
 		a.screen = screenChat
 		a.agents.SetVisible(false)
@@ -799,8 +816,12 @@ func (a App) View() string {
 		}
 		return Frame(a.dim, Status{
 			Screen: "chat",
-			Parts:  a.chat.ContextParts(),
-			Mode:   a.chat.Mode(),
+			// Whose conversation this is, in the corner where the brand used to be. Empty on a
+			// conversation no agent owns, a fresh one started with ctrl+n among them, and the brand
+			// comes back there rather than the corner naming something that does not exist.
+			Agent: a.chat.AgentName(),
+			Parts: a.chat.ContextParts(),
+			Mode:  a.chat.Mode(),
 			// Only once the opening screen has gone, which is drawing the name itself.
 			Wordmark: !a.chat.Blank(),
 		}, a.chat.Body(), footer)

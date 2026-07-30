@@ -93,3 +93,58 @@ func TestTheRiskiestModesAreNotStyledLikeTheSafeOnes(t *testing.T) {
 		}
 	}
 }
+
+// The corner names who you are with rather than what the program is called.
+//
+// "canopy" was on every screen at once, which is a fact nobody needs twice a second. The question
+// somebody running six agents actually has is which one they are talking to, and that is the one
+// line on the frame that can answer it without spending a fact slot.
+func TestTheHeaderNamesTheAgentInsteadOfTheBrand(t *testing.T) {
+	for _, height := range []int{24, 30} {
+		d := Dimensions{Width: 100, Height: height}
+
+		named := stripANSI(Header(d, Status{Screen: "chat", Agent: "main"}))
+		if !strings.Contains(named, badge+" main") {
+			t.Errorf("at height %d the corner does not read the mark then the agent:\n%s", height, named)
+		}
+		if strings.Contains(named, "canopy") {
+			t.Errorf("at height %d the brand is still on the row beside the agent:\n%s", height, named)
+		}
+
+		// A screen that is nobody's conversation keeps the brand, which is where it belongs: the
+		// agents list, the credentials and the help are about the program rather than about an agent.
+		for _, screen := range []string{"agents", "credentials", "worktrees", "help"} {
+			brandy := stripANSI(Header(d, Status{Screen: screen}))
+			if !strings.Contains(brandy, badge+" canopy") {
+				t.Errorf("at height %d the %s screen lost the brand:\n%s", height, screen, brandy)
+			}
+		}
+	}
+}
+
+// A name is whatever somebody typed, and this row's whole job is to carry facts to the right of it,
+// so a long one is cut rather than allowed to push the screen and the mode off the end.
+func TestALongAgentNameIsCutRatherThanPushingTheFactsOff(t *testing.T) {
+	d := Dimensions{Width: 80, Height: 24}
+	long := "the-agent-that-refactors-the-authentication-package"
+
+	got := stripANSI(Header(d, Status{
+		Screen: "chat",
+		Mode:   "build",
+		Agent:  long,
+		Parts:  []string{"~/dev/canopy", "claude", "claude-opus-5"},
+	}))
+
+	if strings.Contains(got, long) {
+		t.Errorf("a fifty column name was drawn in full:\n%s", got)
+	}
+	if !strings.Contains(got, "the-agent") || !strings.Contains(got, "...") {
+		t.Errorf("the cut name is not recognisable as the one it was cut from:\n%s", got)
+	}
+	// The two facts the header refuses to drop are still there, which is the reason for cutting.
+	for _, want := range []string{"chat", "build"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a long name pushed %q off the row:\n%s", want, got)
+		}
+	}
+}

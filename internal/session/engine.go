@@ -124,6 +124,10 @@ type Engine struct {
 	// pending is the question each session is waiting on, at most one at a time.
 	pending map[string]*Prompt
 
+	// promptSeq numbers the questions as they are installed, so a caller reading several of them
+	// can put them in the order they were asked. A map has no order and the queue has one.
+	promptSeq uint64
+
 	// checkpoints captures the worktree before each turn, when there is a worktree to capture.
 	checkpoints *git.Taker
 

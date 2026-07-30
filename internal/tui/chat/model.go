@@ -49,6 +49,14 @@ type Engine interface {
 	Pending(sessionID string) (session.Prompt, bool)
 	Answer(sessionID string, approved, remember bool) bool
 
+	// PendingAll is every question waiting on a person anywhere in the project, oldest first.
+	//
+	// Asked for because a question raised by another agent has to be visible from here: walking to a
+	// subagent's screen to find out it was stuck is the attention failure D-47 names. What this
+	// screen does with them is deliberately less than what it does with its own, since none of them
+	// may take the keyboard from the conversation somebody is actually in.
+	PendingAll() []session.Waiting
+
 	// UseCredential points this conversation at a different credential and model.
 	UseCredential(sessionID, keyName, model string) error
 
@@ -103,10 +111,15 @@ type Engine interface {
 	// swallowed, and somebody who thinks that types it again.
 	Steering(sessionID string) []string
 
-	// Aside answers a question from this conversation's context without joining it. Nothing is
-	// recorded, no turn is created, and a turn in flight is undisturbed, which is what separates
-	// asking something from saying something.
+	// Aside answers a question from this conversation's context without joining it. No turn is
+	// created, nothing joins the conversation's history, and a turn in flight is undisturbed, which
+	// is what separates asking something from saying something.
+	//
+	// Asides is what was asked before, oldest first. The exchange is written down beside the
+	// conversation rather than in it: recording an aside and putting it in the model's context are
+	// different things, and only the second would change what the agent knows.
 	Aside(ctx context.Context, sessionID, question string) (string, error)
+	Asides(sessionID string) []session.Aside
 }
 
 // Commands is the catalog resolved for this chat's project.
@@ -117,6 +130,17 @@ type Commands = config.CommandSet
 
 // EventMsg carries an engine notification into the update loop.
 type EventMsg struct{ Event core.Event }
+
+// SwitchMsg asks the application to open the conversation that owns a surfaced question.
+//
+// The chat can identify the destination, but only the application owns which conversation is on
+// screen. Keeping that boundary also makes the focus step literal: answer keys are not routed
+// across conversations from a compact summary; the person is taken to the full canonical prompt
+// and answers it there.
+type SwitchMsg struct {
+	SessionID string
+	AgentName string
+}
 
 // tickMsg advances the spinner.
 type tickMsg struct{}
@@ -236,6 +260,13 @@ type Model struct {
 	prompt   session.Prompt
 	awaiting bool
 
+	// visitors are the questions other conversations are waiting on, oldest first.
+	//
+	// Shown here so that a subagent stuck behind a permission prompt is discovered from wherever
+	// somebody is sitting rather than by going to look. They are held apart from prompt and awaiting
+	// on purpose: those two own the keyboard the moment they exist, and none of these ever may.
+	visitors []session.Waiting
+
 	// commands is resolved for the project this screen belongs to. Expansion happens here, at the
 	// input boundary, so the engine receives an ordinary prompt and no model or tool path gains a
 	// second command language.
@@ -253,9 +284,14 @@ type Model struct {
 	menu menu
 
 	// asides is every btw asked in this conversation, oldest first, and btwOpen is whether the panel
-	// showing them is up. Kept here and only here: the engine deliberately records nothing about an
-	// aside, so the screen remembering what was asked is the whole of the history there is, and it
-	// leaves with the screen rather than being written anywhere.
+	// showing them is up.
+	//
+	// It used to leave with the screen, because the engine deliberately recorded nothing about an
+	// aside and this slice was the whole of the history there was. Recording it turned out to be a
+	// different question from putting it in the context: an aside still never reaches the model, and
+	// it is now written down beside the conversation, so opening one tomorrow opens its side
+	// questions with it. This is loaded from the engine when the screen moves to a conversation, and
+	// appended to as answers arrive.
 	asides []asideExchange
 
 	btwOpen bool
@@ -287,6 +323,21 @@ type asideExchange struct {
 	answer   string
 }
 
+// loadAsides reads what this conversation has been asked on the side.
+//
+// Replaces rather than merges, because the answer the engine holds is the whole history and anything
+// already on screen is part of it. Called wherever the screen changes which conversation it is
+// showing, so the panel is about the conversation in front of somebody and never about the last one.
+func (m *Model) loadAsides() {
+	stored := m.engine.Asides(m.sessionID)
+
+	asides := make([]asideExchange, 0, len(stored))
+	for _, aside := range stored {
+		asides = append(asides, asideExchange{question: aside.Question, answer: aside.Answer})
+	}
+	m.asides = asides
+}
+
 // New builds a chat model over an engine and a session.
 //
 // Reads the session immediately rather than waiting for the first event. Resuming a conversation
@@ -306,6 +357,10 @@ func New(engine Engine, sessionID, dir, keyName string) Model {
 	m.refresh()
 	m.markRunning = m.markVisible()
 	m.input.LoadHistory(promptsOf(m.session))
+	// The conversation Canopy opens on arrives here rather than through SetSession, so its side
+	// questions are read here too. Without this the one conversation somebody actually lands in
+	// would be the one that had forgotten them.
+	m.loadAsides()
 	return m
 }
 
@@ -532,6 +587,15 @@ func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+// visitorFocusKey is the one keystroke that opens another agent's question.
+//
+// ctrl+g because it is free: every printable key belongs to the message box, and ctrl+a, ctrl+e,
+// ctrl+u, ctrl+w and ctrl+j are the box's own editing keys, while ctrl+c, ctrl+d, ctrl+k, ctrl+n and
+// ctrl+r already mean something on this screen. It is also deliberately not y or a: the answer
+// keys must remain unreachable until the asking conversation, with its full canonical request, is
+// the conversation on screen.
+const visitorFocusKey = "ctrl+g"
+
 // promptLines renders the question.
 func (m Model) promptLines() []string {
 	t := theme.Current()
@@ -575,6 +639,82 @@ func (m Model) promptLines() []string {
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
 
 	return promptPanel(body, inner)
+}
+
+// visitorPanel is another agent's question, above the message box.
+//
+// Deliberately smaller than the conversation's own prompt. It wears the same frame, so it is
+// recognisable as the same kind of thing from across the room, and it says four lines at most:
+// who is asking, what they want, how many others are behind them, and which key opens the asking
+// conversation. The full canonical request lives on that agent's own screen, one keystroke away.
+// No answer key is accepted here: a compact summary and an approval can never share a surface,
+// which preserves D-35's rule that what is displayed is what is remembered.
+//
+// While this conversation has a question of its own the panel shrinks to a single line. Your own
+// prompt outranks a visitor, and two heavy boxes stacked over one message box would be two things
+// competing to be answered first, but the count still has to be there or the second agent waits
+// unseen until the first is dealt with.
+func (m Model) visitorPanel() []string {
+	if len(m.visitors) == 0 {
+		return nil
+	}
+	t := theme.Current()
+	asking := m.visitors[0]
+
+	if m.awaiting {
+		// Shrunk to a count while this conversation has a question of its own, which outranks a
+		// visitor. The focus key is unavailable while the own prompt owns the keyboard.
+		return []string{"  " + t.Muted.Render(othersWaiting(m.visitors)+", "+
+			visitorFocusKey+" after this one")}
+	}
+
+	inner := m.width - promptChrome
+	if inner < 12 {
+		inner = 12
+	}
+
+	// Nothing bounds an agent's name or a scope's text, and both are drawn on a line with a wall at
+	// the end of it, so both are cut here. The full command and the full scope are on the asking
+	// agent's own screen, which is where somebody deciding on the detail should be.
+	var body []string
+	body = append(body, t.Warning.Render(truncate(asking.Agent, inner/3))+
+		t.Body.Render(" wants to "+describeRequest(asking.Request)))
+
+	// One line of what it actually is, truncated rather than wrapped. A command shown in full is
+	// what the asking agent's own screen is for; here the job is to say which agent needs a person,
+	// and a panel that grows with the command would push the conversation off the screen.
+	if what := requestSubject(asking.Request); what != "" {
+		body = append(body, t.Muted.Render(truncate(what, inner)))
+	}
+	if len(m.visitors) > 1 {
+		body = append(body, t.Muted.Render(othersWaiting(m.visitors[1:])))
+	}
+
+	body = append(body, t.Key.Render(visitorFocusKey)+
+		t.Muted.Render(" to open the full request and answer it there"))
+	return promptPanel(body, inner)
+}
+
+// othersWaiting is how many agents are queued behind the one being shown, in words.
+func othersWaiting(waiting []session.Waiting) string {
+	if len(waiting) == 1 {
+		return waiting[0].Agent + " is waiting on you"
+	}
+	return fmt.Sprintf("%d agents are waiting on you", len(waiting))
+}
+
+// requestSubject is the one line worth showing about a call somebody else's agent wants to make.
+func requestSubject(req permission.Request) string {
+	switch {
+	case req.Command != "":
+		return req.Command
+	case len(req.Paths) > 0:
+		return strings.Join(req.Paths, " ")
+	case req.Opaque && req.Arguments != "":
+		return req.Arguments
+	default:
+		return ""
+	}
 }
 
 // promptChrome is the columns the question's frame spends on itself: an indent, two walls and a
@@ -679,6 +819,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	// wondering why nothing happens is a bad minute to give somebody.
 	if m.awaiting {
 		return m.answerPrompt(msg)
+	}
+
+	// Another agent's question takes one explicit key to open, and no answer is routed from this
+	// compact panel. The asking conversation renders the full canonical arguments and owns the
+	// ordinary answer keys once the application switches to it.
+	if msg.String() == visitorFocusKey && len(m.visitors) > 0 {
+		asking := m.visitors[0]
+		return m, func() tea.Msg {
+			return SwitchMsg{SessionID: asking.SessionID, AgentName: asking.Agent}
+		}
 	}
 
 	// The list takes the keys that mean something in a list, and only those, and only while it is
@@ -889,6 +1039,21 @@ func (m *Model) refresh() {
 	m.loaded = true
 	_, m.working = current.Active()
 	m.prompt, m.awaiting = m.engine.Pending(m.sessionID)
+
+	// Every other conversation's questions, read the same way and at the same moment, so the panel
+	// cannot disagree with the conversation it is drawn above. Events arrive here for every session
+	// rather than only this one, which is what makes this current without any extra plumbing.
+	// A fresh slice rather than the old one truncated, because this model is copied by value
+	// everywhere and two copies sharing a backing array would let one of them rewrite the other's
+	// panel from under it.
+	var visitors []session.Waiting
+	for _, waiting := range m.engine.PendingAll() {
+		if waiting.SessionID == m.sessionID {
+			continue
+		}
+		visitors = append(visitors, waiting)
+	}
+	m.visitors = visitors
 }
 
 // Session exposes the current session. For tests and for the screen around this one.
@@ -920,9 +1085,10 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	m.err = ""
 	m.notice = ""
 	// The asides go with the conversation they were asked about. Carrying them across would show
-	// answers about one agent's work over another agent's conversation. The selection goes too,
-	// since it is a place in a transcript that is no longer on screen.
-	m.asides = nil
+	// answers about one agent's work over another agent's conversation, so the ones on screen are
+	// dropped and that conversation's own are read in their place. The selection goes too, since it
+	// is a place in a transcript that is no longer on screen.
+	m.loadAsides()
 	m.btwOpen = false
 	m.btwScroll = 0
 	m.sel = selection{}
@@ -992,6 +1158,19 @@ func (m *Model) UseCredential(keyName, model string) bool {
 
 // SessionID is the conversation being shown.
 func (m Model) SessionID() string { return m.sessionID }
+
+// AgentName is whose conversation this is, empty where no agent owns it.
+//
+// Read by the frame around this screen, which writes it in the corner. It is not repeated in the
+// facts row: the same word twice on one header is one of them wasted.
+func (m Model) AgentName() string { return m.agentName }
+
+// SetAgent names the agent whose conversation this is.
+//
+// Needed because the conversation Canopy opens on is handed to this screen at construction, before
+// anything has switched into it, and the agent that owns it is named by whoever started it. Every
+// later switch carries the name through SetSession instead.
+func (m *Model) SetAgent(name string) { m.agentName = name }
 
 // KeyName is the credential this conversation runs on.
 func (m Model) KeyName() string { return m.keyName }
@@ -1203,17 +1382,16 @@ func (m Model) transcriptHeight() int {
 	// answer with a listing many lines tall, and budgeting one line for it pushed the box and the
 	// footer off the bottom of the frame the first time somebody ran /commands on a small terminal.
 	h := m.height - m.input.Height() - m.statusHeight()
-	if pane := m.taskPane(); pane != "" {
-		h -= strings.Count(pane, "\n") + 1
-	}
+	h -= len(m.taskPane())
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
-	// same reason.
+	// same reason, and so does another agent's question.
 	h -= len(m.btwPanel())
 	h -= len(m.steeringPane())
+	h -= len(m.visitorPanel())
 
 	// The jump pill takes its rows from the conversation too, and only while it is on screen. It is
 	// keyed on the scroll position rather than on the rendered pill because the pill's height is
@@ -1242,8 +1420,10 @@ func (m Model) Body() string {
 			step:    m.markStep,
 			// Below the box here, because the box is in the middle of the screen and below is where
 			// the room is. On a conversation in progress the box is on the floor and the list goes
-			// above it instead. The btw panel goes with it, for the same reason.
-			panel: m.btwPanel(),
+			// above it instead. The btw panel goes with it, for the same reason, and so does another
+			// agent's question: a fresh conversation is exactly where somebody sits while agents they
+			// started are working, so it is the last screen that should hide one asking for a hand.
+			panel: append(m.visitorPanel(), m.btwPanel()...),
 			menu:  m.menu.lines(m.width, m.menuFilter()),
 		}.render()
 	}
@@ -1267,14 +1447,15 @@ func (m Model) Body() string {
 		rows = append(rows, "")
 	}
 
-	if tasks := m.taskPane(); tasks != "" {
-		rows = append(rows, strings.Split(tasks, "\n")...)
-	}
+	rows = append(rows, m.taskPane()...)
 	// Guidance waiting for the agent stays on screen until it is delivered.
 	rows = append(rows, m.steeringPane()...)
 	// The btw panel sits above the box, where the answers to questions about the conversation are
 	// close to the conversation they are about without being in it.
 	rows = append(rows, m.btwPanel()...)
+	// Another agent's question goes closest to the box, because it is the thing on this screen most
+	// likely to be why somebody came back to it.
+	rows = append(rows, m.visitorPanel()...)
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
@@ -1363,44 +1544,67 @@ const maxTaskLines = 6
 // Between them rather than in the transcript, because the transcript scrolls and this must not. A
 // task list that scrolls out of view is a task list you have to go looking for, and the entire
 // value of it is answering "where is this up to" without going looking for anything.
-func (m Model) taskPane() string {
+//
+// A block with a frame around it rather than loose lines, wearing the same chrome as the btw panel,
+// because the two are the same kind of thing: a standing note above the box that is not part of the
+// conversation. Loose lines directly under the transcript read as more of what the agent was
+// saying, which is exactly what a status that must never be mistaken for prose should not do.
+//
+// The btw panel stands in its place while it is up rather than stacking under it. Both at once is
+// two framed blocks over one message box on a screen whose whole layout argument is that the
+// conversation wins ties, and the tasks come back the moment the btw is closed.
+func (m Model) taskPane() []string {
 	tasks := m.session.Tasks
-	if len(tasks) == 0 {
-		return ""
+	if len(tasks) == 0 || m.btwUp() {
+		return nil
 	}
 	t := theme.Current()
+
+	inner := m.width - boxChrome
+	if inner < 6 {
+		inner = 6
+	}
 
 	// A long list collapses to what is happening now plus the counts, rather than being cut off at
 	// an arbitrary item. Truncating would hide the end of the list, and the end is where the
 	// unfinished work is.
 	if len(tasks) > maxTaskLines {
-		return t.Info.Render("  tasks  ") + t.Body.Render(core.TaskSummary(tasks))
+		return borderedBlock("tasks", []string{t.Body.Render(
+			truncate(core.TaskSummary(tasks), inner))}, inner)
 	}
 
-	var b strings.Builder
-	for i, task := range tasks {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-
-		style := t.Muted
-		switch task.State {
-		case core.TaskInProgress:
-			// The one that is happening now is the line the eye should land on.
-			style = t.Body
-		case core.TaskDone:
-			style = t.Muted
-		}
-
-		line := "  [" + task.State.Glyph() + "] " + task.Text
+	rows := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		line := "[" + task.State.Glyph() + "] " + task.Text
 		if task.Outcome != "" {
 			// The outcome is what makes a finished list worth reading, so it is on the same line as
 			// the item rather than folded away behind a key nobody presses.
 			line += ", " + task.Outcome
 		}
-		b.WriteString(style.Render(truncate(line, m.width-2)))
+		rows = append(rows, taskStyle(t, task.State).Render(truncate(line, inner)))
 	}
-	return b.String()
+	return borderedBlock("tasks", rows, inner)
+}
+
+// taskStyle colours a row by what is happening to it.
+//
+// Three states, three colours, all from the theme and none built here, which is the rule at the top
+// of internal/tui/theme. The colour is an accelerant and never the fact: every row still carries its
+// glyph, so the list reads the same with the palette turned off, which is D-10 and the reason the
+// second theme exists at all.
+//
+// In progress takes the informational colour and done takes the success colour, which is the pairing
+// the rest of the interface already uses for "this is happening" and "this worked". Pending is muted
+// because a list is mostly pending and a screen where most rows shout has no emphasis left to spend.
+func taskStyle(t theme.Theme, state core.TaskState) lipgloss.Style {
+	switch state {
+	case core.TaskInProgress:
+		return t.Info
+	case core.TaskDone:
+		return t.Success
+	default:
+		return t.Muted
+	}
 }
 
 // btwVisible is how many content rows the panel shows at once.
@@ -1449,6 +1653,14 @@ func (m *Model) btwScrollBy(lines int) {
 	}
 }
 
+// btwUp reports whether the asides panel is showing.
+//
+// Asked in one place because two blocks depend on the answer: this one, and the task list it stands
+// in front of while it is up. Two readings of the same condition is how the height budget and the
+// rendering come to disagree, and that disagreement is a message box pushed off the bottom of the
+// screen.
+func (m Model) btwUp() bool { return m.btwOpen && len(m.asides) > 0 }
+
 // btwPanel is the asides in a box of their own, above the message box and exactly as wide.
 //
 // A bordered panel rather than a line in the status row, which is where the answer used to go and
@@ -1457,10 +1669,9 @@ func (m *Model) btwScrollBy(lines int) {
 // It is deliberately in the border colour rather than a signal colour: nothing in it is part of the
 // conversation, and the frame should say so.
 func (m Model) btwPanel() []string {
-	if !m.btwOpen || len(m.asides) == 0 {
+	if !m.btwUp() {
 		return nil
 	}
-	t := theme.Current()
 
 	inner := m.width - boxChrome
 	if inner < 6 {
@@ -1489,15 +1700,27 @@ func (m Model) btwPanel() []string {
 	}
 	label += " · esc to close"
 
+	return borderedBlock(label, content[start:end], inner)
+}
+
+// borderedBlock is the frame the panels above the message box share.
+//
+// One function rather than one per panel, because "the same chrome as the btw panel" is a claim two
+// copies would stop being true of the first time somebody adjusted one of them. The label rides the
+// top edge in the space the rule was spending anyway, and is dropped whole on a terminal too narrow
+// for it: a label that wraps the edge breaks the frame it is written on.
+func borderedBlock(label string, content []string, inner int) []string {
+	t := theme.Current()
+
 	top := " " + t.Border.Render("╭"+strings.Repeat("─", inner+2)+"╮")
 	if rest := inner - lipgloss.Width(label) - 1; rest >= 0 {
 		top = " " + t.Border.Render("╭─") + " " + t.Muted.Render(label) + " " +
 			t.Border.Render(strings.Repeat("─", rest)+"╮")
 	}
 
-	out := make([]string, 0, btwVisible+2)
+	out := make([]string, 0, len(content)+2)
 	out = append(out, top)
-	for _, line := range content[start:end] {
+	for _, line := range content {
 		pad := inner - lipgloss.Width(ansi.Strip(line))
 		if pad < 0 {
 			pad = 0
@@ -1850,12 +2073,11 @@ func (m Model) Context() string { return strings.Join(m.ContextParts(), "  ") }
 // joined string. Truncating a joined string cuts a fact in half, and half of "12.3k tokens" is a
 // number with no unit on it.
 func (m Model) ContextParts() []string {
+	// The agent's name used to be first here, and is not here at all any more: it moved into the
+	// header's title, beside the mark, where it answers "whose conversation am I in" without
+	// spending a fact slot. Written in both places it would be the same word twice on one row, and
+	// the facts row is the half that gets dropped from the right on a narrow terminal.
 	parts := []string{}
-	if m.agentName != "" {
-		// First, because with several agents the question "whose conversation am I in" comes before
-		// every other thing this line says.
-		parts = append(parts, m.agentName)
-	}
 	// The opening screen already says where the agent is working and what it is talking to, along
 	// its bottom left, so while that screen is up the header does not say the same two things three
 	// rows above it. They move up here the moment the conversation starts and takes the floor back.

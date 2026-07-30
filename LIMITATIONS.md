@@ -241,7 +241,9 @@ be rediscovered by getting burned by it.
 - On the permission prompt, the key that grants broad, standing approval for the rest of the session
   ('a') sits directly next to the one-time, single-use answer ('y'), with no separate confirmation
   step of its own. `y` covers only the current call; `a` remembers the displayed scope for the
-  session. Every other key, including enter and escape, refuses (Q-09).
+  session. Every other key, including enter and escape, refuses (Q-09). A compact notice about
+  another agent's prompt never accepts either approval key; it first opens the owning conversation
+  so the full canonical request is the approval surface.
 
 - A field can be set on an agent, stored, displayed, and never actually consulted by the code
   responsible for enforcing it. This already happened with per-agent trust. A deliberate review

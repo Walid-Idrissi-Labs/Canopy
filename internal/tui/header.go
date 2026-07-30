@@ -56,6 +56,15 @@ type Status struct {
 	// Screen is where you are: chat, agents, review, credentials.
 	Screen string
 
+	// Agent is whose conversation is on screen, and it takes the brand's place in the corner when
+	// it is set.
+	//
+	// The brand does not vanish, it stops squatting on the one line that could say where you are.
+	// "canopy" was on every screen at once, which is a fact nobody needs twice a second, while the
+	// question somebody with six agents running actually has is which one they are talking to.
+	// Empty on the screens that are nobody's conversation, and they keep the name.
+	Agent string
+
 	// Parts are the details, most important first.
 	Parts []string
 
@@ -68,6 +77,50 @@ type Status struct {
 	// the middle of the screen at four times this size. Two copies of it at once is one too many, and
 	// the one in the corner is the one that is redundant there.
 	Wordmark bool
+}
+
+// title is what the header writes beside the mark: who you are with, or the brand.
+//
+// Bounded, because nothing stops an agent being called something long and this name sits on a row
+// whose whole purpose is to carry facts to the right of it. A name that pushed the screen and the
+// mode off the row would have made the header worse at the exact moment it had most to say.
+func (s Status) title(width int) string {
+	if s.Agent == "" {
+		return "canopy"
+	}
+	return shorten(s.Agent, titleBudget(width))
+}
+
+// titleBudget is how many cells the name may take.
+//
+// A quarter of the row, floored so a very narrow terminal still shows something recognisable and
+// capped so a wide one does not hand a quarter of a large screen to one word. At eighty columns
+// this is nineteen cells, which is more than any name anybody types and less than the row.
+func titleBudget(width int) int {
+	budget := width / 4
+	if budget < 8 {
+		budget = 8
+	}
+	if budget > 24 {
+		budget = 24
+	}
+	return budget
+}
+
+// shorten cuts a name to a number of cells, saying that it was cut.
+//
+// Measured in cells rather than runes, because a name can hold anything a person can type and a
+// double width character counts twice on the row while counting once in a slice.
+func shorten(name string, cells int) string {
+	if lipgloss.Width(name) <= cells {
+		return name
+	}
+	const cut = "..."
+	runes := []rune(name)
+	for len(runes) > 0 && lipgloss.Width(string(runes)+cut) > cells {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + cut
 }
 
 // modeStyle colours a mode by how much it is allowed to do without asking.
@@ -116,8 +169,9 @@ func shortHeader(inner int, s Status) string {
 	// Measured in display cells rather than bytes throughout. The separator, the badge and the
 	// context meter are all multi byte, so len would over count every one of them and the header
 	// would drop facts it had room for.
-	left := t.Logo.Render(badge) + " " + t.Title.Render("canopy")
-	used := lipgloss.Width(badge) + 1 + len("canopy")
+	name := s.title(inner)
+	left := t.Logo.Render(badge) + " " + t.Title.Render(name)
+	used := lipgloss.Width(badge) + 1 + lipgloss.Width(name)
 
 	if s.Screen != "" {
 		left += "  " + t.Heading.Render(s.Screen)
@@ -244,8 +298,9 @@ func headerFacts(s Status, width int) [3]string {
 	t := theme.Current()
 
 	var rows [3]string
-	rows[0] = t.Logo.Render(badge) + " " + t.Title.Render("canopy")
-	used := lipgloss.Width(badge) + 1 + len("canopy")
+	name := s.title(width)
+	rows[0] = t.Logo.Render(badge) + " " + t.Title.Render(name)
+	used := lipgloss.Width(badge) + 1 + lipgloss.Width(name)
 
 	if s.Screen != "" && used+2+lipgloss.Width(s.Screen) <= width {
 		rows[0] += "  " + t.Heading.Render(s.Screen)

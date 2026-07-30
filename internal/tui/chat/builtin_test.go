@@ -9,6 +9,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -405,5 +406,73 @@ func TestTheBtwPanelScrollsAndStopsAtItsEnds(t *testing.T) {
 	}
 	if view := plain(next.Body()); !strings.Contains(view, "? six") {
 		t.Errorf("scrolling back down never returns to the newest aside:\n%s", view)
+	}
+}
+
+// The screen no longer owns the history. A conversation opened tomorrow opens with the questions
+// somebody asked it today, which is what makes an aside worth asking rather than a note to lose.
+func TestAsidesAreThereWhenTheConversationIsOpenedAgain(t *testing.T) {
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Turns: []core.Turn{
+			{ID: "turn-1", Request: core.Message{Text: "build the parser"}, State: core.TurnComplete},
+		}},
+		asides: map[string][]session.Aside{
+			"s1": {
+				{Question: "where is the parser", Answer: "in internal/config"},
+				{Question: "why that library", Answer: "it was already a dependency"},
+			},
+		},
+	}
+
+	// Opening the screen is what a restart looks like from here: a new model over the same engine.
+	m := boxedChat(engine)
+
+	// A bare /btw opens the panel over what was asked before, and asks the model nothing.
+	next, _ := run(m, "/btw")
+	view := plain(next.Body())
+	for _, want := range []string{"where is the parser", "in internal/config", "why that library"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the reopened panel is missing %q:\n%s", want, view)
+		}
+	}
+	if len(engine.asked) != 0 {
+		t.Errorf("a bare /btw over a loaded history asked the model something: %v", engine.asked)
+	}
+}
+
+// The asides on screen belong to the conversation on screen. Carrying them across would put answers
+// about one agent's work over another agent's transcript.
+func TestMovingToAnotherConversationBringsItsOwnAsides(t *testing.T) {
+	engine := &fakeEngine{
+		sessions: map[string]core.Session{
+			"s1": {ID: "s1"},
+			"s2": {ID: "s2"},
+		},
+		asides: map[string][]session.Aside{
+			"s1": {{Question: "about the parser", Answer: "in internal/config"}},
+			"s2": {{Question: "about the poller", Answer: "every two seconds"}},
+		},
+	}
+
+	m := boxedChat(engine)
+	m.SetSession("s2", "worker-2")
+
+	next, _ := run(m, "/btw")
+	view := plain(next.Body())
+	if !strings.Contains(view, "about the poller") {
+		t.Errorf("the conversation moved to does not show its own asides:\n%s", view)
+	}
+	if strings.Contains(view, "about the parser") {
+		t.Errorf("an aside from the conversation that was left is still on screen:\n%s", view)
+	}
+}
+
+// And with nothing asked anywhere it still explains itself rather than opening an empty box.
+func TestABareBtwWithNoHistoryStillSaysWhatItWants(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	next, _ := run(boxedChat(engine), "/btw")
+
+	if view := plain(next.Body()); !strings.Contains(view, "like to know") {
+		t.Errorf("a bare /btw with no history does not say what it wants:\n%s", view)
 	}
 }

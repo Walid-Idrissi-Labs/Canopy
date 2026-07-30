@@ -171,7 +171,8 @@ func runChat(resume string) error {
 	// database while the agent it had just started talked to nobody.
 	last, err := tui.RunAppConfigured(
 		monitor, keyStore, engine, filepath.Base(dir), keyName, tui.AppOptions{
-			Review: review, Commands: commands, Costs: costs, Session: main.SessionID,
+			Review: review, Commands: commands, Costs: costs,
+			Session: main.SessionID, Agent: main.Name,
 		})
 	if err != nil {
 		return err

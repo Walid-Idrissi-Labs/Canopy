@@ -16,6 +16,8 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
+	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -63,6 +65,7 @@ type stubEngine struct {
 	using    [2]string
 	created  int
 	asking   bool
+	waiting  []session.Waiting
 	// useErr is what UseCredential answers with, for the tests about a switch the engine declines.
 	// It refuses mid answer, and what the application does with a refusal is its own decision.
 	useErr  error
@@ -102,6 +105,8 @@ func (e *stubEngine) Pending(string) (session.Prompt, bool) {
 }
 
 func (e *stubEngine) Answer(string, bool, bool) bool { return false }
+
+func (e *stubEngine) PendingAll() []session.Waiting { return e.waiting }
 
 // The stub implements the agents view's engine too, so the app level tests exercise the real path
 // rather than a screen that was never constructed.
@@ -679,6 +684,8 @@ func (e *stubEngine) Steer(_, guidance string) error {
 
 func (e *stubEngine) Aside(_ context.Context, _, _ string) (string, error) { return "", nil }
 
+func (e *stubEngine) Asides(string) []session.Aside { return nil }
+
 func (e *stubEngine) Steering(string) []string { return nil }
 
 func (s *stubEngine) Tools() (*core.ToolRegistry, bool) { return nil, false }
@@ -866,6 +873,71 @@ func TestThePickerReadsWithNoColour(t *testing.T) {
 	}
 	if !strings.Contains(view, "> ") {
 		t.Errorf("with no colour, nothing marks the row the cursor is on:\n%s", view)
+	}
+}
+
+// The corner of the frame answers "whose conversation am I in", which is the question somebody with
+// several agents running has every time they look up, and it follows them as they move between them.
+func TestTheCornerNamesTheConversationsAgent(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Turns: []core.Turn{{
+				ID: "t1", State: core.TurnComplete,
+				Request: core.Message{Role: core.RoleUser, Text: "hello"},
+			}}},
+			"session-7": {ID: "session-7"},
+		},
+	}
+	app := tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+	sized, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	view := plain(sized.(tui.App).View())
+	if !strings.Contains(view, "main") {
+		t.Errorf("the conversation Canopy opened on is not named in the corner:\n%s", view)
+	}
+	// And it is not said twice: the facts row gave the name up when the title took it.
+	if strings.Count(view, "main") != 1 {
+		t.Errorf("the agent's name is on the header %d times:\n%s", strings.Count(view, "main"), view)
+	}
+
+	// Moving to a subagent's conversation moves the name with it.
+	switched, _ := sized.(tui.App).Update(agentsui.SwitchMsg{SessionID: "session-7", AgentName: "worker-2"})
+	moved := plain(switched.(tui.App).View())
+	if !strings.Contains(moved, "worker-2") {
+		t.Errorf("the corner still names the conversation that was left:\n%s", moved)
+	}
+	if strings.Contains(moved, "main") {
+		t.Errorf("the corner names two agents at once:\n%s", moved)
+	}
+}
+
+// A visitor panel can summarize a request, but it cannot approve one. Its only action asks the
+// application to open the owning conversation, where the chat's full canonical prompt is the
+// surface that receives y or a.
+func TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Turns: []core.Turn{{
+				ID: "t1", State: core.TurnComplete,
+				Request: core.Message{Role: core.RoleUser, Text: "hello"},
+			}}},
+			"session-7": {ID: "session-7"},
+		},
+	}
+	app := tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+
+	switched, _ := app.Update(chat.SwitchMsg{SessionID: "session-7", AgentName: "worker-2"})
+	view := plain(switched.(tui.App).View())
+	if !strings.Contains(view, "worker-2") || strings.Contains(view, "main") {
+		t.Errorf("the surfaced question did not open its owning conversation:\n%s", view)
 	}
 }
 

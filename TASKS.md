@@ -132,18 +132,19 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, in the commit these words are in, after phase K was built and reviewed:
-84 review, 40 todo, four partial, five claimed, six deferred, **zero done**. Counted rather than
-carried over, because a board quoting a number taken before the commit it sits in is the failure
-this section exists to prevent, and that has now happened twice. The figures this replaces, 81
-review and eight claimed, were true when the round was claimed and stopped being true as K-01, K-02
-and K-03 moved to review; the four U tasks claimed alongside them are on the branch stacked after
-this one and are counted there.
+Counted on this branch, in the commit these words are in, after the whole keys and surfaces round
+was built and independently reviewed: 88 review, 40 todo, four partial, one claimed, six deferred,
+**zero done**. Counted rather than carried over, because a board quoting a number taken before the
+commit it sits in is the failure this section exists to prevent, and it has now happened three
+times: the previous recount was made on the keys branch and said the four U tasks were counted on
+the branch stacked after it, then rode the merge into that very branch with the sentence intact.
+The figures this replaces, 84 review and five claimed, were true there and not here, where U-16 to
+U-19 sit at review in this same file. The one task still claimed is A8-05.
 
-The number that matters is a different one. **83 task lines carry `claude [x]` and nine carry
-`codex [x]`.** That first figure has also been recounted rather than carried: it read 77 here and
-was already wrong when it was written, the real count at the time being 80, and three of phase K
-have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
+The number that matters is a different one. **87 task lines carry `claude [x]` and nine carry
+`codex [x]`.** That first figure has been recounted rather than carried each time: it read 77 here
+and was already wrong when it was written, the real count at the time being 80, and the seven lines
+of this round have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
 the other has independently checked almost none of them, and no amount of further building changes
 it. That is why the split for this round is not another feature split: one side finishes the
 contract and safety work, the other converts `review` into `done`, and only the second of those can
@@ -4887,32 +4888,70 @@ round's file boundary in section 2.1 and the change is additive, with no existin
 touched.
 
 ### U-16 An agent's question reaches the screen you are on
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/tui/chat/, internal/tui/app.go, internal/session/approval.go (additive)`
 
 Deliverable: while you sit on one conversation, a permission prompt raised by any other agent in
 the project appears as a compact needs-you panel above the input box, named after the agent that
 asked, oldest first with a count when more are waiting. It never owns the keyboard by itself: one
-explicit key focuses it, and only then do the usual answer keys act, routed to the agent that
-asked. The conversation's own prompt keeps its current shape and takes precedence. The engine
-gains one additive accessor that lists pending prompts across sessions; the agents screen is
-unchanged.
+explicit key opens the conversation that owns it, and only that conversation's full canonical
+prompt receives the usual answer keys. The conversation's own prompt keeps its current shape and
+takes precedence. The engine gains one additive accessor that lists pending prompts across
+sessions; the agents screen is unchanged.
 
 Acceptance: with this conversation idle and a subagent awaiting, the panel appears with the
-subagent's name and scope; typing and sending a message here answers nothing; the focus key then
-`y` approves exactly that subagent's tool and the panel leaves; two waiting subagents show the
-oldest plus a count, and answering advances to the next; when this conversation's own prompt is
-up while a subagent also waits, the own prompt shows and the count says the other is still there;
-answering from the agents screen still works as today.
+subagent's name and a compact subject; typing and sending a message here answers nothing; the focus
+key opens exactly that subagent's conversation, where the canonical request is shown in full before
+`y` or `a` can approve; two waiting subagents show the oldest plus a count, and returning after an
+answer advances to the next; when this conversation's own prompt is up while a subagent also waits,
+the own prompt shows and the count says the other is still there; answering from the agents screen
+still works as today.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-47. Overlaps U-03 deliberately: this block is the chat-screen surface, U-03 keeps the
 rest of the cross-screen story. The focus key must not collide with typing or an existing binding
 and must appear in help; Q-21 is where binding taste gets settled.
 
+Built. The engine gained one accessor, PendingAll, returning a new Waiting type: session id, agent
+name, request and decision, oldest first. Oldest first needed a number, since the pending map has no
+order and a wall clock cannot separate two prompts a fan out raises in the same millisecond, so
+Prompt carries an unexported install sequence set under the lock in Approve. An agent name comes
+from the agent records walked in creation order inside the same lock, falling back to the session id
+rather than to blank: a question from a conversation with no agent record is still one somebody has
+to be able to find.
+
+Nothing new was needed to make the chat notice. Engine events already arrive for every session
+rather than only the one on screen, and every event already ends in refresh, so refresh reads
+PendingAll beside Pending and the panel cannot disagree with the prompt drawn above it.
+
+The focus key is ctrl+g. Free on both counts: the message box owns ctrl+a, ctrl+e, ctrl+u, ctrl+w
+and ctrl+j, and the screen already spends ctrl+c, ctrl+d, ctrl+k, ctrl+n and ctrl+r. It is in
+help.go under its own heading.
+
+Review correction, 2026-07-30: the original focused panel kept its one-line, truncated request but
+then enabled `y` and `a`. That contradicted D-35: the approval could remember a full command the
+person was never shown. Focus now emits a switch to the exact session and agent named by the visible
+question. The application opens that conversation, whose existing prompt displays the canonical
+arguments in full and owns the answer keys. The compact visitor panel never accepts an approval
+answer, so it is safe for that panel to remain bounded.
+
+Acceptance, clause by clause: the panel appearing with the subagent's name and compact subject is
+TestASubagentsQuestionAppearsWithItsNameAndScope; typing and sending answering nothing is
+TestTypingAndSendingAnswersNobodyElsesQuestion and TestTheCompactPanelNeverAcceptsAnApprovalAnswer;
+the focus key opening the exact asking conversation and showing its complete request before `y`
+acts is TestFocusingOpensTheFullRequestBeforeYesCanApprove and
+TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt; two waiters preserving order is
+TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances and
+TestAQueuedSwitchDoesNotRetargetTheNextWaitingAgent; the own prompt keeping precedence with the
+count still visible is TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted. The engine half is
+TestEveryPendingQuestionIsListedOldestFirstAndNamed and
+TestAQuestionFromAnUnnamedConversationIsStillNamed, and the frame arithmetic is
+TestTheQuestionPanelDoesNotOverflowTheFrame. The agents screen's existing awaiting-permission tests
+still hold.
+
 ### U-17 The top left names who you are with
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/tui/header.go, internal/tui/app.go, internal/tui/chat/model.go`
 
 Deliverable: next to the triangle the header writes the name of the agent whose conversation is
@@ -4925,13 +4964,38 @@ subagent's conversation it reads that name; agents, keys, dashboard and help sti
 the tall header still shows the wordmark; at 80 columns a long agent name is truncated rather
 than pushing the facts off the row.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: the brand does not vanish, it stops squatting on the one line that could say where you
 are. The wordmark and the blank-screen mark are untouched.
 
+Built. Status gained an Agent field, and both header shapes read it through one Status.title, so the
+short and the tall version cannot come to disagree about what the corner says. Empty means the
+brand, which is what every screen that is nobody's conversation passes.
+
+The name is cut to a quarter of the row, floored at eight cells and capped at twenty four, measured
+in cells rather than runes because a name holds whatever somebody typed. The cut mark is three ASCII
+dots rather than the ellipsis this package uses elsewhere, since new bytes in this repository stay
+inside ASCII.
+
+One thing the ask did not name. The conversation Canopy opens on belongs to an agent called main,
+created by cmd/canopy a moment before the interface exists, and the chat screen learns an agent's
+name from whoever switched into it, which on that one conversation is nobody. Rather than growing
+the chat's engine interface with an agent lookup for a single string, AppOptions gained an Agent
+field that cmd/canopy fills from the agent it just created, applied beside SetCommands the same way.
+Every other route into a conversation still carries the name through SetSession, and a conversation
+no agent owns, a fresh ctrl+n among them, correctly reads as the brand.
+
+Acceptance, clause by clause: the corner reading the mark then the agent, and screens that are
+nobody's conversation keeping canopy, is TestTheHeaderNamesTheAgentInsteadOfTheBrand across both
+header heights; the name following you from main to a subagent, and being on the header exactly
+once, is TestTheCornerNamesTheConversationsAgent; truncation at eighty columns without pushing the
+screen or the mode off the row is TestALongAgentNameIsCutRatherThanPushingTheFactsOff. The wordmark
+is untouched and still held by TestAStartedConversationDrawsTheNameOnlyInTheCorner and its pair, and
+the height and width invariants by the two tests that already covered them.
+
 ### U-18 Tasks are a block whose states you can see across the room
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/tui/chat/model.go`
 
 Deliverable: the agent's task list becomes a bordered block above the input box, drawn with the
@@ -4944,13 +5008,39 @@ off the glyphs alone still tell them apart; opening the btw panel hides the task
 restores it; the transcript height accounts for whichever block is up, so nothing overflows an
 80x24 frame; the six-line cap and the summary collapse behave as before.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: colours come from the theme and nowhere else, the rule at the top of
 internal/tui/theme/theme.go, and the glyph stays the state's first citizen per D-10.
 
+Built. "The same chrome as the btw panel" is one function rather than a copy of one: the btw panel's
+frame drawing moved out into borderedBlock, which takes a label, its content and a width, and both
+blocks now go through it. Two copies would have stopped being the same chrome the first time
+somebody adjusted one of them.
+
+Rows are Info for in progress, Success for done and Muted for pending, all through theme.Current().
+The glyph is untouched and still first, so with the palette off the three states are told apart
+exactly as they were before any colour existed.
+
+Which block is up is decided in one place, a btwUp method both the task block and the btw panel ask,
+because two readings of that condition is how the height budget and the rendering come to disagree,
+and that disagreement is the message box pushed off the bottom of the screen. taskPane now returns
+lines rather than a joined string, which is what the btw panel and the steering pane already did, so
+the height budget counts rows rather than counting newlines in a string.
+
+Acceptance, clause by clause: three states as three visibly different rows is
+TestTheThreeTaskStatesAreThreeDifferentRows, which forces a colour profile because under go test
+lipgloss strips styling, and which was checked by making the three styles identical and watching it
+fail; the glyphs alone telling them apart with colour off is the existing
+TestTaskStatesReadWithoutColour; the btw standing in the block's place and esc restoring it is
+TestTheBtwPanelStandsInTheTaskBlocksPlace; the transcript height accounting for whichever block is
+up, inside 80x24, is TestEitherBlockLeavesTheFrameIntact; and the six-line cap and the summary
+collapse are unchanged and still held by TestALongListCollapsesRatherThanEatingTheScreen and
+TestTheMessageBoxSurvivesATaskList. That the list is a framed block at all is
+TestTheTaskListIsABlockAndNotLooseLines.
+
 ### U-19 A btw is worth keeping
-`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`status: review | owner: claude | branch: tui/ambient-attention | depends: none`
 `scope: internal/session/storage.go, internal/session/aside.go, internal/tui/chat/`
 
 Deliverable: asides survive the screen. Schema version 8 adds an asides table keyed by session,
@@ -4963,11 +5053,45 @@ in one conversation does not appear in another; the request built after an aside
 of it, retested; a schema 7 file migrates forward and a newer file is still refused; a bare /btw
 with no history anywhere still explains itself.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: this deliberately retires the comment in internal/tui/chat/model.go that says the history
 leaves with the screen; the comment is rewritten to say what is now true. The engine recording an
 aside does not change what Aside sends: recording is storage, not context.
+
+Built. Schema 8 is one new migration appended, never an edit to an applied one, creating an asides
+table keyed by session with an index on it. A table rather than a JSON column on the session, which
+is what the task list uses: that list is read and written whole, where this one only grows and is
+appended a row at a time. The rows go when the conversation goes, through the same foreign key
+everything else hanging off a session goes through.
+
+The engine records after the answer exists and never before it, since a question with no answer is
+not an exchange worth keeping and would be drawn as a question the agent ignored. A failure to write
+does not cost the answer: the write goes through the same persist path every other save uses, so a
+storage error is reported where the others are and the person still gets what they asked. Held by
+TestAFailedRecordingDoesNotCostTheAnswer, which drops the table under a live engine and checks both
+halves, the answer coming back and the failure reaching the error hook, since a claim in a note that
+nothing tests is a claim that stops being true without anybody noticing. The new
+accessor is Asides, returning oldest first, and an engine with no storage attached still answers
+asides perfectly well and simply cannot remember them.
+
+The chat screen loads instead of clearing, in SetSession and in New: the conversation Canopy opens
+on arrives through the constructor rather than through a switch, so without the second call the one
+conversation somebody actually lands in would have been the one that had forgotten everything.
+
+Acceptance, clause by clause: ask, quit, reopen and it is there is
+TestAnAsideSurvivesTheProcessThatAskedIt at the engine and
+TestAsidesAreThereWhenTheConversationIsOpenedAgain at the screen, where a bare /btw opens the loaded
+history and asks the model nothing; one conversation's asides not appearing in another is
+TestAsidesBelongToOneConversation and TestMovingToAnotherConversationBringsItsOwnAsides; the request
+after an aside carrying nothing of it is TestTheRequestAfterAnAsideContainsNothingOfIt, which counts
+the messages as well as searching them, because the fixture answers an aside with the same words it
+answers a turn with; a schema 7 file migrating forward with nothing lost is
+TestAFileAtTheOlderSchemaMigratesForward and the newer-file refusal still holds in
+TestANewerSchemaIsRefusedRatherThanDowngraded; and a bare /btw with no history anywhere still
+explaining itself is TestABareBtwWithNoHistoryStillSaysWhatItWants. Order is
+TestAsidesComeBackInTheOrderTheyWereAsked, and the two states nobody asked about but which would
+have been wrong are TestAFailedAsideIsNotRecorded and TestAsidesWorkWithNoStorageAttached.
 
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
