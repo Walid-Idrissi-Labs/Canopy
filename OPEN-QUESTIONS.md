@@ -486,3 +486,51 @@ answering before 0.1 has many of them.
 
 **Who decides:** both supervisors, ideally by watching one person with strong shell habits use
 the product for ten minutes.
+
+## Q-22 What happens to the Claude route when the paused credit change lands?
+
+**Added 2026-07-30 by the phase S planning.**
+
+Anthropic announced, and then paused on 2026-06-15, a change that would move Claude Agent SDK,
+`claude -p` and third-party app usage off subscription limits and onto separately purchased
+credits. S-04 is built on the current arrangement, where a delegated Claude Code turn draws on the
+user's own Max or Pro limits, and that arrangement is the whole reason the route is worth having:
+the user has already paid.
+
+Paused is not cancelled, and nothing in the announcement said it would not return. If it does, S-04
+still works, because Canopy is driving a binary the user signed in to themselves and none of that
+changes. What changes is the cost story. Usage that looked included becomes a separate purchase,
+and somebody who signed in expecting the first finds out by being billed for the second.
+
+**Decided in the meantime:** build S-04 on the current arrangement, and say plainly in LIMITATIONS
+that it meters against the subscription as of the date recorded there. **What would change:** if the
+change lands, both S-04's documentation and its in-product cost surface need rewriting before the
+next release, and the honest form may be a warning at sign-in rather than a line in a document.
+
+**Who watches for it:** whoever holds the release. This one arrives from outside and nothing in the
+tree will notice it happening.
+
+## Q-23 What do Canopy's tools, permissions and verification mean in a delegated turn?
+
+**Added 2026-07-30 by the phase S planning.**
+
+All three routes D-51 permits work by driving the vendor's own agent over a protocol rather than by
+calling a completions endpoint, so a delegated turn runs the vendor's tool loop, the vendor's
+permission model and the vendor's context handling. Canopy's own tools, its per-agent trust levels
+and prompts from A4, its audit trail of refused calls, and A6's verification of what an agent
+actually produced were all built on the assumption that Canopy runs the loop.
+
+Three answers are possible and they are not equivalent. Canopy could refuse to delegate any turn
+that needs its own tools, and be honest that a subscription credential buys a weaker agent. It could
+expose its tools to the delegated agent through the protocol, which ACP and the app server both
+partly allow, and re-impose its own gating at that boundary. Or it could accept that a delegated
+turn is governed by the vendor and say so on screen, which is the smallest change and the largest
+honesty problem, because the trust level displayed would not be the trust level in force.
+
+**Decided in the meantime:** nothing, deliberately. S-03 to S-05 may deliver a working conversation
+on a delegated agent, but no task in phase S may claim a trust level or an audit guarantee it does
+not enforce, and no screen may show a permission mode the delegated turn is not actually running
+under. A screen showing `plan` while somebody else's agent edits files is worse than no screen.
+
+**Who decides:** both supervisors, after one delegated route works end to end and the gap can be
+seen rather than argued about.

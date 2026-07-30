@@ -127,7 +127,7 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | Cutting `v0.1.0-beta.1`, claimed 2026-07-30. The interface round it releases is merged as PRs #42 to #49. A8-05's visible hook-failure surface after it | `release/beta-1` | none |
+| Claude | Phase S, signing in with a subscription instead of pasting a key. Claimed 2026-07-30, ledger first: S-01 to S-08 and PG-S are written and pushed before any implementation. `v0.1.0-beta.1` is cut and the interface round it releases is merged as PRs #42 to #49 | `feat/subscription-sign-in` | none |
 | Codex | Independent verification of the unsigned lines, the eleven phase gates, the six product runs | `verify/independent-pass` | none |
 
 ### 2.0 Where this actually stands
@@ -3453,7 +3453,8 @@ It lives in `internal/tui/brand` because the launch screen and the empty convers
 and neither package can import the other. Two copies would drift, and the drift would be somebody's
 idea of the logo showing up on one screen and not the other.
 
-Drawn from `█`, `▀` and `▄` only. The quadrant and corner blocks look better in the two fonts that
+Drawn from the full block, the upper half block and the lower half block only, U+2588, U+2580 and
+U+2584. The quadrant and corner blocks look better in the two fonts that
 render them correctly and like a row of missing glyph boxes everywhere else, and the first thing a
 new user sees is not where to find out which font they are running. Asserted by a test, along with
 the silhouette being symmetric about its centre on every row, since an asymmetric one reads as a
@@ -4909,7 +4910,7 @@ Deliverable: `shift+tab` moves a selection, and the mode it stops on is applied 
 the last press. Walking the ladder from cruise to build no longer puts the conversation into plan
 and confined on the way. The wait is never the last word: sending a message, naming a mode with
 `/mode`, leaving the conversation and quitting all apply the selection immediately. The box says
-what is enforced and what is coming without confusing them, `cruise → plan`, and the ladder asks
+what is enforced and what is coming without confusing them, `cruise -> plan`, and the ladder asks
 the engine which modes it would accept rather than finding out by attempting each one.
 
 Acceptance: from cruise, three presses that land on build leave the conversation in cruise
@@ -5295,7 +5296,7 @@ second key, on a different screen, as a conversation answering on the wrong prov
 U-06 stays open: the live credential check in the wizard, rate entry for OpenAI-compatible endpoints
 in the interface, and startup warnings that currently go to a stderr the alt screen erases.
 
-Review correction, 2026-07-30: afterSecret said the new key “is now the credential” before its parent
+Review correction, 2026-07-30: afterSecret said the new key "is now the credential" before its parent
 called Engine.UseCredential. That call can refuse while a turn is active, leaving the key safely
 stored but the conversation unchanged. Selection is now a pending request: the keys model says only
 what its store established, and the application explicitly acknowledges acceptance or reports the
@@ -5636,6 +5637,360 @@ catalog is added by hand, picked from the picker, and answers.
 
 ---
 
+# Phase S: signing in instead of pasting
+
+Asked for by Walid on 2026-07-30. Every credential Canopy holds is a string somebody pasted. That is
+the right shape for an API key and the wrong shape for the way most people now pay for a model:
+somebody with a Claude Max plan, a Copilot seat or a ChatGPT Pro subscription has already paid, has
+no API key, and is currently told by this program to go and open a billing account they may not
+want. This phase gives that person a way in, and writes down which ways in are permitted, because
+that turns out to be the hard part.
+
+Principles are D-51. The short form: a subscription is signed in to, never pasted, and exactly three
+routes are permitted. GitHub Copilot through its official Go SDK, which is licensed and documented
+for precisely this case. Claude through the user's own already-authenticated Claude Code
+installation over ACP, which Anthropic contemplates and meters. OpenAI through the Codex app server,
+which OpenAI publishes for host applications. Canopy will not implement claude.ai OAuth, which
+Anthropic prohibits in writing and enforces on its servers. Gemini consumer sign-in is closed and
+stays closed.
+
+One structural fact runs through all three and should be read before anything is built. Every
+sanctioned route is "drive the vendor's own agent over a protocol" rather than "call a completions
+endpoint": the Copilot SDK over JSON-RPC, Claude Code over ACP, Codex over app-server JSON-RPC. A
+subscription credential is therefore a second kind of provider, a delegated agent, and it is not
+what `core.ProviderClient` describes. A delegated turn runs the vendor's tool loop, the vendor's
+permission model and the vendor's context handling, not Canopy's, so what A4's permission gating,
+A6's verification and Canopy's own tools mean during one is a real question with no assumed answer.
+It is Q-23. Nobody is to build past it by pretending a delegated agent is a `ProviderClient` with a
+different transport.
+
+Five constraints were established by reading the code rather than assumed, and every task here
+respects them:
+
+1. **`internal/core` is frozen** for both pairs, and a new credential kind must not be a new
+   `core.Provider`. `Provider.Valid` at internal/core/key.go:28 accepts exactly two values and
+   `KeyRef.Validate` calls it, so a third constant is a core change. The kind lives in the keys
+   record beside the provider instead, which is D-46 rule 4 applied a second time: the frozen
+   contract does not grow a field for something a layer above it can carry.
+2. **Tokens are secrets.** `core.Secret.UnmarshalJSON` refuses unconditionally, at
+   internal/core/secret.go:84, so access and refresh tokens belong in the keychain `Backend` and
+   never in keys.json. Expiry and account identity are not secrets and belong in the record.
+3. **An expired token must not reach the wire.** `ErrAuthentication` means never retry and never
+   fall back, at internal/core/provider.go:351, and an expired-but-refreshable token classified that
+   way is a wrong answer. S-02 refreshes ahead of the request so a 401 stays genuinely terminal.
+4. **The provider switch exists twice**, at internal/session/resolver.go:49 and in `newClient` at
+   cmd/canopy/ask.go:285. They are the same switch with a different return arity. Change one without
+   the other and `canopy ask` silently diverges from the interface.
+5. **Nothing in the tree opens a browser or listens on a loopback port**, and no task here adds a
+   loopback listener of Canopy's own. Where a sign-in needs one, the vendor's binary hosts it.
+
+### S-01 A credential can be signed in to rather than typed
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: none`
+`scope: internal/keys/`
+
+Deliverable: the keys store learns that a credential may hold a grant instead of a pasted secret.
+The keys.json record gains the kind of credential it is, the account identity the grant belongs to,
+which is the login or email the vendor reports so that somebody with two subscriptions can tell them
+apart, and the moment the current token stops being valid. None of those three is a secret and all
+three are readable without touching the keychain, which is what lets a list say "signed in as this
+account, expires then" without unlocking anything. The tokens themselves go to the `Backend`, whose
+accounts are a flat name to string map today because `Put` writes the secret under the bare
+credential name at internal/keys/store.go:203.
+
+Storing two tokens under one credential therefore needs a choice, and the choice is to be argued for
+in the notes rather than made silently: either a second account key derived from the credential
+name, or one slot holding a JSON object. If it is a second account key the derivation must be one no
+user can collide with, and it can be, because `keyNamePattern` is `^[a-z0-9][a-z0-9_-]{0,30}$` at
+internal/core/key.go:50, so any slot named with a character outside that set is unreachable by a name
+a person is allowed to choose. Whichever is chosen, `Remove` takes the tokens with it, or a deleted
+credential leaves its refresh token in somebody's keychain forever.
+
+Acceptance: a signed-in credential round-trips through the store with its kind, account identity and
+expiry intact, and with no token anywhere in keys.json, asserted by reading the file's bytes rather
+than by reading the struct back. Re-authenticating an existing signed-in credential preserves
+`CreatedAt`, `LastUsedAt` and `Models` exactly as `Put` already preserves them on rotation at
+internal/keys/store.go:220, and replaces the tokens. Removing it removes both halves, and a `Get`
+that finds metadata with no tokens behind it reports that in the same terms the missing-secret path
+already uses. `internal/core` is unchanged: the diff touches no file under it and
+`core.AllProviders()` still returns two. `TestPublishedTypesCarryNoSecrets` at
+internal/core/secret_test.go:171 is still green, and since it stops descending at depth four, any new
+type reachable from `KeyMetadata`, `AgentProfile` or `Event` is either shallower than that or the
+test is extended until it genuinely reaches it. A keys.json written by the previous build loads with
+every credential intact and none of them claiming to be signed in.
+
+`verify: claude [ ]   codex [ ]`
+
+### S-02 A token is refreshed before it is needed, not after it fails
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: internal/keys/, internal/session/, cmd/canopy/`
+
+Deliverable: refresh runs when a credential is resolved for use, ahead of the request being built,
+and never in response to a rejection. The distinction is the whole task. `ErrAuthentication` is
+documented as never retry and never fall back, in those words, because a wrong key is a thing to fix
+and routing around it hides the problem while billing elsewhere. An expired token is not a wrong key,
+but it arrives as the same 401, so a reactive design has to either misclassify it or teach the error
+kind a distinction that a frozen package cannot be taught. Refreshing first removes the question: by
+the time a request exists its token is valid, so a 401 means what it has always meant.
+
+A refresh that fails is a sign-in that has lapsed and says so in those terms, naming the command or
+the screen that fixes it. It is not reported as a network error and not retried in a loop. Two turns
+starting at once on one credential refresh once between them.
+
+If an implementer concludes that a change to `internal/core` is unavoidable, whether a new
+`ProviderErrorKind`, a field on `ProviderError`, or a third `Provider` constant, they stop. They do
+not make the change, do not work around it quietly, and do not widen this task to cover it. They
+record what forced it as an open question for both supervisors and leave S-02 blocked. `internal/core`
+is frozen for both pairs and the rule that changing it needs a joint discussion first is P1-01's, not
+this phase's to relax.
+
+Acceptance: a credential whose token expires inside the refresh window is refreshed before its first
+request is constructed, asserted against a fake clock and a fake token endpoint, with the request
+carrying the new token and the store holding it. A token valid past the window is not refreshed, so
+a working session makes no calls it did not need. A refused refresh surfaces as a lapsed sign-in
+naming its remedy, never as `ErrAuthentication` on a request that was never sent, and never as a
+retry loop. Two concurrent turns on one expired credential produce one refresh. A genuine 401 from a
+valid token still classifies as `ErrAuthentication` and still neither retries nor falls back, which
+is `fallbackAllowed` at internal/provider/chain.go:79 behaving exactly as it does today. No file
+under `internal/core` is modified.
+
+`verify: claude [ ]   codex [ ]`
+
+### S-03 GitHub Copilot signs in through its own SDK
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`scope: internal/provider/copilot/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
+
+Deliverable: the Copilot route, first of the three because it is the one whose vendor documents this
+exact case. The Copilot SDK reached GA on 2026-06-02, is MIT licensed, and publishes a Go module at
+`github.com/github/copilot-sdk/go`. Its own documentation describes the arrangement Canopy wants: you
+create a GitHub OAuth App or GitHub App, users authorise it, and you pass their access token to the
+SDK, so that requests are made on behalf of each authenticated user using their Copilot
+subscription. Canopy uses the official SDK rather than speaking to the underlying endpoints itself,
+by Walid's decision on 2026-07-30, because the SDK is the sanctioned surface and being sanctioned is
+the entire value of this route.
+
+One piece is genuinely undecided and is this task's to settle and record rather than to assume. The
+SDK is given a user's token, and where that token comes from is a choice between a GitHub App
+registered to Canopy, driven by the device flow so that constraint 5 holds and nothing listens on a
+port, and reusing a login the user already has from the `gh` CLI. The first is the only Canopy-owned
+vendor identity anywhere in this phase and so has a cost that outlives the task; the second has no
+registration but binds Canopy to another tool's storage format. Whichever is chosen, the notes say
+why.
+
+Acceptance: on a machine with no GitHub credentials, signing in produces a user code and a
+verification URL, waits, and completes when the user authorises, with nothing listening on a
+loopback port at any point. The resulting credential stores its tokens per S-01 and lists as signed
+in under the GitHub login it belongs to. A turn runs through the SDK against the user's own Copilot
+subscription and streams back. Refresh follows S-02. A GitHub account with no Copilot seat is told
+exactly that, not shown a generic authentication failure. Both internal/session/resolver.go and
+`newClient` in cmd/canopy/ask.go reach the new client, so `canopy ask` and the interface agree, and
+a test holds that the two switches know the same set of providers.
+
+`verify: claude [ ]   codex [ ]`
+
+### S-04 Claude runs through the user's own Claude Code
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: internal/provider/acp/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
+
+Deliverable: the Claude route delegates rather than authenticates. Canopy does not implement
+claude.ai OAuth, does not hold an Anthropic subscription credential, and never sees a subscription
+token. It discovers a Claude Code installation the user has already signed in to and drives it over
+ACP, the Agent Client Protocol.
+
+The line this sits on is sharp and the task exists to stay on the correct side of it. Anthropic's
+published position is that Claude Agent SDK, `claude -p` and third-party app usage still draw from
+the subscription's usage limits, which is a sentence describing metering rather than prohibition.
+The prohibition is separate and explicit: they do not permit third-party developers to offer
+Claude.ai login or to route requests through Free, Pro or Max plan credentials on behalf of their
+users, they enforce it on their servers, and they reserve the right to do so without prior notice.
+Delegating to a binary the user already signed in to is the first thing. Holding their subscription
+credential is the second. Canopy does only the first.
+
+So the credential this task stores holds no token at all. It records that a delegated Claude Code
+exists, where its binary is, and which account it reports being signed in as. That is a credential
+kind whose keychain half is empty, which S-01 must therefore allow rather than treat as damage.
+
+Acceptance: on a machine with Claude Code installed and signed in, adding this credential finds it,
+reports the account it is signed in as, and runs a turn whose reply arrives over ACP. On a machine
+without it, the failure names the missing thing and how to install it, and does not offer to sign
+anybody in to anything. No Anthropic OAuth flow exists anywhere in the tree, meaning no claude.ai
+endpoint, no authorisation URL and no code exchange, held by a test over this repository's own source
+so that a later contributor cannot add one quietly. The stored credential has no secret behind it and
+`canopy keys test` says something true about it rather than reporting a missing secret as corruption.
+A delegated turn shows that it draws on the user's own subscription and does not show a dollar cost,
+because Canopy never sees a token count and a figure it cannot see is a figure it must not print.
+
+`verify: claude [ ]   codex [ ]`
+
+### S-05 OpenAI signs in through the Codex app server
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`scope: internal/provider/codex/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
+
+Deliverable: OpenAI is the route with no third-party programme, and therefore the one where the
+choice of surface matters most. It does have a documented one. `codex app-server` is Apache-2.0,
+speaks JSON-RPC 2.0, and is published by OpenAI as the interface Codex itself uses to power rich
+clients, described in their documentation as what to use for a deep integration inside your own
+product, covering authentication, conversation history, approvals and streamed agent events. Canopy
+drives it and lets it own the ChatGPT sign-in: `account/login/start` with type `chatgpt`, where the
+app server hosts the loopback callback itself, or `chatgptDeviceCode` where no browser is available.
+Canopy adds no listener of its own, which is how constraint 5 survives this task.
+
+Canopy identifies itself honestly. A client's `clientInfo.name` at `initialize` becomes the upstream
+`originator` header, so Canopy appears as `canopy`. It must not send `originator: codex_cli_rs`.
+Impersonating another client is the one behaviour the terms plausibly reach, none of the established
+projects on this path do it, and a route chosen because it is defensible stops being defensible the
+moment it lies about who is calling. Send a `version` header beside it: backend model routing is
+cohort-keyed on originator plus version, and a missing version has been observed to change which
+models resolve, in openai/codex issue #31967, opened 2026-07-10 and closed 2026-07-25. OpenAI ask
+new integrations intended for enterprise use to contact them for a known-clients list, which is a
+thing to do rather than a thing to build.
+
+The fallback, when the binary is absent, is to reuse a login the user already has rather than mint
+one. Codex stores tokens at `$CODEX_HOME/auth.json`, by default `~/.codex/auth.json`, mode 0600,
+holding `id_token`, `access_token`, `refresh_token` and `account_id`, refreshable against
+`https://auth.openai.com/oauth/token`, with inference at `https://chatgpt.com/backend-api/codex`.
+That path is degraded on purpose and is not the design. There is also an experimental
+`chatgptAuthTokens` mode for hosts that own the token lifecycle, and it is deliberately not the first
+choice, because owning that lifecycle is precisely the liability the app server exists to take.
+
+Two costs belong to this task rather than being discovered inside it. It depends on a `codex` binary,
+either bundled or discovered on the machine, and which of the two is decided here and recorded,
+because a discovered binary is a version Canopy does not control and a bundled one is a licence
+obligation and a release artefact. And there is an open, unanswered OpenAI issue reporting 429 quota
+errors for third-party OAuth on active Plus plans, so this route may be quota-segregated from what
+the same user sees in the ChatGPT client. They are told that before they sign in, not after the
+first 429.
+
+Acceptance: with `codex` present, signing in drives `account/login/start` and completes, and the
+device-code path completes on a machine with no browser. The `initialize` handshake sends a
+`clientInfo.name` of `canopy` and a version, held by a test that fails if either is missing or if the
+originator is ever a value belonging to another client. A turn runs and streams.
+`account/rateLimits/read` returns the plan's limits and they reach a surface a user can see. With
+`codex` absent but `auth.json` present, the fallback authenticates and says out loud that it is the
+degraded path rather than pretending to be the design. With neither present, the failure says which
+of the two would fix it. The 429 caveat is shown before the credential is stored, not only in
+LIMITATIONS. Refresh follows S-02.
+
+`verify: claude [ ]   codex [ ]`
+
+### S-06 The wizard has a path that never asks for a secret
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: internal/tui/keys/, internal/tui/`
+
+Deliverable: a branch of the add-credential wizard that ends without a secret prompt. The state
+machine is `mode` at internal/tui/keys/model.go:41 and every path through it currently terminates at
+`modeSecret`: an Anthropic key goes name, provider, secret, and an OpenAI-compatible key goes name,
+provider, base URL, model, secret. A subscription credential has nothing to type, so the provider
+step gains the subscription choices and those route to a sign-in step instead, which shows whatever
+the vendor's flow needs shown, a user code and a URL or simply a wait, reports success as the account
+that was signed in as, and returns to the list with the new credential selected the way U-24
+established. Cancelling part way leaves nothing stored and nothing half written, which is
+`cancelDraft` at model.go:559 doing for a live sign-in what it already does for a draft.
+
+A signed-in credential appears in the list and in the model picker as itself. What it can run comes
+from the delegated agent rather than from `internal/catalog`, and where the vendor chooses the model
+and offers no say, the picker says the vendor chooses rather than showing an empty list, which is
+D-46 rule 1's spirit in a case the catalog does not cover.
+
+One boundary needs care. `TestDashboardOnlyDependsOnCore` at internal/tui/dashboard_test.go:73 holds
+that the interface imports only `internal/core` and other `internal/tui` packages, because otherwise
+it stops being swappable between the fake and the real engine. It walks one directory and does not
+recurse, so `internal/tui/keys` is not actually held to it and already imports `internal/catalog`.
+That is a gap, not a licence. A sign-in flow reaching into `internal/provider` or `internal/keys`
+from a screen is exactly what the rule exists to stop. The sign-in runs behind the narrow `Store`
+interface at model.go:24 or behind a new interface just as narrow, and the test is extended to cover
+the subpackages rather than left walking a single directory.
+
+Acceptance: somebody with no credentials adds a subscription one through the wizard, is never shown a
+secret prompt, and the conversation's next message runs on it with no further keystroke. The list row
+says which account it is signed in as and when the grant expires. Cancelling at the sign-in step
+stores nothing and leaves no partial record. A vendor that chooses the model says so where the picker
+would otherwise be empty. Every new screen renders at 80 columns and under `NO_COLOR`. The import
+boundary test covers `internal/tui/keys` and `internal/tui/chat` and passes.
+
+`verify: claude [ ]   codex [ ]`
+
+### S-07 The command line signs in, and a test says what it can
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: cmd/canopy/keys.go, cmd/canopy/`
+
+Deliverable: the CLI half of S-06. `canopy keys` gains a way to sign in, a way to see which
+credentials are signed in and as whom, and a way to sign out that revokes or discards the tokens
+rather than only forgetting the record.
+
+And `canopy keys test` needs a new answer. Today it is storage only: it reads the metadata, reads the
+secret, recomputes the fingerprint and compares, at cmd/canopy/keys.go:437. A subscription credential
+has no secret to fingerprint, so that check has nothing to do on one. Rather than skipping it, the
+command becomes the strongest honest statement available for each kind of credential. For a pasted
+key that remains the fingerprint comparison it already does. For a signed-in credential it is that a
+grant exists, that it is unexpired or refreshable, and, where the vendor exposes it, what the account
+actually is and what its limits are. `account/rateLimits/read` from S-05 is exactly this, and it is a
+better answer than a fingerprint ever was, because it is a fact about the subscription rather than a
+fact about the file.
+
+The command currently closes by saying the provider is not contacted "because no provider client
+exists until A2", at cmd/canopy/keys.go:473. That has been untrue for eight phases. It goes.
+
+Acceptance: signing in from the CLI produces a credential the interface then lists, and one added in
+the interface is visible to the CLI. Signing out leaves no token in the backend and no record in
+keys.json. `canopy keys test` on a pasted key behaves as it does today, with unchanged output where
+the output is unchanged. On a signed-in credential it reports the account and the state of the grant,
+and refuses to claim a network check it did not make. On a lapsed credential it says lapsed and names
+the command that fixes it. No output anywhere mentions A2.
+
+`verify: claude [ ]   codex [ ]`
+
+### S-08 The documents say what is permitted and what is not
+
+`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
+`scope: README.md, INSTALL.md, LIMITATIONS.md, SECURITY.md`
+
+Deliverable: the documents move with the code, and for this phase they carry more weight than usual,
+because the user's first question here is not "how do I do this" but "am I allowed to". README says
+that a subscription is a way in and names the three that work. INSTALL says what has to be present
+for each: a GitHub account with a Copilot seat, a Claude Code installation the user has already
+signed in to, a `codex` binary. LIMITATIONS carries the honest list: that claude.ai login is
+prohibited and Canopy will not add it however often it is asked, that Gemini consumer sign-in is
+closed, that the OpenAI route may be quota-segregated and has an open 429 report against it, that a
+delegated turn's cost cannot be shown in money because Canopy never sees a token count, and that a
+delegated turn runs the vendor's tool loop rather than Canopy's. SECURITY says where tokens live,
+that they are in the keychain and never in keys.json, what signing out actually removes, and what an
+attacker who reached the keychain would be able to do with what they found.
+
+Every claim about a vendor's terms carries the date it was true, the way D-51 and the catalog carry
+theirs. These are facts about mid-2026, three of them changed in the eight weeks before this was
+written, and an undated claim about what a vendor permits is the confident wrong answer D-32 forbids.
+
+Acceptance: each of the four documents names the three permitted routes, and none of them contradicts
+another or contradicts D-51. Every statement about what a vendor permits carries a date. The refusal
+to implement claude.ai OAuth appears in LIMITATIONS in plain words with its reason, so that the next
+person to propose it finds the answer before writing any code. A reader whose only subscription is
+ChatGPT can tell from README alone whether Canopy is usable for them.
+
+`verify: claude [ ]   codex [ ]`
+
+### PG-S Phase S gate
+
+`status: todo | depends: S-01, S-02, S-03, S-04, S-05, S-06, S-07, S-08`
+
+Both supervisors watch three machines, each holding exactly one subscription and no API key: one
+with Copilot, one with Claude Code already signed in, one with ChatGPT. On each, somebody who has not
+used Canopy before signs in from the wizard without being coached, sends a message, gets a reply,
+leaves it long enough for the token to lapse, and sends another that works without signing in again.
+They then read LIMITATIONS and can say correctly why claude.ai login is not on the list. No run asked
+anybody to paste a secret, nothing listened on a loopback port, and no Anthropic subscription token
+exists anywhere on the Claude machine outside Claude Code's own storage.
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
 # Retired tasks
 
 Replaced by the 2026-07-26 re-plan. Kept so the reasoning is not lost.
@@ -5677,3 +6032,4 @@ status or verification updates.
 | 2026-07-28 | Claude | Added phases E and U after PG-A9, from an audit of the send path and of every screen rather than of this ledger: ten efficiency tasks and fourteen interface tasks, none of which blocks 0.1. Four blocks set back to partial where their prose outran the code: A3-06 (no auto compaction, meter blind to tool traffic), A2-07 (saving visible only in headless ask), A2-08 (chain has no caller), A8-03 (instructions parse and reach nothing). Notes added to A5-09 and A9-02. Principles recorded as D-42 to D-44, new questions Q-19 to Q-21. |
 | 2026-07-29 | Claude | Added U-15 from Walid using the built program: the mode key applied every rung it walked past, so cycling from cruise to build put a working agent through plan. Built the same day, out of lane order, since it is a defect in a shipped safety setting. Recorded as D-45. The engine gained `ModeUnusable`, the refusal `SetMode` already made asked as a question. Section 2.0 recounted, which the two new phases had left stale. |
 | 2026-07-29 | Claude | Added phase K, one key many models, and U-16 to U-19, from six asks by Walid: keys that hold several models over a dated catalog, dispatch that understands model words, a picker screen, other agents' permission prompts surfacing on the conversation you are on, the header naming the agent instead of the brand, a tasks block with state colours, and btw history that survives the screen. Recorded as D-46 and D-47. Claimed on feat/one-key-many-models and tui/ambient-attention, stacked in that order on tui/mode-settle. |
+| 2026-07-30 | Claude | Added phase S after phase K, signing in with a subscription instead of pasting a key. Eight tasks and a gate, written from research into what each vendor actually permits rather than what is technically reachable: Copilot through its official Go SDK, Claude through the user's own Claude Code over ACP, OpenAI through the Codex app server with an existing `auth.json` login as the degraded fallback. claude.ai OAuth is refused as prohibited and server-enforced, and Gemini consumer sign-in is recorded as closed so neither is proposed again. Recorded as D-51, which takes that number because D-50 is reserved by work in flight. New questions Q-22, the paused Anthropic credit change, and Q-23, what Canopy's tools, permissions and verification mean in a delegated turn. Claimed on feat/subscription-sign-in, ledger pushed before any code. Nothing renumbered. |
