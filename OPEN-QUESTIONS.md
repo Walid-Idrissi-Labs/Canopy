@@ -604,5 +604,23 @@ sharpens the first option: refusing to delegate a turn that needs Canopy's tools
 nothing on Copilot and everything on Claude Code, so it is a per-route policy rather than a phase-wide
 one.
 
-**Who decides:** both supervisors. Two delegated routes now work end to end and they sit at opposite
-ends of what a protocol allows, which is the comparison this question was waiting for.
+**Confirmed by S-05, 2026-07-30, on the ChatGPT route, which lands beside Claude Code rather than
+beside Copilot.** The Codex app server has no field anywhere for a client's own tools: `thread/start`
+and `turn/start` accept none, and the only tools in the room are the app server's own plus whatever
+MCP servers the user's `~/.codex/config.toml` starts, which Canopy neither chose nor can see. So the
+three answers come out as they do on Claude Code, and two of the three routes now sit at that end.
+
+The trap holds here too and by a wider margin, which is worth recording as a property of the category
+rather than of one protocol. This route has eleven item types, most of them tool-shaped, and the app
+server has already run every one inside its own sandbox before Canopy hears about it. All of them
+become notices. A test sends all eleven plus two invented ones and fails on any tool call event.
+
+One thing is new, and it is a cost rather than a finding. Because Canopy declines every approval, the
+Codex thread is opened read-only, so a delegated ChatGPT turn cannot write files at all. That is the
+honest pairing for a client that refuses everything, and it is the clearest illustration yet of the
+first of the three options: a subscription credential buying a visibly weaker agent, and saying so.
+It is now something a supervisor can sit in front of rather than imagine.
+
+**Who decides:** both supervisors. All three delegated routes now work end to end, and they land two
+against one: Copilot's turn is governed by Canopy, and the Claude Code and ChatGPT turns are not,
+because neither protocol has a door. The comparison this question was waiting for exists.

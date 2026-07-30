@@ -334,6 +334,84 @@ failure that would send somebody to replace a credential that is fine.
 Revoking Canopy's access at GitHub needs a client secret, for the same reason renewing does, so the
 command says plainly that it did the local half only and where to do the other.
 
+### The ChatGPT route, and why it needs the Codex CLI
+
+Canopy can run turns on a ChatGPT Plus, Pro, Team or Business plan without an API key, by driving
+`codex app-server`, which OpenAI publish under Apache-2.0 as the interface for host applications
+wanting a deep integration, authentication included (D-51, S-05). Canopy asks it to sign you in, and
+it does the rest: it builds the authorisation URL, hosts the callback on its own loopback port,
+talks to OpenAI, and keeps the grant in `~/.codex` afterwards.
+
+**Canopy never holds a ChatGPT credential.** The credential it stores is a delegation with nothing
+behind it, and `internal/keys` refuses to put a token there at all. That also means **Canopy does
+not renew anything on this route**: the app server owns the grant and renews it without being asked,
+so the five-minute refresh margin that applies to a pasted or Copilot credential has nothing to act
+on here. If the grant lapses beyond renewal, `canopy keys test` says so and signing in again fixes
+it.
+
+**Canopy identifies itself as `canopy` and never as another client.** The name a client gives at the
+handshake becomes the originator the app server sends to OpenAI, and it lands in OpenAI's compliance
+logs. Canopy does not send `codex_cli_rs` or any first-party client's name. As of 2026-07-30
+OpenAI's own app-server documentation asks integrations intended for enterprise use to contact them
+to be added to a known-clients list; Canopy is not on one, and being added is a conversation
+somebody has to have rather than something the code can do.
+
+**This route may draw on a smaller allowance than the ChatGPT app does.** There is an open,
+unanswered report of third-party OAuth sign-ins hitting 429 quota errors on active Plus plans, which
+if it is real means this route is quota-segregated from what the same person sees in the ChatGPT
+client. This is said before you sign in, on both surfaces, rather than only here. `canopy keys test`
+reads the plan's actual limits from OpenAI, so it will say when one has been hit.
+
+**On a delegated turn, Codex runs the turn and Canopy's permission gate does not apply.** Everything
+the Claude Code section says about that is true here, for the same reasons and with one addition:
+
+- **Canopy's own tools are not available.** The protocol has no field for a client to hand an agent
+  its own tools. The only tools in the room are Codex's own, plus whatever MCP servers the
+  `~/.codex/config.toml` on your machine tells it to start, which Canopy neither chose nor can see.
+- **Canopy declines every approval Codex asks for**, and reports each refusal in the conversation.
+  Declining does not make the turn gated; it only covers the calls Codex chose to ask about.
+- **The thread is opened read-only** and asks to be asked, which is the honest pairing for a client
+  that refuses everything. It makes a delegated Codex a visibly weaker agent than a metered one, and
+  saying so is the point. If you want a turn where Canopy gates the tools, use a credential where
+  Canopy runs them.
+- **A4's audit trail and A6's verification see nothing**, because Canopy ran nothing.
+
+**No cost figure is shown.** The token counts are real and are reported. The dollar value is not,
+for the reason the other two delegated routes give: a ChatGPT plan is billed monthly and this usage
+is metered against its limits, so a list price would be a correct number about an invoice nobody
+receives, and zero would say the turn was free. Unpriced is the honest answer.
+
+**The `codex` binary has to be on the machine, and Canopy does not ship one.** Install it with `npm
+install -g @openai/codex` or `brew install codex`; `CANOPY_CODEX` overrides where it is found and is
+checked rather than trusted. Bundling was considered and rejected: it would mean a per-platform Rust
+binary inside a release that is one small static binary, an Apache-2.0 notice obligation, and a
+vendor version pinned on release day while the protocol it speaks keeps moving. The cost of
+discovering instead is that the version is not Canopy's to control, so the handshake checks what it
+found.
+
+**There is no fallback that runs turns without it.** If `~/.codex/auth.json` exists and the binary
+does not, Canopy says so and names the account the login belongs to, because at that point the
+sign-in is not what is missing. It does not lift the tokens out of that file and call
+`chatgpt.com/backend-api/codex` itself, and that is a decision rather than an omission. D-51 permits
+this route through the app server and permits the Claude route explicitly because Canopy holds none
+of your subscription credential; reading those tokens out and using them is the thing it does not
+permit. It would also break what it was trying to rescue, because OpenAI rotate refresh tokens and
+whichever process redeems one last wins: a Canopy that renewed a login it does not own would sign
+you out of your own Codex to keep a copy working.
+
+**Signing out does not sign your Codex out.** `canopy keys signout` removes Canopy's record. The
+ChatGPT login stays in `~/.codex`, where your own `codex` uses it too. Run `codex logout` if you
+want it gone from the machine.
+
+**Canopy asks the app server for a thread that is not saved.** Threads are opened ephemeral, so a
+turn does not leave a second copy of your conversation in `~/.codex/sessions`. Canopy's own
+transcript is the one that persists, and it is handed over in full on every turn, so unlike the
+Copilot route, editing history, re-rolling and compaction all work normally.
+
+**One process per turn, and the model is Codex's default unless you name one.** A delegated
+credential stores no model, so the picker says the vendor chooses. Naming one is honoured, and when
+Codex resolves something else it is said on screen rather than substituted silently.
+
 ## Tools and permissions
 
 - Web search is **cut from 0.1** (A4-07, D-40). `fetch_url` works and ships, so an agent can read a

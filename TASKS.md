@@ -6533,7 +6533,7 @@ not build until its dependency is added.
 
 ### S-05 OpenAI signs in through the Codex app server
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
 `scope: internal/provider/codex/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
 
 Deliverable: OpenAI is the route with no third-party programme, and therefore the one where the
@@ -6581,7 +6581,307 @@ degraded path rather than pretending to be the design. With neither present, the
 of the two would fix it. The 429 caveat is shown before the credential is stored, not only in
 LIMITATIONS. Refresh follows S-02.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `internal/provider/codex`, a `core.ProviderClient` that starts `codex app-server` as
+a child process and has a JSON-RPC conversation with it over stdio. The route is registered in
+`cmd/canopy/signin_codex.go` and joins S-03's `routeSet`. `internal/session/resolver.go` and
+`cmd/canopy/ask.go` each gained one branch inside the delegated fork they already had. Nothing under
+`internal/core` is touched, and no change to it was needed or nearly needed.
+
+The primary route was taken, and it turned out to be more primary than the block assumed. The app
+server does not only host the sign-in, it keeps the grant afterwards, in `$CODEX_HOME`, and renews
+it without being asked. So this is a `KindDelegated` credential, the same kind as the Claude
+route's, and Canopy holds no ChatGPT token at any point. That is the single fact most of the notes
+below follow from, and it is a better outcome than the block expected rather than a worse one: the
+reason D-51 permits the Claude route at all is that Canopy holds none of the user's subscription
+credential, and this route now has that same property while still being a real sign-in Canopy
+initiates.
+
+The wire format was established rather than remembered, and the binary turned out to publish it.
+`codex app-server generate-json-schema --out DIR` writes the whole protocol out of the installed
+binary: 84 client requests, 10 server requests, 71 server notifications, one client notification. So
+every method name, field name and enum value in wire.go is that binary's own spelling at 0.141.0
+rather than a reading of a blog post. It was then confirmed by driving a real app server against a
+real ChatGPT account and logging every frame in both directions, which is where the three things a
+schema would not have given came from.
+
+The first is the one this route stands on. `initialize` answers with a `userAgent` composed from the
+`clientInfo.name` the client just sent: sending `canopy` gets back `canopy/0.141.0 (Mac OS 26.0.1;
+arm64) ghostty/1.2.3 (canopy; 0.1.0)`, and sending `codex_cli_rs` gets back a string beginning
+`codex_cli_rs`. That was checked by sending three different names and reading the three answers. It
+means the originator claim is checkable from inside rather than merely intended, so `checkIdentity`
+reads Canopy's own name back off the handshake and refuses to run a turn under one belonging to
+somebody else. It has never fired, which is the point: a promise is worth what it can be checked
+for. The loopback flow confirms the same thing from the other end, because the `authUrl` the app
+server returns carries `&originator=canopy` in its query string.
+
+The second is that cancelling a login still produces an `account/login/completed`, with `success`
+false and `error` "Login was not completed". That was found by starting a real device-code login,
+reading the code, and cancelling it. It matters because it is the difference between a wait that is
+always released and one that can hang: there is exactly one event that ends a sign-in and no path
+that ends it silently.
+
+The third is that a turn's tokens arrive on `thread/tokenUsage/updated` rather than on the
+`turn/start` result or on `turn/completed`, and that the notification carries `last` and `total`
+separately. Reporting `total` would have made every turn in a thread look like it cost everything
+before it as well.
+
+Q-23 is answered as S-04 answered it, and the protocol settles more of it here than it did there.
+
+Canopy's tools are not offered, and there is no field to offer them through: `thread/start` and
+`turn/start` have nowhere to put a client's tool definitions, and the only tools in the room are the
+app server's own plus whatever MCP servers the user's own `config.toml` starts. Held by
+`TestNoCanopyToolIsOfferedToADelegatedTurn`, which puts two definitions on the request and searches
+every frame that crossed.
+
+Canopy declines every approval. `item/commandExecution/requestApproval` and
+`item/fileChange/requestApproval` are both answered `{"decision":"decline"}`, and each refusal is
+reported to the reader. Declining rather than cancelling is a real choice between the protocol's two
+refusals: cancel stops the whole turn, and Canopy is refusing to vouch for one call rather than
+objecting to the work. The thread is opened `read-only` with `on-request`, which is the honest
+pairing for a client that refuses everything. `never` reads as safer and is worse: it tells the app
+server to stop asking and get on with whatever the sandbox permits, so the calls Canopy would have
+declined simply happen and nobody is told.
+
+And the load-bearing one, which S-04 asked to be checked and satisfied rather than assumed. No item
+from the delegated agent becomes a `core.EventToolCall`. `internal/agent/loop.go` collects those and
+invokes them, so the obvious mapping would have Canopy run a command the app server has already run
+inside its own sandbox, through a gate, against a tool definition it does not have. Every item type
+becomes a `core.EventNotice` except `agentMessage` and `reasoning`, which become text and thinking.
+The way I satisfied myself is a test rather than a reading: `TestNoItemFromTheDelegatedAgentIsEver
+HandedBackToBeRun` sends all eleven item types the protocol has plus two invented ones, and fails on
+any tool call event at all. The live test asserts the same thing against a real Codex. There is no
+branch in `reportItem` that can produce one, which is why the invented types are in the list.
+
+Three things belong to this task rather than being discovered inside it, and the block asks for
+each.
+
+**The binary is discovered, not bundled.** Bundling means a per-platform Rust binary inside a
+release that is one small static Go binary, an Apache-2.0 notice obligation, and a version pinned on
+release day while the protocol it speaks keeps moving. Discovering costs the opposite thing, that
+the version is not Canopy's to control, and the answer to that is that the handshake checks what it
+found rather than assuming a shape. `CANOPY_CODEX` overrides where it is looked for and is checked
+rather than trusted, because a stale override is a path that used to exist. Recorded in
+LIMITATIONS.md as well as here, because it is the user who lives with it.
+
+**Absence is reported in three different sentences, because there are three different situations.**
+No binary and no login: install the Codex CLI, with both install commands named, and no exec error
+anywhere near the surface. A login in `$CODEX_HOME` and no binary: the account and plan that login
+belongs to, the directory it is in, and the sentence that the sign-in is not what is missing, the
+program that uses it is. A binary that was found and will not run: reinstall, which is a different
+sentence from "install this". Held by `TestAMachineWithNeitherCodexNorALoginIsToldWhatToInstall` and
+`TestAMachineWithALoginAndNoCodexIsToldTheProgramIsMissingRatherThanTheSignIn`.
+
+**The 429 caveat is in `keysui.Route.Caveat`**, which both surfaces draw before anything is stored:
+`runKeysSignIn` prints it before the prompt and before the wait, and `view.go` renders it on the
+sign-in step. Held by `TestTheQuotaCaveatIsShownBeforeAnythingIsStored`, which runs a sign-in that
+never completes and then asserts both that the caveat was printed and that no credential exists.
+
+What `canopy keys test` says now on this route, which is the clause S-07 built
+`reportsOnCredentials` for and the reason it stops saying "No vendor was contacted". It asks the app
+server, which asks OpenAI: the account's email, the plan the limits belong to, the primary window as
+"42% used of a 5 hour window, resets 2026-08-29 12:00", the secondary window where there is one,
+whether a limit has actually been hit and which sort, and any credits behind the plan. Two extra
+lines when they are true: that the credential was added for one account and Codex is now signed in
+as another, so turns run as the second; and that this is an API-key Codex rather than a ChatGPT
+plan, so turns are billed per token there. A vendor that cannot be reached says it could not be
+asked and repeats what it was that failed, rather than letting the stored account read as a checked
+one. Held by
+`TestKeysTestOnAChatGPTCredentialAsksOpenAIRatherThanReadingBackTheRecord` and
+`TestKeysTestRefusesToInventAnAnswerWhenOpenAICannotBeAsked`.
+
+Considered and rejected. `chatgptAuthTokens`, the mode where the host supplies its own access token:
+rejected, and the schema is blunter about it than the block is. Its own description reads
+"[UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE". It exists for hosts that already own the
+token lifecycle, and owning that lifecycle is precisely the liability this route was chosen to take
+off Canopy. Held by `TestCanopyNeverAsksToOwnTheTokenLifecycleItself`, which sweeps every frame of
+every mode for the string. Running Canopy's own PKCE flow with OpenAI's
+`app_EMoamEEZ73f0CkXaXp7hrann` client id: rejected without needing the argument, because it never
+came up: the app server uses that client id itself, which is visible in the `authUrl` it returns, so
+Canopy borrows nobody's OAuth client. Setting `capabilities.experimentalApi`: rejected, it opts into
+methods whose shape may change without notice, and this route already depends on a binary Canopy
+does not version.
+`capabilities.requestAttestation`: rejected harder, it opts into being asked to generate an upstream
+attestation header, which is not something Canopy has any business producing on somebody's behalf. A
+long-lived thread per conversation, the way S-03's route holds a Copilot session: rejected because
+`core.Request` carries the whole transcript every turn, so a thread that already held the history
+would receive every earlier message twice. One process and one ephemeral thread per turn instead,
+which also means Canopy's history editing, re-rolling and compaction keep working, unlike on the
+Copilot route. Comparing `codex --version` against a minimum: rejected for S-04's reason, a version
+number is something somebody has to keep correct and it breaks on the day the vendor renumbers; the
+handshake tests the thing that actually matters. Emitting a notice per `item/completed`: rejected,
+one per status change buries the reply, so only the start of an item is reported. Treating an
+unknown notification as a fault: rejected, this protocol grows by adding them. Treating an unknown
+*turn status* as normal, by contrast, is a failure, because presenting an answer nobody can vouch
+for as complete is worse than saying the protocol moved.
+
+**The counter-position, recorded because it is real and this should not read as one-sided.** Charm's
+Crush deliberately refused to add a ChatGPT subscription provider, twice closing working
+implementations, with their maintainers citing OpenAI's terms of service. Reasonable maintainers
+looked at the same facts and reached the opposite answer from the one D-51 reached, and anybody
+reading this later should know that rather than discover it. The reason this route is here anyway is
+narrower than "OpenAI seem fine with it": OpenAI publish `codex app-server` under Apache-2.0 and
+document it as the interface for exactly this case, their own app-server documentation asks new
+integrations to identify themselves through `clientInfo.name`, and the one behaviour their terms
+plausibly reach is impersonating another client, which is the thing this build refuses and holds a
+repository-wide test against. If that reading is wrong, the honest consequence is that the route
+should go, not that it should get quieter.
+
+Four corrections to the block, all verified rather than argued.
+
+The first matters most. **"Refresh follows S-02" cannot happen on this route as built, because there
+is nothing to refresh.** The clause presumes Canopy holds a token, and taking the primary route
+means it does not: the app server owns the grant and renews it. `keys.Refresher.Credential` refuses
+a delegated credential in `internal/keys`' own words before any source is consulted, and nothing is
+registered through `SourceFor`. That is the correct behaviour rather than a gap, and it is asserted
+rather than left implied by
+`TestNothingOnTheChatGPTRouteIsRenewedByCanopyBecauseCanopyHoldsNoToken`, which holds both halves:
+the refresher refuses, and no source claims the route. S-02's seam is genuinely used by S-03, and
+the reason it was written as a function rather than a map still holds.
+
+The second is the fallback, and it is where this build departs from the block rather than correcting
+it, so it is flagged for both supervisors rather than presented as settled. **The fallback reads and
+reports; it does not become a second way to make requests.** The block asks for one that
+"authenticates" against `https://auth.openai.com/oauth/token` and runs inference at
+`https://chatgpt.com/backend-api/codex`. That was not built, for three reasons. D-51 permits this
+route "through the Codex app server" and permits the Claude route on the stated ground that Canopy
+holds none of the user's subscription credential; lifting tokens out of `auth.json` and calling
+chatgpt.com with them is Canopy holding exactly that, and the appendix to DECISIONS.md says TASKS.md
+may expand a decision into executable criteria and may not contradict one. It would also break what
+it was rescuing: the refresh token in `auth.json` belongs to the user's own Codex and OpenAI rotate
+it, so whichever process redeems it last wins and the other is signed out, meaning a Canopy that
+renewed a login it does not own would sign somebody out of their own Codex to keep a copy working.
+And the premise is narrow, because `auth.json` is written by `codex login`, so a machine that has
+one and no binary is a machine whose binary was removed or is off PATH, and the sentence that fixes
+that is the one now printed. What was built reads `$CODEX_HOME/auth.json`, decodes the account and
+plan out of the identity token's claims under OpenAI's own namespace, and says whose login it is and
+what is missing. `TestTheDegradedPathReadsWhoIsSignedInAndHandsBackNoToken` holds that no token
+survives into any type this package hands out. If the supervisors want the inference path anyway, it
+is a change to D-51 first and a task second.
+
+The third is small and worth saying because it changes what a test can assert. **Canopy sets no HTTP
+headers on this route at all**, so "send a `version` header beside it" is not something this code
+can do. What Canopy controls is `clientInfo.name` and `clientInfo.version`, and the app server folds
+both into what it sends: the name becomes the originator verbatim and the version appears in the
+user agent's trailing parenthetical, both confirmed by reading the handshake back. A version is
+therefore sent, and the test asserts it is non-empty rather than asserting a header exists.
+Relatedly, I could not confirm that a standalone `version` header exists in current Codex at all;
+openai/codex issue 31967 is cited in the block and I did not verify it, so it is repeated here as
+reported rather than as established.
+
+The fourth is a citation. The block's material mentions an OpenAI OSS programme page at
+`developers.openai.com/community/codex-for-oss`; I could not confirm that page exists. What is
+confirmed, and is the stronger statement anyway, is the app-server documentation's own text asking
+integrations intended for enterprise use to contact OpenAI to be added to a known-clients list. That
+is what LIMITATIONS.md cites, with its date. The 429 report the block describes is likewise recorded
+as an open, unanswered report rather than as a fact, which is how the caveat words it.
+
+Verified end to end against a real installation before ticking, since a scripted peer proves only
+that Canopy is consistent with its own reading of the protocol: `codex-cli` 0.141.0 from Homebrew, a
+real ChatGPT account, `CANOPY_LIVE_CODEX=1`. `TestLiveADelegatedTurnReachesTheUsersOwnCodex`
+returned
+`pong` with `{InputTokens:14751 OutputTokens:5 CacheReadTokens:3456 CacheWriteTokens:0 CostUSD:0
+CostKnown:false}`, which is the cost clause happening rather than being asserted, and the opening
+notice arrived first. `TestLiveTheAppServerIdentifiesCanopyAsCanopy` read back
+`canopy/0.141.0 (Mac OS 26.0.1; arm64) ghostty/1.2.3 (canopy; 0.1.0-test)` from the real binary.
+`TestLiveThePlansLimitsComeBackFromOpenAI` returned a real window: 0% used of a 30 day window,
+resetting 2026-08-29. The device-code flow was driven against the real OpenAI auth server as well,
+producing `https://auth.openai.com/codex/device` and a code, and then cancelled;
+`~/.codex/auth.json` was backed up first and compared byte for byte afterwards, and was untouched.
+
+Acceptance, clause by clause: signing in driving `account/login/start` and completing, with `codex`
+present, is `TestSigningInDrivesTheAppServersOwnFlowAndEndsWithTheAccountItSignedIn` for the
+protocol and `TestSigningInThroughChatGPTStoresADelegatedCredentialWithNoTokenBehindIt` for what
+reaches the store, the second asserting against keys.json's bytes; the device-code path completing
+on a machine with no browser is `TestAMachineWithNoBrowserIsGivenACodeToTypeSomewhereElse`, with
+`TestASessionThatLooksRemoteIsGivenTheCodeRatherThanTheBrowser` for the choice between the two,
+which is made by looking at the session because the browser flow's callback is a localhost address
+and over ssh it never arrives; the handshake sending a `clientInfo.name` of `canopy` and a version,
+failing if either is missing or if the originator ever belongs to another client, is
+`TestTheHandshakeNamesCanopyAndAVersionAndNeverAnotherClient`, with
+`TestAnAppServerThatWouldCallCanopySomethingElseStopsTheTurn` holding the other direction and
+`TestNoOriginatorBelongingToAnotherClientAppearsAnywhereInThisRepository` holding it over every Go
+file in the tree, since a test scoped to this package would pass on the day somebody set the name
+elsewhere; a turn running and streaming is `TestADelegatedTurnsReplyArrivesOverTheAppServer` against
+a real JSON-RPC peer over real pipes, plus the live test; `account/rateLimits/read` returning the
+plan's limits and reaching a surface a user can see is
+`TestKeysTestOnAChatGPTCredentialAsksOpenAIRatherThanReadingBackTheRecord` and
+`TestLiveThePlansLimitsComeBackFromOpenAI`; `codex` absent with `auth.json` present saying out loud
+that it is the degraded path is
+`TestAMachineWithALoginAndNoCodexIsToldTheProgramIsMissingRatherThanTheSignIn`, with the departure
+from the block argued four paragraphs above; neither present naming which of the two would fix it is
+`TestAMachineWithNeitherCodexNorALoginIsToldWhatToInstall`; the 429 caveat being shown before the
+credential is stored is `TestTheQuotaCaveatIsShownBeforeAnythingIsStored`; and refresh following
+S-02 is `TestNothingOnTheChatGPTRouteIsRenewedByCanopyBecauseCanopyHoldsNoToken`, which holds the
+corrected form of the clause.
+
+The Q-23 clauses, which the block states as prose rather than as acceptance:
+`TestNoItemFromTheDelegatedAgentIsEverHandedBackToBeRun`,
+`TestCanopyDeclinesEveryApprovalTheDelegatedAgentAsksFor`,
+`TestARequestForACapabilityCanopyNeverOfferedIsRefusedRatherThanStubbed`,
+`TestNoCanopyToolIsOfferedToADelegatedTurn`,
+`TestATurnSaysWhoseSubscriptionItRunsOnBeforeItSaysAnythingElse` and
+`TestADelegatedThreadAsksToBeAskedAndIsRootedReadOnly`.
+
+The rest cover protocol behaviour the clauses imply rather than name.
+`TestADelegatedTurnReportsItsTokensAndNeverClaimsToKnowTheirCost`, which also holds that the last
+turn is reported rather than the thread total;
+`TestAReplyThatArrivesOnlyWholeIsNotLostAndOneThatArrivesTwiceIsNotDoubled`, which is the one that
+would fail if the item's whole text were read alongside its deltas;
+`TestReasoningArrivesAsThinkingRatherThanAsPartOfTheReply`;
+`TestEveryWayATurnCanEndArrivesAsADoneEventCanopyUnderstands` and
+`TestAStatusThisBuildHasNeverSeenIsAFailureRatherThanAGuess`;
+`TestAFailureTheAppServerWillRetryIsANoticeRatherThanTheEndOfTheTurn`, without which a turn the app
+server is retrying is reported dead while it is still running;
+`TestCancellingATurnAsksTheAgentToStopRatherThanKillingIt` and `TestATurnDoesNotOutliveItsContext`;
+`TestClosingATurnStopsTheProcessBehindIt`, since an unclosed app server holds the MCP servers the
+user's own config told it to start; `TestATurnThatNamesNoModelIsTheOrdinaryCaseRatherThanAMalformed
+One`, `TestAModelTheDelegatedAgentDoesNotOfferIsSaidRatherThanSubstituted` and
+`TestATurnThatDoesNotStartWithTheUserIsRefused`;
+`TestTheWholeConversationReachesTheDelegatedAgentWithItsVoicesLabelled`, which also holds that the
+system prompt goes in as the thread's developer instructions;
+`TestAnAppServerThatStopsMidTurnIsAFailureThatQuotesWhatItSaid` and
+`TestAnAppServerWithNobodySignedInSaysToSignInAgain`; `TestTheNameOfThisRouteIsNotOpenAI`, since
+usage is attributed by provider name and a delegated turn calling itself "openai" would be
+indistinguishable from a metered one; `TestAnAppServerThatReportsNoUserAgentIsNotAccusedOfLying`,
+because silence is not evidence; `TestASignInOpenAIRefusedSaysWhatOpenAISaid`,
+`TestASignInThatCompletesWithNoAccountBehindItIsRefused`,
+`TestCancellingASignInStopsThePollingAndSaysItWasStoppedRatherThanThatItFailed` and
+`TestReadingTheAccountDoesNotRenewAGrantCanopyDoesNotOwn`, that last one holding that a probe does
+not spend the refresh token the user's own Codex was going to use;
+`TestSigningOutTellsTheAppServerRatherThanOnlyForgetting`;
+`TestAnOverriddenBinaryIsCheckedRatherThanTrusted`,
+`TestCodexHomeIsWhereCodexSaysItIsRatherThanWhereCanopyGuesses` and
+`TestTheBinaryIsFoundOnTheMachineRatherThanShippedInside`;
+`TestALoginFileFromAnAPIKeyCodexIsNotDescribedAsASubscription` and
+`TestALoginWhoseIdentityTokenCannotBeReadIsStillALogin`;
+`TestCancellingAChatGPTSignInStopsThePollingAndStoresNothing` and
+`TestCancellingAChatGPTSignInThatAlreadyCompletedRemovesTheCredential`, which are S-07's Cancel
+contract held on the first route in this build where somebody genuinely has minutes to change their
+mind; `TestTheChatGPTRouteIsOfferedByTheBuildAndNamesWhatItNeeds` and
+`TestNamingAChatGPTRouteThatDoesNotExistSaysWhichOnesDo`; and, in internal/session,
+`TestACodexCredentialResolvesToTheAppServerRatherThanToAnOpenAIEndpoint`,
+`TestTheTwoDelegatedRoutesDoNotResolveToEachOthersAgents`, which is the regression that matters most
+now that there are two delegated routes and one of them is openai-compatible, and
+`TestAMachineWithoutCodexSaysSoWhenTheCredentialIsUsed`.
+
+Found on the way, in the fake app server rather than in production, and worth recording because it
+is the same hazard S-04 found from the other side: a script that talks while its own read loop is
+blocked deadlocks against a client doing the same. The fake now runs its script on its own goroutine
+and locks its writes. Production is safe for the reason S-04's is, that a refusal is small enough to
+fit an operating system pipe buffer, and the fake's unbuffered pipes are what made the shape
+visible.
+
+One seam, said out loud rather than left. The keys record stores route `codex` for both route ids,
+because how somebody signed in is not a property of the credential and where its turns go is. The
+two ids exist so that a person the browser guess got wrong can ask for the code instead, and
+`routeSet.Report` dispatches on the stored value, which both ids answer to.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree, because
+`internal/provider/copilot` and the two switches were in flight there for S-03 while this was
+written: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues.
 
 ### S-06 The wizard has a path that never asks for a secret
 
