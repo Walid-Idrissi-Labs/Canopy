@@ -64,18 +64,21 @@ without unlocking anything.
 anywhere the vendor accepts it until you rotate it. For a Copilot sign-in, an access token scoped to
 what Canopy asked for, plus a refresh token where the registration issues one, usable until the
 grant is revoked at GitHub. The recommended registration issues an access token that does not expire
-at all, so that one is good until somebody revokes it. For a delegated credential there is nothing in the store to take: what such an attacker
-would find instead is the vendor's own program already signed in on the same machine, which is a
-much better target and not one Canopy put there.
+at all, so that one is good until somebody revokes it. For a delegated credential there is nothing
+in the store to take: what such an attacker would find instead is the vendor's own program already
+signed in on the same machine, which is a much better target and not one Canopy put there.
 
 **What signing out removes, per route.** `canopy keys signout` always removes Canopy's record and
-whatever Canopy holds in the credential store. It ends the vendor's grant only where it can: on the
-Copilot route revoking needs a client secret that a downloadable program cannot keep, so the command
-says plainly it did the local half only; on the ChatGPT route the login belongs to your own `codex`
-and stays in `$CODEX_HOME`, where `codex logout` removes it; on the Claude route there was never
-anything to revoke. A command that did only the local half while calling it signing out is how
-somebody comes to believe they revoked access they still have, so each one says which of the two it
-managed.
+whatever Canopy holds in the credential store. It never ends the vendor's grant, on any of the three
+routes, and it says so rather than letting you assume otherwise. No route in this build implements
+revocation: on the Copilot route revoking needs a client secret a downloadable program cannot keep,
+and on the two delegated routes Canopy never held a credential to revoke. So a Copilot signout tells
+you the grant was not revoked and to remove Canopy's access where you granted it, and a delegated
+signout tells you that nothing was revoked anywhere and that the vendor still considers you signed
+in. A command that did only the local half while calling it signing out is how somebody comes to
+believe they revoked access they still have. If you want the ChatGPT login itself gone, that is
+`codex logout` against your own `$CODEX_HOME`; Canopy will not touch it, because OpenAI rotate
+refresh tokens and signing out a login Canopy does not own is a surprise nobody asked for.
 
 So the following are known and documented behaviour rather than vulnerabilities:
 
@@ -91,11 +94,13 @@ So the following are known and documented behaviour rather than vulnerabilities:
   run.
 - A secret was printed by a child process into its own stdout and ended up in the logs. Canopy can
   only redact what it formats itself (D-20).
-- On a delegated route, the Claude Code or Codex route, the vendor's agent read or wrote files, ran
-  a command, or reached the network without Canopy asking you anything. Canopy's permission gate is
-  not in that path and LIMITATIONS.md says so per route. That agent has whatever access to your
-  machine you gave it when you set it up, under its own configuration and its own permission rules,
-  and none of that is something Canopy sets, sees or can bound. A report about what somebody else's
+- On a delegated route, the Claude Code or Codex route, the vendor's agent read files, ran a
+  command, or reached the network without Canopy asking you anything, and on the Claude route wrote
+  files too. The ChatGPT route's thread is opened read-only, so that one cannot write;
+  LIMITATIONS.md gives the per-route detail. Canopy's permission gate is not in either path. That
+  agent has whatever access to your machine you gave it when you set it up, under its own
+  configuration and its own permission rules, and none of that is something Canopy sets, sees or
+  can bound. A report about what somebody else's
   agent did with the access you granted it belongs to that vendor. A report that Canopy claimed
   otherwise on screen is ours, and is in scope below.
 
