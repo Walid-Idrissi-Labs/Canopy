@@ -238,6 +238,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.agents.SetVisible(false)
 		return a, cmd
 
+	case chat.SwitchMsg:
+		// A surfaced permission summary is intentionally not an approval surface. Opening the
+		// conversation that owns it puts the full canonical request on screen before y or a can
+		// spend anything, preserving the same ownership boundary as a switch from the agents view.
+		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
+		a.screen = screenChat
+		a.agents.SetVisible(false)
+		return a, cmd
+
 	case chat.ActionMsg:
 		// A slash command that named something only the application can do. The chat says what was
 		// asked for and owns none of it, which is what keeps "which screen is showing" in one place.

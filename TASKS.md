@@ -4926,17 +4926,18 @@ touched.
 Deliverable: while you sit on one conversation, a permission prompt raised by any other agent in
 the project appears as a compact needs-you panel above the input box, named after the agent that
 asked, oldest first with a count when more are waiting. It never owns the keyboard by itself: one
-explicit key focuses it, and only then do the usual answer keys act, routed to the agent that
-asked. The conversation's own prompt keeps its current shape and takes precedence. The engine
-gains one additive accessor that lists pending prompts across sessions; the agents screen is
-unchanged.
+explicit key opens the conversation that owns it, and only that conversation's full canonical
+prompt receives the usual answer keys. The conversation's own prompt keeps its current shape and
+takes precedence. The engine gains one additive accessor that lists pending prompts across
+sessions; the agents screen is unchanged.
 
 Acceptance: with this conversation idle and a subagent awaiting, the panel appears with the
-subagent's name and scope; typing and sending a message here answers nothing; the focus key then
-`y` approves exactly that subagent's tool and the panel leaves; two waiting subagents show the
-oldest plus a count, and answering advances to the next; when this conversation's own prompt is
-up while a subagent also waits, the own prompt shows and the count says the other is still there;
-answering from the agents screen still works as today.
+subagent's name and a compact subject; typing and sending a message here answers nothing; the focus
+key opens exactly that subagent's conversation, where the canonical request is shown in full before
+`y` or `a` can approve; two waiting subagents show the oldest plus a count, and returning after an
+answer advances to the next; when this conversation's own prompt is up while a subagent also waits,
+the own prompt shows and the count says the other is still there; answering from the agents screen
+still works as today.
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
@@ -4958,62 +4959,28 @@ PendingAll beside Pending and the panel cannot disagree with the prompt drawn ab
 
 The focus key is ctrl+g. Free on both counts: the message box owns ctrl+a, ctrl+e, ctrl+u, ctrl+w
 and ctrl+j, and the screen already spends ctrl+c, ctrl+d, ctrl+k, ctrl+n and ctrl+r. It is in
-help.go under its own heading with the three answer keys.
+help.go under its own heading.
 
-Three judgements worth recording, two of them since amended by review and written here as they now
-stand. A visiting question does not inherit the own prompt's "any other key is no": your own question
-is one you are looking at, this one you walked to, and a stray key should not refuse on another
-agent's behalf either, so unfocused keys do nothing and focused ones answer only on y, a, n and esc.
+Review correction, 2026-07-30: the original focused panel kept its one-line, truncated request but
+then enabled `y` and `a`. That contradicted D-35: the approval could remember a full command the
+person was never shown. Focus now emits a switch to the exact session and agent named by the visible
+question. The application opens that conversation, whose existing prompt displays the canonical
+arguments in full and owns the answer keys. The compact visitor panel never accepts an approval
+answer, so it is safe for that panel to remain bounded.
 
-While this conversation has its own prompt the visitor panel shrinks to a single count line, because
-two heavy boxes over one message box would be two things competing to be answered first. The
-shrinking is unchanged; what it said was not honest. It read "ctrl+g after this one" whether or not
-the panel already held the keyboard, which is how the defect below stayed invisible, and it now
-states which of the two is true.
-
-Answering drops the question from the panel locally rather than re-reading the engine, since the
-entry does not leave the engine until the goroutine it unblocked wakes. That held for exactly one
-frame: the next engine event, and one arrives for every agent in the project, rebuilt the panel from
-PendingAll and put the answered question back with the cursor on it. The screen now remembers what it
-answered for as long as the engine goes on listing it, and forgets it the moment the engine does.
-
-Three defects found in review and fixed here, one of them breaking D-47 itself.
-
-Focus survived your own prompt taking precedence. It was cleared on esc and on an emptied queue and
-on nothing else, so a focus taken before your own question arrived sat there through the whole
-exchange: you answered yours with y, typed an ordinary sentence, and its leading y approved the
-subagent's command. Both halves are fixed. Focus is dropped in the same statement that sets awaiting,
-so no ordering of events can slip between the two, and the panel now says in words whenever it holds
-the keyboard, in both its full and its shrunk form, so a focus nobody can see is a state that cannot
-exist. Held by TestYourOwnPromptTakesTheFocusBackFromAVisitor, which is the reported scenario end to
-end down to the sentence beginning with y, and by TestTheFocusKeyDoesNothingWhileYourOwnQuestionIsUp.
-
-Focus rode the front of the queue rather than the question it was taken for, so a question answered
-on its own screen between ctrl+g and the keystroke handed that keystroke to whoever moved up. It
-pins a session id now, and a focus whose question has left drops rather than being inherited. That
-also changed how a queue is worked through: answering one no longer keeps the keyboard for the next,
-which costs a second ctrl+g per agent and is the right price, since focus is consent to answer one
-question and inheriting it is a decision nobody made. Held by
-TestAFocusedQuestionAnsweredElsewhereDoesNotPassTheKeyboardOn, with the queue behaviour in
-TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances.
-
-The answered-question flicker is fixed rather than explained: locally answered ids are filtered from
-the rebuilt list until PendingAll stops naming them, which is also when the note is dropped, so a
-later question from the same agent is not suppressed. Held by
-TestAnAnsweredQuestionDoesNotComeBackOnTheNextEvent.
-
-Acceptance, clause by clause: the panel appearing with the subagent's name and scope is
+Acceptance, clause by clause: the panel appearing with the subagent's name and compact subject is
 TestASubagentsQuestionAppearsWithItsNameAndScope; typing and sending answering nothing is
-TestTypingAndSendingAnswersNobodyElsesQuestion; the focus key then y approving exactly that
-subagent is TestFocusingThenYesApprovesTheAgentThatAsked, with the other answers in
-TestTheFocusedPanelAlwaysAndRefuseAndLeaveIt; two waiting showing the oldest plus a count and
-advancing on an answer is TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances; the own prompt
-keeping precedence with the count still visible is
-TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted. The engine half is
+TestTypingAndSendingAnswersNobodyElsesQuestion and TestTheCompactPanelNeverAcceptsAnApprovalAnswer;
+the focus key opening the exact asking conversation and showing its complete request before `y`
+acts is TestFocusingOpensTheFullRequestBeforeYesCanApprove and
+TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt; two waiters preserving order is
+TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances and
+TestAQueuedSwitchDoesNotRetargetTheNextWaitingAgent; the own prompt keeping precedence with the
+count still visible is TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted. The engine half is
 TestEveryPendingQuestionIsListedOldestFirstAndNamed and
 TestAQuestionFromAnUnnamedConversationIsStillNamed, and the frame arithmetic is
-TestTheQuestionPanelDoesNotOverflowTheFrame. The agents screen is untouched: no file under
-internal/tui/agents changed, and its existing awaiting-permission tests still hold.
+TestTheQuestionPanelDoesNotOverflowTheFrame. The agents screen's existing awaiting-permission tests
+still hold.
 
 ### U-17 The top left names who you are with
 `status: review | owner: claude | branch: tui/ambient-attention | depends: none`

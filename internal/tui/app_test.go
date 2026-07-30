@@ -17,6 +17,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -922,6 +923,32 @@ func TestTheCornerNamesTheConversationsAgent(t *testing.T) {
 	}
 	if strings.Contains(moved, "main") {
 		t.Errorf("the corner names two agents at once:\n%s", moved)
+	}
+}
+
+// A visitor panel can summarize a request, but it cannot approve one. Its only action asks the
+// application to open the owning conversation, where the chat's full canonical prompt is the
+// surface that receives y or a.
+func TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Turns: []core.Turn{{
+				ID: "t1", State: core.TurnComplete,
+				Request: core.Message{Role: core.RoleUser, Text: "hello"},
+			}}},
+			"session-7": {ID: "session-7"},
+		},
+	}
+	app := tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+
+	switched, _ := app.Update(chat.SwitchMsg{SessionID: "session-7", AgentName: "worker-2"})
+	view := plain(switched.(tui.App).View())
+	if !strings.Contains(view, "worker-2") || strings.Contains(view, "main") {
+		t.Errorf("the surfaced question did not open its owning conversation:\n%s", view)
 	}
 }
 
