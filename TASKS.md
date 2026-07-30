@@ -127,7 +127,7 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | The beta interface round, claimed 2026-07-29: U-20 to U-24 on one stack, U-01, U-03 and U-09 on a second, and the launch documents on a third. A8-05's visible hook-failure surface after it | `tui/what-the-agent-did` then `tui/rendered-markdown` then `fix/cell-width-and-chrome` then `perf/render-once-per-turn` then `tui/first-key-selects`, each stacked on the last; `tui/attention-and-navigation` and `docs/beta-launch` beside them | none |
+| Claude | Cutting `v0.1.0-beta.1`, claimed 2026-07-30. The interface round it releases is merged as PRs #42 to #49. A8-05's visible hook-failure surface after it | `release/beta-1` | none |
 | Codex | Independent verification of the unsigned lines, the eleven phase gates, the six product runs | `verify/independent-pass` | none |
 
 ### 2.0 Where this actually stands
@@ -211,10 +211,17 @@ which is not what the rule is for.
    get no MCP tools. That is authoritative rather than proposed now that `mcp/hardening` has merged.
 3. **The independent verification pass**, which is the whole of Codex's column above and the only
    route to a signed phase gate.
-4. **A9-02**, interface robustness: 80 columns, resize, rapid updates, no colour, large output, and
-   quit with several agents live.
-5. **PG-M**, which is the release blocker. No tag until M-01, M-03 and M-06 are signed, and only the
-   pair that did not build them can sign them.
+4. **A9-02**, interface robustness. Half closed by U-22: resize is covered in sequence, 80 columns
+   and the no-colour palette are covered per screen. Still open are quitting with several agents
+   live, and rapid updates not moving the selection under load.
+5. **PG-M**, which is the blocker for `v0.1.0` and, by the supervisor's decision on 2026-07-30, not
+   for a prerelease. `v0.1.0-beta.1` was tagged with M-01, M-03 and M-06 at `review` carrying
+   `claude [x]` and no `codex [x]`, and with every phase gate unsigned. That is recorded here rather
+   than resolved: the rule that only the pair which did not build a task may sign it is unchanged,
+   the count of nine `codex [x]` lines against ninety-odd is unchanged, and the README and
+   RELEASING both say plainly that the gates are unsigned. What was decided is that a prerelease
+   somebody can install and judge is worth more than a fourth alpha nobody sees, not that the
+   signing stopped mattering.
 6. **A clean-machine install**, and a first run with nobody coaching.
 
 Outside the unfinished tasks named above, the remaining 0.1 scope is either implemented and waiting

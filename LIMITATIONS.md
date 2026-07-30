@@ -319,9 +319,10 @@ be rediscovered by getting burned by it.
   original text for anything before it. The full, original text stays in storage and stays
   searchable regardless, but the model's working context from that point on is a shortened version
   of what was actually said (D-28). Today compaction only happens when you ask for it, with ctrl+r
-  or /compact; the meter warns near the limit, but nothing compacts by itself, and a conversation
-  that outgrows the window fails its next turn until you compact by hand. The automatic half of
-  D-28 is planned as E-02 and does not exist yet.
+  or /compact, and both ask before they spend: the first press offers and names what goes, on which
+  key and within what bound, and the second goes ahead. The meter warns near the limit, but nothing
+  compacts by itself, and a conversation that outgrows the window fails its next turn until you
+  compact by hand. The automatic half of D-28 is planned as E-02 and does not exist yet.
 
 ## Interface
 
@@ -344,12 +345,22 @@ be rediscovered by getting burned by it.
   signals are serialized; this is what closes the pid-reuse window rather than a flag written after
   `Wait` returns.
 
-- The engine half of the robustness sweep has been run and the interface half has not. Timeouts,
+- The engine half of the robustness sweep has been run and the interface half is half done. Timeouts,
   bounded output, event delivery under load, paths with spaces, externally removed worktrees and
-  orphaned processes on quit are covered by tests of their own now (A9-01). Resize
-  handling, readability at 80 columns with several agents, every state being distinguishable without
-  colour, and rapid updates not moving the selection are not: they are A9-02 and nothing has
-  verified them together.
+  orphaned processes on quit are covered by tests of their own (A9-01). Resize is now covered by a
+  test that applies seven sizes in sequence to one model, across the threshold where the header
+  changes shape, which is what every earlier size test failed to do: they rebuilt the application per
+  size, so nothing was ever carried across a change. Readability at 80 columns and every state being
+  distinguishable without colour are covered per screen. Selection is held by identity rather than by
+  row index, and there are tests for a row moving under it and for its subject disappearing entirely,
+  so the mechanism that keeps a selection honest is proven. What is still not covered is quitting
+  with several agents live, and a burst of updates arriving faster than the screen redraws. That is
+  the rest of A9-02.
+
+- A model that streams a very long answer is still rendered in full, and that is now the only
+  unbounded rendering path left: finished turns are rendered once and cached, so the cost of a long
+  conversation no longer grows with every frame, but the cost of one enormous reply is still paid
+  while it arrives.
 
 - Bounding output is done where a command produces it, which is where the memory cost is, and not
   where a reply does. A model that streams a very long answer grows the turn in the snapshot without
