@@ -110,8 +110,19 @@ them and attach them to the GitHub release with an `nfpms` block. That gets some
 
 ## Versions
 
-`v0.1.0-alpha.1`, then `-alpha.2` and so on while the shape is still moving. `v0.1.0` when Codex and
-the classmate have both signed the phase gates, since that is what the ledger means by done.
+`v0.1.0-alpha.1`, then `-alpha.2` and so on while the shape was still moving. `v0.1.0-beta.1` is the
+first release meant for somebody other than the two people building it, and `-beta.2` and so on
+follow it while that is still true. `v0.1.0` when Codex and the classmate have both signed the phase
+gates, since that is what the ledger means by done.
+
+The line between alpha and beta here is not a feature count. An alpha was a build the two of us
+could try; a beta is a build somebody else can install, run without being coached, and read an
+honest account of before they trust it with a repository. That is what moved: the first ten minutes
+work, the interface says what the agent did rather than that it did something, and LIMITATIONS is
+accurate enough to be worth reading first.
+
+What has not moved is the signing. The phase gates are still unsigned, which is why this is a
+prerelease and why the README says so in the second paragraph rather than the last.
 
 Nothing here is API stable and the version says so. Going to `v1` is a promise about compatibility,
 and it should be made deliberately rather than reached by counting.

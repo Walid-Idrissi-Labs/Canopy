@@ -8,11 +8,16 @@
 A terminal coding agent built for running several agents at once, isolating them on their own git
 branches when they need it, and knowing which of them actually produced working code.
 
-> **Status: pre-alpha.** Everything on this page is built and tested, except where
+> **Status: beta.** Everything on this page is built and tested, except where
 > [LIMITATIONS.md](LIMITATIONS.md) says otherwise, and that document is worth reading before this
 > one. Most of the extensibility layer is not built; custom prompt commands are the first exception.
 > Development is tracked in
 > [TASKS.md](TASKS.md), and the decisions behind it in [DECISIONS.md](DECISIONS.md).
+>
+> Beta means the interface has been used, the engine has been tested, and the phase gates have not
+> been signed by the second pair who are meant to sign them. Nothing here is API stable, the version
+> says so, and the honest summary is that this is worth your time and not yet worth your trust with
+> anything you cannot review afterwards.
 
 ## Why this and not Claude Code or aider
 
