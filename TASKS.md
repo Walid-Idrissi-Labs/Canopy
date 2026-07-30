@@ -6156,6 +6156,32 @@ enough exchange filled one. Every request in the file now waits for its response
 is sent, which is a rule about the transport rather than about politeness, and it is also the only way
 to know whether a setting took.
 
+Found by the live test and by nothing else, which is the argument for having one. The route does not
+call `core.Request.Validate`, and that is the single place it parts company with the contract every
+other provider follows. Validate requires a model. On this route Canopy does not choose the model: it
+is Claude Code's own setting, asked for only when the bridge offers that exact value. A delegated
+credential therefore stores no model and `defaultModelFor` now returns nothing for one, the same
+answer `canopy keys list` already gave in that column, so a real turn arrives with `Model` empty and
+was refused before the process started. Every scripted test had been naming a model, so every scripted
+test passed. `validate` in client.go holds what this route actually needs, with the reason written
+above it, and `TestATurnThatNamesNoModelIsTheOrdinaryCaseRatherThanAMalformedOne` and
+`TestATurnThatDoesNotStartWithTheUserIsRefused` hold both sides of the line.
+
+Verified end to end against a real installation before ticking, since a scripted peer proves only
+that Canopy is consistent with its own reading of the schema:
+`@agentclientprotocol/claude-agent-acp` 0.64.0 installed into a scratch directory and pointed at with
+`CANOPY_CLAUDE_ACP`, a real Max account, `TestLiveADelegatedTurnReachesTheUsersOwnClaudeCode` green.
+It reported `{InputTokens:2 OutputTokens:4 CacheReadTokens:15273 CacheWriteTokens:5767 CostUSD:0
+CostKnown:false}`, which is the cost clause happening rather than being asserted, and the opening
+notice arrived first.
+
+S-03 landed in the same worktree while this was being written and composed the two registries into
+`routeSet` rather than replacing either, which is what the note in credentials.go asked whoever landed
+second to do. It also added `keys.SignIn.Route`, so `canopy keys test` asks the vendor a credential
+actually belongs to. This route records `claude-code` there, held by
+`TestADelegatedClaudeCredentialRecordsThatItCameFromTheClaudeCodeRoute`. `pricing.ModelID.Delegated`
+turned out to be needed by both routes for the same reason and is used by both.
+
 Acceptance, clause by clause: adding the credential on a machine with Claude Code installed and
 signed in finding it and reporting the account is
 `TestAddingTheClaudeCredentialFindsClaudeCodeAndReportsTheAccountItIsSignedInAs`, which drives
@@ -6228,6 +6254,8 @@ to a Console account and whose delegated turns really are billed per token;
 the first real route; `TestSigningOutOfADelegatedClaudeCredentialRevokesNothingAndSaysSo`;
 `TestADelegatedCredentialListsAsDelegatedAndLetsTheVendorChooseTheModel`;
 `TestTheClaudeRouteSaysWhatItNeedsAndWhatItGivesUp`;
+`TestAConversationOnADelegatedCredentialStartsWithNoModelOfCanopysChoosing`, which also holds that an
+ordinary Anthropic key still gets this build's default;
 `TestADelegatedCredentialResolvesToTheDelegatedRouteRatherThanToTheAnthropicApi` and
 `TestAPastedCredentialStillResolvesTheWayItAlwaysDid`, which is the regression that matters most, that
 an ordinary Anthropic key is untouched by any of this; and
