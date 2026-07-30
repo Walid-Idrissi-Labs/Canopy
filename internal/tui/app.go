@@ -105,6 +105,11 @@ type App struct {
 	// would throw away where somebody actually was.
 	cameFrom screen
 
+	// waiting is who needed a person the last time the engine said anything, held so the bell can
+	// ring on the transition into needing somebody rather than once per frame for as long as they
+	// go on waiting. See bell.go.
+	waiting []string
+
 	chat      chat.Model
 	agents    agentsui.Model
 	dashboard Model
@@ -228,6 +233,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentsui.SwitchMsg:
 		// The agents view asks and the application decides, which is what keeps "which screen is
 		// showing" in one place.
+		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
+		a.screen = screenChat
+		a.agents.SetVisible(false)
+		return a, cmd
+
+	case chat.SwitchMsg:
+		// A surfaced permission summary is intentionally not an approval surface. Opening the
+		// conversation that owns it puts the full canonical request on screen before y or a can
+		// spend anything, preserving the same ownership boundary as a switch from the agents view.
 		cmd := a.chat.SetSession(m.SessionID, m.AgentName)
 		a.screen = screenChat
 		a.agents.SetVisible(false)
@@ -429,7 +443,85 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmds = append(cmds, agentsCmd)
 
 	a.keys, _ = a.keys.Update(msg)
+
+	// Who needs a person is worked out here rather than on the key path, because a keystroke of
+	// yours cannot make another agent ask a question. Everything that starts one arrives as an
+	// engine event, and this is the branch every engine event passes through.
+	a.noticeAttention()
+
 	return a, tea.Batch(cmds...)
+}
+
+// attention is every conversation waiting on a person anywhere in the project, named once each.
+//
+// Two sources, because there are two ways to need somebody and neither contains the other. A
+// pending question can belong to any conversation, including one that is nobody's agent, and it is
+// gone the moment it is answered. A failed agent has no question outstanding and has still stopped
+// and cannot start again on its own, which is what the agent list has always counted. Asking only
+// the first would have walked a person past a failed agent on every screen but one; asking only the
+// second would miss the conversation they started themselves.
+//
+// Named rather than counted so the bell can tell a second agent arriving from the first one still
+// waiting. The name is the session, or the agent where there is no session to name, since two
+// unstarted agents sharing an empty id would collapse into one.
+func (a App) attention() []string {
+	seen := map[string]bool{}
+	var who []string
+	note := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		who = append(who, id)
+	}
+
+	for _, waiting := range a.engine.PendingAll() {
+		note(waiting.SessionID)
+	}
+	for _, status := range a.engine.AgentStatuses() {
+		if !status.State.NeedsAttention() {
+			continue
+		}
+		if status.Agent.SessionID != "" {
+			note(status.Agent.SessionID)
+			continue
+		}
+		note(status.Agent.Name)
+	}
+	return who
+}
+
+// noticeAttention records who is waiting and rings for anybody who was not waiting before.
+//
+// Once per agent that starts needing somebody, and never once per frame. A bell that repeated while
+// a question sat there would not be an alert, it would be a noise somebody silences at the terminal,
+// taking every later one with it. A second agent joining the queue is a second transition and rings
+// again, because the first bell was about the first agent and was answered or ignored on its own
+// terms.
+func (a *App) noticeAttention() {
+	waiting := a.attention()
+
+	fresh := false
+	for _, id := range waiting {
+		if !named(a.waiting, id) {
+			fresh = true
+			break
+		}
+	}
+	a.waiting = waiting
+
+	if fresh {
+		ring()
+	}
+}
+
+func named(who []string, id string) bool {
+	for _, one := range who {
+		if one == id {
+			return true
+		}
+	}
+	return false
 }
 
 // routeKey handles screen switching, and reports whether it consumed the key.
@@ -468,9 +560,9 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 			// here would reopen tomorrow in the one somebody had just moved away from.
 			return a.quit()
 		case "ctrl+n":
-			if a.chat.Awaiting() {
-				return false, a, nil
-			}
+			// This refused while a question was open, along with the two keys below, and no longer
+			// does. The argument is with them.
+			//
 			// Asked for while a reply is arriving, the first press explains and the second goes
 			// ahead. A confirmation rather than a refusal, because leaving is allowed: the old
 			// conversation keeps its turn and finishes it whether or not anybody is watching.
@@ -484,11 +576,17 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 			return true, next, cmd
 
 		case "ctrl+k", "ctrl+d":
-			// Navigation is disabled while a question is open, for the same reason: leaving the
-			// screen with a tool call waiting would hide the thing that is blocking.
-			if a.chat.Awaiting() {
-				return false, a, nil
-			}
+			// These two, and ctrl+n above, used to refuse while a question was open, on the argument
+			// that leaving the screen with a tool call waiting would hide the thing that is
+			// blocking. D-43 reverses that argument and this code is the reason it was written down:
+			// the screen the lock kept you from is the agent list, which is the one place that says
+			// who else has stopped and cannot start again without you. Keeping one blocked agent in
+			// view by hiding every other one is the worst trade in the program, and it was made on
+			// the screen the product's premise depends on.
+			//
+			// Leaving is not answering. The question is still pending when you come back, the header
+			// counts it from wherever you went, and nothing about the reflex-safety rule changes:
+			// every key that reaches the prompt still means no.
 			if msg.String() == "ctrl+k" {
 				a.cameFrom = screenChat
 				a.leaveChat(screenKeys)
@@ -751,13 +849,20 @@ func (a App) View() string {
 		return TooSmall(a.dim)
 	}
 
+	// Asked of the engine on the way to drawing rather than read from what the last event left
+	// behind, so the count is right on the frame after a question is answered from this screen as
+	// well as on the frame after one is raised somewhere else. Every screen is handed it, because a
+	// screen that did not show it would be a place somebody could stand and not know.
+	needing := len(a.attention())
+
 	switch a.screen {
 	case screenHelp:
 		footer := Keys(a.dim.Width, "any other key", "back")
 		if HelpHeight(a.dim.Width) > a.dim.BodyHeight() {
 			footer = Keys(a.dim.Width, "j/k", "scroll", "any other key", "back")
 		}
-		return Frame(a.dim, Status{Screen: "help"}, HelpFrom(a.dim, a.helpScroll), footer)
+		return Frame(a.dim, Status{Screen: "help", Attention: needing},
+			HelpFrom(a.dim, a.helpScroll), footer)
 
 	case screenAgents:
 		// Credentials and help stay ahead of the movement keys, because they are the two hints
@@ -776,12 +881,12 @@ func (a App) View() string {
 			// wrong one.
 			footer = Keys(a.dim.Width, "enter", "continue", "esc", "cancel")
 		}
-		return Frame(a.dim, Status{Screen: "agents", Parts: []string{a.agents.Context()}},
-			a.agents.Body(), footer)
+		return Frame(a.dim, Status{Screen: "agents", Attention: needing,
+			Parts: []string{a.agents.Context()}}, a.agents.Body(), footer)
 
 	case screenReview:
-		return Frame(a.dim, Status{Screen: "review", Parts: []string{a.review.Context()}},
-			a.review.Body(), a.review.Footer())
+		return Frame(a.dim, Status{Screen: "review", Attention: needing,
+			Parts: []string{a.review.Context()}}, a.review.Body(), a.review.Footer())
 
 	case screenChat:
 		// The keys mean something different while a question is up, and again depending on whether
@@ -824,9 +929,10 @@ func (a App) View() string {
 			// Whose conversation this is, in the corner where the brand used to be. Empty on a
 			// conversation no agent owns, a fresh one started with ctrl+n among them, and the brand
 			// comes back there rather than the corner naming something that does not exist.
-			Agent: a.chat.AgentName(),
-			Parts: a.chat.ContextParts(),
-			Mode:  a.chat.Mode(),
+			Agent:     a.chat.AgentName(),
+			Attention: needing,
+			Parts:     a.chat.ContextParts(),
+			Mode:      a.chat.Mode(),
 			// Only once the opening screen has gone, which is drawing the name itself.
 			Wordmark: !a.chat.Blank(),
 		}, a.chat.Body(), footer)
@@ -835,11 +941,13 @@ func (a App) View() string {
 		if a.picker.typing {
 			footer = Keys(a.dim.Width, "enter", "use it here", "esc", "back to the list")
 		}
-		return Frame(a.dim, Status{Screen: "model"}, a.picker.Body(), footer)
+		return Frame(a.dim, Status{Screen: "model", Attention: needing}, a.picker.Body(), footer)
 	case screenKeys:
-		return Frame(a.dim, Status{Screen: "credentials"}, a.keys.Body(), a.keys.Footer())
+		return Frame(a.dim, Status{Screen: "credentials", Attention: needing},
+			a.keys.Body(), a.keys.Footer())
 	default:
-		return Frame(a.dim, Status{Screen: "worktrees", Parts: []string{a.dashboard.Context()}},
+		return Frame(a.dim, Status{Screen: "worktrees", Attention: needing,
+			Parts: []string{a.dashboard.Context()}},
 			a.dashboard.Body(),
 			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc/q", "agents",
 				"?", "help"))
@@ -878,6 +986,10 @@ func (a App) ChatInput() string { return a.chat.InputValue() }
 
 // ChatSubscribeCmd is the same, for the chat screen's own event stream.
 func (a App) ChatSubscribeCmd() tea.Cmd { return a.chat.SubscribeCmd() }
+
+// ChatAwaiting reports whether the conversation has a question waiting on a person. For tests,
+// which assert that walking away from one leaves it waiting rather than answering it.
+func (a App) ChatAwaiting() bool { return a.chat.Awaiting() }
 
 // ChatSession is the conversation the chat screen is on. For the caller, which prints the code to
 // come back to it, and for tests.

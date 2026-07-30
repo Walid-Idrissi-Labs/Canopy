@@ -1051,6 +1051,13 @@ Four rules keep the list honest:
    the plural lives in the keys store beside it. The frozen contract does not grow a field for a
    feature that a layer above it can carry.
 
+“What can this provider run” means what Canopy can invoke through the provider transport it ships,
+not every model name the provider publishes. In particular, the current OpenAI-compatible client
+uses Chat Completions. A model documented as requiring Responses is not offered by that catalog
+until Canopy has a Responses transport for it. The free-text rule still accepts unlisted model ids
+so a dated list cannot gate a newly compatible model, but accepting an id is not a claim that the
+current transport implements an API the model requires.
+
 ## D-47 A question reaches you where you are, and only your hand answers it. Decided 2026-07-29.
 
 Extends D-43. A permission prompt raised by any agent in the project may surface on whatever
@@ -1083,6 +1090,13 @@ the reason is why somebody is reading. The cap is always stated in the line that
 `ctrl+o` lifts all of them at once. Nothing is ever cut silently, which is the same rule the
 compaction marker follows and for the same reason.
 
+Output is displayed as terminal-safe text, never replayed as terminal instructions. Newline and
+tab keep their layout meaning; ESC, carriage return, backspace, BEL, DEL, and the rest of the C0/C1
+control ranges are rendered as visible escapes before Canopy adds its own styling. The stored tool
+result remains unchanged. This applies equally to output previews and file content drawn as a diff:
+an agent reading or writing a hostile file must not let that file clear the screen, rewrite earlier
+lines, change the title, or place text on the clipboard.
+
 Two limits are part of the decision, not implementation detail. A diff is drawn only from arguments
 this code understands, `edit_file` and `write_file`, because a diff inferred from an unknown tool's
 arguments would be a confident and specific claim about somebody's repository that nothing verified.
@@ -1094,6 +1108,12 @@ not.
 Supersedes the renderer's own rule, recorded in the comment on `summariseResult` and in the two
 tests that asserted it. Extends D-42's principle that every saving is visible: what is elided from
 the screen is named on the screen.
+
+The focus step opens the conversation that owns the prompt; it does not route approval keys from
+the compact visitor panel. That panel may truncate a command to protect the current conversation's
+frame, so allowing `y` or `a` there would contradict D-35's rule that the canonical arguments shown
+are the arguments approved. On the asking conversation, the ordinary prompt shows the full request
+and only then owns the answer keys.
 
 ## D-49 Structure keeps a plain-text mark, emphasis does not. Decided 2026-07-29.
 
@@ -1131,6 +1151,11 @@ prose with its hashes showing. Underscore emphasis, strikethrough, task list box
 and links were not recognised at all. Underscores are only a marker at a word boundary, because
 snake_case identifiers are commoner in a coding agent's output than underscore emphasis and
 italicising the middle of one is the worse error.
+
+A table never widens the frame to preserve a preferred column floor. Gaps shrink from two cells to
+one, column floors shrink from three cells to one, and when the terminal is too narrow to give each
+column even one cell and each boundary one separator, the table becomes labelled rows. That fallback
+is taller but lossless: every header and value remains, and no rendered line exceeds the width.
 
 Supersedes the marker rule in `internal/tui/chat/markdown.go` and the five tests that asserted it,
 which are rewritten to assert the new marks rather than deleted. The vocabulary changed; the property

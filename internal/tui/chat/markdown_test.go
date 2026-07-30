@@ -191,6 +191,49 @@ func TestTableColumnsLineUp(t *testing.T) {
 	}
 }
 
+// Six columns still fit at twenty cells, but not with the preferred three-cell floor plus gaps.
+// The old fitter silently enlarged its budget and produced lines wider than the terminal.
+func TestANarrowMultiColumnTableNeverExceedsItsWidth(t *testing.T) {
+	const width = 20
+	reply := "| alpha | beta | gamma | delta | epsilon | zeta |\n" +
+		"|---|---|---|---|---|---|\n" +
+		"| one | two | three | four | five | six |"
+	lines := chat.RenderMarkdown(reply, width)
+
+	for _, line := range lines {
+		if got := len([]rune(plain(line))); got > width {
+			t.Errorf("a six-column table rendered %d cells at width %d: %q", got, width, plain(line))
+		}
+	}
+	view := plain(strings.Join(lines, "\n"))
+	if !strings.Contains(view, "eps") || !strings.Contains(view, "fiv") {
+		t.Errorf("the fitted table did not retain content from its wide columns:\n%s", view)
+	}
+}
+
+// Some tables are mathematically impossible to draw horizontally: twelve columns need at least
+// twenty-three cells even if every cell and gap is one wide. Those become labelled records instead
+// of overflowing or discarding columns.
+func TestATableTooNarrowForItsColumnCountBecomesLabelledRows(t *testing.T) {
+	const width = 20
+	reply := "| a | b | c | d | e | f | g | h | i | j | k | l |\n" +
+		"|---|---|---|---|---|---|---|---|---|---|---|---|\n" +
+		"| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |"
+	lines := chat.RenderMarkdown(reply, width)
+	view := plain(strings.Join(lines, "\n"))
+
+	for _, line := range lines {
+		if got := len([]rune(plain(line))); got > width {
+			t.Errorf("a stacked table rendered %d cells at width %d: %q", got, width, plain(line))
+		}
+	}
+	for _, want := range []string{"• a: 1", "• f: 6", "• l: 12"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the stacked table lost %q:\n%s", want, view)
+		}
+	}
+}
+
 // The whole point of a hanging indent is that a reader's eye does not have to re-find the left edge
 // of a bullet's own text when it wraps. Under the bullet is where a naive wrap would put it.
 func TestBulletListHangingIndentLinesUpUnderTheTextNotTheBullet(t *testing.T) {

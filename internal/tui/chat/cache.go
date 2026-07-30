@@ -52,7 +52,11 @@ func cachedTurn(sessionID string, turn core.Turn, width int, spinner string, kin
 		return renderTurn(turn, width, spinner, kinds, detail)
 	}
 
-	key := turnKey(sessionID, turn, width, detail)
+	// Resolve the callback once. Besides making its answers part of the key, this guarantees the
+	// render uses the exact classifications that produced that key if a registry is being replaced
+	// concurrently by the screen above us.
+	kinds = freezeKinds(turn, kinds)
+	key := turnKey(sessionID, turn, width, kinds, detail)
 
 	renderedTurns.Lock()
 	if lines, ok := renderedTurns.lines[key]; ok {
@@ -80,6 +84,32 @@ func cachedTurn(sessionID string, turn core.Turn, width int, spinner string, kin
 	return lines
 }
 
+// freezeKinds snapshots the classifications this turn will render.
+func freezeKinds(turn core.Turn, kinds KindOf) KindOf {
+	if kinds == nil {
+		return nil
+	}
+	type resolved struct {
+		kind  core.ToolKind
+		known bool
+	}
+	byName := make(map[string]resolved, len(turn.ToolCalls))
+	for _, call := range turn.ToolCalls {
+		if _, seen := byName[call.Name]; seen {
+			continue
+		}
+		kind, known := kinds(call.Name)
+		byName[call.Name] = resolved{kind: kind, known: known}
+	}
+	return func(name string) (core.ToolKind, bool) {
+		answer, ok := byName[name]
+		if !ok {
+			return "", false
+		}
+		return answer.kind, answer.known
+	}
+}
+
 // terminal reports whether a turn has finished changing.
 //
 // Listed rather than inferred from "not running", so that a state added later is not silently
@@ -101,7 +131,10 @@ func terminal(state core.TurnState) bool {
 // first one's answer.
 //
 // The turn's identity is not enough on its own either. The same turn drawn at two widths is two
-// different sets of lines, and ctrl+o draws it a third way.
+// different sets of lines, ctrl+o draws it a third way, and a tool registry can classify the same
+// call differently on two surfaces. The resolved kind is part of the visible label and colour, so
+// it is content for this purpose even though it is supplied by a callback rather than stored on the
+// turn.
 //
 // The content is hashed rather than measured. The first version of this fingerprinted a turn by the
 // lengths of its parts, on the reasoning that a terminal turn is not supposed to change anyway and
@@ -109,7 +142,7 @@ func terminal(state core.TurnState) bool {
 // within one run of this package's own tests, where a session called s1 holding a turn called turn-1
 // is what nearly every test builds. Hashing costs a pass over bytes that are already in memory,
 // which is nothing beside the markdown pass it saves, and it turns "usually right" into right.
-func turnKey(sessionID string, turn core.Turn, width int, detail Detail) string {
+func turnKey(sessionID string, turn core.Turn, width int, kinds KindOf, detail Detail) string {
 	h := fnv.New64a()
 	write := func(s string) {
 		_, _ = h.Write([]byte(s))
@@ -128,6 +161,13 @@ func turnKey(sessionID string, turn core.Turn, width int, detail Detail) string 
 		write(call.Name)
 		_, _ = h.Write(call.Input)
 		_, _ = h.Write([]byte{0})
+		if kinds == nil {
+			write("kind:unknown")
+		} else if kind, known := kinds(call.Name); known {
+			write("kind:" + string(kind))
+		} else {
+			write("kind:unknown")
+		}
 	}
 	for _, result := range turn.ToolResults {
 		write(result.CallID)

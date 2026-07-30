@@ -118,7 +118,7 @@ func TestANumberRunTogetherWithTheWordBeforeItStillResolves(t *testing.T) {
 		{anthropic, "Sonnet5", "claude-sonnet-5"},
 		{anthropic, "claude-sonnet5", "claude-sonnet-5"},
 		{openAI, "gpt5.2", "gpt-5.2"},
-		{openAI, "gpt5.1 codex max", "gpt-5.1-codex-max"},
+		{openAI, "gpt5.1", "gpt-5.1"},
 	} {
 		hits := Match(probe.models, probe.spoken)
 		if len(hits) != 1 || hits[0].ID != probe.want {
