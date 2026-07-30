@@ -832,8 +832,12 @@ func TestOpeningTheModelPickerAndLeavingChangesNothing(t *testing.T) {
 	}
 }
 
-// The current model is marked, every credential gets a section with its provider on the header, and
-// a key with nothing to offer says so rather than disappearing.
+// The current model is marked and every credential gets a section with its provider on the header.
+//
+// The list is bounded now that it stands in the message box's place rather than taking the screen,
+// so the second credential is reached by walking to it. That is the trade the block is worth: eight
+// models under one key is an ordinary setup, and a list that grew to fit them would have pushed the
+// conversation it is being read against off the top.
 func TestThePickerMarksWhereYouAreAndKeepsEmptySections(t *testing.T) {
 	app := openPicker(t, twoKeys(), onOpus())
 	view := plain(app.View())
@@ -843,13 +847,86 @@ func TestThePickerMarksWhereYouAreAndKeepsEmptySections(t *testing.T) {
 		"* Claude Opus 5",
 		"claude-opus-5",
 		"Claude Sonnet 5",
-		"nim (openai-compatible)",
-		"api.moonshot.cn",
-		"none set",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the picker is missing %q:\n%s", want, view)
 		}
+	}
+	// And says which way the rest of it is, rather than ending without a word and reading as a list
+	// that stops there.
+	if !strings.Contains(view, "more") {
+		t.Errorf("the picker does not say that the list goes on:\n%s", view)
+	}
+
+	// A key with nothing to offer keeps its section and says so rather than disappearing, which is
+	// the state an unrecognised endpoint is in on the day it is added.
+	next := tea.Model(app)
+	for range 20 {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	view = plain(next.(tui.App).View())
+	for _, want := range []string{"nim (openai-compatible)", "api.moonshot.cn", "none set"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("walking to the second credential does not reach %q:\n%s", want, view)
+		}
+	}
+}
+
+// The picker takes the message box and the keys that belong to it, and nothing else.
+//
+// This is the whole of what it is: a block where the box goes. It was a screen, and opening it took
+// the conversation away, which is choosing a model for a conversation you cannot see. The header,
+// the transcript and the frame stay exactly where they were.
+func TestThePickerLeavesTheConversationOnScreen(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{session: core.Session{
+		ID: "session-1", KeyName: "claude", Model: "claude-opus-5",
+		Turns: []core.Turn{{
+			ID: "t1", State: core.TurnComplete,
+			Request: core.Message{Role: core.RoleUser, Text: "what does the resolver do"},
+			Text:    "it refuses and lists them",
+		}},
+	}}
+
+	app := launchWith(store, twoKeys(), engine)
+	before := plain(app.(tui.App).View())
+	if !strings.Contains(before, "enter send") {
+		t.Fatalf("the conversation did not open with a message box:\n%s", before)
+	}
+
+	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model")})
+	sent, cmd := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("/model produced no command, so nothing was asked of the application")
+	}
+	opened, _ := sent.(tui.App).Update(cmd())
+	view := plain(opened.(tui.App).View())
+
+	for _, want := range []string{
+		// The header, which says whose conversation this is and what it is running.
+		"canopy",
+		"claude-opus-5",
+		// The conversation itself, both halves of the exchange.
+		"what does the resolver do",
+		"it refuses and lists them",
+		// And the picker, where the box was.
+		"model, for this conversation",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("opening the picker lost %q:\n%s", want, view)
+		}
+	}
+
+	// What goes is the box's own keys, which do nothing while there is nothing to type into.
+	for _, gone := range []string{"enter send", "ctrl+n new", "shift+tab mode"} {
+		if strings.Contains(view, gone) {
+			t.Errorf("the picker left %q in the footer, which cannot be pressed:\n%s", gone, view)
+		}
+	}
+	if !strings.Contains(view, "esc back, unchanged") {
+		t.Errorf("the footer does not say how to leave the picker:\n%s", view)
 	}
 }
 
@@ -1071,16 +1148,17 @@ func TestThePickerTakesAModelItHasNeverHeardOf(t *testing.T) {
 	engine := onOpus()
 	app := openPicker(t, twoKeys(), engine)
 
-	if !strings.Contains(plain(app.View()), "something else, type it") {
-		t.Fatalf("the picker offers no way to type a model:\n%s", plain(app.View()))
-	}
-
 	// Down to the row that takes typing under the first credential. The cursor opens on the model
 	// the conversation is running, which is the second of that credential's eight, so its typing row
-	// is seven below.
+	// is seven below. It is the last row of the section rather than the first, which is why walking
+	// to it can cross the edge of a bounded list: the escape hatch belongs under the models it is an
+	// escape from, and the block says how much more of the list there is.
 	next := tea.Model(app)
 	for range 7 {
 		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	if !strings.Contains(plain(next.(tui.App).View()), "something else, type it") {
+		t.Fatalf("the picker offers no way to type a model:\n%s", plain(next.(tui.App).View()))
 	}
 	opened, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1150,15 +1228,13 @@ func TestAKeyWithNothingToOfferCanStillBeTypedInto(t *testing.T) {
 	engine := onOpus()
 	app := openPicker(t, twoKeys(), engine)
 
-	view := plain(app.View())
-	if !strings.Contains(view, "none set") {
-		t.Fatalf("the empty section lost its warning:\n%s", view)
-	}
-
 	// The last row in the list belongs to that section, since it is the only row it has.
 	next := tea.Model(app)
 	for range 20 {
 		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	if view := plain(next.(tui.App).View()); !strings.Contains(view, "none set") {
+		t.Fatalf("the empty section lost its warning:\n%s", view)
 	}
 	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
 	for _, r := range "moonshot-v1-32k" {
