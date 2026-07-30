@@ -11,17 +11,22 @@ import (
 // Markdown rendering for a model's reply.
 //
 // A reply is read once and shown many times: scrolled past, searched, resumed after a restart. It
-// has to survive all of that as plain, readable text, which is why every structural marker here is
-// kept literally in the output (the "#", the "- ", the "> ", the "**") rather than replaced by
-// colour alone. Strip every escape code from a rendered line and the structure is still there.
+// has to survive all of that as plain, readable text, so every structural block carries a mark that
+// is itself plain text and not a colour: a rule under the top two heading levels, a round bullet, a
+// gutter bar on a quote, a box on a task. Strip every escape code from a rendered line and the
+// structure is still there.
+//
+// The marks are no longer the source's own. Emphasis, which carries no structure, loses its markers
+// entirely and is drawn with weight, slant and line. D-49 has the reasoning and the boundary between
+// the two.
 //
 // This also settles the one real safety question in the file: styling is always applied to text
 // that has already been wrapped to width, never the other way round. wrapLine's hard break path
-// cuts a too-long word by rune position, and a rune position computed against a plain string is not
-// the same position once ANSI codes are spliced in around part of it. Style first, wrap second would
+// cuts a too-long word by cell position, and a position computed against a plain string is not the
+// same position once ANSI codes are spliced in around part of it. Style first, wrap second would
 // let a cut land inside an escape sequence and corrupt everything after it on that line. wrap.go's
-// own wrapWithMarkers works around exactly this for the input cursor, and the same reasoning applies
-// here: wrap the plain text, then colour the pieces of the line that resulted.
+// own wrapWithMarkers works around exactly this for the input cursor, and inline.go does it for
+// emphasis by wrapping styled runs rather than a styled string.
 
 // RenderMarkdown turns a model's markdown reply into display lines of at most width columns.
 func RenderMarkdown(s string, width int) []string {
@@ -118,9 +123,6 @@ func renderParagraph(text string, width int, base lipgloss.Style) []string {
 	return renderInlineText(text, width, base)
 }
 
-// headingLevel reports 1, 2 or 3 for a line starting with that many "#" characters followed by a
-// space, and 0 for anything else. Four or more is left as a paragraph: the vocabulary this project
-// asked for stops at h3, and a stray "####" reads more like emphasis than structure.
 // headingLevel reports 1 to 6 for a line starting with that many "#" characters followed by a space,
 // and 0 for anything else.
 //
@@ -163,10 +165,7 @@ func renderHeading(line string, width int) []string {
 
 	text := strings.TrimSpace(strings.TrimPrefix(line, strings.Repeat("#", level)))
 
-	var out []string
-	for _, wrapped := range renderInlineText(text, width, style) {
-		out = append(out, wrapped)
-	}
+	out := renderInlineText(text, width, style)
 	if level <= 2 && len(out) > 0 {
 		rule := lipgloss.Width(plainWidthOf(text))
 		if rule > width {
@@ -387,63 +386,6 @@ func renderListItem(item *listItem, width int) []string {
 	return out
 }
 
-// renderInline finds bold, italic and inline code spans in an already-wrapped plain-text line and
-// styles them, leaving every marker character in place in the output.
-//
-// Run after wrapping rather than before, for the reason at the top of this file: a style applied
-// before wrapping can end up split by a hard break landing inside its own escape codes. Run per
-// line instead, a span that straddles a wrap point simply fails to find its closing marker on that
-// line and falls back to literal text, the same graceful behaviour an unclosed marker gets anywhere
-// else in a reply.
-func renderInline(line string, base lipgloss.Style) string {
-	t := theme.Current()
-	runes := []rune(line)
-	var out strings.Builder
-	var plain strings.Builder
-
-	flush := func() {
-		if plain.Len() > 0 {
-			out.WriteString(base.Render(plain.String()))
-			plain.Reset()
-		}
-	}
-
-	i := 0
-	for i < len(runes) {
-		if runes[i] == '`' {
-			if end := indexRune(runes, i+1, '`'); end >= 0 {
-				flush()
-				out.WriteString(t.InlineCode.Render(string(runes[i : end+1])))
-				i = end + 1
-				continue
-			}
-		}
-
-		if i+1 < len(runes) && runes[i] == '*' && runes[i+1] == '*' && flanking(runes, i+2) {
-			if end := indexPair(runes, i+2, '*', '*'); end >= 0 && flanking(runes, end-1) {
-				flush()
-				out.WriteString(base.Bold(true).Render(string(runes[i : end+2])))
-				i = end + 2
-				continue
-			}
-		}
-
-		if runes[i] == '*' && flanking(runes, i+1) {
-			if end := indexSingleStar(runes, i+1); end >= 0 && flanking(runes, end-1) {
-				flush()
-				out.WriteString(base.Italic(true).Render(string(runes[i : end+1])))
-				i = end + 1
-				continue
-			}
-		}
-
-		plain.WriteRune(runes[i])
-		i++
-	}
-	flush()
-	return out.String()
-}
-
 // flanking reports whether the rune at pos exists and is not a space, which is what stops
 // "5 * 3 * 2" from being read as an italic span opening at the first star.
 func flanking(runes []rune, pos int) bool {
@@ -455,33 +397,6 @@ func indexRune(runes []rune, from int, r rune) int {
 		if runes[i] == r {
 			return i
 		}
-	}
-	return -1
-}
-
-// indexPair finds the next occurrence of two runes back to back, starting at from, and returns the
-// index of the first of the pair.
-func indexPair(runes []rune, from int, a, b rune) int {
-	for i := from; i+1 < len(runes); i++ {
-		if runes[i] == a && runes[i+1] == b {
-			return i
-		}
-	}
-	return -1
-}
-
-// indexSingleStar finds the next '*' that does not belong to a "**" pair, so an italic search does
-// not stop at the opening of a bold span nested inside it.
-func indexSingleStar(runes []rune, from int) int {
-	for i := from; i < len(runes); i++ {
-		if runes[i] != '*' {
-			continue
-		}
-		if i+1 < len(runes) && runes[i+1] == '*' {
-			i++ // part of a "**" pair, not a lone star
-			continue
-		}
-		return i
 	}
 	return -1
 }
