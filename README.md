@@ -50,6 +50,7 @@ Those are stated plainly rather than deferred quietly, and
 - [Install](#install)
 - [What it is](#what-it-is)
 - [Named keys, so agents have names](#named-keys-so-agents-have-names)
+- [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key)
 - [Dispatch agents from the conversation](#dispatch-agents-from-the-conversation)
 - [Watch them, and steer without stopping them](#watch-them-and-steer-without-stopping-them)
 - [Git as a real tool, not a shell string](#git-as-a-real-tool-not-a-shell-string)
@@ -82,6 +83,10 @@ canopy keys add nim -provider openai-compatible \
 canopy keys list                             # the MODEL column says NOT SET where one is missing
 ```
 
+No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy keys signin` rather
+than `canopy keys add`, and read
+[Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
+
 Anything that is not Anthropic needs a model named explicitly. There is no default anybody could
 guess for somebody else's gateway, and a credential without one cannot answer a single message.
 Finishing the credential wizard both stores the key and asks the current conversation to use it.
@@ -100,9 +105,10 @@ Homebrew is not available yet and will not be until the first release without a 
 
 ## What it is
 
-Canopy does what a terminal coding agent does. You plug in provider API keys, talk to it, and it
-reads and writes code with tools. If that were all, there would be no reason to use it over the
-tools that already do it well.
+Canopy does what a terminal coding agent does. You give it a credential, which is either a provider
+API key you paste or a subscription you sign in to, then talk to it, and it reads and writes code
+with tools. If that were all, there would be no reason to use it over the tools that already do it
+well.
 
 The reason to use it is what happens when one agent is not enough.
 
@@ -118,6 +124,35 @@ canopy keys add minimax  --provider openai-compatible --base-url ...
 
 Once a key has a name, so does an agent, and you can talk about agents the way you already think
 about them.
+
+## Sign in with a subscription instead of a key
+
+If you pay for a model by the month and have never opened a billing account, there is nothing to
+paste, and `canopy keys signin <name>` is the way in. Three routes are permitted, each because the
+vendor's own terms allow that particular shape as of 2026-07-30 (D-51):
+
+- **GitHub Copilot**, `-route copilot`. Canopy runs GitHub's device flow, holds the resulting token
+  in your keychain, and puts turns through GitHub's official Copilot SDK against your seat.
+- **Claude**, `-route claude-code`. Canopy holds no Anthropic credential at all and never sees one.
+  It drives the Claude Code you installed and signed in to yourself. Anthropic do not permit
+  third-party tools to offer Claude.ai login, so Canopy does not implement it and will not.
+- **ChatGPT**, `-route codex`. OpenAI's own `codex app-server` runs the sign-in, hosts the callback
+  and keeps the grant afterwards, so Canopy holds no token here either. `-route codex-device` prints
+  a code to type on another device, for a machine you only reach over ssh.
+
+There is no Gemini route. Google's consumer sign-in was prohibited by terms and then switched off on
+2026-06-18.
+
+One thing is worth knowing before you choose, because it is the opposite of what the rest of this
+page describes. **On the Copilot route Canopy's own tools and permission prompts stay in the path.
+On the Claude and ChatGPT routes they do not.** Those two are delegated: the vendor's agent runs the
+turn under the vendor's own permission rules, its auto-approved tool calls never reach Canopy, and
+so Canopy gates nothing and verifies nothing while it happens. That is set by each vendor's protocol
+rather than chosen, and [LIMITATIONS.md](LIMITATIONS.md) states it route by route.
+
+Subscription turns report their token counts and no dollar figure, because a monthly plan is not
+billed per token and a list price would be a correct number about an invoice nobody receives.
+[INSTALL.md](INSTALL.md) has what each route needs on the machine.
 
 ## Dispatch agents from the conversation
 
@@ -312,6 +347,9 @@ the pass.
 - `/bin/sh`, since shell tools and test commands run through it
 - macOS or Linux
 - Go 1.26 or newer, only if you are building from source rather than taking a binary
+- One more program per subscription route, none of which Canopy bundles: Claude Code plus the ACP
+  bridge for the Claude route, the Copilot CLI for the Copilot route, the Codex CLI for the ChatGPT
+  route. [INSTALL.md](INSTALL.md) names each one and what installs it.
 
 ## Development
 

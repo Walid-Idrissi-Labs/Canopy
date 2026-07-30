@@ -1,9 +1,10 @@
 # Canopy limitations
 
-Last reviewed: 2026-07-28
+Last reviewed: 2026-07-31
 
-Canopy is pre-alpha, version 0.1, and under active development by two people. Keys, providers, chat
-and persistence, tools and permissions, multi-agent dispatch and the verification engine are built.
+Canopy is pre-alpha, version 0.1, and under active development by two people. Keys, providers,
+subscription sign-in, chat and persistence, tools and permissions, multi-agent dispatch and the
+verification engine are built.
 The extensibility layer is not, and several things that are built are not yet reachable from the
 interface. This document is not a one-time disclosure. It is kept next to
 DECISIONS.md and TASKS.md and updated as the same commits that close a gap here, so a limitation
@@ -206,211 +207,240 @@ be rediscovered by getting burned by it.
   They found two real cancellation bugs on their first run that no scripted test caught, which means
   the same class of bug can reappear between one person's manual run and the next (Q-05).
 
-### The Claude Code route, and what it gives up
+## Subscription sign-in
 
-Canopy can run turns on a Claude Max or Pro plan without an API key, and the way it does that is by
-delegating: it drives a Claude Code you installed and signed in to yourself, over the Agent Client
-Protocol. This is not Canopy signing you in to Claude. Anthropic do not permit third-party developers
-to offer Claude.ai login or to route requests through Free, Pro or Max plan credentials on behalf of
-their users, they enforce that server-side, and they reserve the right to do so without prior notice,
-so Canopy holds no Anthropic subscription credential and the credential it does store has no secret
-behind it at all (D-51, S-04).
+Canopy can run turns on a Claude Max or Pro plan, a GitHub Copilot seat, or a ChatGPT Plus, Pro,
+Team or Business plan, with no API key anywhere. Exactly three routes are permitted, each for a
+stated reason rather than by the absence of an objection (D-51). Every claim below about what a
+vendor permits carries the date it was true. Three of them changed in the eight weeks before this
+was written, and an undated statement about somebody else's terms is the confident wrong answer this
+project exists to refuse.
 
-**On a delegated turn, Claude Code runs the turn and Canopy's permission gate does not apply.** This
-is the most important sentence in this section, because it is the opposite of what the rest of the
-product teaches you to expect. Concretely:
+**Canopy does not implement claude.ai OAuth and will not, however often it is asked.** As of
+2026-07-30 Anthropic's legal and compliance page states that they do not permit third-party
+developers to offer Claude.ai login or to route requests through Free, Pro or Max plan credentials
+on behalf of their users, and that they reserve the right to enforce that without prior notice. It
+is enforced on their servers as well as written down. Other tools have shipped it anyway; that is
+not a precedent, it is a list of people who can be stopped without warning. The Claude route below
+is a different thing and the difference is not a technicality: implementing the login means holding
+somebody's subscription credential, and that route holds none. A test walks every Go file in this
+repository and fails on an Anthropic authorisation endpoint, a code challenge or a client secret, so
+the next person to propose it finds the answer from the test suite rather than from Anthropic
+(S-04).
 
-- **Canopy's own tools are not available.** The delegated agent uses Claude Code's tools. Canopy's
-  file, shell, git and fetch tools are not offered to it, and cannot be: MCP servers are the only way
-  ACP lets a client hand its own tools to an agent, and Canopy exposes none.
+**There is no Gemini route.** Google's consumer sign-in was prohibited by their terms before
+2026-06-18 and switched off on that date. Recorded so it is not proposed again.
 
-- **Canopy's per-agent trust levels and approval prompts are not in the path.** A tool call that
-  Claude Code auto-approves under its own permission rules runs without Canopy seeing it, let alone
-  gating it. The permission mode shown on Canopy's own screen describes what Canopy would do, and on
-  a delegated turn Canopy is not the one doing it.
+### Canopy's permission gate is in the path on one of the three routes
 
-- **Where Claude Code does ask for approval, Canopy declines.** Canopy will not stand in as your
-  approver for a tool call it did not make and has no trust level for, so every permission request is
-  refused and each refusal is reported in the conversation. Declining does not make the turn safe: it
-  only covers the calls Claude Code chose to ask about. If you want a turn where Canopy gates the
-  tools, use a credential where Canopy runs them.
+This is the most important thing on this page for anybody signing in with a subscription, because it
+is the opposite of what the rest of Canopy teaches you to expect. Which answer a route gives is set
+by that vendor's protocol rather than chosen, and it is not the same answer for all three.
 
-- **A4's audit trail of refused calls and A6's verification see nothing.** Canopy reports each tool
-  the delegated agent said it was running, as a notice, which is a record rather than a control.
-  Nothing in a delegated turn is verified per-agent, because Canopy did not run any of it.
+**On the Copilot route Canopy runs the tools and the gate applies in full.** The session is created
+in the SDK's `empty` mode, with an allowlist naming Canopy's own tools and no vendor source at all,
+so `bash`, `powershell`, `edit`, `grep`, `web_fetch` and the rest are never offered to the model.
+Canopy's tools are declared to the vendor with no implementation behind them, so a call comes back
+out to Canopy, through the agent's trust level and, where the level requires it, past a person, and
+only then goes back down as a result. GitHub's agent decides what it wants done and has no way to do
+any of it itself. The permission mode on screen is the one in force, and A4's audit trail and A6's
+verification apply, because Canopy ran every tool call there was (S-03).
 
-Two more things about the route itself:
+**On the Claude and ChatGPT routes the vendor's agent runs the turn and Canopy's permission gate
+does not apply.** Concretely:
 
-- **It needs two programs, not one.** Claude Code, signed in, and the ACP bridge, which is a separate
-  package (`npm install -g @agentclientprotocol/claude-agent-acp`). Claude Code does not speak ACP by
-  itself. A machine missing either is told which one and how to get it.
+- **Canopy's own tools are not available, and cannot be.** ACP v1 gives a client no channel for its
+  own tools except MCP servers, and Canopy's tools are not an MCP server. The Codex app server has
+  no field for them at all. The tools in the room are the vendor's own, plus whatever MCP servers
+  your own `$CODEX_HOME/config.toml` starts, which Canopy neither chose nor can see.
+- **A tool call the vendor auto-approves never reaches Canopy.** Not gated, not refused, not seen.
+  The permission mode shown on Canopy's screen describes what Canopy would do, and on these two
+  routes Canopy is not the one doing it. Every delegated turn opens with a notice saying so before
+  the first word of the reply, which is what stops the mode indicator from being a lie, but a notice
+  is a statement and not a control.
+- **Where the vendor does ask for approval, Canopy declines.** It will not stand in as your approver
+  for a call it did not make, cannot describe in its own vocabulary and has no trust level for. Each
+  refusal is reported in the conversation. Declining does not make the turn gated: it covers only
+  the calls the vendor chose to ask about.
+- **A4's audit trail and A6's verification see nothing**, because Canopy ran nothing. Each tool the
+  delegated agent says it ran is reported as a notice, which is a record rather than a control.
+- **On the ChatGPT route the thread is opened read-only**, which is the honest pairing for a client
+  that refuses every approval, so a delegated Codex turn cannot write files at all. A subscription
+  credential buys a visibly weaker agent there, and saying so is the point.
 
-- **The model and the system prompt are Claude Code's.** Canopy asks for the model and the effort a
-  request named, but only when the bridge offers that setting and offers that exact value; otherwise
-  it says on screen which setting actually answered rather than substituting one silently. A Canopy
-  agent profile's system prompt is sent as the first thing the delegated agent reads, and does not
-  replace Claude Code's own, because ACP has no field that could.
+If you want a turn where Canopy gates the tools, use a credential where Canopy runs them: a pasted
+API key, or the Copilot route. Whether a route that cannot be governed should ship beside one that
+can is Q-23, and it is not settled.
 
-- **No cost figure is shown, and that is deliberate.** The turn's token counts are real and are
-  reported. The dollar value of those tokens is not, because a Max or Pro plan is billed monthly and
-  this usage is metered against its limits, so a list price would be a correct number about an invoice
-  nobody receives. As of 2026-07-30 that metering is the published arrangement: Anthropic state that
-  Claude Agent SDK, `claude -p` and third-party app usage draw from the subscription's usage limits.
-  They announced, and then paused on 2026-06-15, a change moving that usage onto separately purchased
-  credits. Paused is not cancelled (Q-22), and if it returns this paragraph is wrong and the route's
-  cost story needs rewriting before the release that follows it.
+### What is true of all three routes
 
-### The GitHub Copilot route, and where its conversation lives
+- **No cost figure is shown on a subscription turn.** The token counts are real and are reported.
+  The dollar value is not: a monthly plan is metered against its own limits rather than billed per
+  token, so a list price would be a correct number about an invoice nobody receives, and zero would
+  say the turn was free. Unpriced is the honest answer. A rate you set on the credential yourself
+  does not override that, and this is the one place in Canopy where your own figure does not win,
+  because a per-million-token rate cannot describe a plan billed monthly whoever supplied it.
 
-Canopy can run turns on a GitHub Copilot seat without an API key. This is the one route of the three
-that the vendor documents for exactly this case: you register an app, the user authorises it, and
-their token is handed to GitHub's official SDK so that requests are made on their behalf against
-their own subscription (D-51, S-03). Canopy registers and uses its own GitHub app, drives the device
-flow so that nothing has to listen on a port, and identifies itself as `canopy`. It does not reuse
-another editor's client id and does not send another editor's version headers.
+- **Each route needs a vendor program Canopy does not ship**: Claude Code plus the ACP bridge, the
+  Copilot CLI, or the Codex CLI. Every one is discovered on your machine rather than bundled, and
+  that is deliberate. Bundling would multiply the size of a release that is one small static binary,
+  pin a vendor version your own installation would then be stuck at, and put a proprietary vendor
+  binary inside Canopy's release archives, which is a redistribution question nobody has asked. The
+  cost is that the version is not Canopy's to control, so each route checks what it found at the
+  handshake rather than assuming a shape, and an absent program is reported as a sentence naming
+  what to install rather than as an exec error.
 
-**What is preserved, and it is the reason this design was chosen.** Unlike the Claude Code route, a
-Copilot turn still runs under Canopy's rules:
+- **The delegated agent has whatever access to your machine you already gave it**, which is not
+  something Canopy sets, sees or can bound. It runs under your account and under its own
+  configuration. SECURITY.md says the same thing in threat-model terms.
 
-- **Canopy's own tools are the only tools in the session.** The session is created in the SDK's
-  `empty` mode with an allowlist naming Canopy's tools and no vendor source at all, so `bash`,
-  `powershell`, `edit`, `grep`, `web_fetch` and the rest are not offered to the model. GitHub's
-  agent decides what it wants done; it has no way to do any of it itself.
-- **Canopy's permission gate is in the path.** Canopy's tools are declared to the vendor with no
-  implementation behind them, so a call comes back out to Canopy, through the agent's trust level
-  and, where the level requires it, past a person, and only then goes back down as a result. The
-  permission mode on screen is the one actually in force.
-- **The audit trail is complete**, because Canopy ran every tool call there was.
+- **The model is the vendor's to choose unless it offers a say.** A delegated credential stores no
+  model of its own, so the picker says the vendor chooses rather than showing an empty list. A model
+  a request names is asked for only where the vendor offers that exact value, and where something
+  else answers that is said on screen rather than substituted silently.
 
-**Where the conversation lives, and what that costs.** GitHub's SDK owns the conversation: a session
-accumulates its own history and there is no call that seeds one. Canopy therefore holds one session
-per conversation and sends only the newest message. The consequences are real:
+- **Where Canopy holds a token, renewal is per process.** Two Canopy processes on one machine can
+  renew the same credential at the same time. The cost is one wasted renewal, and on a vendor that
+  rotates refresh tokens the loser renews again on its next turn. The fix would be a lock file, and
+  a lock file held across a network call is how a crashed process leaves a credential unusable until
+  somebody deletes a file they have never heard of (S-02). This reaches only the Copilot route,
+  since it is the one route of the three where Canopy holds a token at all.
 
-- **Editing history, re-rolling a turn and compacting locally do not reach it.** Canopy notices when
-  its history and the vendor's have diverged and refuses the turn rather than answering from a
+- **Nothing here listens on a loopback port.** Where a sign-in needs a callback the vendor's own
+  program hosts it, and where no browser is reachable the flow is a code you type somewhere else.
+
+### The Claude route, and what it gives up
+
+Canopy does not sign you in to Claude on this route. It discovers a Claude Code you installed and
+signed in to yourself, asks it which account that is, and drives it over the Agent Client Protocol.
+The credential it stores holds no token and there is nowhere in it to put one, which is the whole
+reason the route is permitted at all: Anthropic contemplate and meter this category in writing,
+where they prohibit the other one (D-51, S-04).
+
+- **It needs two programs, not one.** Claude Code, signed in, and the ACP bridge, which is a
+  separate package (`npm install -g @agentclientprotocol/claude-agent-acp`). Claude Code does not
+  speak ACP by itself. A machine missing either is told which one and how to get it.
+
+- **The system prompt does not replace Claude Code's own.** A Canopy agent profile's system prompt
+  is sent as the first thing the delegated agent reads. ACP has no field that could do more.
+
+- **Turns draw on your plan's usage limits, as of 2026-07-30.** Anthropic state that Claude Agent
+  SDK, `claude -p` and third-party app usage draw from the subscription's usage limits. They
+  announced, and then paused on 2026-06-15, a change that would move that usage onto separately
+  purchased credits. Paused is not cancelled (Q-22). If it returns, usage that looked included
+  becomes a separate purchase, this paragraph is wrong, and the route's cost surface needs rewriting
+  before the release that follows. Nothing in Canopy will notice that happening.
+
+- **A Claude Code signed in to a Console account is not a subscription**, and Canopy says so rather
+  than describing it as one. Delegated turns on such an installation really are billed per token, to
+  that account.
+
+### The Copilot route, and where its conversation lives
+
+This is the one route of the three that the vendor documents for exactly this case: you register an
+app, the user authorises it, and their token is handed to GitHub's official SDK so that requests are
+made on their behalf against their own subscription (D-51, S-03). It is also the one route where
+Canopy holds a token: it runs GitHub's device flow, stores the result in your keychain, and
+identifies itself as its own app rather than reusing another editor's client id or version headers.
+
+- **Editing history, re-rolling a turn and compacting do not reach the vendor's copy.** GitHub's SDK
+  owns the conversation: a session accumulates its own history and there is no call that seeds one,
+  so Canopy holds one session per conversation and sends only the newest message. When its history
+  and the vendor's have diverged, Canopy refuses the turn by name rather than answering from a
   conversation you can no longer see. Start a new conversation to change what has been said.
-- **A conversation picked up after a restart is seeded from a transcript, not resumed.** The earlier
-  turns go into the next prompt as a labelled record. That is weaker than having had them, and it is
-  the only surface the SDK offers.
-- **The model and the reasoning effort belong to the session.** They are set when the conversation
-  starts. Naming a different model mid-conversation does not restart it, because restarting it would
-  throw the conversation away to honour a flag.
-- **`MaxTokens` is not sent.** The SDK exposes no per-turn output cap for a Copilot session.
 
-**No cost figure is shown.** The token counts are real and are reported. The dollar value is not: a
-Copilot seat is billed monthly and this usage is metered against that plan's allowance, so a list
-price would be a correct number about an invoice nobody receives, and zero would say the turn was
-free. Unpriced is the honest answer.
+- **A conversation picked up after a restart is seeded, not resumed.** The earlier turns go into the
+  next prompt as a labelled transcript. That is weaker than having had them and it is the only
+  surface the SDK offers.
 
-**Two things have to be present, and Canopy ships neither.**
+- **The model and the reasoning effort belong to the session**, set when the conversation starts.
+  Naming a different model mid-conversation does not restart it, because restarting would throw the
+  conversation away to honour a flag. **`MaxTokens` is not sent** either; the SDK exposes no
+  per-turn output cap for a Copilot session.
 
-- **The Copilot CLI.** `npm install -g @github/copilot`, or `COPILOT_CLI_PATH` pointing at it. The
-  SDK offers a bundler that would embed a per-platform copy in Canopy's binary, and it is
-  deliberately not used: it would multiply the size of a release that is one small static binary, it
-  would pin a vendor version your Copilot would then be stuck at, and it would put a proprietary
-  vendor binary inside Canopy's release archives, which is a redistribution question nobody asked.
-- **A GitHub app of Canopy's own.** Register an **OAuth app** with the device flow enabled, and set
-  `CANOPY_GITHUB_CLIENT_ID` to its client id, which is not a secret. An OAuth app is recommended over
-  a GitHub app for one specific reason: its user tokens do not expire, so Canopy never has to renew
-  one, and renewing needs a client secret that a program you can download cannot keep. If you use a
-  GitHub app with expiring user tokens instead, supply `CANOPY_GITHUB_CLIENT_SECRET` as well or
-  accept that a lapsed grant is signed in to again by hand.
+- **Canopy needs a GitHub app of its own and no release has one compiled in yet.** Register an
+  **OAuth app** with the device flow enabled and set `CANOPY_GITHUB_CLIENT_ID` to its client id,
+  which is not a secret. An OAuth app rather than a GitHub app for one specific reason: its user
+  tokens do not expire, so Canopy never has to renew one, and renewing needs a client secret that a
+  program you can download cannot keep. A GitHub app with expiring user tokens works if you supply
+  `CANOPY_GITHUB_CLIENT_SECRET` as well, or accept signing in again by hand when a grant lapses.
 
-**The scopes are not documented by GitHub and Canopy's list is evidence rather than fact.** Canopy
-requests `copilot` and `read:user`. There is no published GitHub scope table entry containing the
-word Copilot, GitHub's own Copilot SDK setup page names no scope at all, and the SDK's Go source
-validates nothing about the token it is given. `copilot` is what every third-party Copilot client
-sends; `read:user` is documented and is what lets a credential say whose subscription it is.
-Whether both are needed has not been confirmed against a live seat. `CANOPY_GITHUB_SCOPES` overrides
-the list so the question can be settled by experiment.
+- **The scopes are not documented by GitHub and Canopy's list is evidence rather than fact.** Canopy
+  requests `copilot` and `read:user`. As of 2026-07-30 there is no published GitHub scope table
+  entry containing the word Copilot, GitHub's own Copilot SDK setup page names no scope at all, and
+  the SDK's Go source validates nothing about the token it is handed. `copilot` is what every
+  third-party Copilot client sends; `read:user` is documented and is the smallest scope that lets a
+  credential say whose subscription it is. Whether both are needed has not been confirmed against a
+  live seat. `CANOPY_GITHUB_SCOPES` overrides the list so the question can be settled by experiment.
 
-**A seat is not checked at sign-in.** GitHub publishes no endpoint Canopy can ask, and the SDK's own
-`account.getQuota` is defined in its schema and not implemented in the CLI as of v1.0.8, which
-GitHub's own end-to-end test skips over. An account with no Copilot seat is told exactly that on its
-first turn rather than at sign-in, and it is told that rather than being shown an authentication
-failure that would send somebody to replace a credential that is fine.
+- **A seat is not checked at sign-in.** GitHub publish no endpoint Canopy can ask, and the SDK's own
+  `account.getQuota` is defined in its schema and not implemented in the CLI as of v1.0.8, which
+  GitHub's own end-to-end test skips over. An account with no Copilot seat is told exactly that on
+  its first turn, rather than shown an authentication failure that would send somebody to replace a
+  credential that is fine.
 
-**Canopy cannot revoke the grant for you.** `canopy keys signout` deletes the tokens and the record.
-Revoking Canopy's access at GitHub needs a client secret, for the same reason renewing does, so the
-command says plainly that it did the local half only and where to do the other.
+- **Canopy cannot revoke the grant for you.** `canopy keys signout` deletes the tokens and the
+  record. Revoking Canopy's access at GitHub needs a client secret, for the same reason renewing
+  does, so the command says plainly that it did the local half only and where to do the other.
 
 ### The ChatGPT route, and why it needs the Codex CLI
 
-Canopy can run turns on a ChatGPT Plus, Pro, Team or Business plan without an API key, by driving
-`codex app-server`, which OpenAI publish under Apache-2.0 as the interface for host applications
-wanting a deep integration, authentication included (D-51, S-05). Canopy asks it to sign you in, and
-it does the rest: it builds the authorisation URL, hosts the callback on its own loopback port,
-talks to OpenAI, and keeps the grant in `~/.codex` afterwards.
+Canopy drives `codex app-server`, which OpenAI publish under Apache-2.0 as the interface for host
+applications wanting a deep integration, authentication included (D-51, S-05). Canopy asks it to
+sign you in and it does the rest: it builds the authorisation URL, hosts the callback on its own
+loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 
-**Canopy never holds a ChatGPT credential.** The credential it stores is a delegation with nothing
-behind it, and `internal/keys` refuses to put a token there at all. That also means **Canopy does
-not renew anything on this route**: the app server owns the grant and renews it without being asked,
-so the five-minute refresh margin that applies to a pasted or Copilot credential has nothing to act
-on here. If the grant lapses beyond renewal, `canopy keys test` says so and signing in again fixes
-it.
+- **Canopy never holds a ChatGPT credential**, and `internal/keys` refuses to put a token behind
+  this credential at all. That also means **Canopy renews nothing on this route**: the app server
+  owns the grant and renews it without being asked, so the five-minute refresh margin that applies
+  to a pasted or Copilot credential has nothing to act on. If the grant lapses beyond renewal,
+  `canopy keys test` says so and signing in again fixes it.
 
-**Canopy identifies itself as `canopy` and never as another client.** The name a client gives at the
-handshake becomes the originator the app server sends to OpenAI, and it lands in OpenAI's compliance
-logs. Canopy does not send `codex_cli_rs` or any first-party client's name. As of 2026-07-30
-OpenAI's own app-server documentation asks integrations intended for enterprise use to contact them
-to be added to a known-clients list; Canopy is not on one, and being added is a conversation
-somebody has to have rather than something the code can do.
+- **This route may draw on a smaller allowance than the ChatGPT app does.** There is an open,
+  unanswered report of third-party OAuth sign-ins hitting 429 quota errors on active Plus plans,
+  which if it is real means this route is quota-segregated from what the same person sees in the
+  ChatGPT client. That is said before you sign in, on both surfaces, rather than only here.
+  `canopy keys test` reads the plan's actual limits from OpenAI, so it will say when one has been
+  hit.
 
-**This route may draw on a smaller allowance than the ChatGPT app does.** There is an open,
-unanswered report of third-party OAuth sign-ins hitting 429 quota errors on active Plus plans, which
-if it is real means this route is quota-segregated from what the same person sees in the ChatGPT
-client. This is said before you sign in, on both surfaces, rather than only here. `canopy keys test`
-reads the plan's actual limits from OpenAI, so it will say when one has been hit.
+- **Canopy identifies itself as `canopy` and never as another client.** The name a client gives at
+  the handshake becomes the originator the app server sends to OpenAI, and it lands in OpenAI's
+  compliance logs. Canopy does not send `codex_cli_rs` or any first-party client's name, and reads
+  its own name back off the handshake rather than trusting that it took. As of 2026-07-30 OpenAI's
+  app-server documentation asks integrations intended for enterprise use to contact them to be added
+  to a known-clients list. Canopy is not on one, and being added is a conversation somebody has to
+  have rather than something the code can do.
 
-**On a delegated turn, Codex runs the turn and Canopy's permission gate does not apply.** Everything
-the Claude Code section says about that is true here, for the same reasons and with one addition:
+- **The `codex` binary has to be on the machine.** `npm install -g @openai/codex` or `brew install
+  codex`; `CANOPY_CODEX` overrides where it is found and is checked rather than trusted.
 
-- **Canopy's own tools are not available.** The protocol has no field for a client to hand an agent
-  its own tools. The only tools in the room are Codex's own, plus whatever MCP servers the
-  `~/.codex/config.toml` on your machine tells it to start, which Canopy neither chose nor can see.
-- **Canopy declines every approval Codex asks for**, and reports each refusal in the conversation.
-  Declining does not make the turn gated; it only covers the calls Codex chose to ask about.
-- **The thread is opened read-only** and asks to be asked, which is the honest pairing for a client
-  that refuses everything. It makes a delegated Codex a visibly weaker agent than a metered one, and
-  saying so is the point. If you want a turn where Canopy gates the tools, use a credential where
-  Canopy runs them.
-- **A4's audit trail and A6's verification see nothing**, because Canopy ran nothing.
+- **There is no fallback that runs turns without it.** If `$CODEX_HOME/auth.json` exists and the
+  binary does not, Canopy names the account that login belongs to and says the program rather than
+  the sign-in is what is missing. It does not lift the tokens out of that file and call
+  `chatgpt.com/backend-api/codex` itself, and that is a decision rather than an omission. D-51
+  permits this route through the app server, and permits the Claude route explicitly because Canopy
+  holds none of your subscription credential; reading those tokens out and using them is the thing
+  it does not permit. It would also break what it was rescuing, because OpenAI rotate refresh tokens
+  and whichever process redeems one last wins: a Canopy that renewed a login it does not own would
+  sign you out of your own Codex to keep a copy working.
 
-**No cost figure is shown.** The token counts are real and are reported. The dollar value is not,
-for the reason the other two delegated routes give: a ChatGPT plan is billed monthly and this usage
-is metered against its limits, so a list price would be a correct number about an invoice nobody
-receives, and zero would say the turn was free. Unpriced is the honest answer.
+- **Signing out does not sign your Codex out.** `canopy keys signout` removes Canopy's record. The
+  ChatGPT login stays in `$CODEX_HOME`, where your own `codex` uses it too. Run `codex logout` if
+  you want it gone from the machine.
 
-**The `codex` binary has to be on the machine, and Canopy does not ship one.** Install it with `npm
-install -g @openai/codex` or `brew install codex`; `CANOPY_CODEX` overrides where it is found and is
-checked rather than trusted. Bundling was considered and rejected: it would mean a per-platform Rust
-binary inside a release that is one small static binary, an Apache-2.0 notice obligation, and a
-vendor version pinned on release day while the protocol it speaks keeps moving. The cost of
-discovering instead is that the version is not Canopy's to control, so the handshake checks what it
-found.
+- **Threads are opened ephemeral**, so a turn does not leave a second copy of your conversation in
+  `$CODEX_HOME/sessions`. Canopy's own transcript is the one that persists and it is handed over in
+  full on every turn, so unlike the Copilot route, editing history, re-rolling and compaction all
+  work normally.
 
-**There is no fallback that runs turns without it.** If `~/.codex/auth.json` exists and the binary
-does not, Canopy says so and names the account the login belongs to, because at that point the
-sign-in is not what is missing. It does not lift the tokens out of that file and call
-`chatgpt.com/backend-api/codex` itself, and that is a decision rather than an omission. D-51 permits
-this route through the app server and permits the Claude route explicitly because Canopy holds none
-of your subscription credential; reading those tokens out and using them is the thing it does not
-permit. It would also break what it was trying to rescue, because OpenAI rotate refresh tokens and
-whichever process redeems one last wins: a Canopy that renewed a login it does not own would sign
-you out of your own Codex to keep a copy working.
-
-**Signing out does not sign your Codex out.** `canopy keys signout` removes Canopy's record. The
-ChatGPT login stays in `~/.codex`, where your own `codex` uses it too. Run `codex logout` if you
-want it gone from the machine.
-
-**Canopy asks the app server for a thread that is not saved.** Threads are opened ephemeral, so a
-turn does not leave a second copy of your conversation in `~/.codex/sessions`. Canopy's own
-transcript is the one that persists, and it is handed over in full on every turn, so unlike the
-Copilot route, editing history, re-rolling and compaction all work normally.
-
-**One process per turn, and the model is Codex's default unless you name one.** A delegated
-credential stores no model, so the picker says the vendor chooses. Naming one is honoured, and when
-Codex resolves something else it is said on screen rather than substituted silently.
+- **Reasonable people read OpenAI's terms the other way.** Charm's Crush deliberately refused to add
+  a ChatGPT subscription provider, twice closing working implementations, with their maintainers
+  citing those terms. This route exists anyway on a narrower ground than "OpenAI seem fine with it":
+  OpenAI publish the app server under Apache-2.0 and document it as the interface for exactly this
+  case, their documentation asks integrations to identify themselves through `clientInfo.name`, and
+  the one behaviour their terms plausibly reach is impersonating another client, which this build
+  refuses and holds a repository-wide test against. If that reading is wrong, the honest consequence
+  is that the route goes, not that it gets quieter.
 
 ## Tools and permissions
 

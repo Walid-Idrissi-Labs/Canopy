@@ -7191,7 +7191,7 @@ Run before ticking, in a clean clone at this commit rather than in the shared wo
 
 ### S-08 The documents say what is permitted and what is not
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
 `scope: README.md, INSTALL.md, LIMITATIONS.md, SECURITY.md`
 
 Deliverable: the documents move with the code, and for this phase they carry more weight than usual,
@@ -7216,7 +7216,168 @@ to implement claude.ai OAuth appears in LIMITATIONS in plain words with its reas
 person to propose it finds the answer before writing any code. A reader whose only subscription is
 ChatGPT can tell from README alone whether Canopy is usable for them.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-31   codex [ ]`
+
+notes: four documents, no Go file touched, so `gofmt -l .` is empty for the reason that there was
+nothing to format. `make test` is green, which is here as a statement that nothing was broken rather
+than as evidence that anything was proved: a documentation task cannot be held by this repository's
+tests and should not pretend to be.
+
+What the documents say now. README gains one section between the named-keys section and dispatch,
+about the length of the other feature sections, naming the three routes and their flags and carrying
+the gating asymmetry in two sentences; it also gains a pointer from the install block, a line in
+Requirements for the vendor programs, and a fix described below. INSTALL gains a "Signing in with a
+subscription" section with one subsection per route, four environment variables, and the
+registration Walid has to perform; the old Copilot-only section is folded into it. LIMITATIONS'
+three adjacent route sections are consolidated into one `## Subscription sign-in` section with a
+shared spine and three shorter route sections under it. SECURITY gains the three shapes a credential
+can now take, what an attacker who reached the credential store gets for each, what signing out
+removes per route, one entry in the documented-behaviour list and four in the in-scope list.
+
+Why LIMITATIONS was consolidated rather than left as three sections, which the block does not ask
+for and the brief does. The three sections were written by three tasks in flight beside each other
+and each one restated the whole of the cost argument and most of the delegation argument in its own
+words. Three copies of one paragraph is not redundancy, it is three paragraphs that will disagree
+after the first edit, and the disagreement will be about the sentence this phase most needs to stay
+exact. Worse, the three copies were not already saying the same thing: the Claude section opened
+"on a delegated turn Canopy's permission gate does not apply" and the Copilot section, four
+paragraphs later, said the opposite about itself, and a reader who stopped at the first would carry
+away a claim that is false for the route they are most likely to be told to use. So the asymmetry is
+now stated once, at the top, as a heading of its own, with the per-route sections holding only what
+is specific to a route. Nothing was dropped in the merge except three restatements of the cost
+paragraph and one of the binary-bundling paragraph.
+
+Two corrections to this block, both verified against the code rather than argued, and both are
+cases where the block describes what was planned and the build did something better.
+
+**"a delegated turn's cost cannot be shown in money because Canopy never sees a token count" has a
+false premise.** Canopy does see the token counts, on all three routes: the ACP bridge puts real
+per-turn input, output and cache counts on the `session/prompt` result, the app server sends them on
+`thread/tokenUsage/updated`, and `AssistantUsageData` carries them on the Copilot route. S-04 found
+this and the conclusion survives for a better reason, which is what the documents say: the figure is
+available and is about somebody else's invoice, because a monthly plan is metered rather than billed
+per token. The tokens are therefore reported and only the money is withheld, which is a stronger
+sentence than the one the block asked for and is the one `pricing.ModelID.Delegated` implements.
+
+**"a delegated turn runs the vendor's tool loop rather than Canopy's" is true of two routes and
+false of the third.** On the Copilot route Canopy's tools are the only tools in the session, they
+are declared with no implementation so every call comes back out through A4's gate, and the audit
+trail is complete. Writing the block's uniform claim into LIMITATIONS would have understated the
+Copilot route and, more seriously, would have made the document contradict what the product does.
+The asymmetry is per protocol rather than per principle, Q-23 records it that way after S-03, and it
+is what the documents now carry.
+
+One thing the block's INSTALL clause is missing rather than wrong: it names "a Claude Code
+installation the user has already signed in to" and the route needs two programs, not one. The ACP
+bridge is a separate package published by the protocol's maintainers, Claude Code does not speak ACP
+by itself, and a machine with only the first is the ordinary case rather than an edge. INSTALL names
+both and says which is which, including the bridge's previous name, since `bridgeNames` in
+internal/provider/acp/discover.go accepts `claude-code-acp` as well.
+
+And one where the SECURITY clause is narrower than the build: "where tokens live, that they are in
+the keychain and never in keys.json" describes one route of three. On the other two Canopy holds no
+token anywhere, which is a different and better security story and is the reason D-51 permits them
+at all, so the file states the three shapes and what a compromise costs for each rather than one
+rule for all.
+
+What was found already wrong in documents that existed before this task.
+
+README said "You plug in provider API keys, talk to it, and it reads and writes code with tools",
+which stopped being true when S-03 landed. It now names both kinds of credential. Nothing else in
+README was false; the rest of the omission was that a person whose only subscription is ChatGPT
+would have read the whole page and concluded the program was not for them, which is the acceptance
+clause about exactly that person.
+
+INSTALL's runtime requirements said "An API key for at least one provider", same defect and fixed
+the same way.
+
+INSTALL's Copilot section, written by S-03, said a GitHub app of your own is needed "if you are
+building Canopy rather than using a release that has one compiled in". No release has one compiled
+in. `clientID` is `""` in internal/provider/copilot/signin.go and `.goreleaser.yaml` sets exactly
+three `-X` flags, all of them `main.version`, `main.commit` and `main.date`. So the sentence told
+somebody taking a release binary that they needed nothing, and what they would actually get is
+`ErrNotRegistered` on their first sign-in. It now says no release has one yet. Registering the
+OAuth app and adding the fourth ldflag are Walid's, and neither is in this task's scope; a release
+tagged before that happens ships a Copilot route nobody can use.
+
+LIMITATIONS named `~/.codex` in four places where the code reads `$CODEX_HOME` and honours it, at
+internal/provider/codex/discover.go:42. For anybody who has moved it, four of those sentences were
+wrong about where their own login is. They now say `$CODEX_HOME` and INSTALL records the default.
+
+LIMITATIONS said "Last reviewed: 2026-07-28", which predated three tasks that edited it. Now
+2026-07-31, and the opening inventory of what is built gains subscription sign-in.
+
+Everything else was checked and found accurate. The route ids in the documents are the constants:
+`copilot` is `copilot.Route`, `codex` and `codex-device` are `codex.Route` and `codex.Route +
+"-device"`, and `claude-code` is `claudeCodeRouteID`. The install commands are the ones the error
+messages name. The ldflag path in INSTALL resolves to the real var. The behaviour of `-route` when
+it is omitted is `chooseRoute` at cmd/canopy/signin.go:208, which prints the list and refuses rather
+than guessing, and INSTALL says that. The headless rule for the ChatGPT route is `browserReachable`
+at internal/provider/codex/login.go:129, and INSTALL names the three ssh variables and the two
+display variables it actually reads rather than saying "over ssh".
+
+What could not be verified, said rather than smoothed over. The Copilot scopes are still evidence
+rather than fact and every document that mentions them says so; confirming them needs a seat.
+No vendor's published terms page was re-fetched for this task, so every date in these documents is
+the date S-03, S-04, S-05 or D-51 recorded, carried forward unchanged and attributed there. The
+one claim in the phase's material that S-05 could not confirm, openai/codex issue 31967, is
+deliberately absent from all four documents rather than repeated as established.
+
+Considered and rejected. A table in LIMITATIONS for the per-route gating matrix, which is the
+clearest possible rendering of an asymmetry: rejected because there is no table anywhere in that
+file and one table in a file of prose bullets reads as an import from another document. The
+information is in a heading of its own instead, which is the same prominence. Leaving the three
+route sections adjacent and adding cross-references between them: rejected for the drift reason
+above, and because a reader following a cross-reference to find out whether their turn is gated has
+already been failed. Turning README into a route-by-route manual: rejected, the block puts that in
+INSTALL and a README that explains three vendors' installation requirements stops being a README.
+Softening "Canopy's permission gate does not apply" into "Canopy's permission gate does not apply to
+the vendor's own tools": rejected, it is true and it is the sentence somebody would quote back after
+an incident, and the shorter one is the one that gets read. Removing the arrow at README.md:319 to
+satisfy the ASCII rule: rejected and flagged instead, because that line quotes literal program
+output, `modeArrow` at internal/tui/chat/model.go:2215 is a rightwards arrow U+2192 with a space
+either side, and an ASCII arrow in README would be a document describing a screen that does not
+exist. It predates this task. CONTRIBUTING.md
+and story.md carry non-ASCII too and neither is in scope here.
+
+No line was added to the change log at the end of this file. The log takes structural changes to
+this ledger, meaning tasks added, removed or reordered, and this task added none: it changed four
+documents and one status block.
+
+Acceptance, clause by clause: each of the four documents naming the three permitted routes is
+README's "Sign in with a subscription instead of a key", INSTALL's "Signing in with a subscription"
+with a subsection each, LIMITATIONS' `## Subscription sign-in` with a section each, and SECURITY's
+credential-shapes block, which names the Copilot route by name and the Claude and ChatGPT routes as
+the two that hold nothing; none of them contradicting another or contradicting D-51 is the
+consolidation above, which removed the one real contradiction that existed, plus a read of all four
+against D-51's five positions, the three permitted routes, the claude.ai refusal and the Gemini
+closure, with no document making a claim D-51 does not; every statement about what a vendor permits
+carrying a date is the 2026-07-30 on Anthropic's prohibition and their metering statement, on
+GitHub's absent scope documentation, and on OpenAI's known-clients request, and the 2026-06-18 on
+Google's switch-off and the 2026-06-15 on the paused Anthropic credit change; the refusal to
+implement claude.ai OAuth appearing in LIMITATIONS in plain words with its reason is the second
+paragraph of the new section, which states the prohibition, that it is server-enforced, that other
+tools shipping it is a list of people who can be stopped rather than a precedent, and that
+`TestNoAnthropicSignInFlowExistsAnywhereInThisRepository` will fail the build of anybody who tries,
+so the next person to propose it finds the answer before writing code; and a reader whose only
+subscription is ChatGPT being able to tell from README alone whether Canopy is usable for them is
+the contents entry, the pointer in the install block, the `-route codex` line and the paragraph
+about delegated turns, which together answer both halves of that question, that it works and what
+it costs them.
+
+The brief's own additional clauses, which the block states as prose or not at all: the gating
+asymmetry per route is LIMITATIONS' "Canopy's permission gate is in the path on one of the three
+routes" and README's two sentences; Copilot history ownership is the first bullet of the Copilot
+section, including that an edited history is refused by name; unpriced turns are the first bullet of
+"What is true of all three routes", including that a rate the user set does not override it; the
+binary dependencies are the second bullet there with the three reasons bundling was refused; the
+unverified scopes are the Copilot section's fifth bullet; the paused Anthropic credit change is the
+Claude section's third bullet with both dates and what would have to be rewritten; and S-02's
+cross-process renewal limit is the fifth bullet of the shared section, with the note that it reaches
+only the Copilot route because it is the only route where Canopy holds a token.
+
+Run before ticking: `make test` green, `gofmt -l .` empty, `grep -rnP '[^\x00-\x7F]'` over all four
+documents finding only the pre-existing arrow at README.md:319 described above.
 
 ### PG-S Phase S gate
 
