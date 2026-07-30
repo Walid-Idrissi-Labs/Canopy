@@ -6241,6 +6241,12 @@ brief did not mention. And `ClientOptions.Env` defaults to `os.Environ()` inside
 `COPILOT_CLI_PATH` is consulted as the brief said, but only because of that default: a caller that
 sets `Env` to anything else loses it.
 
+One correction to the task text, harmless: the acceptance names `newClient` in cmd/canopy/ask.go as
+the second place the provider fork lives, and by the time this landed S-04 had moved that fork up
+into `clientFor` in the same file, with `newClient` left holding only the two pasted-key providers.
+The Copilot branch is in `clientFor`, which is where the kind and the route are already known, and
+the clause is met by the same test either way.
+
 Run before ticking, in a clean clone at this commit rather than in the shared worktree:
 `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
 ./...` reports no issues.
