@@ -5686,7 +5686,7 @@ respects them:
 
 ### S-01 A credential can be signed in to rather than typed
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: none`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: none`
 `scope: internal/keys/`
 
 Deliverable: the keys store learns that a credential may hold a grant instead of a pasted secret.
@@ -5719,7 +5719,100 @@ type reachable from `KeyMetadata`, `AgentProfile` or `Event` is either shallower
 test is extended until it genuinely reaches it. A keys.json written by the previous build loads with
 every credential intact and none of them claiming to be signed in.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built in internal/keys/signin.go, with the record's three new fields and a shared upsert in
+store.go. Nothing under internal/core is touched.
+
+The storage choice, which the task asked to be argued rather than made: both tokens go into one
+backend entry under the credential's own name, not two entries under names derived from it. The
+derived name was genuinely available and genuinely safe. keyNamePattern admits no character a
+derivation would use, so nothing a user is allowed to type could collide with one, and that hazard
+is not why it was rejected. It was rejected on what happens when a write stops halfway. Two entries
+are two Set calls with no transaction around them, and a failure between them leaves an access
+token with no refresh token beside it. There is no ordering that makes that half state harmless the
+way an orphaned secret is harmless, because the credential still looks usable and is quietly no
+longer renewable, which is a fault that surfaces weeks later at the moment somebody needed it to
+work. Two entries also mean Remove has to delete both, and the one a later edit forgets is a refresh
+token sitting in somebody's keychain after they believe they deleted the credential. One entry does
+not handle either problem, it does not have them: one write, one delete, and Remove needed no change
+at all to take the tokens with it. It also makes it impossible for a credential to be a pasted
+secret and a sign-in at once, since both write the same slot, so converting either into the other
+leaves nothing behind to be found later. The cost is that the backend now holds a document where it
+held a bare string, and the price of that is paid in the marker field's name: the entry begins
+`"canopyGrant": 1`, so somebody who opens Keychain Access and finds it can tell what it is.
+
+Three kinds rather than the two the task names, and this is the one place the build went past what
+was asked. S-04 says a delegated credential's keychain half is empty and that S-01 must allow that
+rather than treat it as damage. A signed-in credential with no tokens and a delegated credential
+are the same record on disk unless the record says which, so without the third word either a
+delegated credential reads as damaged for its whole life or a sign-in whose tokens were deleted
+from the keychain reads as fine, and the acceptance clause about reporting missing tokens cannot
+hold at the same time as S-04's requirement. KindDelegated also turns D-51's reason for permitting
+the Claude route into something enforced: a delegated credential handed a token at all is refused
+rather than stored, held by TestADelegatedSignInRefusesToBeGivenTokens. S-04 owns where the binary
+lives and what account it reports; only the kind is here.
+
+Considered and rejected. Putting the kind on core.Provider, which is constraint 1 and would have
+been a change to a frozen package, but also wrong on its own terms: Provider answers which API
+shape a credential speaks and Kind answers where it came from, the two are independent, and folding
+them together makes every combination a new constant. Recording a fingerprint of the access token,
+so a sign-in has the same column a pasted key has: rejected because the account already tells two
+credentials apart and does it better, and a fingerprint that changes on every refresh is a column
+that looks like an identity and moves like a clock. Writing `"kind": "pasted"` on ordinary
+credentials for symmetry: rejected so a keys.json that has never held a sign-in round trips to the
+same document, which is the rule record.Models already follows. Naming a sign-in command in the
+lapsed-tokens error the way the pasted path names `canopy keys add`: rejected because the commands
+that sign somebody in arrive with S-03 and S-04, and an error telling a user to run something that
+does not exist is worse than one that stops at what they have to do.
+
+One thing worth flagging for S-02 and after. Get now refuses a value that parses as a grant, and
+Tokens refuses a value that does not. That pair covers the window where PutSignIn wrote its tokens
+and then failed to save the record, or Put did the same in the other direction. Without it the
+first request goes out with a JSON document where the credential belongs, comes back 401, and gets
+classified as a wrong key, which is documented as never retry and never fall back, so the user
+would be sent to replace a credential that was never the problem. Held by
+TestTokensLeftInTheBackendAreNotServedAsAPastedSecret.
+
+Found and fixed on the way, in its own commit rather than bundled here: SetModel was the only
+mutating method on the store that never took the mutex. Every one of them reads the whole of
+keys.json, changes one thing and writes all of it back, which is only safe under the lock, so a
+model selection running alongside any other write put back a copy of the file from before that
+write and the other change was gone with nothing reporting it. MarkUsed fires on every turn, so the
+overlap is ordinary rather than exotic. Held by
+TestChangingTheModelDoesNotDiscardAConcurrentChange, which adds thirty two models while selecting
+thirty two and counts what survived: without the lock two or three are missing every run. Worth
+recording precisely, because the brief called it a data race and it is not one the detector can
+see. Nothing is shared in memory between the two calls, since each loads its own slice; the race is
+on the file, so `-race` stays silent about it and only counting the lost writes catches it.
+
+Acceptance, clause by clause: a signed-in credential round-trips with its kind, account and expiry
+intact and no token in keys.json, asserted against the file's bytes, is
+TestASignedInCredentialKeepsItsAccountAndExpiryAndWritesNoTokenToDisk; re-authenticating preserving
+CreatedAt, LastUsedAt and Models exactly as Put preserves them and replacing the tokens is
+TestSigningInAgainKeepsWhatRotatingAPastedKeyKeepsAndReplacesTheTokens, and "exactly as" is now the
+same upsert function both paths call rather than the same rule written twice; removing it removing
+both halves is TestRemovingASignedInCredentialTakesItsTokensWithIt; a lookup that finds metadata
+with no tokens behind it reporting in the terms the missing-secret path already uses is
+TestASignInWithNoTokensBehindItIsReportedAsDamageNotAsAbsence, which shares one sentence with Get
+through halvesDisagree and differs only in the remedy; internal/core unchanged and
+core.AllProviders() still two is TestSigningInAddsNoProvider plus a diff that touches no file under
+internal/core; TestPublishedTypesCarryNoSecrets still green, with the new types unreachable from
+KeyMetadata, AgentProfile and Event because internal/core cannot import internal/keys, so the
+meaningful cover is TestTheFactsBehindASignInAreSafeToDisplay, which walks SignIn the same way and
+also holds that KeyMetadata carries no Tokens field; and a keys.json from the previous build loading
+with every credential intact and none claiming to be signed in is
+TestAKeysFileFromThePreviousBuildHasNoCredentialClaimingToBeSignedIn, which also holds that writing
+it back leaves kind, account and expiresAt absent.
+
+Four more that cover behaviour the clauses imply rather than name:
+TestASignedInCredentialIsNotHandedOutAsAPastedSecret,
+TestAPastedSecretAndASignInCannotBothBeTrueOfOneCredential,
+TestADelegatedSignInHoldsNoTokensAndIsNotDamage and
+TestASignInWithoutTheAccountItBelongsToIsRefused.
+
+Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues.
 
 ### S-02 A token is refreshed before it is needed, not after it fails
 

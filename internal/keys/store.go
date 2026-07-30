@@ -277,8 +277,8 @@ func upsert(records []record, stored record, rate core.KeyRate) ([]record, recor
 // Get returns a credential's secret value.
 //
 // Only a pasted one. A credential somebody signed in to is refused here rather than served, because
-// what sits behind it is a pair of tokens and a caller reaching for Get is reaching for something to
-// put in a header. Tokens is the way to those, and it says so.
+// what sits behind it is a pair of tokens, and a caller reaching for Get is reaching for something
+// to put in a header. Tokens is the way to those, and it says so.
 func (s *Store) Get(ref core.KeyRef) (core.Secret, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

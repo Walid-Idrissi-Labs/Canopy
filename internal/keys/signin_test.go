@@ -521,7 +521,7 @@ func TestTheFactsBehindASignInAreSafeToDisplay(t *testing.T) {
 }
 
 // A keys.json from the build before this one has no kind field on any record. Every credential in
-// it has to load intact and none of them may come back claiming to be something nobody signed in to.
+// it has to load intact, and none may come back claiming to be something nobody signed in to.
 func TestAKeysFileFromThePreviousBuildHasNoCredentialClaimingToBeSignedIn(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "keys.json")
