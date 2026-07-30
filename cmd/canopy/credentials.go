@@ -49,11 +49,12 @@ func (s signInAware) Identity(ref core.KeyRef) (keysui.Identity, error) {
 // A package variable for the reason openKeyStore is one: it is what a test swaps to drive the flow
 // without a vendor on the other end of it. Nothing else about it is dynamic.
 //
-// It is empty, and that is the honest state of this build rather than an oversight. The three
-// permitted routes are D-51's and each arrives with its own task: Copilot with S-03, Claude Code
-// with S-04, ChatGPT with S-05. The surfaces are here first on purpose, because otherwise each of
-// those three tasks builds its own wizard branch and its own command and the three of them disagree.
-var signInRoutes keysui.SignIn = noRoutes{}
+// One of the three D-51 permits is here: Claude Code, which S-04 built, and which is the route where
+// there is nothing to sign in to because the user already did. Copilot arrives with S-03 and ChatGPT
+// with S-05, and whichever of those lands next has to compose the registries rather than replace this
+// one. That composition is not written yet on purpose: a registry of registries with a single member
+// is a shape guessed at before the second case exists.
+var signInRoutes keysui.SignIn = claudeCode{}
 
 // noRoutes is what a build with no vendor behind it offers, which is nothing, said plainly.
 type noRoutes struct{}

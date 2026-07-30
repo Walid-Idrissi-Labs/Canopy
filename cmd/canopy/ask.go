@@ -15,6 +15,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
@@ -76,15 +77,6 @@ func runAsk(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// Through the refresher rather than straight to the store, so a signed-in credential whose token
-	// is nearly out is renewed before the request is built rather than discovered as a 401 after it
-	// was sent. `canopy ask` and the interface have to agree about what a credential is worth, and
-	// the one place that decides is keys.Refresher.
-	secret, err := keys.NewRefresher(store).Credential(meta)
-	if err != nil {
-		return err
-	}
-
 	// The credential's own model unless one was named on the command line. The flag still wins,
 	// because trying a different model against a key you already have is most of what this command
 	// is for, and having to change the stored setting to do it would be absurd.
@@ -92,7 +84,7 @@ func runAsk(args []string, out io.Writer) error {
 		*model = meta.Model
 	}
 
-	client, err := newClient(meta, secret, *model)
+	client, id, err := clientFor(store, meta, *model)
 	if err != nil {
 		return err
 	}
@@ -122,10 +114,7 @@ func runAsk(args []string, out io.Writer) error {
 
 	// Priced here rather than in the provider clients: what a turn costs depends on which endpoint
 	// answered, and only the credential knows that.
-	priced := pricer(pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, *model).
-		WithUserRate(meta.Rate))
-
-	return drain(stream, out, priced)
+	return drain(stream, out, pricer(id))
 }
 
 // pricer turns a model identity into the function that costs a turn.
@@ -285,6 +274,59 @@ func readPrompt(args []string) (string, error) {
 //
 // The credential decides, not a flag. That is the whole point of naming keys: `-key nemotron`
 // carries its provider and endpoint with it, so nothing above has to be told which API to speak.
+// clientFor builds the client for a credential and says how a turn on it should be priced.
+//
+// Kind before provider, for the reason internal/session/resolver.go gives at the same fork: a
+// delegated credential is Anthropic by provider and holds no secret at all, so asking the refresher
+// for one refuses it before the route is ever reached.
+//
+// This is the second place the provider fork lives, which is what constraint 4 already says about
+// this command and the interface. It is worth two answers rather than one only because they answer
+// slightly different questions, and the thing that must not drift, what a credential is worth right
+// now, is keys.Refresher for both.
+func clientFor(
+	store *keys.Store, meta core.KeyMetadata, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
+	in, err := store.SignIn(meta.Ref)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+
+	if in.Kind == keys.KindDelegated {
+		ctx, cancel := context.WithTimeout(context.Background(), delegateTimeout)
+		defer cancel()
+
+		found, findErr := acp.Discovery{}.Find(ctx)
+		if findErr != nil {
+			return nil, pricing.ModelID{}, fmt.Errorf(
+				"key %q delegates to Claude Code: %w", meta.Ref.Name, findErr)
+		}
+		// Delegated, so nothing downstream prints a dollar figure for a turn metered against a plan
+		// that is billed monthly. See pricing.ModelID.Delegated.
+		id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
+		return acp.New(found, acp.WithVersion(version)), id, nil
+	}
+
+	// Through the refresher rather than straight to the store, so a signed-in credential whose token
+	// is nearly out is renewed before the request is built rather than discovered as a 401 after it
+	// was sent. `canopy ask` and the interface have to agree about what a credential is worth, and
+	// the one place that decides is keys.Refresher.
+	secret, err := keys.NewRefresher(store).Credential(meta)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+
+	client, err := newClient(meta, secret, model)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+	return client, pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, model).
+		WithUserRate(meta.Rate), nil
+}
+
+// delegateTimeout bounds looking for the delegated agent before a turn.
+const delegateTimeout = 30 * time.Second
+
 func newClient(meta core.KeyMetadata, secret core.Secret, model string) (core.ProviderClient, error) {
 	switch meta.Ref.Provider {
 	case core.ProviderAnthropic:

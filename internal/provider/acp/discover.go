@@ -200,11 +200,16 @@ type authStatus struct {
 func (d Discovery) Find(ctx context.Context) (Installation, error) {
 	cli, err := d.lookPath("claude")
 	if err != nil {
+		// The underlying lookup failure is deliberately not carried through. "executable file not
+		// found in $PATH" adds nothing to the sentence above and turns advice somebody can act on
+		// into advice with an implementation detail stapled to it. That is the opposite trade from
+		// core.WithDetail's, and it is the right one here because there is no provider message to
+		// preserve: the whole fact is that the file is not there.
 		return Installation{}, fmt.Errorf(
 			"%w. Canopy does not sign anybody in to Claude: it drives a Claude Code you have already "+
 				"signed in to yourself, so there has to be one. Install it from "+
-				"https://claude.com/claude-code, then run `claude` once and sign in: %w",
-			ErrClaudeCodeMissing, err)
+				"https://claude.com/claude-code, then run `claude` once and sign in",
+			ErrClaudeCodeMissing)
 	}
 
 	account, err := d.account(ctx, cli)

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
@@ -53,6 +55,18 @@ func (r *KeyResolver) Resolve(
 		return nil, pricing.ModelID{}, err
 	}
 
+	// Which kind of credential this is comes before which provider it speaks, and it has to. A
+	// delegated credential is an Anthropic credential by provider and is not a credential at all by
+	// substance: there is no secret behind it, so asking the refresher for one below would refuse it
+	// in internal/keys' own words and the route would never be reached.
+	in, err := r.store.SignIn(meta.Ref)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+	if in.Kind == keys.KindDelegated {
+		return r.delegate(meta, model)
+	}
+
 	secret, err := r.credentials.Credential(meta)
 	if err != nil {
 		return nil, pricing.ModelID{}, err
@@ -80,6 +94,44 @@ func (r *KeyResolver) Resolve(
 			meta.Ref.Name, meta.Ref.Provider)
 	}
 }
+
+// delegate builds the client for a credential that drives somebody else's agent.
+//
+// Discovery happens here, on every turn, rather than being cached on the credential. What was on the
+// machine when the credential was added is not what is on it now: Claude Code can be uninstalled,
+// updated, or signed out of between two messages, and each of those has its own remedy that only a
+// fresh look can name. The cost is one short subprocess per turn against a turn that is about to
+// start a subprocess anyway.
+//
+// The model identity is marked delegated, which is what stops a dollar figure appearing beside a turn
+// nobody is billed per token for. See pricing.ModelID.Delegated.
+func (r *KeyResolver) delegate(
+	meta core.KeyMetadata, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), delegateTimeout)
+	defer cancel()
+
+	found, err := delegatedAgent.Find(ctx)
+	if err != nil {
+		return nil, pricing.ModelID{}, fmt.Errorf("key %q delegates to Claude Code: %w",
+			meta.Ref.Name, err)
+	}
+
+	// The provider is carried through so a failure can still say which credential this was, and the
+	// model is carried through so the client can ask for it if the delegated agent offers a choice.
+	// Neither of them prices anything, because Delegated is checked first.
+	id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
+	return acp.New(found), id, nil
+}
+
+// delegateTimeout bounds looking for the delegated agent before a turn.
+const delegateTimeout = 30 * time.Second
+
+// delegatedAgent is how the machine is inspected for a delegated route.
+//
+// A package variable for the reason cmd/canopy's openKeyStore is one: it is what a test swaps to
+// drive the route without a Claude Code installed. Nothing else about it is dynamic.
+var delegatedAgent = acp.Discovery{}
 
 // pick chooses a credential.
 //

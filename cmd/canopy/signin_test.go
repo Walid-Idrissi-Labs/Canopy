@@ -565,12 +565,21 @@ func TestSigningInRefusesAFlagThatWouldPutACredentialInShellHistory(t *testing.T
 
 // A build with no route says so in terms of what a person wanted to know, which is whether this is
 // possible at all, rather than reporting an unknown flag value.
+//
+// The registry is set to the empty one here rather than left as the shipped default, which it was
+// until S-04. The shipped build now offers the Claude Code route, and this test is about what a
+// build with nothing behind it says: that behaviour still exists, is still reachable while S-03 and
+// S-05 are unbuilt on some path or other, and is worth keeping true.
 func TestSigningInWithNoRouteBuiltSaysWhichRoutesAreComing(t *testing.T) {
 	backend := keys.NewMemoryBackend()
 	store := keys.NewStore(backend, filepath.Join(t.TempDir(), "keys.json"))
 	original := openKeyStore
 	openKeyStore = func() (*keys.Store, error) { return store, nil }
 	t.Cleanup(func() { openKeyStore = original })
+
+	originalRoutes := signInRoutes
+	signInRoutes = noRoutes{}
+	t.Cleanup(func() { signInRoutes = originalRoutes })
 
 	err := runKeys([]string{"signin", "seat"}, &bytes.Buffer{})
 	if err == nil {
