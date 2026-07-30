@@ -52,7 +52,6 @@ type Login struct {
 	session *session
 	prompt  Prompt
 	loginID string
-	mode    LoginMode
 
 	mu        sync.Mutex
 	finished  bool
@@ -67,9 +66,6 @@ var ErrSignInStopped = errors.New("the sign-in was stopped, so nothing was store
 
 // Prompt is what to put on screen. Already known by the time Begin returned, so this does no work.
 func (l *Login) Prompt() Prompt { return l.prompt }
-
-// Mode is which flow this turned out to be, so a surface can say which one it picked and why.
-func (l *Login) Mode() LoginMode { return l.mode }
 
 // Begin asks the app server to sign somebody in and returns once it has said what they must do.
 //
@@ -95,7 +91,7 @@ func (v Vendor) Begin(ctx context.Context, mode LoginMode) (*Login, error) {
 		return nil, fmt.Errorf("asking the Codex app server to start a ChatGPT sign-in: %w", err)
 	}
 
-	login := &Login{vendor: v, session: s, loginID: result.LoginID, mode: mode}
+	login := &Login{vendor: v, session: s, loginID: result.LoginID}
 	switch {
 	case result.UserCode != "":
 		login.prompt = Prompt{URL: result.VerificationURL, Code: result.UserCode}
