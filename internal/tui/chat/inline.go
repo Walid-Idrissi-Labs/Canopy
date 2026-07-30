@@ -2,6 +2,7 @@ package chat
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -258,6 +259,13 @@ func wrapInline(runs []inline, width int) [][]inline {
 		for lipgloss.Width(tok.run.visible()) > width {
 			head, tail := cutCells(tok.run.visible(), width-used)
 			if head == "" {
+				// Only reachable when this line has no room left at all, since cutCells always
+				// takes a character when it has any budget. Breaking rather than continuing, so
+				// that if that guarantee ever changes this becomes a layout fault and not a
+				// hang: the loop below cannot be allowed to depend on it silently.
+				if used == 0 {
+					break
+				}
 				flush()
 				continue
 			}
@@ -285,14 +293,31 @@ func wrapInline(runs []inline, width int) [][]inline {
 //
 // By cell and not by rune. A rune count against a cell budget is the bug that lets a line of
 // full-width text render at twice the width of the terminal and wrap the whole frame.
+//
+// **With any budget at all, this always takes at least one character.** That is the property both
+// hard-break loops depend on to terminate, and leaving it out froze the interface. A budget of one
+// cell against a two cell character, a CJK ideograph or an emoji, used to return nothing: the caller
+// would start a fresh line, ask again, get nothing again, and spin forever inside View with the
+// screen stopped and ctrl+c unanswered. It was reachable from ordinary model output, a checkmark in
+// an indented list or a table with enough columns, on an eighty column terminal.
+//
+// So a character wider than the whole budget is emitted anyway and overflows it. One column of
+// overflow on a line too narrow to hold one character is a cosmetic fault on a display nobody can
+// read regardless. Not returning is not a fault, it is the end of the session.
 func cutCells(s string, budget int) (head, tail string) {
-	if budget <= 0 {
+	if budget <= 0 || s == "" {
 		return "", s
 	}
 	used := 0
 	for i, r := range s {
 		w := lipgloss.Width(string(r))
 		if used+w > budget {
+			if i == 0 {
+				// Nothing fits, not even this one character. Take it regardless, so the caller
+				// advances.
+				_, size := utf8.DecodeRuneInString(s)
+				return s[:size], s[size:]
+			}
 			return s[:i], s[i:]
 		}
 		used += w

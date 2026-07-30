@@ -5297,6 +5297,43 @@ keys cannot retry them. TestAStoredCredentialDoesNotClaimARefusedConversationSwi
 wizard-to-engine path; TestARefusedSelectionStaysStoredButIsNotRetriedOrClaimed holds the child
 contract.
 
+### U-25 The renderer always returns
+`status: review | owner: claude | branch: fix/narrow-wrap-hang | depends: U-21, U-23`
+`scope: internal/tui/chat/`
+
+Deliverable: the three defects an independent pre-release review found in the interface round, none
+of which the gate catches.
+
+The renderer could stop returning. Both hard-break loops asked `cutCells` for a piece of a word, got
+nothing back when the budget was one cell and the next character two, started a fresh line and asked
+again with the same budget. Inside `View`, so the screen froze and ctrl+c was never read. Reachable
+from ordinary model output: a checkmark in an indented list item, or a table with enough columns, at
+widths this program chooses on purpose. `cutCells` now always takes at least one character when it
+has any budget, overflowing by a column rather than not returning, and both loops break rather than
+spin if that guarantee is ever lost.
+
+A tool call left unanswered by a stopped turn said it was running, and said it under the line
+admitting the reply was cut short. It now says it never finished, which is also what frees a finished
+turn's render from the clock and makes it safe to cache.
+
+A render is produced outside the cache's lock, so a theme change could land between producing it and
+storing it, putting an old-palette render into the map that had just been emptied. Renders now carry
+the generation they were made in and are only stored while it is current.
+
+Acceptance: `RenderMarkdown` and `Transcript` return for every combination of full-width text,
+emoji, list indent to 77, table columns to 40, and widths from 1 to 100, each under a watchdog. A
+character wider than the whole line is still emitted, so nothing is lost at width 1. An interrupted
+turn's abandoned call says what became of it. A render made before a theme change is refused by the
+cache after it.
+
+`verify: claude [x]   codex [ ]`
+
+notes: found by an independent review commissioned before tagging the beta, not by the gate, which
+was green throughout: gofmt, vet, golangci-lint at zero issues and the full suite including `-race`
+all passed with a reachable freeze of the entire interface in the tree. Worth remembering the next
+time a green gate is mistaken for a reviewed change. The hang is the reason `v0.1.0-beta.1` was not
+tagged on 2026-07-30 until this landed.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 

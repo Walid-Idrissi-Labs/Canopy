@@ -73,10 +73,11 @@ func wrapLine(line string, width int) []string {
 			}
 			head, tail := cutCells(word, take)
 			if head == "" {
-				// Nothing fits in what is left of this line, not even one cell of it. Start a fresh
-				// line rather than spinning here writing nothing.
-				flush()
-				continue
+				// Only reachable if cutCells stops guaranteeing a character per call, which is the
+				// property that makes this loop terminate. Breaking turns a broken guarantee into a
+				// truncated line instead of a frozen interface; the previous version flushed and
+				// continued, which spun forever on a line one cell narrower than one character.
+				break
 			}
 			current.WriteString(head)
 			word = tail
