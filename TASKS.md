@@ -127,31 +127,34 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | The keys and surfaces round, claimed 2026-07-29: K-01 to K-03, then U-16 to U-19, from six asks by Walid. A8-05's visible hook-failure surface after it | `feat/one-key-many-models`, then `tui/ambient-attention` stacked on it | none |
+| Claude | The beta interface round, claimed 2026-07-29: U-20 to U-24 on one stack, U-01, U-03 and U-09 on a second, and the launch documents on a third. A8-05's visible hook-failure surface after it | `tui/what-the-agent-did` then `tui/rendered-markdown` then `fix/cell-width-and-chrome` then `perf/render-once-per-turn` then `tui/first-key-selects`, each stacked on the last; `tui/attention-and-navigation` and `docs/beta-launch` beside them | none |
 | Codex | Independent verification of the unsigned lines, the eleven phase gates, the six product runs | `verify/independent-pass` | none |
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, in the commit these words are in, after the whole keys and surfaces round
-was built and independently reviewed: 88 review, 40 todo, four partial, one claimed, six deferred,
-**zero done**. Counted rather than carried over, because a board quoting a number taken before the
-commit it sits in is the failure this section exists to prevent, and it has now happened three
-times: the previous recount was made on the keys branch and said the four U tasks were counted on
-the branch stacked after it, then rode the merge into that very branch with the sentence intact.
-The figures this replaces, 84 review and five claimed, were true there and not here, where U-16 to
-U-19 sit at review in this same file. The one task still claimed is A8-05.
+Counted on this branch, in the commit these words are in, after the beta interface round: 93 review,
+40 todo, four partial, one claimed, six deferred, **zero done**. Counted rather than carried, for the
+reason this section has now recorded three separate times: a board quoting a figure taken before the
+commit it sits in is read instead of the ledger and is wrong.
 
-The number that matters is a different one. **87 task lines carry `claude [x]` and nine carry
-`codex [x]`.** That first figure has been recounted rather than carried each time: it read 77 here
-and was already wrong when it was written, the real count at the time being 80, and the seven lines
-of this round have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
-the other has independently checked almost none of them, and no amount of further building changes
-it. That is why the split for this round is not another feature split: one side finishes the
-contract and safety work, the other converts `review` into `done`, and only the second of those can
-produce the first `done` this project has ever had.
+**This branch is the tip of a stack of five and the count is the stack's, not main's.** The five are
+listed in the board above and each contains the one before it, so merging the last one merges all of
+them; `tui/attention-and-navigation` carries U-01, U-03 and U-09 and sits beside the stack rather
+than in it, and `docs/beta-launch` is cut from main and touches no Go file. Anyone recounting on a
+different branch will get a different number and both will be right.
 
-Nothing reaches `done` on one signature. An agent may not sign its own work, which is the whole
-mechanism, so the verification column is structurally not Claude's to fill.
+**92 task lines carry `claude [x]` and nine carry `codex [x]`.** That gap is the project's actual
+state and no amount of further building changes it: one pair has built nine phases and a beta round
+on top of them, and the other has independently checked nine task lines. Nothing here reaches `done`
+on one signature, and an agent may not sign its own work, so the second column is structurally not
+Claude's to fill.
+
+The eight blocks added this round are U-20 to U-24 (the transcript showing what an agent did, a reply
+rendered as a document, four cell-width and frame defects, rendering a finished turn once, and the
+add-key wizard selecting what it stored) and U-01, U-03 and U-09 (navigation that reads a prompt
+without answering it, attention that crosses screens, and no reflex that spends money). Two of them
+overturn a rule the code held on purpose and both are recorded rather than assumed: D-48 for tool
+output, D-49 for markdown markers.
 
 ### 2.1 File boundary for this round
 
@@ -5262,6 +5265,37 @@ it to choose visible text and colour. A turn first rendered with a nil, read, or
 therefore retain that classification when another surface knew the call was execute, network, write,
 or Git. turnKey now hashes the resolved known/unknown kind for every call.
 TestAChangedToolClassificationRendersAgain holds the cross-surface regression.
+
+### U-24 The wizard ends where its user thinks it ended
+`status: review | owner: claude | branch: tui/first-key-selects | depends: none`
+`scope: internal/tui/keys/, internal/tui/app.go, internal/tui/chat/model.go`
+
+Deliverable: the first half of U-06. Storing a credential selects it for the conversation, and the
+list's cursor moves to the row that will actually answer.
+
+Acceptance: on a machine with no credentials, somebody adds one through the wizard and the credential
+they typed is the credential the next message runs on, with no further keystroke and no coaching. The
+same holds for a second credential added later. The screen says so only after the session engine
+accepts the switch. If an active turn refuses it, the screen says the credential was stored but not
+selected, shows the engine's reason, and does not retry on a later unrelated keystroke.
+
+`verify: claude [x]   codex [ ]`
+
+notes: split out of U-06 and shipped alone because it is a first-run defect and this is release week.
+The reason it survived this long is that it is invisible with one credential stored: the resolver
+falls back to the only one there is, so the wizard appeared to work, and the bug only surfaces on the
+second key, on a different screen, as a conversation answering on the wrong provider. The rest of
+U-06 stays open: the live credential check in the wizard, rate entry for OpenAI-compatible endpoints
+in the interface, and startup warnings that currently go to a stderr the alt screen erases.
+
+Review correction, 2026-07-30: afterSecret said the new key “is now the credential” before its parent
+called Engine.UseCredential. That call can refuse while a turn is active, leaving the key safely
+stored but the conversation unchanged. Selection is now a pending request: the keys model says only
+what its store established, and the application explicitly acknowledges acceptance or reports the
+precise refusal. Refused and accepted requests are both disarmed after the acknowledgement so later
+keys cannot retry them. TestAStoredCredentialDoesNotClaimARefusedConversationSwitch holds the full
+wizard-to-engine path; TestARefusedSelectionStaysStoredButIsNotRetriedOrClaimed holds the child
+contract.
 
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`

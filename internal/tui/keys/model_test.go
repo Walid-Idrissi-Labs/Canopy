@@ -642,3 +642,89 @@ func TestThePickerSaysWhenTheCatalogHasGoneStale(t *testing.T) {
 		t.Errorf("a stale list stopped offering anything:\n%s", view)
 	}
 }
+
+// The wizard has to end where the person walking it thinks it ended.
+//
+// Storing a credential used to leave it unselected. It worked anyway while there was exactly one,
+// because the resolver falls back to the only credential there is, and broke the moment a second was
+// added: the conversation answered on whichever the resolver preferred rather than on the one just
+// typed in. The failure therefore appears later, on a different screen, to somebody who has no
+// reason to connect it to the wizard.
+func TestAddingACredentialSelectsIt(t *testing.T) {
+	store := &stubStore{}
+	m := New(store)
+
+	m = key(m, "a")
+	m = typeRunes(m, "claude")
+	m = press(m, tea.KeyEnter)
+	m = press(m, tea.KeyEnter) // provider list, anthropic is first
+	m = typeRunes(m, canary)
+	m = press(m, tea.KeyEnter)
+
+	chosen, ok := m.Chosen()
+	if !ok {
+		t.Fatalf("no credential is selected after adding one:\n%s", plain(m.View()))
+	}
+	if chosen != "claude" {
+		t.Errorf("selected %q after adding claude", chosen)
+	}
+	// Stored is the only fact this component owns. It must not say "now in use" until the parent
+	// conversation acknowledges the switch.
+	if view := plain(m.View()); !strings.Contains(view, `Stored "claude"`) ||
+		strings.Contains(view, "now the credential") {
+		t.Errorf("the wizard claimed more than the store had established:\n%s", view)
+	}
+
+	m.SelectionApplied("claude")
+	if view := plain(m.View()); !strings.Contains(view, "now the credential for this conversation") {
+		t.Errorf("the parent acknowledgement is not shown:\n%s", view)
+	}
+}
+
+// A second credential added later is also the one that answers, which is the case the fallback in
+// the resolver used to hide.
+func TestAddingASecondCredentialSelectsTheNewOne(t *testing.T) {
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}},
+	}}
+	m := New(store)
+
+	m = key(m, "a")
+	m = typeRunes(m, "kimi")
+	m = press(m, tea.KeyEnter)
+	m = press(m, tea.KeyEnter)
+	m = typeRunes(m, canary)
+	m = press(m, tea.KeyEnter)
+
+	if chosen, _ := m.Chosen(); chosen != "kimi" {
+		t.Errorf("selected %q after adding kimi as a second credential", chosen)
+	}
+}
+
+// A refusal clears the pending preference. Otherwise every later key on this screen retries it, and
+// the credential can switch unexpectedly once the active turn that caused the refusal ends.
+func TestARefusedSelectionStaysStoredButIsNotRetriedOrClaimed(t *testing.T) {
+	store := &stubStore{}
+	m := New(store)
+
+	m = key(m, "a")
+	m = typeRunes(m, "claude")
+	m = press(m, tea.KeyEnter)
+	m = press(m, tea.KeyEnter)
+	m = typeRunes(m, canary)
+	m = press(m, tea.KeyEnter)
+	m.SelectionRefused("claude", "this session is mid answer")
+
+	if _, chosen := m.Chosen(); chosen {
+		t.Error("the refused preference remained armed for a later retry")
+	}
+	view := plain(m.View())
+	for _, want := range []string{`stored "claude"`, "not selected", "mid answer"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the refusal lost %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "now the credential") {
+		t.Errorf("the refused switch is presented as applied:\n%s", view)
+	}
+}

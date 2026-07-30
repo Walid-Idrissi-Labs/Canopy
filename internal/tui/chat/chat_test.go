@@ -421,7 +421,7 @@ func (errBusy) Error() string { return "this session is already working on a tur
 
 func TestEmptyMessagesAreNotSent(t *testing.T) {
 	engine := &fakeEngine{}
-	press(typeText(model(engine), "   "), tea.KeyEnter)
+	_ = press(typeText(model(engine), "   "), tea.KeyEnter)
 
 	if len(engine.sent) != 0 {
 		t.Errorf("whitespace was sent as a message: %v", engine.sent)
@@ -529,7 +529,7 @@ func TestEscapeStopsARunningTurn(t *testing.T) {
 	if !m.Working() {
 		t.Fatal("a streaming turn should read as working")
 	}
-	press(m, tea.KeyEsc)
+	_ = press(m, tea.KeyEsc)
 	if engine.cancelled != 1 {
 		t.Errorf("escape cancelled %d times, want 1", engine.cancelled)
 	}
@@ -542,7 +542,7 @@ func TestEscapeWithNothingRunningDoesNotCancel(t *testing.T) {
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	press(m, tea.KeyEsc)
+	_ = press(m, tea.KeyEsc)
 	if engine.cancelled != 0 {
 		t.Error("escape with nothing running should not cancel anything")
 	}
@@ -899,7 +899,7 @@ func TestAnythingOtherThanYesRefuses(t *testing.T) {
 		}
 		m := model(engine)
 		m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
-		m.Update(key)
+		_, _ = m.Update(key)
 
 		if len(engine.answers) != 1 {
 			t.Errorf("%v: %d answers, want 1", key, len(engine.answers))
@@ -927,7 +927,7 @@ func TestYesApprovesOnceAndAlwaysApprovesWidely(t *testing.T) {
 	engine.prompt = pendingPrompt("make test")
 	engine.answers = nil
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
-	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 
 	if len(engine.answers) != 1 || !engine.answers[0][0] || !engine.answers[0][1] {
 		t.Errorf("a gave %v, want approved and remembered", engine.answers)

@@ -136,7 +136,7 @@ func TestSlashCompactGoesThroughTheSameConfirmation(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("the key named in the offer did not go ahead with it")
 	}
-	m.Update(cmd())
+	_, _ = m.Update(cmd())
 	if engine.compacted != 1 {
 		t.Errorf("the confirmed command compacted %d times", engine.compacted)
 	}

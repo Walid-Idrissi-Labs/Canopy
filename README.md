@@ -79,6 +79,10 @@ canopy keys list                             # the MODEL column says NOT SET whe
 
 Anything that is not Anthropic needs a model named explicitly. There is no default anybody could
 guess for somebody else's gateway, and a credential without one cannot answer a single message.
+Finishing the credential wizard both stores the key and asks the current conversation to use it.
+The screen only says the switch is active after the session accepts it; a conversation mid-answer
+keeps its current key and reports the newly stored one as not selected.
+
 The keys screen offers a dated catalog where Canopy knows both the endpoint and a compatible
 transport, while still accepting an unlisted model id. OpenAI's offered list is intentionally
 limited to models the current Chat Completions adapter can invoke; models that require the

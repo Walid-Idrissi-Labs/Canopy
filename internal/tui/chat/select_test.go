@@ -92,7 +92,7 @@ func TestASelectionAcrossLinesCopiesWholeLines(t *testing.T) {
 	m = mouse(m, tea.MouseActionPress, tea.MouseButtonLeft, fromCol, fromRow)
 	m = mouse(m, tea.MouseActionMotion, tea.MouseButtonLeft, 79, toRow)
 	// The release is what copies; the model after it is not read again in this test.
-	mouse(m, tea.MouseActionRelease, tea.MouseButtonLeft, 79, toRow)
+	_ = mouse(m, tea.MouseActionRelease, tea.MouseButtonLeft, 79, toRow)
 
 	if len(*copied) != 1 {
 		t.Fatalf("clipboard = %q, want one entry", *copied)
@@ -135,7 +135,7 @@ func TestABareClickCopiesNothing(t *testing.T) {
 	row, col := rowAndCol(t, m, "parser")
 	m = mouse(m, tea.MouseActionPress, tea.MouseButtonLeft, col, row)
 	// The release decides whether anything is copied; the model after it is not read again.
-	mouse(m, tea.MouseActionRelease, tea.MouseButtonLeft, col, row)
+	_ = mouse(m, tea.MouseActionRelease, tea.MouseButtonLeft, col, row)
 
 	if len(*copied) != 0 {
 		t.Errorf("a bare click copied %q", *copied)
