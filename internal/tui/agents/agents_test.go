@@ -20,6 +20,27 @@ type fakeEngine struct {
 	sessions map[string]core.Session
 	added    []session.Agent
 	addErr   error
+	answered []answeredCall
+}
+
+// answeredCall is one reply the view sent through Answer, and on whose behalf.
+type answeredCall struct {
+	session  string
+	approved bool
+	remember bool
+}
+
+func (e *fakeEngine) Answer(sessionID string, approved, remember bool) bool {
+	e.answered = append(e.answered,
+		answeredCall{session: sessionID, approved: approved, remember: remember})
+	// The answered agent stops waiting, which is what the real engine's next status read says.
+	for i := range e.statuses {
+		if e.statuses[i].Agent.SessionID == sessionID {
+			e.statuses[i].State = core.AgentWorking
+			e.statuses[i].Waiting = ""
+		}
+	}
+	return true
 }
 
 func (e *fakeEngine) AgentStatuses() []session.AgentStatus { return e.statuses }
