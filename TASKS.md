@@ -5199,6 +5199,36 @@ horizontally becomes labelled rows. TestANarrowMultiColumnTableNeverExceedsItsWi
 reported regression and TestATableTooNarrowForItsColumnCountBecomesLabelledRows holds the
 mathematically impossible case without dropping data.
 
+### U-22 A column is not a rune, and a frame is not a suggestion
+`status: review | owner: claude | branch: fix/cell-width-and-chrome | depends: none`
+`scope: internal/tui/, internal/tui/chat/`
+
+Deliverable: four width and height defects found by reading the render path, and the A9-02 evidence
+that was missing for two of them. The hard word break in `wrapLine` and the ellipsis in `truncate`
+both cut a rune count against a cell budget, so full-width text drew at up to twice the width it was
+given. The status row was neither wrapped nor bounded while the function that budgets its height
+counts newlines, so a long error pushed the footer off the bottom. `Frame` padded a short body and
+never clipped a tall one, so a screen composing several panels at once scrolled its own header away.
+`ctrl+d agents` sat behind `ctrl+n new` in the footer's hint order and was therefore the first thing
+dropped at eighty columns, on the key to the feature the product is named for. The turn in flight
+now says how long it has been going.
+
+Acceptance: no rendered line exceeds the width it was given, for CJK text, in prose, in a code block
+and on a tool call's argument, and nothing is lost in the wrapping. A frame drawn on a terminal that
+is too short for its body still shows its header and its footer. Seven window sizes applied in
+sequence to one model, across the wordmark threshold in both directions, never draw outside the
+frame. `ctrl+d agents` is on screen at eighty columns.
+
+`verify: claude [x]   codex [ ]`
+
+notes: closes two of the four named gaps in A9-02, which are (a) resize was never tested in
+sequence, every test that looked like one rebuilt the application per size, and (b) the flagship key
+was invisible at the default terminal width. The other two, quitting with several agents live and
+unbounded rendering of a very long reply, stay open and stay in LIMITATIONS. Two `notice` messages
+carrying a `canopy pickup` command were moved onto their own line, because the wrap this task adds
+would otherwise break a command across two rows, and half a command is a command that looks like a
+shorter one.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 

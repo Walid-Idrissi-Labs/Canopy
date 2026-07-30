@@ -60,19 +60,26 @@ func wrapLine(line string, width int) []string {
 		}
 
 		// A single word wider than the line has to be broken, or it would run past the edge.
+		//
+		// Broken by cell and not by rune. The budget here is a count of terminal columns, and a rune
+		// is not a column: a CJK character occupies two. Cutting a rune count against a cell budget
+		// is how a line of full-width text with no spaces in it, which is an ordinary sentence in
+		// Japanese or Chinese, came out at twice the width of the terminal and wrapped the frame.
 		for lipgloss.Width(word) > width {
 			take := width - currentWidth
 			if take <= 0 {
 				flush()
 				take = width
 			}
-			runes := []rune(word)
-			cut := take
-			if cut > len(runes) {
-				cut = len(runes)
+			head, tail := cutCells(word, take)
+			if head == "" {
+				// Nothing fits in what is left of this line, not even one cell of it. Start a fresh
+				// line rather than spinning here writing nothing.
+				flush()
+				continue
 			}
-			current.WriteString(string(runes[:cut]))
-			word = string(runes[cut:])
+			current.WriteString(head)
+			word = tail
 			flush()
 		}
 

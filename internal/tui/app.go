@@ -896,13 +896,18 @@ func (a App) View() string {
 		if a.chat.Working() {
 			escMeans = "stop"
 		}
-		footer := Keys(a.dim.Width, "enter", "send", "esc", escMeans, "ctrl+c", "quit",
-			"↑", "history", "shift+tab", "mode", "ctrl+n", "new", "ctrl+k", "keys",
-			"ctrl+d", "agents", "ctrl+r", "compact")
+		// Ordered by what is lost if it falls off the end, because Keys drops from the right and
+		// eighty columns is the width most terminals actually open at. `ctrl+d agents` used to sit
+		// behind `ctrl+n new` in both lists and was therefore the first thing cut at eighty, which
+		// meant the key to the several-agents view was invisible on a default terminal in the
+		// product named for it.
+		footer := Keys(a.dim.Width, "enter", "send", "esc", escMeans, "ctrl+d", "agents",
+			"shift+tab", "mode", "ctrl+c", "quit", "↑", "history", "ctrl+k", "keys",
+			"ctrl+n", "new", "ctrl+o", "full output", "ctrl+r", "compact")
 		if a.chat.InputEmpty() {
-			footer = Keys(a.dim.Width, "enter", "send", "?", "help", "shift+tab", "mode",
-				"ctrl+k", "keys", "ctrl+n", "new", "ctrl+d", "agents", "↑", "history",
-				"ctrl+r", "compact", "ctrl+c", "quit")
+			footer = Keys(a.dim.Width, "enter", "send", "?", "help", "ctrl+d", "agents",
+				"shift+tab", "mode", "ctrl+k", "keys", "ctrl+n", "new", "↑", "history",
+				"ctrl+o", "full output", "ctrl+r", "compact", "ctrl+c", "quit")
 		}
 		if a.chat.Awaiting() {
 			// The question's own panel names the keys, with the scope of "always" spelled out,

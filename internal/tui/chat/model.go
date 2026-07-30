@@ -253,6 +253,14 @@ type Model struct {
 	spinner int
 	working bool
 
+	// workingSince is when this screen first saw the turn in flight, cleared when it lands.
+	//
+	// The screen's clock rather than the turn's, for the reason callSeen carries below: a Turn has
+	// timestamps but reading them means the interface and the engine disagreeing about which of two
+	// clocks a number came from. What is shown is how long the screen has been watching, which is
+	// what the person in front of it is actually asking.
+	workingSince time.Time
+
 	// expanded lifts the caps on diffs, tool output and error text, toggled with ctrl+o.
 	//
 	// One switch for the whole transcript rather than a state per call. Per-call folding needs a
@@ -1194,7 +1202,14 @@ func (m *Model) refresh() {
 	}
 	m.session = current
 	m.loaded = true
+	wasWorking := m.working
 	_, m.working = current.Active()
+	switch {
+	case m.working && !wasWorking:
+		m.workingSince = time.Now()
+	case !m.working:
+		m.workingSince = time.Time{}
+	}
 	m.prompt, m.awaiting = m.engine.Pending(m.sessionID)
 	m.noteCalls(current)
 
@@ -2019,12 +2034,12 @@ func (m Model) statusRow(below int) string {
 		return t.Success.Render("  ✓ copied to clipboard")
 	}
 	if m.err != "" {
-		return t.Danger.Render("  " + m.err)
+		return m.statusText(m.err, t.Danger)
 	}
 	// Above the working line on purpose. A notice is usually a question waiting on the next
 	// keystroke, and a spinner saying "working" is not the thing to answer.
 	if m.notice != "" {
-		return t.Warning.Render("  " + m.notice)
+		return m.statusText(m.notice, t.Warning)
 	}
 	if m.awaiting {
 		return t.Warning.Render("  waiting for you")
@@ -2033,9 +2048,56 @@ func (m Model) statusRow(below int) string {
 		return t.Muted.Render("  " + m.spinnerFrame() + " summarising the conversation so far")
 	}
 	if m.working {
-		return t.Muted.Render("  " + m.spinnerFrame() + " working, esc to stop")
+		// The count is what tells a slow turn from a stuck one. Without it, a request that has been
+		// out for four minutes and one that left a moment ago are the same spinner, and the spinner
+		// is the only thing on screen saying anything is happening at all.
+		return t.Muted.Render("  " + m.spinnerFrame() + " working" + m.workingFor() + ", esc to stop")
 	}
 	return ""
+}
+
+// statusText lays a message out across as many rows as it needs.
+//
+// Wrapped here rather than left to the terminal. statusHeight budgets this row by counting the
+// newlines in it, so a message long enough for the terminal to wrap on its own occupied more rows
+// than the frame had reserved and pushed the footer off the bottom of the screen. The messages that
+// do this are the long ones, which is to say the errors, which is to say exactly the times when the
+// screen going wrong is least welcome.
+func (m Model) statusText(text string, style lipgloss.Style) string {
+	width := m.width - 2
+	if width < 8 {
+		width = 8
+	}
+	lines := wrap(text, width)
+
+	// Bounded, because a provider can return one very long line and the status row is not a
+	// transcript. The bound is a share of the screen rather than a fixed number of rows: several of
+	// these messages are deliberately multi-line, the mode ladder above all, and a fixed cap of a
+	// few rows silently ate the last two rungs of it. Never below five, so the ladder fits on a
+	// short terminal too.
+	most := m.height / 3
+	if most < 5 {
+		most = 5
+	}
+	if len(lines) > most {
+		lines = append(lines[:most-1], "…")
+	}
+	for i, line := range lines {
+		lines[i] = style.Render("  " + line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// workingFor is how long the turn in flight has been going, once that is worth saying.
+func (m Model) workingFor() string {
+	if m.workingSince.IsZero() {
+		return ""
+	}
+	elapsed := time.Since(m.workingSince)
+	if elapsed < time.Second {
+		return ""
+	}
+	return ", " + formatDuration(elapsed)
 }
 
 // boxChrome is how many columns the message box spends on itself: a leading space, two corner or

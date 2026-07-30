@@ -425,7 +425,10 @@ func TestTheChatFooterKeepsHelpAndCredentialsAtEightyColumns(t *testing.T) {
 
 	view := plain(narrow.(tui.App).View())
 	footer := lastLine(view)
-	for _, hint := range []string{"? help", "ctrl+k keys"} {
+	// `ctrl+d agents` joins the two that must survive. It is the way to the several-agents view,
+	// which is the feature the product is named for, and it used to sit behind `ctrl+n new` in the
+	// hint order and therefore be the first thing dropped on a default eighty column terminal.
+	for _, hint := range []string{"? help", "ctrl+k keys", "ctrl+d agents"} {
 		if !strings.Contains(footer, hint) {
 			t.Errorf("the footer at eighty columns dropped %q: %q", hint, footer)
 		}
