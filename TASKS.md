@@ -4572,8 +4572,8 @@ read what you are approving refuses it; and the screens that would tell you anot
 blocked are locked exactly when your own agent is blocked.
 
 ### U-01 Reading the prompt is not answering it
-`status: todo | owner: none | branch: none | depends: PG-M`
-`scope: internal/tui/chat/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: PG-M`
+`scope: internal/tui/chat/, internal/tui/help.go`
 
 Deliverable: while a permission prompt is pending, navigation navigates. Scroll keys, arrows,
 page keys and the wheel move the transcript so the person can reread the reasoning above the
@@ -4585,10 +4585,16 @@ non-navigation key still refuse, because the reflex key on an unread prompt mean
 safety property, and it is kept. A test enumerates the navigation set so a new binding cannot
 silently join the refusal path.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-43's first rule. Today `pgup` on a prompt is a refusal indistinguishable from a
 deliberate one, which punishes exactly the person who wanted to read before deciding.
+
+notes: left and right joined the navigation set as well, moving nothing. They belong to the
+message box's caret, which is not in play while a question is up, and an arrow refusing because
+the conversation does not scroll sideways is a distinction nobody watching the screen can see.
+The keys are named on the question's own panel, since the footer goes quiet while one is up and a
+key that is safe and unmentioned is a key nobody risks.
 
 ### U-02 The always that grants nothing
 `status: todo | owner: none | branch: none | depends: A5-08`
@@ -4610,8 +4616,8 @@ notes: found by reading the render path, not by a report from a user, which is t
 find it.
 
 ### U-03 Attention crosses screens
-`status: todo | owner: none | branch: none | depends: PG-M`
-`scope: internal/tui/, internal/tui/chat/, internal/tui/agents/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: PG-M`
+`scope: internal/tui/, internal/tui/agents/, README.md`
 
 Deliverable: an agent needing a person is visible from every screen, and no screen is ever
 locked. The header carries "N need you" everywhere, not only inside the agents screen's own
@@ -4624,11 +4630,23 @@ says so within a second, in a word and a glyph that survive NO_COLOR. ctrl+d, ct
 work while the current chat has a pending prompt. The pending prompt is unchanged on return. The
 bell fires once per transition, never per frame, and can be turned off.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
 
 notes: D-43's second rule, and the one the product's premise depends on. The current behaviour
 is the worst combination: the only screen that shows who needs you is unreachable exactly when
 someone needs you.
+
+notes: three refinements, each reversing something that was written down. The count left the
+agents screen's context line rather than being written in both places: the header counts every
+conversation waiting on a person and that line could only ever count agents, and two numbers a row
+apart disagreeing about the same question is worse than either alone. The comment in `app.go`
+arguing that leaving a screen with a tool call waiting would hide what is blocking is deleted, and
+the test asserting it (`TestANewConversationIsRefusedWhileAQuestionIsUp`) is reversed, because
+what the lock actually hid was every other blocked agent. The bell is configured through
+`CANOPY_BELL` rather than through `canopy.json`, following the argument theme.go already makes
+about the palette: how loud a program is belongs to the person at the terminal, not to the
+repository they happen to have open. It rings once per agent that starts needing somebody, so a
+second agent joining the queue rings again; only the same agent going on waiting is silent.
 
 ### U-04 A way back to every conversation
 `status: todo | owner: none | branch: none | depends: A3-02`
@@ -4734,8 +4752,8 @@ anyone who typed the wrong correction. The engine grew the take-back and forgot 
 interface.
 
 ### U-09 No reflex spends money
-`status: todo | owner: none | branch: none | depends: E-03`
-`scope: internal/tui/chat/`
+`status: review | owner: claude | branch: tui/attention-and-navigation | depends: E-03`
+`scope: internal/tui/chat/, internal/tui/help.go, internal/session/compaction.go, internal/session/resolver.go`
 
 Deliverable: no single unconfirmed keystroke starts a paid model call. ctrl+r, which half the
 world's fingers press expecting history search, currently fires a compaction, a real request on
@@ -4747,11 +4765,25 @@ Acceptance: ctrl+r alone spends nothing. The confirmation states turns, key and 
 anything is sent. /compact goes through the same confirmation. A test walks every binding in the
 help table and asserts none reaches a provider call without a confirmation or an explicit send.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-29   codex [ ]`
+
+notes: the binding walk this task turns on was passing for the wrong reason when first written. It
+pressed every advertised key and read the counters, but discarded the `tea.Cmd` each press returned,
+and every provider call in this program is made from inside one. A deliberately broken ctrl+r, with
+the confirmation removed, walked straight through it. The loop now runs the command it was handed,
+and anything that command batches, bounded by a timeout because some of them are timers. Verified by
+mutation both ways: the test fails with the confirmation removed and passes with it restored.
 
 notes: D-43's third rule. Whether ctrl+r, ctrl+k and ctrl+d should keep their current meanings
 at all is taste, so it is Q-21 for the supervisors rather than decided here; making the paid one
 free to press by accident is not taste.
+
+notes: the cost is named in tokens rather than in money. The screen cannot price a request without
+resolving the credential's provider, endpoint and any user rate, and a dollar figure it guessed at
+would be worse than the estimate it is standing in for. What the offer says is the same estimate
+the compaction reports afterwards, worked out by `session.PlanCompaction` so the sentence somebody
+agrees to cannot drift from what they get. A conversation too short to compact is told so on the
+first press rather than being offered a compaction of nothing.
 
 ### U-10 The input box under your fingers
 `status: todo | owner: none | branch: none | depends: M-02`

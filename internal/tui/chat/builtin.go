@@ -75,6 +75,10 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 		m.notice = commandListing(m.commands)
 
 	case "compact":
+		// The same two steps the key takes, deliberately. A command that spent on being typed while
+		// the key it shadows asked first would be the cheaper path to the more expensive outcome,
+		// and somebody who had learned that ctrl+r asks would have no reason to expect this one not
+		// to. The offer names ctrl+r either way, since that is the key that goes ahead with it.
 		updated, cmd := m.compact()
 		*m = updated
 		return true, cmd

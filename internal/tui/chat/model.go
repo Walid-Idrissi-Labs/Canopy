@@ -10,6 +10,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -255,6 +256,12 @@ type Model struct {
 	// compacting is true while a summary is being produced, which is a model call and takes as long
 	// as any other. Without it the interface looks frozen and people press the key again.
 	compacting bool
+
+	// compactAsked is true when a compaction has been offered and the same key again will pay for
+	// it. Nothing has been sent while this is set, which is the whole point of it existing: ctrl+r
+	// used to reach a provider on the first press, and it is the key half the world's fingers press
+	// expecting to search their history.
+	compactAsked bool
 
 	// prompt is the tool call waiting on an answer, when there is one.
 	prompt   session.Prompt
@@ -567,6 +574,56 @@ func (m *Model) scrollBy(lines int) {
 	}
 }
 
+// navigation is every key that moves the conversation, and what it moves it by.
+//
+// A table rather than a switch, because the claim being made here is about the whole set. Reading a
+// prompt before answering it must be possible with the keyboard, so these keys are carved out of
+// the refusal that every other key means while a question is up, and a test walks this table to say
+// so. A switch would let a new scroll binding be added in one place and quietly join the refusal
+// path in the other.
+//
+// Left and right are in it and move nothing. They belong to the message box's caret, which is not
+// in play while a question is up, and an arrow key refusing a permission prompt because the
+// conversation does not scroll sideways is a distinction nobody watching the screen can see.
+var navigation = map[string]func(*Model){
+	"up":        func(m *Model) { m.scrollBy(1) },
+	"down":      func(m *Model) { m.scrollBy(-1) },
+	"left":      func(*Model) {},
+	"right":     func(*Model) {},
+	"pgup":      func(m *Model) { m.scrollBy(m.transcriptHeight() / 2) },
+	"pgdown":    func(m *Model) { m.scrollBy(-m.transcriptHeight() / 2) },
+	"ctrl+home": func(m *Model) { m.scroll = len(m.transcript()) },
+	// Two keys for the bottom, because ctrl+end is the one a terminal veteran reaches for and
+	// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
+	// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
+	"ctrl+end":  func(m *Model) { m.scroll = 0 },
+	"ctrl+down": func(m *Model) { m.scroll = 0 },
+}
+
+// navigate moves the conversation for a key that navigates, and reports whether it was one.
+func (m *Model) navigate(key string) bool {
+	move, ok := navigation[key]
+	if !ok {
+		return false
+	}
+	move(m)
+	return true
+}
+
+// NavigationKeys is the navigation set, in a stable order.
+//
+// Exported for the test that asserts none of these answers a permission question, for the same
+// reason HelpBindingCount is exported: the property is about every key in the set, so the test has
+// to walk the set rather than keep a copy of it that can go stale.
+func NavigationKeys() []string {
+	keys := make([]string, 0, len(navigation))
+	for key := range navigation {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // answerPrompt handles the keys that reply to a permission question.
 //
 // Deliberately few, and deliberately not a single key for the widest option. Approving once is `y`,
@@ -574,6 +631,8 @@ func (m *Model) scrollBy(lines int) {
 // including escape and enter. That last part matters: the reflex key on a prompt somebody has not
 // read is enter, and enter meaning no is the difference between a misread prompt costing a retry
 // and costing a repository.
+//
+// Everything except the navigation set, which the caller has already dealt with. See navigation.
 func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
@@ -637,6 +696,13 @@ func (m Model) promptLines() []string {
 		t.Key.Render("y")+t.Muted.Render(" once   ")+
 			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
+
+	// The keys that read rather than decide, named here because the footer goes quiet while a
+	// question is up and this panel is the only thing left saying what may be pressed. Somebody who
+	// does not know scrolling is safe will not risk it, which leaves them deciding on the part of
+	// the reasoning that happens to fit on screen.
+	body = append(body,
+		t.Key.Render("pgup")+t.Muted.Render(" and the arrows read what is above this, deciding nothing"))
 
 	return promptPanel(body, inner)
 }
@@ -794,15 +860,40 @@ func describeRequest(req permission.Request) string {
 	}
 }
 
-// compact asks for a summary of the older half of the conversation.
+// compact asks for a summary of the older half of the conversation, once somebody has said so
+// twice.
 //
 // Manual, on a key, rather than only automatic at the limit. Somebody who knows they are about to
 // paste a large file has a reason to compact before it, and a tool that only acts at the threshold
 // makes them wait for the failure first.
+//
+// **No reflex spends money.** The first press offers and the second goes ahead, because this is a
+// real request to a real provider and ctrl+r is what half the world's fingers press expecting to
+// search their history. A key that costs money on the first press is one people learn to avoid
+// rather than one they learn.
 func (m Model) compact() (Model, tea.Cmd) {
 	if m.compacting || m.working {
 		return m, nil
 	}
+
+	if !m.compactAsked {
+		plan := session.PlanCompaction(m.session)
+		if !plan.Possible() {
+			// Said here rather than found out by sending. The engine refuses this too and its
+			// refusal costs nothing, but arriving at it through a confirmation would have offered to
+			// summarise nothing and then declined to do it.
+			m.err = "there is not enough of this conversation to summarise yet"
+			m.notice = ""
+			return m, nil
+		}
+		m.compactAsked = true
+		m.notice = m.compactionOffer(plan)
+		m.err = ""
+		return m, nil
+	}
+
+	m.compactAsked = false
+	m.notice = ""
 	m.compacting = true
 	m.err = ""
 
@@ -813,11 +904,60 @@ func (m Model) compact() (Model, tea.Cmd) {
 	}
 }
 
+// compactionOffer is the sentence somebody agrees to before anything is sent.
+//
+// It has to name four things, because a confirmation that leaves any of them out is one people
+// press through: how much of the conversation goes, roughly what sending it costs, what is kept
+// whatever happens, and which key does it. The bound is the half that makes this safe to agree to
+// at all, since the recent turns are where the actual work is and summarising those is how an agent
+// loses the thread mid task.
+//
+// One line, and kept short enough to stay one at eighty columns, because it sits on the status row
+// between the conversation and the message box: a confirmation that wraps and pushes what somebody
+// is typing down the screen is one they answer without reading.
+func (m Model) compactionOffer(plan session.CompactionPlan) string {
+	return fmt.Sprintf("summarise %d of %d turns, about %s tokens, last %d kept? ctrl+r again",
+		plan.Turns, len(m.session.Turns), roughTokens(plan.Tokens), plan.Kept)
+}
+
+// roughTokens is a token count at a glance.
+//
+// Thousands and millions rather than the exact figure, and only here. The header prints the number
+// it was given because a usage total is something people compare; this one is an estimate inside a
+// sentence, and six digits of an estimate reads as precision that is not there.
+func roughTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	// An offer to spend money lasts exactly one keystroke. Anything other than the same key again is
+	// a change of mind, and an offer that outlived it would eventually be taken up by a keystroke
+	// somebody meant for something else entirely, which is the failure the confirmation exists to
+	// prevent arriving a few seconds later. The same rule the application applies to ctrl+n.
+	if m.compactAsked && msg.String() != "ctrl+r" {
+		m.compactAsked = false
+		m.notice = ""
+	}
+
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
 	// into the message box, and typing an answer to a yes or no question into a text field and
 	// wondering why nothing happens is a bad minute to give somebody.
+	//
+	// Everything except navigation, which moves the conversation and decides nothing. The command
+	// being approved is often the last thing on screen and the reasoning that led to it is above,
+	// so a prompt that refused itself the moment somebody scrolled up to read it was punishing the
+	// one person who wanted to understand what they were agreeing to. See navigation.
 	if m.awaiting {
+		if m.navigate(msg.String()) {
+			return m, nil
+		}
 		return m.answerPrompt(msg)
 	}
 
@@ -915,25 +1055,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+r":
+		// Offers on the first press and pays on the second. See compact.
 		return m.compact()
 
-	case "pgup":
-		m.scrollBy(m.transcriptHeight() / 2)
-		return m, nil
-
-	case "pgdown":
-		m.scrollBy(-m.transcriptHeight() / 2)
-		return m, nil
-
-	case "ctrl+home":
-		m.scroll = len(m.transcript())
-		return m, nil
-
-	case "ctrl+end", "ctrl+down":
-		// Two keys for one thing, because ctrl+end is the one a terminal veteran reaches for and
-		// ctrl+down is the one somebody guesses from the arrow they were already scrolling with. The
-		// jump-to-bottom pill names ctrl+down for that reason: it is the one you can work out.
-		m.scroll = 0
+	case "pgup", "pgdown", "ctrl+home", "ctrl+end", "ctrl+down":
+		// Through the same table the question above uses, so a key cannot come to mean one thing
+		// with a prompt on screen and something else without one. The arrows are deliberately not
+		// here: with no question up they belong to the message box, where up recalls what was sent
+		// last and left and right move the caret.
+		m.navigate(msg.String())
 		return m, nil
 	}
 
