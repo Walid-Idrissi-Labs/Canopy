@@ -251,11 +251,12 @@ func renderDiff(lines []DiffLine, lang string, width, limit int) []string {
 			if j > 0 {
 				prefix = "  "
 			}
-			text := fragment
+			// An unchanged line is context and is drawn as quietly as the rest of the call's
+			// detail. A changed one is source, and gets the same lexer the review screen's diff
+			// uses, so the same line reads the same in both places.
+			text := Highlight(lang, fragment)
 			if line.Op == DiffKeep {
 				text = t.Muted.Render(fragment)
-			} else {
-				text = Highlight(lang, fragment)
 			}
 			out = append(out, indent+prefix+text)
 		}
