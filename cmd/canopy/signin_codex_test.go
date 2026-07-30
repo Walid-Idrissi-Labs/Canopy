@@ -417,3 +417,74 @@ func TestNothingOnTheChatGPTRouteIsRenewedByCanopyBecauseCanopyHoldsNoToken(t *t
 			"renew: the grant lives in ~/.codex and the app server renews it without being asked")
 	}
 }
+
+// Both bugs below were found by running the built command against a real Codex rather than by
+// reading the code, which is the argument for doing that before ticking a task.
+
+// The route ids and the route recorded on a credential have to be the same string, because
+// routeSet dispatches `canopy keys test` by matching one against the other.
+func TestTheChatGPTRouteIdIsTheOneRecordedOnItsCredentials(t *testing.T) {
+	vendor := signedInCodex()
+	store, _ := codexRouteOn(t, vendor)
+
+	if err := runKeys([]string{"signin", "chatgpt", "-route", codexDeviceRouteID}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("signing in: %v", err)
+	}
+	in, err := store.SignIn(core.KeyRef{Name: "chatgpt"})
+	if err != nil {
+		t.Fatalf("reading the credential: %v", err)
+	}
+
+	// The whole registry, not this member alone, because the dispatch that matters is routeSet's.
+	if !offers(codexSignIn{}, in.Route) {
+		t.Fatalf("a credential signed in through the device route recorded route %q, and no route "+
+			"id in this registry matches it. routeSet.Report matches the recorded route against the "+
+			"ids its members offer, so `canopy keys test` on this credential reports that no route "+
+			"in this build can say anything about it", in.Route)
+	}
+}
+
+// The stored account is an identity, so it must not move when the plan does.
+func TestAnAccountWhosePlanChangedIsNotReportedAsADifferentAccount(t *testing.T) {
+	vendor := signedInCodex()
+	store, _ := codexRouteOn(t, vendor)
+
+	if err := runKeys([]string{"signin", "chatgpt", "-route", codexRouteID}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("signing in: %v", err)
+	}
+
+	in, err := store.SignIn(core.KeyRef{Name: "chatgpt"})
+	if err != nil {
+		t.Fatalf("reading the credential: %v", err)
+	}
+	if in.Account != "someone@example.com" {
+		t.Errorf("the credential recorded the account as %q. Folding the plan into it makes an "+
+			"identity that moves like a clock, which is the objection S-01 raised against recording "+
+			"a fingerprint", in.Account)
+	}
+
+	// Same person, upgraded plan. Nothing about who the turns run as has changed.
+	vendor.account.Plan = "pro"
+	vendor.limits.Plan = "pro"
+
+	var out bytes.Buffer
+	if err := runKeys([]string{"test", "chatgpt"}, &out); err != nil {
+		t.Fatalf("testing the credential: %v", err)
+	}
+	if strings.Contains(out.String(), "Turns run as") {
+		t.Errorf("an upgraded plan was reported as a different account, which would fire on every "+
+			"credential on the day somebody changed plan:\n%s", out.String())
+	}
+
+	// A genuinely different account still says so, or the check above would be satisfied by
+	// deleting the note.
+	vendor.account.Email = "somebody-else@example.com"
+	out.Reset()
+	if err := runKeys([]string{"test", "chatgpt"}, &out); err != nil {
+		t.Fatalf("testing the credential: %v", err)
+	}
+	if !strings.Contains(out.String(), "somebody-else@example.com") {
+		t.Errorf("Codex being signed in as somebody else was not reported, and turns on this "+
+			"credential run as them:\n%s", out.String())
+	}
+}

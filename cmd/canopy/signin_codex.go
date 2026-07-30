@@ -30,11 +30,18 @@ import (
 const (
 	// codexRouteID is the browser flow, whose callback the app server hosts on its own loopback
 	// port.
-	codexRouteID = "chatgpt"
+	//
+	// It is codex.Route's own string, and that is a requirement rather than a tidiness: routeSet
+	// dispatches `canopy keys test` by matching the route recorded on a credential against the ids
+	// its members offer, so an id that differs from the stored value makes the credential
+	// undispatchable and the command reports that no route in this build can say anything about it.
+	// Found by running the command against a real credential rather than by reading the code.
+	codexRouteID = codex.Route
 
 	// codexDeviceRouteID is the same sign-in with a code to type instead, for a machine whose
-	// browser is somewhere else.
-	codexDeviceRouteID = "chatgpt-device"
+	// browser is somewhere else. Credentials from it record codexRouteID too, since how somebody
+	// signed in is not a property of the credential and where its turns go is.
+	codexDeviceRouteID = codex.Route + "-device"
 )
 
 // codexSignIn is the sign-in registry for the ChatGPT route.
@@ -342,9 +349,19 @@ func (a *codexAttempt) Wait() (keysui.Outcome, error) {
 //
 // Required by internal/keys, which refuses a sign-in without one, and required for a better reason
 // than that: two ChatGPT accounts on one machine are otherwise two identical rows.
+//
+// The address alone, not the "someone@example.com (pro)" form the account prints as. This is an
+// identity rather than a display string, and folding the plan into it makes it move like a clock:
+// somebody who upgrades from Plus to Pro has not become a different person, and Report compares the
+// stored account against the one the vendor now reports to say when turns are running as somebody
+// else. That comparison fires on every credential the day the plan name changes if the plan is
+// inside the value. It is the same objection S-01 raised against recording a fingerprint.
 func accountName(account codex.Account) string {
-	if name := strings.TrimSpace(account.String()); name != "" {
+	if name := strings.TrimSpace(account.Email); name != "" {
 		return name
+	}
+	if account.Kind == "apiKey" {
+		return "an OpenAI API key account"
 	}
 	return "a ChatGPT account"
 }

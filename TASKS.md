@@ -6856,7 +6856,9 @@ not spend the refresh token the user's own Codex was going to use;
 `TestTheBinaryIsFoundOnTheMachineRatherThanShippedInside`;
 `TestALoginFileFromAnAPIKeyCodexIsNotDescribedAsASubscription` and
 `TestALoginWhoseIdentityTokenCannotBeReadIsStillALogin`;
-`TestCancellingAChatGPTSignInStopsThePollingAndStoresNothing` and
+`TestTheChatGPTRouteIdIsTheOneRecordedOnItsCredentials` and
+`TestAnAccountWhosePlanChangedIsNotReportedAsADifferentAccount`, which are the two the live smoke
+check found; `TestCancellingAChatGPTSignInStopsThePollingAndStoresNothing` and
 `TestCancellingAChatGPTSignInThatAlreadyCompletedRemovesTheCredential`, which are S-07's Cancel
 contract held on the first route in this build where somebody genuinely has minutes to change their
 mind; `TestTheChatGPTRouteIsOfferedByTheBuildAndNamesWhatItNeeds` and
@@ -6873,10 +6875,33 @@ and locks its writes. Production is safe for the reason S-04's is, that a refusa
 fit an operating system pipe buffer, and the fake's unbuffered pipes are what made the shape
 visible.
 
-One seam, said out loud rather than left. The keys record stores route `codex` for both route ids,
-because how somebody signed in is not a property of the credential and where its turns go is. The
-two ids exist so that a person the browser guess got wrong can ask for the code instead, and
-`routeSet.Report` dispatches on the stored value, which both ids answer to.
+Found by running the built command against a real Codex rather than by reading the code, which is
+the argument for doing that before ticking anything. Two bugs, and both were invisible to a suite
+that was already green.
+
+The route ids were `chatgpt` and `chatgpt-device` and the credential recorded route `codex`.
+`routeSet.Report` dispatches by matching the recorded route against the ids its members offer, so
+nothing matched, and `canopy keys test` on a real credential answered that the credential "was
+signed in through codex, which this build no longer offers" instead of asking OpenAI anything. The
+ids are now `codex` and `codex-device`, and `codexRouteID` is `codex.Route` itself rather than a
+string that happens to agree with it. Held by
+`TestTheChatGPTRouteIdIsTheOneRecordedOnItsCredentials`, which asserts through `offers`, the
+function the dispatch actually uses.
+
+The stored account was `Account.String()`, which reads "someone@example.com (pro)". Report compares
+the stored account against the one the vendor reports now, to say when turns are running as somebody
+else, and against a real account that comparison fired immediately: the vendor reports the address
+and the record held the address plus the plan. Worse than a cosmetic false positive, it would fire
+on every credential in the world on the day its owner changed plan. The record now holds the address
+alone, which is what it should always have been: this is an identity, and folding the plan into it
+makes it move like a clock, which is exactly the objection S-01 raised against recording a
+fingerprint. Held by `TestAnAccountWhosePlanChangedIsNotReportedAsADifferentAccount`, which upgrades
+the plan and expects silence, then changes the address and expects the note, so the first half
+cannot be satisfied by deleting it.
+
+Both ids still store the same route, because how somebody signed in is not a property of the
+credential and where its turns go is. The second exists so a person the browser guess got wrong can
+ask for the code instead.
 
 Run before ticking, in a clean clone at this commit rather than in the shared worktree, because
 `internal/provider/copilot` and the two switches were in flight there for S-03 while this was
