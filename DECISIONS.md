@@ -1051,6 +1051,13 @@ Four rules keep the list honest:
    the plural lives in the keys store beside it. The frozen contract does not grow a field for a
    feature that a layer above it can carry.
 
+“What can this provider run” means what Canopy can invoke through the provider transport it ships,
+not every model name the provider publishes. In particular, the current OpenAI-compatible client
+uses Chat Completions. A model documented as requiring Responses is not offered by that catalog
+until Canopy has a Responses transport for it. The free-text rule still accepts unlisted model ids
+so a dated list cannot gate a newly compatible model, but accepting an id is not a claim that the
+current transport implements an API the model requires.
+
 ## D-47 A question reaches you where you are, and only your hand answers it. Decided 2026-07-29.
 
 Extends D-43. A permission prompt raised by any agent in the project may surface on whatever
@@ -1101,6 +1108,12 @@ not.
 Supersedes the renderer's own rule, recorded in the comment on `summariseResult` and in the two
 tests that asserted it. Extends D-42's principle that every saving is visible: what is elided from
 the screen is named on the screen.
+
+The focus step opens the conversation that owns the prompt; it does not route approval keys from
+the compact visitor panel. That panel may truncate a command to protect the current conversation's
+frame, so allowing `y` or `a` there would contradict D-35's rule that the canonical arguments shown
+are the arguments approved. On the asking conversation, the ordinary prompt shows the full request
+and only then owns the answer keys.
 
 ## Appendix: where the settled scope comes from
 

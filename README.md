@@ -1,5 +1,10 @@
 # Canopy
 
+[![CI](https://github.com/Walid-Idrissi-Labs/Canopy/actions/workflows/ci.yml/badge.svg)](https://github.com/Walid-Idrissi-Labs/Canopy/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Walid-Idrissi-Labs/Canopy?include_prereleases&sort=semver)](https://github.com/Walid-Idrissi-Labs/Canopy/releases)
+[![Go](https://img.shields.io/github/go-mod/go-version/Walid-Idrissi-Labs/Canopy)](go.mod)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A terminal coding agent built for running several agents at once, isolating them on their own git
 branches when they need it, and knowing which of them actually produced working code.
 
@@ -8,6 +13,50 @@ branches when they need it, and knowing which of them actually produced working 
 > one. Most of the extensibility layer is not built; custom prompt commands are the first exception.
 > Development is tracked in
 > [TASKS.md](TASKS.md), and the decisions behind it in [DECISIONS.md](DECISIONS.md).
+
+## Why this and not Claude Code or aider
+
+For a single agent editing a single checkout, use whichever of those you already like. Canopy is
+not trying to win that comparison. It exists for the moment one agent stops being enough, and five
+things follow from taking that seriously:
+
+- **Credentials have names.** A key is stored under a name and carries its own provider, endpoint
+  and model, so "a kimi agent" is a resolvable thing rather than a way of talking. An environment
+  variable holds a secret and nothing else: no name, no model, and no second one.
+- **You dispatch in a sentence.** "Use 2 claude agents for the auth refactor and a kimi agent to
+  write the tests" spawns them, after a confirmation, on their own git worktrees and branches when
+  they would otherwise collide.
+- **Steering does not interrupt.** Guidance queues and lands at the next turn boundary, so
+  correcting an agent does not throw away the turn it is halfway through. Interrupt still exists,
+  as a separate key, for when you actually mean stop.
+- **Git is a set of tools, not a string.** Status, diff, log, add, commit and branch are structured
+  and rooted at the agent's workspace. A permission model handed `bash("git ...")` cannot reliably
+  tell `git status` from `git push --force`; one handed a typed call can.
+- **Verification decides who won.** Every agent's result is bound to the exact worktree state it
+  tested, and three agents on one task are ranked by whose code passes rather than by which one
+  sounded most confident. Fanning out is not new. Using test evidence to settle it appears to be.
+
+What Canopy does not have: a sandbox, a language server, web search, or agents that spawn agents.
+Those are stated plainly rather than deferred quietly, and
+[LIMITATIONS.md](LIMITATIONS.md) is the honest list.
+
+## Contents
+
+- [Install](#install)
+- [What it is](#what-it-is)
+- [Named keys, so agents have names](#named-keys-so-agents-have-names)
+- [Dispatch agents from the conversation](#dispatch-agents-from-the-conversation)
+- [Watch them, and steer without stopping them](#watch-them-and-steer-without-stopping-them)
+- [Git as a real tool, not a shell string](#git-as-a-real-tool-not-a-shell-string)
+- [Know which agent was actually right](#know-which-agent-was-actually-right)
+- [Reusable prompt commands](#reusable-prompt-commands)
+- [Modes, on shift+tab](#modes-on-shifttab)
+- [A report for the pull request](#a-report-for-the-pull-request)
+- [What it will not do](#what-it-will-not-do)
+- [Requirements](#requirements)
+- [Development](#development)
+- [Contributing and security](#contributing-and-security)
+- [License](#license)
 
 ## Install
 
@@ -30,6 +79,10 @@ canopy keys list                             # the MODEL column says NOT SET whe
 
 Anything that is not Anthropic needs a model named explicitly. There is no default anybody could
 guess for somebody else's gateway, and a credential without one cannot answer a single message.
+The keys screen offers a dated catalog where Canopy knows both the endpoint and a compatible
+transport, while still accepting an unlisted model id. OpenAI's offered list is intentionally
+limited to models the current Chat Completions adapter can invoke; models that require the
+Responses API need a transport Canopy does not yet ship.
 
 Now run `canopy` in a git repository. Press `?` for every key binding.
 
@@ -78,6 +131,10 @@ The transcript shows bounded tool output and file diffs. Control characters from
 content are printed as visible escapes before terminal styling, so viewed output cannot act as a
 second terminal program.
 
+If another agent needs permission, a compact notice reaches the conversation you are on. The
+notice cannot approve anything: `ctrl+g` opens the asking conversation, where the complete
+canonical request is shown before `y` or `a` can act.
+
 Steering and interrupting are deliberately two different things:
 
 - **Steer** queues guidance that arrives at the next turn boundary. The current turn finishes and
@@ -87,6 +144,13 @@ Steering and interrupting are deliberately two different things:
 Cancelling a turn to inject a correction throws away the work in progress, and usually the
 reasoning with it. Steering is the one you want almost every time, and it is the one most tools do
 not have.
+
+An agent that has stopped and cannot start again without you is counted in the header of every
+screen, not only on the one that lists agents, and no screen is ever locked because a question is
+waiting: leaving a conversation is not answering it, and the question is still there when you come
+back. Scrolling a permission prompt to read what is above it does not answer it either. Set
+`CANOPY_BELL=1` to have the terminal beep the moment an agent starts needing you, which is off
+unless you ask for it.
 
 ## Git as a real tool, not a shell string
 
@@ -250,6 +314,18 @@ make fmt
 Work is claimed and verified through [TASKS.md](TASKS.md). Read its first section before starting
 anything: tasks are built in order, claims are pushed before work begins, and every task is
 independently checked by someone who did not write it.
+
+## Contributing and security
+
+[CONTRIBUTING.md](CONTRIBUTING.md) is the door if you are not one of the maintainers: what to run
+before you push, how branches and commits are named, and what to leave alone. `AGENTS.md` and the
+`TASKS.md` claim-and-verify protocol are internal to the two pairs working the ledger, and you do
+not need to follow either of them to send a pull request.
+
+For a vulnerability, use the address in [SECURITY.md](SECURITY.md) rather than a public issue. That
+file also states the threat model, which matters more here than it does for most tools: Canopy runs
+agent-generated commands under your account, so a fair amount of alarming-looking behaviour is
+documented rather than broken, and it says which is which.
 
 ## License
 

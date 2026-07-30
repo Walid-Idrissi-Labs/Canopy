@@ -142,9 +142,10 @@ be rediscovered by getting burned by it.
   Agents created afterwards inherit it; ones already running keep the credential they were started
   with, and there is no way to move a running agent to a different one.
 
-- A credential can only talk to one model. Using the same key against two models means storing it
-  twice under two names, which is what naming keys is for, but it does mean pasting the secret in
-  again.
+- A credential keeps one selected default model, but may remember several catalog or user-added
+  models and switch between them without storing the secret again. The shipped catalogs are dated
+  conveniences rather than complete provider inventories; free text accepts a model that is absent
+  from the list, but it cannot add a provider API that Canopy's adapter does not implement.
 
 - Sub agents, one agent spawning helper agents for a subtask, and agent handoff with model
   escalation, handing a worktree and a summary from a cheap model to a stronger one, are both
@@ -154,7 +155,7 @@ be rediscovered by getting burned by it.
 
 - Plan first mode is **cut from 0.1** (A4-09, D-40). The engine is built and tested and nothing
   reaches it: turning it on needs a profile setting and a screen that shows a plan and takes an
-  approval, and neither exists. The four modes on `shift+tab` are a different feature and they do
+  approval, and neither exists. The five modes on `shift+tab` are a different feature and they do
   work.
 
 - An agent keeps a todo list and there is no pane showing it live (A4-10, D-40). The list appears in
@@ -194,6 +195,9 @@ be rediscovered by getting burned by it.
   API slightly differently. A two-minute stall watchdog exists because at least one gateway has been
   observed accepting a request and then sending nothing back at all; without it, that turn would sit
   for the length of the underlying HTTP client's own timeout, which is thirty minutes (A2-06).
+  It currently speaks Chat Completions only, not the Responses API. Responses-only OpenAI models
+  are therefore omitted from the picker and cannot be used successfully even if their ids are
+  entered by hand.
 
 - Tests that talk to a real provider are gated behind a manually supplied key and never run in CI.
   They found two real cancellation bugs on their first run that no scripted test caught, which means
@@ -239,7 +243,9 @@ be rediscovered by getting burned by it.
 - On the permission prompt, the key that grants broad, standing approval for the rest of the session
   ('a') sits directly next to the one-time, single-use answer ('y'), with no separate confirmation
   step of its own. `y` covers only the current call; `a` remembers the displayed scope for the
-  session. Every other key, including enter and escape, refuses (Q-09).
+  session. Every other key, including enter and escape, refuses (Q-09). A compact notice about
+  another agent's prompt never accepts either approval key; it first opens the owning conversation
+  so the full canonical request is the approval surface.
 
 - A field can be set on an agent, stored, displayed, and never actually consulted by the code
   responsible for enforcing it. This already happened with per-agent trust. A deliberate review
@@ -352,9 +358,13 @@ be rediscovered by getting burned by it.
   repository does not exist yet, so `brew install` is not available until the first non-prerelease
   tag. Binaries are on the releases page and `go install` works.
 
-- `go install ...@latest` builds from the default branch rather than from the latest tag, because Go
-  ignores prerelease versions for `@latest` and every tag so far is one. The binary from `go install`
-  and the binary from the releases page are therefore not the same code.
+- `go install ...@latest` gives you the newest tag, not the default branch. Go prefers a release
+  version for `@latest` and falls back to the highest prerelease when a module has no release
+  version at all, which is this one, so `@latest` currently resolves to `v0.1.0-alpha.3`. It is the
+  same code as the archive on the releases page for that tag, built without the version stamping,
+  so it reports itself as `dev`. What it does not contain is anything merged since the tag. The
+  behaviour changes the day a non-prerelease tag exists: `@latest` will pin to that and stop
+  following prereleases, and getting a newer alpha will mean naming it, `@v0.1.1-alpha.1`.
 
 - The `snapshot`, `watch` and `demo` subcommands read a fake project rather than your repository.
   They exist to demonstrate the state machine and they say so. The worktree monitor inside the
@@ -391,6 +401,18 @@ be rediscovered by getting burned by it.
 
 - macOS and Linux only. Windows is deferred until process-group and terminal semantics are actually
   designed and tested for it, rather than approximated and shipped half working (D-03).
+
+- **`canopy keys add` fails outright on a machine with no Secret Service.** Secrets go to the OS
+  credential store, which on Linux means a D-Bus Secret Service such as gnome-keyring or
+  KWallet. A container, a CI runner, a bare server over SSH and most WSL setups have none, and
+  what you get there is the keyring library's own error wrapped in "storing in the OS keychain",
+  on the first command anybody runs. There is no fallback, and the message does not mention the
+  escape hatch, which is `CANOPY_KEY_BACKEND=file`. That writes secrets to a mode 0600 JSON file
+  next to the metadata instead, and every command run afterwards prints a warning saying so. The
+  missing hint is the actual defect here: not falling back automatically is deliberate, since
+  silently downgrading to plaintext on disk because the keychain was awkward is the kind of
+  shortcut that stays invisible until it is a headline, but an error that does not name the
+  option leaves a first-time user with nothing to try. `INSTALL.md` documents it.
 
 - A Windows stub already exists in the process-handling code, and it says plainly that it is
   incomplete rather than pretending to be finished: Windows has no process-group equivalent in

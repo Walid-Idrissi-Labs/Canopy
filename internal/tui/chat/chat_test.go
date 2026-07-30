@@ -733,9 +733,12 @@ func TestCompactionCanBeAskedForByHand(t *testing.T) {
 	engine := &fakeEngine{session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: turns}}
 
 	m := model(engine)
+	// Twice, because the first press offers and the second pays. See the compaction tests for what
+	// the offer says.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	if cmd == nil {
-		t.Fatal("ctrl+r should start a compaction")
+		t.Fatal("a confirmed ctrl+r should start a compaction")
 	}
 	if !strings.Contains(plain(m.Body()), "summarising") {
 		t.Errorf("a compaction in progress should say so, since it is a model call and takes as "+
@@ -762,12 +765,17 @@ func TestCompactionCanBeAskedForByHand(t *testing.T) {
 // A failed compaction must not leave the interface looking like it is still working, and must say
 // why rather than silently doing nothing.
 func TestAFailedCompactionIsReported(t *testing.T) {
+	turns := make([]core.Turn, 8)
+	for i := range turns {
+		turns[i] = turn("t", "question", "answer", core.TurnComplete)
+	}
 	engine := &fakeEngine{
-		session:    core.Session{ID: "s1", Model: "claude-opus-5"},
+		session:    core.Session{ID: "s1", Model: "claude-opus-5", Turns: turns},
 		compactErr: errNotEnough{},
 	}
 
 	m := model(engine)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	m, _ = m.Update(cmd())
 
