@@ -201,10 +201,12 @@ func (m Model) viewRename() string {
 		b.WriteString("\n")
 	}
 
+	// Two short lines rather than one long one. This is the narrowest screen in the program, the
+	// frame draws from sixty columns, and a note that wraps there pushes the footer off the bottom.
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render(
-		"  the value is not asked for again, and every conversation on this credential follows the\n" +
-			"  new name"))
+	b.WriteString(styleMuted.Render("  the value is not asked for again"))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("  every conversation on it follows the new name"))
 	b.WriteString("\n")
 	return b.String()
 }
