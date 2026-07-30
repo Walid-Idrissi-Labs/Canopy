@@ -5125,6 +5125,43 @@ explaining itself is TestABareBtwWithNoHistoryStillSaysWhatItWants. Order is
 TestAsidesComeBackInTheOrderTheyWereAsked, and the two states nobody asked about but which would
 have been wrong are TestAFailedAsideIsNotRecorded and TestAsidesWorkWithNoStorageAttached.
 
+### U-20 The transcript shows the work, not the news of it
+`status: review | owner: claude | branch: tui/what-the-agent-did | depends: none`
+`scope: internal/tui/chat/`
+
+Deliverable: what a tool call did, on the screen where it happened. An `edit_file` or `write_file`
+call draws a diff of the change, trimmed to three lines of context either side, tallied `+n -m` and
+highlighted by the file's own language. Every other call shows the head of what came back instead of
+only a line count. A failed call shows the whole reason rather than its first line. A call with no
+result yet says how long it has been running. `ctrl+o` lifts every one of those caps and folds them
+back, and it is in the help table.
+
+Acceptance: an agent changing a line in a file produces a visible `-` for the line that went out and
+a `+` for the line that came in, with the unchanged lines around it unmarked. A four hundred line
+read shows a bounded head, states the full size, and names `ctrl+o`. A build failure shows more than
+its opening line. A tool whose arguments this code does not understand gets no diff, because a diff
+drawn from arguments nothing can read is a confident lie about somebody's repository. `ctrl+o` twice
+returns to where it started. Tool output and diff content render terminal controls as visible text
+rather than executing them. Every marker survives NO_COLOR.
+
+`verify: claude [x]   codex [ ]`
+
+notes: not planned in the 2026-07-28 audit, which read the screens against the engine and therefore
+found the affordances the engine had and the interface lacked. This is the opposite kind of gap: the
+interface had everything it needed and drew a line count. Found on 2026-07-29 by reading the render
+path against what a competitor shows. It overturns one rule the code held on purpose, that tool
+output belongs to the model and not to the screen, and keeps the half of it that was right by
+bounding what is shown. Recorded as D-48. The running clock is the screen's own, first-seen rather
+than started, because a `ToolCall` carries no timestamp and `internal/core` is frozen; the label says
+"running for" rather than "took" for exactly that reason.
+
+Review correction, 2026-07-30: the new previews passed tool output and file content directly into
+the terminal renderer. That made OSC 52 clipboard writes, CSI screen changes, BEL, carriage return
+and similar controls executable terminal input. terminalSafe now escapes all C0 controls except
+newline and tab, plus DEL and C1, before styling. TestToolOutputCannotEmitTerminalControlSequences
+and TestADiffCannotEmitTerminalControlSequences hold both public render paths; the package-level
+tests hold the complete control ranges and ordinary Unicode.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 

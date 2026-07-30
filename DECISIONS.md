@@ -1069,6 +1069,46 @@ permission. Your own conversation's prompt outranks visitors, and a count of who
 visible either way. D-43's rule that no reflex spends money is unchanged; this is that rule
 holding at one more distance.
 
+## D-48 A tool call shows a bounded piece of what it did, not a count of it. Decided 2026-07-29.
+
+The transcript used to render a tool call as which tool, which argument, whether it worked and how
+long it took, and nothing else. The rule behind that was written down in the renderer: the output
+belongs to the model and not to the screen, because a thousand line file read printed into the
+conversation buries the reply somebody is waiting for.
+
+Half of that is right and is kept. The other half was costing more than it saved. A `run_command`
+that printed a failing test rendered as a tick and a duration. An `edit_file` that rewrote a
+function rendered as the file's name, which is the same sentence a one character typo fix produced,
+on the one class of call whose consequences outlive the conversation. And a failed call showed the
+first line of its error, which is the line that a compiler error, a stack trace and a refused
+permission all share.
+
+So the rule is now the bound rather than the absence. Every call shows the head of what came back,
+capped at a stated number of lines; a writing call shows a diff of the change instead, trimmed to
+three lines of context either side and tallied; a failure shows the reason at a larger cap because
+the reason is why somebody is reading. The cap is always stated in the line that applies it, and
+`ctrl+o` lifts all of them at once. Nothing is ever cut silently, which is the same rule the
+compaction marker follows and for the same reason.
+
+Output is displayed as terminal-safe text, never replayed as terminal instructions. Newline and
+tab keep their layout meaning; ESC, carriage return, backspace, BEL, DEL, and the rest of the C0/C1
+control ranges are rendered as visible escapes before Canopy adds its own styling. The stored tool
+result remains unchanged. This applies equally to output previews and file content drawn as a diff:
+an agent reading or writing a hostile file must not let that file clear the screen, rewrite earlier
+lines, change the title, or place text on the clipboard.
+
+Two limits are part of the decision, not implementation detail. A diff is drawn only from arguments
+this code understands, `edit_file` and `write_file`, because a diff inferred from an unknown tool's
+arguments would be a confident and specific claim about somebody's repository that nothing verified.
+And the elapsed time on a call still in flight is measured from when the screen first saw it rather
+than from when it started, because a `ToolCall` carries no timestamp and `internal/core` is frozen;
+the label reads "running for" rather than "took" so the number is not claimed to be something it is
+not.
+
+Supersedes the renderer's own rule, recorded in the comment on `summariseResult` and in the two
+tests that asserted it. Extends D-42's principle that every saving is visible: what is elided from
+the screen is named on the screen.
+
 The focus step opens the conversation that owns the prompt; it does not route approval keys from
 the compact visitor panel. That panel may truncate a command to protect the current conversation's
 frame, so allowing `y` or `a` there would contradict D-35's rule that the canonical arguments shown

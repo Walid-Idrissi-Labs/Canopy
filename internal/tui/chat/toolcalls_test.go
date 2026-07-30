@@ -72,8 +72,61 @@ func TestAFailedToolCallSaysSoAndWhy(t *testing.T) {
 	if !strings.Contains(body, "may not run commands") {
 		t.Errorf("the reason is not shown, so the user cannot tell what to fix:\n%s", body)
 	}
-	if strings.Contains(body, "second line") {
-		t.Errorf("the whole error was printed rather than its first line:\n%s", body)
+	// The whole reason, not its opening line. A compiler error, a stack trace and a refused
+	// permission all begin with a line that does not say which one it is, so a first-line-only
+	// failure is the same screen for three problems with three different fixes.
+	if !strings.Contains(body, "second line") {
+		t.Errorf("only the first line of the error survived, so the rest of the reason is lost:\n%s", body)
+	}
+}
+
+// A tool's stdout is data, not a terminal program. OSC 52 can write to the clipboard, CSI can
+// erase the screen, and BEL can make the terminal signal; all three must be visible text by the
+// time untrusted output reaches the renderer.
+func TestToolOutputCannotEmitTerminalControlSequences(t *testing.T) {
+	const hostile = "before\x1b]52;c;YXR0YWNrZXI=\x07after\x1b[2J"
+	engine := &fakeEngine{session: withCall(
+		"run_command", `{"command":"hostile-program"}`,
+		core.ToolResult{Content: hostile, Duration: time.Millisecond},
+	)}
+
+	body := model(engine).Body()
+	if strings.Contains(body, "\x1b]52;") || strings.Contains(body, "\x1b[2J") ||
+		strings.ContainsRune(body, '\a') {
+		t.Fatalf("tool output reached the terminal as an active control sequence: %q", body)
+	}
+	view := plain(body)
+	for _, visible := range []string{`\x1b]52;c;YXR0YWNrZXI=\x07`, `\x1b[2J`} {
+		if !strings.Contains(view, visible) {
+			t.Errorf("the escaped control %q is not visible to the user:\n%s", visible, view)
+		}
+	}
+}
+
+// A long error is still bounded, because "show the reason" cannot mean "hand the screen to whatever
+// came back". The bound is stated in the same line that applies it, so nobody has to wonder whether
+// they are looking at all of it.
+func TestALongErrorIsBoundedAndSaysSo(t *testing.T) {
+	engine := &fakeEngine{session: withCall(
+		"run_command", `{"command":"go build ./..."}`,
+		core.ToolResult{
+			Content:  strings.Repeat("some/package/file.go:12: undefined: thing\n", 40),
+			IsError:  true,
+			Duration: time.Second,
+		},
+	)}
+	body := plain(model(engine).Body())
+
+	// The bound itself lives in the renderer; this only asserts that one exists and that it is
+	// smaller than what came back, which is the property a reader depends on.
+	if shown := strings.Count(body, "undefined: thing"); shown >= 40 {
+		t.Errorf("all %d error lines reached the screen, so nothing bounds a failing build:\n%s", shown, body)
+	}
+	if !strings.Contains(body, "more lines") {
+		t.Errorf("the error was cut without saying so:\n%s", body)
+	}
+	if !strings.Contains(body, "ctrl+o") {
+		t.Errorf("the screen cuts the error without naming the key that shows the rest:\n%s", body)
 	}
 }
 
@@ -154,11 +207,22 @@ func TestALargeResultIsSummarisedRatherThanPrinted(t *testing.T) {
 	)}
 	body := plain(model(engine).Body())
 
-	if strings.Count(body, "a line of the file") > 0 {
-		t.Errorf("the tool output was printed into the conversation:\n%s", body[:400])
+	// A head, not the whole thing. The rule this replaces was that output never reached the screen
+	// at all, which left a command printing a test failure rendering as a tick and a duration. The
+	// half worth keeping is that the reply is what somebody is waiting for, so a four hundred line
+	// read must not bury it, and the bound is what keeps that true.
+	if shown := strings.Count(body, "a line of the file"); shown > 12 {
+		t.Errorf("%d lines of a 401 line result reached the screen, so the reply is buried:\n%s",
+			shown, body)
+	}
+	if !strings.Contains(body, "a line of the file") {
+		t.Errorf("none of the result reached the screen, so the call is a tick and a duration:\n%s", body)
 	}
 	if !strings.Contains(body, "401 lines") {
 		t.Errorf("the size of the result is not stated:\n%s", body)
+	}
+	if !strings.Contains(body, "more lines") {
+		t.Errorf("the result was cut without saying so:\n%s", body)
 	}
 }
 

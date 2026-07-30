@@ -236,7 +236,9 @@ be rediscovered by getting burned by it.
 
 - Canopy cannot redact a secret that a child process prints to its own stdout. Redaction only covers
   what Canopy itself formats: the trust screen, service detail, and its own log rendering. Anything
-  a spawned command chooses to print is captured into the logs verbatim (D-20).
+  a spawned command chooses to print is captured into the logs verbatim (D-20). The TUI does escape
+  terminal controls before displaying tool output or diff content, but that prevents terminal
+  injection rather than removing sensitive data from the stored result.
 
 - On the permission prompt, the key that grants broad, standing approval for the rest of the session
   ('a') sits directly next to the one-time, single-use answer ('y'), with no separate confirmation

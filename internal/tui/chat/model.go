@@ -253,6 +253,21 @@ type Model struct {
 	spinner int
 	working bool
 
+	// expanded lifts the caps on diffs, tool output and error text, toggled with ctrl+o.
+	//
+	// One switch for the whole transcript rather than a state per call. Per-call folding needs a
+	// cursor that can land on a call, and the transcript is deliberately a flat list of lines with no
+	// such cursor; adding one to fold a diff would be rebuilding the scroll model to answer a
+	// question that "show me everything" answers.
+	expanded bool
+
+	// callSeen is when this screen first saw a tool call with no result, by call ID.
+	//
+	// The clock for the "running for" label. Kept here rather than on the call because a ToolCall
+	// carries no start time and internal/core is frozen under the P1-01 rule, and kept as first-seen
+	// rather than pretending to be a start time, which is what the label says out loud.
+	callSeen map[string]time.Time
+
 	// compacting is true while a summary is being produced, which is a model call and takes as long
 	// as any other. Without it the interface looks frozen and people press the key again.
 	compacting bool
@@ -1058,6 +1073,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// Offers on the first press and pays on the second. See compact.
 		return m.compact()
 
+	case "ctrl+o":
+		// The reading view and the checking view, on one key. Scroll is held rather than reset,
+		// because the reason somebody expands is that they are looking at something particular and
+		// want more of it, and moving the screen under them would lose exactly that.
+		m.expanded = !m.expanded
+		if m.expanded {
+			m.notice = "showing full output, ctrl+o to fold it back"
+		} else {
+			m.notice = ""
+		}
+		return m, nil
+
 	case "pgup", "pgdown", "ctrl+home", "ctrl+end", "ctrl+down":
 		// Through the same table the question above uses, so a key cannot come to mean one thing
 		// with a prompt on screen and something else without one. The arrows are deliberately not
@@ -1169,6 +1196,7 @@ func (m *Model) refresh() {
 	m.loaded = true
 	_, m.working = current.Active()
 	m.prompt, m.awaiting = m.engine.Pending(m.sessionID)
+	m.noteCalls(current)
 
 	// Every other conversation's questions, read the same way and at the same moment, so the panel
 	// cannot disagree with the conversation it is drawn above. Events arrive here for every session
@@ -1184,6 +1212,33 @@ func (m *Model) refresh() {
 		visitors = append(visitors, waiting)
 	}
 	m.visitors = visitors
+}
+
+// noteCalls remembers when each unanswered tool call was first seen, and forgets the answered ones.
+//
+// The map is rebuilt from the session on every refresh rather than added to, so it cannot outgrow the
+// conversation: a call that has come back is not in it, and a turn that was compacted away takes its
+// calls with it. Timestamps for calls already being watched are carried over, because a first-seen
+// time that resets on every frame would render as a counter stuck at zero.
+func (m *Model) noteCalls(current core.Session) {
+	var seen map[string]time.Time
+	now := time.Now()
+	for _, turn := range current.Turns {
+		for _, call := range turn.ToolCalls {
+			if resultFor(turn, call) != nil {
+				continue
+			}
+			if seen == nil {
+				seen = make(map[string]time.Time, len(turn.ToolCalls))
+			}
+			if started, ok := m.callSeen[call.ID]; ok {
+				seen[call.ID] = started
+				continue
+			}
+			seen[call.ID] = now
+		}
+	}
+	m.callSeen = seen
 }
 
 // Session exposes the current session. For tests and for the screen around this one.
@@ -1350,7 +1405,11 @@ func (m Model) Blank() bool { return m.blank() }
 func (m Model) transcript() []string {
 	var lines []string
 	if len(m.session.Turns) > 0 {
-		lines = Transcript(m.session, m.width, m.spinnerFrame(), m.toolKind)
+		lines = TranscriptWith(m.session, m.width, m.spinnerFrame(), m.toolKind, Detail{
+			Expanded: m.expanded,
+			Now:      time.Now(),
+			Started:  m.callSeen,
+		})
 	}
 	if m.awaiting {
 		// At the bottom of the transcript rather than in a dialogue over it, so the command being
