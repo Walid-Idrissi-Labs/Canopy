@@ -149,7 +149,8 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 	}
 
 	for _, call := range turn.ToolCalls {
-		lines = append(lines, renderToolCall(call, resultFor(turn, call), width, kinds, detail)...)
+		lines = append(lines, renderToolCall(
+			call, resultFor(turn, call), turn.State, width, kinds, detail)...)
 	}
 
 	lines = append(lines, statusLines(turn, spinner, width)...)
@@ -179,7 +180,10 @@ func resultFor(turn core.Turn, call core.ToolCall) *core.ToolResult {
 	return nil
 }
 
-func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kinds KindOf, detail Detail) []string {
+func renderToolCall(
+	call core.ToolCall, result *core.ToolResult, state core.TurnState,
+	width int, kinds KindOf, detail Detail,
+) []string {
 	t := theme.Current()
 
 	// The label is what makes a call readable at a glance rather than at a read. A wall of tool
@@ -205,6 +209,18 @@ func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kind
 	// minute and a call that started a moment ago are the same line otherwise, and telling them
 	// apart is the whole question somebody watching a stuck agent is asking.
 	if result == nil {
+		// A call with no result on a turn that is over never came back, and saying it is running is
+		// the interface claiming something it cannot know. It happens whenever a turn is interrupted
+		// or fails with calls still out: the turn stops, the calls are abandoned, and nothing ever
+		// answers them. The old wording put "running for 9.0s" directly under "[stopped, the reply
+		// above is partial]", which is the exact class of confident wrong statement this project
+		// exists to refuse.
+		//
+		// It also freed the render from the clock, which is what lets a finished turn be cached at
+		// all: a line counting seconds can never be reused, and this one was, so the count froze.
+		if terminal(state) {
+			return append(lines, t.Muted.Render(indent+"never finished"))
+		}
 		return append(lines, t.Muted.Render(indent+runningFor(call.ID, detail)))
 	}
 

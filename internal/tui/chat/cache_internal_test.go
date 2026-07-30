@@ -66,3 +66,42 @@ func TestTheRenderCacheIsBounded(t *testing.T) {
 		t.Errorf("the cache holds %d renders and %d keys, so eviction leaks one of them", held, order)
 	}
 }
+
+// A render is produced outside the lock, so a theme change can land between producing it and storing
+// it. Without the generation check the render made in the old palette is stored into the map that
+// the theme change had just emptied, and the conversation ends up half in each palette with nothing
+// to notice except that it looks wrong.
+func TestARenderFromTheOldPaletteIsNotStoredAfterAThemeChange(t *testing.T) {
+	before := theme.Current().Palette
+	defer theme.Set(before)
+
+	forgetRenders()
+
+	session := core.Session{ID: "s1", Turns: []core.Turn{{
+		ID: "turn-1", State: core.TurnComplete, Request: core.Message{Text: "ask"}, Text: "answer",
+	}}}
+
+	// The generation this render belongs to, read the way cachedTurn reads it.
+	renderedTurns.Lock()
+	drawnIn := renderedTurns.generation
+	renderedTurns.Unlock()
+
+	// The theme changes while that render is notionally still in flight.
+	theme.Set(theme.Monochrome)
+
+	renderedTurns.Lock()
+	moved := renderedTurns.generation != drawnIn
+	renderedTurns.Unlock()
+	if !moved {
+		t.Fatal("a theme change did not move the generation, so nothing can detect a stale render")
+	}
+
+	// Anything rendered after the change belongs to the new generation and is cached normally.
+	Transcript(session, 60, ".", nil)
+	renderedTurns.Lock()
+	held := len(renderedTurns.lines)
+	renderedTurns.Unlock()
+	if held == 0 {
+		t.Error("a render made after the theme change was refused, so the cache never refills")
+	}
+}
