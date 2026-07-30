@@ -13,6 +13,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/codex"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
@@ -107,7 +108,7 @@ func (r *KeyResolver) ResolveFor(
 		return nil, pricing.ModelID{}, err
 	}
 	if in.Kind == keys.KindDelegated {
-		return r.delegate(meta, model)
+		return r.delegate(meta, in, model)
 	}
 
 	secret, err := r.credentials.Credential(meta)
@@ -149,16 +150,36 @@ func (r *KeyResolver) ResolveFor(
 // delegate builds the client for a credential that drives somebody else's agent.
 //
 // Discovery happens here, on every turn, rather than being cached on the credential. What was on the
-// machine when the credential was added is not what is on it now: Claude Code can be uninstalled,
-// updated, or signed out of between two messages, and each of those has its own remedy that only a
-// fresh look can name. The cost is one short subprocess per turn against a turn that is about to
-// start a subprocess anyway.
+// machine when the credential was added is not what is on it now: the vendor's agent can be
+// uninstalled, updated, or signed out of between two messages, and each of those has its own remedy
+// that only a fresh look can name. The cost is one short subprocess per turn against a turn that is
+// about to start a subprocess anyway.
+//
+// The route decides which agent, and it has to be the route rather than the provider. Both delegated
+// routes reach a different vendor and one of them is openai-compatible, so a switch on provider
+// would send a ChatGPT credential to Claude Code on the day somebody stored one under the other
+// provider. That is the collision internal/keys/refresh.go wrote SourceFor as a function to avoid,
+// and this is the same key.
 //
 // The model identity is marked delegated, which is what stops a dollar figure appearing beside a turn
 // nobody is billed per token for. See pricing.ModelID.Delegated.
 func (r *KeyResolver) delegate(
-	meta core.KeyMetadata, model string,
+	meta core.KeyMetadata, in keys.SignIn, model string,
 ) (core.ProviderClient, pricing.ModelID, error) {
+	// The provider is carried through so a failure can still say which credential this was, and the
+	// model is carried through so the client can ask for it if the delegated agent offers a choice.
+	// Neither of them prices anything, because Delegated is checked first.
+	id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
+
+	if in.Route == codex.Route {
+		found, err := delegatedCodex.Find()
+		if err != nil {
+			return nil, pricing.ModelID{}, fmt.Errorf("key %q delegates to Codex: %w",
+				meta.Ref.Name, err)
+		}
+		return codex.New(found), id, nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), delegateTimeout)
 	defer cancel()
 
@@ -167,11 +188,6 @@ func (r *KeyResolver) delegate(
 		return nil, pricing.ModelID{}, fmt.Errorf("key %q delegates to Claude Code: %w",
 			meta.Ref.Name, err)
 	}
-
-	// The provider is carried through so a failure can still say which credential this was, and the
-	// model is carried through so the client can ask for it if the delegated agent offers a choice.
-	// Neither of them prices anything, because Delegated is checked first.
-	id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
 	return acp.New(found), id, nil
 }
 
@@ -259,11 +275,16 @@ func (r *KeyResolver) Close() {
 // delegateTimeout bounds looking for the delegated agent before a turn.
 const delegateTimeout = 30 * time.Second
 
-// delegatedAgent is how the machine is inspected for a delegated route.
+// delegatedAgent and delegatedCodex are how the machine is inspected for a delegated route.
 //
-// A package variable for the reason cmd/canopy's openKeyStore is one: it is what a test swaps to
-// drive the route without a Claude Code installed. Nothing else about it is dynamic.
-var delegatedAgent = acp.Discovery{}
+// Package variables for the reason cmd/canopy's openKeyStore is one: they are what a test swaps to
+// drive a route without the vendor's agent installed. Nothing else about them is dynamic. Two of
+// them rather than one interface, because the two discoveries answer different questions and share
+// no field: one looks for a CLI, an account and a bridge, the other for one binary.
+var (
+	delegatedAgent = acp.Discovery{}
+	delegatedCodex = codex.Discovery{}
+)
 
 // pick chooses a credential.
 //

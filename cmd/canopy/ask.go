@@ -17,6 +17,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/codex"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
@@ -294,6 +295,22 @@ func clientFor(
 	}
 
 	if in.Kind == keys.KindDelegated {
+		// Delegated, so nothing downstream prints a dollar figure for a turn metered against a plan
+		// that is billed monthly. See pricing.ModelID.Delegated.
+		id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
+
+		// Route before provider, the same fork the resolver makes and for the same reason: both
+		// delegated routes reach a different vendor and one of them is openai-compatible, so a
+		// switch on provider would hand a ChatGPT credential to Claude Code.
+		if in.Route == codex.Route {
+			found, findErr := codex.Discovery{}.Find()
+			if findErr != nil {
+				return nil, pricing.ModelID{}, fmt.Errorf(
+					"key %q delegates to Codex: %w", meta.Ref.Name, findErr)
+			}
+			return codex.New(found, codex.WithVersion(version)), id, nil
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), delegateTimeout)
 		defer cancel()
 
@@ -302,9 +319,6 @@ func clientFor(
 			return nil, pricing.ModelID{}, fmt.Errorf(
 				"key %q delegates to Claude Code: %w", meta.Ref.Name, findErr)
 		}
-		// Delegated, so nothing downstream prints a dollar figure for a turn metered against a plan
-		// that is billed monthly. See pricing.ModelID.Delegated.
-		id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
 		return acp.New(found, acp.WithVersion(version)), id, nil
 	}
 

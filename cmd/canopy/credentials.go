@@ -51,14 +51,15 @@ func (s signInAware) Identity(ref core.KeyRef) (keysui.Identity, error) {
 // A package variable for the reason openKeyStore is one: it is what a test swaps to drive the flow
 // without a vendor on the other end of it. Nothing else about it is dynamic.
 //
-// Two of the three D-51 permits are here: GitHub Copilot from S-03, where signing in is genuinely a
-// sign-in, and Claude Code from S-04, where it is a search because the user already did it. ChatGPT
-// arrives with S-05 and joins the list below.
+// All three of D-51's permitted routes are here, and they are three different shapes of the same
+// idea. GitHub Copilot, where Canopy runs the flow and keeps the tokens. Claude Code, where there is
+// nothing to sign in to because the user already did it. And ChatGPT, where Canopy asks OpenAI's own
+// app server to run the flow and that app server keeps the grant afterwards.
 //
 // The composition S-04 left for whoever landed second is routeSet, and the second case turned out to
 // need one thing a single registry never did: a way to know which vendor a credential that already
 // exists belongs to. That is what keys.SignIn.Route records and what routeSet dispatches on.
-var signInRoutes keysui.SignIn = routeSet{copilotSignIn{}, claudeCode{}}
+var signInRoutes keysui.SignIn = routeSet{copilotSignIn{}, claudeCode{}, codexSignIn{}}
 
 // routeSet is every way in this build offers, as one registry.
 //
