@@ -110,8 +110,12 @@ var (
 // person sees in the ChatGPT client. Unanswered is not the same as untrue, and the honest place for
 // a maybe is in front of the decision it would change. keysui.Route.Caveat exists for this case and
 // is drawn before anything is stored, on both surfaces.
+// $CODEX_HOME rather than ~/.codex, because that is what discover.go reads and honours and this
+// sentence is telling somebody where their own tokens went. For anybody who has moved it, the
+// literal path is wrong about their machine. The documents were corrected to say $CODEX_HOME and
+// this string was left behind, which is the half of that fix a reader actually sees.
 const quotaCaveat = "Canopy does not hold a ChatGPT credential of yours: OpenAI's own Codex app " +
-	"server signs you in, keeps the tokens in ~/.codex, and answers the turns. Two things to know " +
+	"server signs you in, keeps the tokens in $CODEX_HOME, and answers the turns. Two things to know " +
 	"first. There is an open, unanswered report of third-party sign-ins hitting 429 quota errors on " +
 	"active Plus plans, so this may draw on a smaller allowance than the ChatGPT app does. And a " +
 	"delegated turn runs Codex's own tools in Codex's own sandbox: Canopy's permission gate is not " +
