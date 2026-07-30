@@ -206,6 +206,60 @@ be rediscovered by getting burned by it.
   They found two real cancellation bugs on their first run that no scripted test caught, which means
   the same class of bug can reappear between one person's manual run and the next (Q-05).
 
+### The Claude Code route, and what it gives up
+
+Canopy can run turns on a Claude Max or Pro plan without an API key, and the way it does that is by
+delegating: it drives a Claude Code you installed and signed in to yourself, over the Agent Client
+Protocol. This is not Canopy signing you in to Claude. Anthropic do not permit third-party developers
+to offer Claude.ai login or to route requests through Free, Pro or Max plan credentials on behalf of
+their users, they enforce that server-side, and they reserve the right to do so without prior notice,
+so Canopy holds no Anthropic subscription credential and the credential it does store has no secret
+behind it at all (D-51, S-04).
+
+**On a delegated turn, Claude Code runs the turn and Canopy's permission gate does not apply.** This
+is the most important sentence in this section, because it is the opposite of what the rest of the
+product teaches you to expect. Concretely:
+
+- **Canopy's own tools are not available.** The delegated agent uses Claude Code's tools. Canopy's
+  file, shell, git and fetch tools are not offered to it, and cannot be: MCP servers are the only way
+  ACP lets a client hand its own tools to an agent, and Canopy exposes none.
+
+- **Canopy's per-agent trust levels and approval prompts are not in the path.** A tool call that
+  Claude Code auto-approves under its own permission rules runs without Canopy seeing it, let alone
+  gating it. The permission mode shown on Canopy's own screen describes what Canopy would do, and on
+  a delegated turn Canopy is not the one doing it.
+
+- **Where Claude Code does ask for approval, Canopy declines.** Canopy will not stand in as your
+  approver for a tool call it did not make and has no trust level for, so every permission request is
+  refused and each refusal is reported in the conversation. Declining does not make the turn safe: it
+  only covers the calls Claude Code chose to ask about. If you want a turn where Canopy gates the
+  tools, use a credential where Canopy runs them.
+
+- **A4's audit trail of refused calls and A6's verification see nothing.** Canopy reports each tool
+  the delegated agent said it was running, as a notice, which is a record rather than a control.
+  Nothing in a delegated turn is verified per-agent, because Canopy did not run any of it.
+
+Two more things about the route itself:
+
+- **It needs two programs, not one.** Claude Code, signed in, and the ACP bridge, which is a separate
+  package (`npm install -g @agentclientprotocol/claude-agent-acp`). Claude Code does not speak ACP by
+  itself. A machine missing either is told which one and how to get it.
+
+- **The model and the system prompt are Claude Code's.** Canopy asks for the model and the effort a
+  request named, but only when the bridge offers that setting and offers that exact value; otherwise
+  it says on screen which setting actually answered rather than substituting one silently. A Canopy
+  agent profile's system prompt is sent as the first thing the delegated agent reads, and does not
+  replace Claude Code's own, because ACP has no field that could.
+
+- **No cost figure is shown, and that is deliberate.** The turn's token counts are real and are
+  reported. The dollar value of those tokens is not, because a Max or Pro plan is billed monthly and
+  this usage is metered against its limits, so a list price would be a correct number about an invoice
+  nobody receives. As of 2026-07-30 that metering is the published arrangement: Anthropic state that
+  Claude Agent SDK, `claude -p` and third-party app usage draw from the subscription's usage limits.
+  They announced, and then paused on 2026-06-15, a change moving that usage onto separately purchased
+  credits. Paused is not cancelled (Q-22), and if it returns this paragraph is wrong and the route's
+  cost story needs rewriting before the release that follows it.
+
 ## Tools and permissions
 
 - Web search is **cut from 0.1** (A4-07, D-40). `fetch_url` works and ships, so an agent can read a

@@ -6003,7 +6003,7 @@ a test holds that the two switches know the same set of providers.
 
 ### S-04 Claude runs through the user's own Claude Code
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
 `scope: internal/provider/acp/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
 
 Deliverable: the Claude route delegates rather than authenticates. Canopy does not implement
@@ -6034,7 +6034,216 @@ so that a later contributor cannot add one quietly. The stored credential has no
 A delegated turn shows that it draws on the user's own subscription and does not show a dollar cost,
 because Canopy never sees a token count and a figure it cannot see is a figure it must not print.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `internal/provider/acp`, a `core.ProviderClient` that starts the ACP bridge as a
+child process and has a JSON-RPC conversation with it over stdio. The route is registered in
+`cmd/canopy/signin_claude.go`, which is the first entry in the `signInRoutes` registry S-07 left
+empty. `internal/session/resolver.go` and `cmd/canopy/ask.go` each gained one branch. Nothing under
+`internal/core` is touched, and no change to it was needed or nearly needed.
+
+The wire format was established rather than remembered, which the block asked for and is worth
+recording because half of what is written about ACP on the open web is the v2 draft. Method names
+come from the constants the protocol's own reference implementation exports
+(`SESSION_PROMPT_METHOD_NAME = "session/prompt"` and its neighbours), field names and enums from the
+JSON Schema it generates for v1, and `ProtocolVersion::V1 = 1` with `LATEST = V1`. All of it was then
+confirmed against a real bridge: `@agentclientprotocol/claude-agent-acp` 0.64.0 installed into a
+scratch directory, driven through `initialize`, `session/new` and `session/prompt` by hand, with every
+frame in both directions logged and read. That is where the two facts a schema would not have given
+came from. The bridge answers `initialize` with `protocolVersion: 1` and `agentInfo.name`
+`@agentclientprotocol/claude-agent-acp`, and it sends `configOptions` on `session/new` carrying `mode`,
+`model`, `effort` and `fast`, so a client can ask for a model by reading the ids off the session
+rather than guessing at them. Version 1 is what this speaks. Version 2 was published as a draft on
+2026-07-20 whose own announcement says not to ship it by default before it stabilises, so the version
+is pinned rather than negotiated upward: a client that sends the highest number it has heard of is a
+client whose behaviour changes when somebody else releases something.
+
+Q-23, which the block calls the central question, is answered in three parts and only one of them was
+a choice.
+
+The first was settled by the protocol before it could be settled by taste. Canopy's tools are not
+offered to a delegated turn because ACP v1 has no channel for it: MCP servers are the only way a
+client hands an agent its own tools, and Canopy's tools are not an MCP server. `session/new` is sent
+with an empty `mcpServers` list, explicitly rather than omitted, so the absence is a statement in the
+traffic. `TestNoCanopyToolIsOfferedToADelegatedTurn` puts two tool definitions on the request and
+holds that neither reaches the wire.
+
+The second was a choice and Canopy declines. It advertises `fs.readTextFile`, `fs.writeTextFile` and
+`terminal` all false, so the agent never routes work back through Canopy, and every
+`session/request_permission` is answered with the protocol's `reject_once` option and reported to the
+reader as a notice. Approving would be Canopy standing in as the user's approver for a call it did
+not make, cannot describe in its own vocabulary and has no trust level for, and the screen shows
+Canopy's permission mode while that happened, which is precisely the failure Q-23 forbids. Forwarding
+to A4's own gate is the right long-term answer and is not available: that gate is built around
+Canopy's tool definitions and per-agent trust levels and a vendor tool call carries neither. The
+refusal is chosen by the option's `kind` rather than its `name`, held by
+`TestARefusalIsChosenByItsKindRatherThanItsLabel` with deliberately misleading labels, because the
+names are display strings and a permission decision made by string comparison against somebody else's
+copy is a permission decision waiting to invert.
+
+The third was load-bearing rather than aesthetic. A `tool_call` update becomes a `core.EventNotice`
+and never a `core.EventToolCall`. `internal/agent/loop.go:270` collects every tool call event and
+invokes it, so the obvious mapping would have made Canopy run the vendor's tool a second time,
+through a gate, against a tool definition it does not have. Held by
+`TestAToolTheDelegatedAgentRanIsReportedAndNeverHandedBackToBeRun`.
+
+And the honest sentence the block asked for, which is in LIMITATIONS.md in these words and is the
+single most valuable thing this task produced: on a delegated turn Claude Code runs the turn and
+Canopy's permission gate does not apply. Declining permission requests does not make the turn gated.
+Claude Code's own auto-approved tools never reach Canopy at all, so A4's audit trail records no
+refused calls because Canopy refused none of its own, and A6 verifies nothing because Canopy ran
+nothing. Every turn opens with a notice saying so before the first word of the reply, which is what
+stops the mode indicator on screen from being a lie. Q-23 is updated with what is settled and what is
+not.
+
+Two corrections to the block, both verified rather than argued.
+
+The cost clause's premise is false and its conclusion is right for a better reason. It says Canopy
+never sees a token count. It does: the bridge puts real per-turn `inputTokens`, `outputTokens`,
+`cachedReadTokens` and `cachedWriteTokens` on the `session/prompt` result, and the standard
+`usage_update` notification carries context occupancy and a cumulative dollar figure. So the reason to
+show no cost is not that the figure is unavailable, it is that the figure is about somebody else's
+invoice: a Max plan is billed monthly and these tokens are metered against its limits, so the list
+price is arithmetically correct and factually wrong about what anybody pays. The tokens are therefore
+reported, because "this turn used nothing" is a worse thing to say than what the agent said, and
+`CostKnown` is false always. That needed one addition outside the declared scope, argued here rather
+than made silently: `pricing.ModelID` gains `Delegated`, which makes such a turn unpriced rather than
+free. Without it the pricing layer misreports either way, and both ways are worse than silence. Zero
+tokens through `pricing.Apply` on a model the dated table knows gives `CostKnown: true` and `$0.0000`,
+which reads as "this was free", the exact claim `pricing.Free`'s comment says only a local model gets
+to make. Real tokens give the list price. `Delegated` is checked before `UserRate` as well as before
+the table, which is the one place in that package where somebody's own figure does not win, because a
+per-million-token rate cannot describe a plan billed monthly whoever supplied it, and
+`unpricedReason` says that instead of ignoring what they set.
+
+`internal/core` is untouched and D-51's warning about `core.ProviderClient` turned out to be half
+right. The decision says a delegated agent "is not what core.ProviderClient describes and should not
+be forced into its shape". The interface fits the traffic: a request goes in, text and thinking stream
+out, a stop reason and a usage record come back. What it does not describe is the tool loop, and this
+client answers that by not having one, which is the honest shape rather than a shortcut. Nothing is
+forced. The place the mismatch does show is that `Stream` is handed a request and not a workspace, so
+the delegated session is rooted at the directory Canopy was started in unless a caller says otherwise
+with `WithWorkspace`; that is right for a conversation and wrong for an isolated agent, and it is
+recorded in the option's own comment rather than left to be found.
+
+Considered and rejected. A long-lived ACP session per conversation, reusing `session/load`: rejected
+because `core.Request` carries the whole transcript every turn, so a session that already holds the
+history would receive every earlier message twice, and sending only the last message into one would
+make the client's answers depend on a session identity `core.ProviderClient` does not have. One
+process per turn instead, which also means a turn that goes wrong leaves nothing behind. Comparing
+`claude --version` against a minimum: rejected because a version number is something somebody has to
+keep correct, it goes stale silently, and it breaks on the day the vendor changes their numbering;
+"too old" is detected instead by asking for `claude auth status --json` and by the `initialize`
+handshake's own version negotiation, both of which test the thing that actually matters. Running the
+bridge through `npx` when it is not installed: rejected because a network install in the middle of
+somebody's first turn is a surprise, and the failure that names the package is more useful than the
+convenience. Reading the credential out of `~/.claude/.credentials.json` to learn the account:
+rejected instantly and worth writing down anyway, because it is the shape of the thing D-51 forbids
+even though reading is not routing; `claude auth status --json` answers the same question by asking,
+which is what a person would do. Emitting a notice for every `tool_call_update`: rejected because one
+per status change buries the reply, so only the initial `tool_call` is reported. Mapping ACP's
+`max_turn_requests` onto `core.StopError`: rejected because it is an answer cut off by a bound rather
+than a turn that broke, so it maps onto `StopMaxTokens`, whose `Complete()` is false, with a notice
+carrying the part the enum loses. Treating an unknown `sessionUpdate` variant as a fault: rejected
+because ACP grows by adding them and a client that failed on one would break every time the protocol
+moved; an unknown *stop reason*, by contrast, is a failure, because presenting an answer nobody can
+vouch for as complete is worse than saying the protocol moved.
+
+Found on the way, in the fake agent rather than in production, and fixed in production because it is
+a real hazard: `session/set_config_option` was fired without waiting for its answer, which deadlocked
+against the test's synchronous pipes. Real pipes have a buffer and would have hidden it until a long
+enough exchange filled one. Every request in the file now waits for its response before the next one
+is sent, which is a rule about the transport rather than about politeness, and it is also the only way
+to know whether a setting took.
+
+Acceptance, clause by clause: adding the credential on a machine with Claude Code installed and
+signed in finding it and reporting the account is
+`TestAddingTheClaudeCredentialFindsClaudeCodeAndReportsTheAccountItIsSignedInAs`, which drives
+`canopy keys signin claude` against an invented machine and then reads keys.json's bytes, with
+`TestFindingASignedInClaudeCodeReportsTheAccountAndNoSecret` for the discovery half; a turn whose
+reply arrives over ACP is `TestADelegatedTurnsReplyArrivesOverACP` against a real JSON-RPC peer over
+real pipes, plus `TestLiveADelegatedTurnReachesTheUsersOwnClaudeCode`, which is the only test here
+that needs an installation and skips unless `CANOPY_LIVE_CLAUDE_CODE` is set, following
+internal/session/live_test.go; a machine without it naming the missing thing and how to install it
+without offering to sign anybody in is
+`TestAMachineWithoutClaudeCodeIsToldWhatToInstallRatherThanShownAnExecError`,
+`TestAMachineWithNoBridgeIsToldToInstallTheBridgeAndNothingElse`,
+`TestAClaudeCodeNobodyIsSignedInToNamesTheCommandThatFixesIt` and
+`TestAMachineWithoutClaudeCodeSaysSoWhenTheCredentialIsUsedRatherThanFailingLater`, the last of which
+also holds that no exec error reaches the surface; no Anthropic OAuth flow anywhere in the tree, held
+over this repository's own source, is `TestNoAnthropicSignInFlowExistsAnywhereInThisRepository`, which
+walks every Go file outside `.git`, `vendor` and `testdata` and fails on an authorisation endpoint, a
+code challenge or a client secret in any file that also mentions Anthropic or Claude, paired with
+`TestNothingDiscoveryReturnsHasRoomForACredential`; the stored credential having no secret behind it
+is `TestADelegatedClaudeCredentialLeavesTheKeychainHalfEmpty` and
+`TestWhatIsWrittenToDiskForADelegatedCredentialIsThreeFactsAndNoCredential`; `canopy keys test` saying
+something true rather than reporting a missing secret as corruption is
+`TestTestingADelegatedCredentialSaysSomethingTrueRatherThanReportingAMissingSecret`, with
+`TestTestingADelegatedCredentialLooksAtTheMachineAgainRatherThanReadingBackWhatWasStored` for the case
+where somebody signed out afterwards; and a delegated turn showing that it draws on the user's own
+subscription and showing no dollar cost is `TestATurnSaysWhoseSubscriptionItRunsOnBeforeItSaysAnythingElse`,
+`TestADelegatedTurnReportsItsTokensAndNeverClaimsToKnowTheirCost`,
+`TestATurnOnADelegatedCredentialIsUnpricedRatherThanFree` and
+`TestATurnOnSomebodyElsesAgentIsUnpricedRatherThanFree`.
+
+The Q-23 clauses, which the block states as prose rather than as acceptance:
+`TestNoCanopyToolIsOfferedToADelegatedTurn`,
+`TestCanopyDeclinesToApproveTheDelegatedAgentsToolCalls`,
+`TestARefusalIsChosenByItsKindRatherThanItsLabel`,
+`TestAPermissionRequestWithNoWayToDeclineStopsTheTurn`,
+`TestAToolTheDelegatedAgentRanIsReportedAndNeverHandedBackToBeRun`,
+`TestTheHandshakeNamesCanopyAndOffersNoFilesystemOrTerminal` and
+`TestARequestForACapabilityCanopyNeverOfferedIsRefusedRatherThanStubbed`.
+
+The rest cover protocol behaviour the clauses imply rather than name.
+`TestEveryWayATurnCanEndArrivesAsADoneEventCanopyUnderstands` and
+`TestAStopReasonThisBuildHasNeverSeenIsAFailureRatherThanAGuess` for the stop reasons;
+`TestALimitOnRequestsWithinOneTurnSaysWhichLimitItWas`;
+`TestCancellingATurnAsksTheAgentToStopRatherThanKillingIt` and
+`TestCancellingBeforeAnythingArrivesStillEndsTheTurn`, which hold that a stopped turn keeps its
+partial reply and is not reported as a failure; `TestABridgeThatStopsMidTurnIsAFailureThatQuotesWhatItSaid`;
+`TestABridgeSpeakingAnotherProtocolVersionIsToldWhichOneCanopySpeaks`;
+`TestABridgeWithNobodySignedInSaysToSignInToClaudeCodeItself`;
+`TestClosingATurnStopsTheProcessBehindIt`, since an unclosed bridge is a Node process and a Claude
+Agent SDK beneath it still holding the plan; `TestTheModelAndEffortTheRequestNamedAreAskedForWhenTheAgentOffersThem`,
+`TestAModelTheDelegatedAgentDoesNotOfferIsSaidRatherThanSubstituted` and
+`TestAnAgentThatOffersNoChoiceOfModelIsNotToldToChangeOne`;
+`TestTheWholeConversationReachesTheDelegatedAgentWithItsVoicesLabelled`,
+`TestASingleMessageGoesAcrossOnItsOwnWithNoTranscriptAroundIt` and
+`TestToolTrafficFromAnEarlierCredentialIsRenderedRatherThanDropped`;
+`TestAnUpdateThisBuildHasNeverHeardOfIsIgnoredRatherThanFatal`,
+`TestAnImageInTheAgentsOwnOutputIsNotNarratedAsText` and
+`TestADoneEventArrivesEvenWhenTheAgentAnswersWithAnError`;
+`TestTheNameOfThisRouteIsNotAnthropic`, since usage is attributed by provider name and a delegated
+turn calling itself "anthropic" would be indistinguishable from a metered one;
+`TestTheBridgesPreviousNameIsStillFound` and `TestAnOverriddenBridgeIsCheckedRatherThanTrusted`;
+`TestAClaudeCodeTooOldToReportItsAccountIsToldToUpdate` and
+`TestAClaudeCodeThatCannotBeRunIsReportedAsSuchRatherThanAsLoggedOut`;
+`TestASignInThroughAnApiAccountIsNotDescribedAsASubscription` and
+`TestATurnOnAnAPIAccountSaysItIsBilledRatherThanMetered`, for somebody whose Claude Code is signed in
+to a Console account and whose delegated turns really are billed per token;
+`TestASecondAccountOnOneMachineIsSaidRatherThanAbsorbed`;
+`TestCancellingAClaudeSignInThatAlreadyCompletedRemovesTheCredential` and
+`TestCancellingAClaudeSignInBeforeItFinishesStoresNothing`, which are S-07's Cancel contract held on
+the first real route; `TestSigningOutOfADelegatedClaudeCredentialRevokesNothingAndSaysSo`;
+`TestADelegatedCredentialListsAsDelegatedAndLetsTheVendorChooseTheModel`;
+`TestTheClaudeRouteSaysWhatItNeedsAndWhatItGivesUp`;
+`TestADelegatedCredentialResolvesToTheDelegatedRouteRatherThanToTheAnthropicApi` and
+`TestAPastedCredentialStillResolvesTheWayItAlwaysDid`, which is the regression that matters most, that
+an ordinary Anthropic key is untouched by any of this; and
+`TestARateSomebodySetOnADelegatedCredentialStillDoesNotProduceAFigure`,
+`TestTheSameModelOnAPastedCredentialIsStillPriced` and
+`TestCacheSavingsAreNotReportedForATurnWithNoPrice` in internal/pricing.
+
+One test of S-07's was changed rather than left failing.
+`TestSigningInWithNoRouteBuiltSaysWhichRoutesAreComing` asserted the shipped registry was empty, which
+was true until this task and is not now. It sets `noRoutes{}` explicitly instead, so it still holds
+exactly what it was written to hold: what a build with nothing behind it says.
+
+Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues. Run against a clone of this branch at this commit rather
+than in the shared worktree, because `internal/provider/copilot` is in flight there for S-03 and does
+not build until its dependency is added.
 
 ### S-05 OpenAI signs in through the Codex app server
 

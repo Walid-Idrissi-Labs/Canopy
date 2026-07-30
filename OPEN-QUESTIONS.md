@@ -532,5 +532,44 @@ on a delegated agent, but no task in phase S may claim a trust level or an audit
 not enforce, and no screen may show a permission mode the delegated turn is not actually running
 under. A screen showing `plan` while somebody else's agent edits files is worse than no screen.
 
-**Who decides:** both supervisors, after one delegated route works end to end and the gap can be
-seen rather than argued about.
+**Partly answered by S-04, 2026-07-30, on the Claude Code route.** The first delegated route works
+end to end, so the gap can now be looked at rather than argued about, and one of the three possible
+answers turned out not to be a choice.
+
+Settled, because the protocol settles it: **Canopy's own tools are not offered to a delegated turn.**
+The second option above, exposing them over the protocol and re-imposing Canopy's gating at that
+boundary, is not available in ACP v1. MCP servers are the only channel a client has for handing an
+agent its own tools, Canopy's tools are not an MCP server, and there is no other field. `session/new`
+is therefore sent with an empty `mcpServers` list, and a test holds that no Canopy tool definition
+ever reaches the wire.
+
+Settled, and enforced rather than promised: **Canopy declines every permission request the delegated
+agent makes.** It advertises no filesystem and no terminal capability, so the agent never routes work
+back through Canopy, and when the agent does ask for approval Canopy answers with the protocol's
+`reject_once` option and reports the refusal in the conversation. The reasoning is that approving
+would be Canopy standing in as the user's approver for a call it did not make, cannot describe in its
+own vocabulary and has no trust level for, which is exactly the screen-says-`plan` failure this
+question forbids.
+
+Settled, and this one was load-bearing rather than aesthetic: **a delegated tool call is a notice, not
+a `core.EventToolCall`.** `internal/agent/loop.go` invokes every tool call event it is handed, so
+mapping ACP's `tool_call` update onto that kind would have made Canopy run the vendor's tool a second
+time, through a gate, against a tool definition it does not have.
+
+Still open, and now visible rather than theoretical: **the honest answer for the third question, what
+verification means, is that it does not apply.** Claude Code's own auto-approved tools never reach
+Canopy at all, so declining permission requests does not make a delegated turn gated; it only means
+Canopy grants nothing. A4's audit trail records no refused calls because Canopy refused none of its
+own, and A6 verifies nothing because Canopy ran nothing. That is written down in LIMITATIONS.md in
+those words. What is not settled is whether shipping a route with that property is acceptable at all
+beyond a beta, or whether the answer is the first option, refusing to delegate a turn that would need
+Canopy's tools, at the cost of a subscription credential buying a visibly weaker agent.
+
+Also still open: **what the conversation screen should show for the permission mode during a
+delegated turn.** Today the turn opens with a notice saying Canopy's permissions are not in the path,
+which stops the mode indicator from being a lie by contradicting it in words. A mode indicator that
+knew about delegation would be better than a sentence that argues with it.
+
+**Who decides:** both supervisors. One delegated route now works end to end, so the remaining
+question is a product one rather than an engineering one: whether a weaker agent that says so is
+worth having next to a stronger one that costs money per token.
