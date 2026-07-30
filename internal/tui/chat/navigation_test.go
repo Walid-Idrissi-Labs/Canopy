@@ -120,7 +120,7 @@ func TestEveryKeyThatIsNotNavigationStillRefuses(t *testing.T) {
 	for _, key := range []string{"enter", "esc", "tab", "n", "q", "space", "ctrl+g", "ctrl+r", "?"} {
 		engine, m := asking()
 
-		m.Update(keyMsg(key))
+		_, _ = m.Update(keyMsg(key))
 
 		if len(engine.answers) != 1 {
 			t.Errorf("%s gave %d answers, want one refusal", key, len(engine.answers))
@@ -137,7 +137,7 @@ func TestEveryKeyThatIsNotNavigationStillRefuses(t *testing.T) {
 		remember bool
 	}{{"y", false}, {"a", true}} {
 		engine, m := asking()
-		m.Update(keyMsg(run.key))
+		_, _ = m.Update(keyMsg(run.key))
 
 		if len(engine.answers) != 1 {
 			t.Fatalf("%s gave %d answers, want one", run.key, len(engine.answers))
