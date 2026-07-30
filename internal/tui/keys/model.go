@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
 
@@ -25,6 +26,15 @@ type Store interface {
 	Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata, error)
 	Remove(ref core.KeyRef) error
 	SetModel(ref core.KeyRef, model string) error
+
+	// Models is what this key's owner added by hand, which the screen offers after the catalog.
+	Models(ref core.KeyRef) ([]catalog.Model, error)
+
+	// AddModel is how a model the catalog has never heard of joins the list. Removing one stays with
+	// the CLI: this interface is narrow on purpose, and a screen that can delete something a person
+	// spent effort recording wants a confirmation of its own before it is worth having.
+	AddModel(ref core.KeyRef, id, name string) error
+
 	BackendName() string
 	UsingInsecureBackend() bool
 }
@@ -36,6 +46,7 @@ const (
 	modeName
 	modeProvider
 	modeBaseURL
+	modeModelPick
 	modeModel
 	modeSecret
 	modeConfirmRemove
@@ -61,6 +72,11 @@ type Model struct {
 	draftSecret string
 
 	providerCursor int
+
+	// modelChoices is what the model picker is offering: what the catalog knows about the key's
+	// provider and endpoint, then whatever its owner added that the catalog does not have.
+	modelChoices []catalog.Model
+	modelCursor  int
 
 	// editing is set when the model prompt was reached from the list rather than from the add flow,
 	// so committing it changes one field instead of trying to store a credential with no secret.
@@ -155,6 +171,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		m.handleTextKey(msg, &m.draftSecret, (*Model).afterSecret)
 	case modeProvider:
 		m.handleProviderKey(msg)
+	case modeModelPick:
+		m.handleModelPickKey(msg)
 	case modeConfirmRemove:
 		m.handleConfirmKey(msg)
 	}
@@ -187,12 +205,7 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 		// Changing the model without re-entering the secret. Somebody fixing a typo in a model id
 		// should not have to go and find their API key again.
 		if len(m.keys) > 0 {
-			m.mode = modeModel
-			m.draftName = m.keys[m.cursor].Ref.Name
-			m.draftProvider = m.keys[m.cursor].Ref.Provider
-			m.draftModel = m.keys[m.cursor].Model
-			m.editing = true
-			m.status, m.err = "", nil
+			m.startModelPick(m.keys[m.cursor])
 		}
 	case "enter":
 		// Choosing which credential the conversation runs on. Without this the list was somewhere to
@@ -202,6 +215,131 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 			m.status = fmt.Sprintf("%s is now the credential for this conversation", m.chosen)
 		}
 	}
+}
+
+// startModelPick opens the list of models this credential could be pointed at.
+//
+// A list before a text field, because typing a model id from memory is how a conversation ends up
+// pointed at something with a plausible name that does not exist, and the failure arrives from
+// somebody else's gateway as a complaint about a request. The free text field is still there, one
+// row down the list, since the catalog is a convenience and never a gate.
+func (m *Model) startModelPick(key core.KeyMetadata) {
+	m.draftName = key.Ref.Name
+	m.draftProvider = key.Ref.Provider
+	m.draftBaseURL = key.BaseURL
+	m.draftModel = key.Model
+	m.editing = true
+	m.status, m.err = "", nil
+
+	m.modelChoices = m.offered(key)
+	m.modelCursor = 0
+	for i, choice := range m.modelChoices {
+		// Opened on what it is already set to, so enter is the harmless key rather than the one that
+		// silently changes the model to whatever happened to be first.
+		if choice.ID == key.Model {
+			m.modelCursor = i
+			break
+		}
+	}
+	m.mode = modeModelPick
+}
+
+// offered is Offered with this screen's error handling.
+func (m *Model) offered(key core.KeyMetadata) []catalog.Model {
+	offered, err := Offered(m.store, key)
+	if err != nil {
+		// Worth saying rather than swallowing: a key whose own list could not be read looks
+		// identical to one with nothing added, and the second is a normal state.
+		m.err = err
+	}
+	return offered
+}
+
+// Offered is everything a credential can be pointed at, in the order it is worth reading: what the
+// catalog knows about its provider and endpoint, then what its owner added that the catalog lacks.
+//
+// A package function, and exported, because the model picker asks this about every key at once and
+// two assemblies of one list are two lists that will eventually disagree. A name recorded for a
+// model the catalog already has improves that entry rather than adding a second row for it.
+//
+// The error is returned with the list rather than instead of it: the catalog half is still true when
+// the stored half could not be read, and showing it beats showing nothing.
+func Offered(store Store, key core.KeyMetadata) ([]catalog.Model, error) {
+	offered := catalog.For(key.Ref.Provider, key.BaseURL)
+
+	added, err := store.Models(key.Ref)
+	if err != nil {
+		return offered, err
+	}
+	for _, model := range added {
+		known := false
+		for i, existing := range offered {
+			if existing.ID == model.ID {
+				known = true
+				if model.Name != "" {
+					offered[i].Name = model.Name
+				}
+				break
+			}
+		}
+		if !known {
+			offered = append(offered, model)
+		}
+	}
+	return offered, nil
+}
+
+// handleModelPickKey moves through the offered models and takes one.
+func (m *Model) handleModelPickKey(msg tea.KeyMsg) {
+	// One row past the end is the way out of the list. It is a row rather than a separate key
+	// because a key that is not on screen is a key nobody finds, and this is the escape the whole
+	// catalog depends on being there.
+	typeItRow := len(m.modelChoices)
+
+	switch msg.String() {
+	case "j", "down":
+		if m.modelCursor < typeItRow {
+			m.modelCursor++
+		}
+	case "k", "up":
+		if m.modelCursor > 0 {
+			m.modelCursor--
+		}
+	case "esc":
+		m.cancelDraft()
+	case "enter":
+		if m.modelCursor >= typeItRow {
+			m.draftModel = ""
+			m.mode = modeModel
+			return
+		}
+		m.selectModel(m.modelChoices[m.modelCursor].ID, false)
+	}
+}
+
+// selectModel records which model this credential talks to, and remembers a typed one.
+//
+// remember is set only for a model that came from the keyboard, which is what makes the escape
+// hatch worth using twice: a model the catalog has never heard of is offered in the list next time
+// rather than having to be typed again, exactly.
+func (m *Model) selectModel(model string, remember bool) {
+	ref := core.KeyRef{Name: m.draftName}
+	if remember {
+		if err := m.store.AddModel(ref, model, ""); err != nil {
+			m.err = err
+			return
+		}
+	}
+	if err := m.store.SetModel(ref, model); err != nil {
+		m.err = err
+		return
+	}
+
+	m.editing = false
+	m.mode = modeList
+	m.status = fmt.Sprintf("%s now talks to %s", m.draftName, model)
+	m.err = nil
+	m.reload()
 }
 
 // handleTextKey edits a text field, shared by every prompt including the secret one, so typed
@@ -269,14 +407,9 @@ func (m *Model) afterModel() {
 	m.err = nil
 
 	if m.editing {
-		if err := m.store.SetModel(core.KeyRef{Name: m.draftName}, model); err != nil {
-			m.err = err
-			return
-		}
-		m.editing = false
-		m.mode = modeList
-		m.status = fmt.Sprintf("%s now talks to %s", m.draftName, model)
-		m.reload()
+		// Remembered as well as selected, since a model typed here is one the catalog does not know
+		// and the person has just proved they use it.
+		m.selectModel(model, true)
 		return
 	}
 	m.mode = modeSecret
@@ -359,6 +492,10 @@ func (m *Model) handleConfirmKey(msg tea.KeyMsg) {
 func (m *Model) cancelDraft() {
 	m.draftName, m.draftBaseURL, m.draftSecret = "", "", ""
 	m.providerCursor = 0
+	// Cleared here too, or an abandoned model edit leaves the flag set and the next credential added
+	// on a provider that asks for a model gets its model prompt treated as an edit of the last key
+	// somebody looked at, storing nothing.
+	m.editing = false
 	m.mode = modeList
 	m.err = nil
 	m.status = "Cancelled."

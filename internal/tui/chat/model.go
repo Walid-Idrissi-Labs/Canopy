@@ -968,23 +968,39 @@ func (m *Model) SetCommands(commands config.CommandSet) { m.commands = commands 
 // Notice is what is currently being said. For tests.
 func (m Model) Notice() string { return m.notice }
 
-// UseCredential switches this conversation to a different credential and model.
+// UseCredential switches this conversation to a different credential and model, and reports whether
+// the engine accepted.
 //
 // A refusal is shown rather than swallowed. Choosing a credential and having nothing visibly happen
 // is how somebody concludes the screen does not work, which is exactly what it looked like before
 // there was any way to choose at all.
-func (m *Model) UseCredential(keyName, model string) {
+//
+// It is also returned rather than only shown. The engine refuses mid answer, and the screen around
+// this one keeps its own note of which credential is in use for the conversations it starts next; a
+// void return let that note move to a credential this conversation had just failed to switch to, so
+// the next new conversation opened on a key nobody had successfully chosen, with no model.
+func (m *Model) UseCredential(keyName, model string) bool {
 	if err := m.engine.UseCredential(m.sessionID, keyName, model); err != nil {
 		m.err = err.Error()
-		return
+		return false
 	}
 	m.keyName = keyName
 	m.err = ""
 	m.refresh()
+	return true
 }
 
 // SessionID is the conversation being shown.
 func (m Model) SessionID() string { return m.sessionID }
+
+// KeyName is the credential this conversation runs on.
+func (m Model) KeyName() string { return m.keyName }
+
+// ModelName is the model this conversation runs on.
+//
+// Read off the session rather than held here, because the session is the thing the engine actually
+// sends on and a second copy in this screen would be a second copy to keep in step.
+func (m Model) ModelName() string { return m.session.Model }
 
 // Awaiting reports whether a question is on screen. The frame uses it to change the footer, since
 // the keys mean something different while one is up.
@@ -1849,6 +1865,12 @@ func (m Model) ContextParts() []string {
 		}
 		if m.keyName != "" {
 			parts = append(parts, m.keyName)
+		}
+		// The model beside the credential, because one key now runs many and the credential's name
+		// no longer answers "what am I talking to". Its own part rather than joined to the key, so a
+		// narrow terminal drops the model and keeps the key rather than cutting one string in half.
+		if m.session.Model != "" {
+			parts = append(parts, m.session.Model)
 		}
 	}
 

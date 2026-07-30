@@ -142,9 +142,10 @@ be rediscovered by getting burned by it.
   Agents created afterwards inherit it; ones already running keep the credential they were started
   with, and there is no way to move a running agent to a different one.
 
-- A credential can only talk to one model. Using the same key against two models means storing it
-  twice under two names, which is what naming keys is for, but it does mean pasting the secret in
-  again.
+- A credential keeps one selected default model, but may remember several catalog or user-added
+  models and switch between them without storing the secret again. The shipped catalogs are dated
+  conveniences rather than complete provider inventories; free text accepts a model that is absent
+  from the list, but it cannot add a provider API that Canopy's adapter does not implement.
 
 - Sub agents, one agent spawning helper agents for a subtask, and agent handoff with model
   escalation, handing a worktree and a summary from a cheap model to a stronger one, are both
@@ -194,6 +195,9 @@ be rediscovered by getting burned by it.
   API slightly differently. A two-minute stall watchdog exists because at least one gateway has been
   observed accepting a request and then sending nothing back at all; without it, that turn would sit
   for the length of the underlying HTTP client's own timeout, which is thirty minutes (A2-06).
+  It currently speaks Chat Completions only, not the Responses API. Responses-only OpenAI models
+  are therefore omitted from the picker and cannot be used successfully even if their ids are
+  entered by hand.
 
 - Tests that talk to a real provider are gated behind a manually supplied key and never run in CI.
   They found two real cancellation bugs on their first run that no scripted test caught, which means

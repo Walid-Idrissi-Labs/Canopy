@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -24,6 +25,7 @@ func plain(s string) string { return ansiCodes.ReplaceAllString(s, "") }
 // stubStore records what it was asked to do, without any keychain involved.
 type stubStore struct {
 	keys     []core.KeyMetadata
+	added    map[string][]catalog.Model
 	putErr   error
 	lastPut  core.KeyMetadata
 	lastSeen core.Secret
@@ -304,11 +306,14 @@ func TestACredentialCanBeChosenAndItsModelChanged(t *testing.T) {
 	// Changing the model must not require the secret again. Somebody fixing a typo in a model id
 	// should not have to go and find their API key.
 	m = key(m, "m")
-	if m.mode != modeModel {
+	if m.mode != modeModelPick {
 		t.Fatalf("m on the list landed on mode %v", m.mode)
 	}
-	for range len("old/model") {
-		m = press(m, tea.KeyBackspace)
+	// This key points at an endpoint nobody here has a lineup for, so the only row is the one that
+	// takes a typed id, and it is where the cursor already is.
+	m = press(m, tea.KeyEnter)
+	if m.mode != modeModel {
+		t.Fatalf("the typed row landed on mode %v", m.mode)
 	}
 	m = typeRunes(m, "new/model")
 	m = press(m, tea.KeyEnter)
@@ -424,6 +429,18 @@ func (s *stubStore) SetModel(ref core.KeyRef, model string) error {
 	return errors.New("no such credential")
 }
 
+func (s *stubStore) Models(ref core.KeyRef) ([]catalog.Model, error) {
+	return s.added[ref.Name], nil
+}
+
+func (s *stubStore) AddModel(ref core.KeyRef, id, name string) error {
+	if s.added == nil {
+		s.added = map[string][]catalog.Model{}
+	}
+	s.added[ref.Name] = append(s.added[ref.Name], catalog.Model{ID: id, Name: name})
+	return nil
+}
+
 // The credential screen carried its own four colours and therefore ignored the selected theme
 // entirely, which is the same bug that was found in internal/tui/styles.go. Two copies of one
 // mistake in one tree is the argument for asserting it per package rather than once centrally:
@@ -456,5 +473,172 @@ func TestTheCredentialScreenFollowsTheSelectedTheme(t *testing.T) {
 		if coloured == mono {
 			t.Errorf("%s is the same colour under both themes, so it is not themed", tc.name)
 		}
+	}
+}
+
+// An anthropic key can be pointed somewhere else with no setup at all, which is the whole argument
+// for shipping a list rather than asking everybody to remember model ids.
+func TestTheModelKeyOffersTheCatalogBeforeTheKeyboard(t *testing.T) {
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}, Model: "claude-opus-5"},
+	}}
+	m := New(store)
+
+	m = key(m, "m")
+	if m.mode != modeModelPick {
+		t.Fatalf("m landed on mode %v, want the list", m.mode)
+	}
+
+	view := plain(m.View())
+	for _, want := range []string{"claude-sonnet-5", "claude-haiku-4-5", "something else, type it"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the list is missing %q:\n%s", want, view)
+		}
+	}
+	// The current model is marked with a character, not only with a colour, so the mark survives a
+	// terminal with no colour in it. D-10.
+	if !strings.Contains(view, "* Claude Opus 5") {
+		t.Errorf("the current model is not marked:\n%s", view)
+	}
+
+	// It opens on what it is already set to, so moving one row and taking it is a deliberate change.
+	m = key(m, "j")
+	m = press(m, tea.KeyEnter)
+
+	if m.mode != modeList {
+		t.Errorf("taking a model landed on mode %v, want back at the list", m.mode)
+	}
+	if got := m.ModelFor("claude"); got != "claude-opus-4-8" {
+		t.Errorf("the model is %q after picking the row under the current one", got)
+	}
+	if store.lastPut.Ref.Name != "" {
+		t.Error("picking a model went through Put, which would need the secret again")
+	}
+}
+
+// The catalog is a convenience and never a gate. The day the list is wrong is the day it would stand
+// between somebody and the one model they actually want, so the typed id has to keep working.
+func TestAModelOnNoListCanStillBeTyped(t *testing.T) {
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}, Model: "claude-opus-5"},
+	}}
+	m := New(store)
+
+	m = key(m, "m")
+	for range len(m.modelChoices) {
+		m = key(m, "j")
+	}
+	m = press(m, tea.KeyEnter)
+	if m.mode != modeModel {
+		t.Fatalf("the last row landed on mode %v, want the text field", m.mode)
+	}
+
+	m = typeRunes(m, "claude-something-unreleased")
+	m = press(m, tea.KeyEnter)
+
+	if got := m.ModelFor("claude"); got != "claude-something-unreleased" {
+		t.Errorf("the typed model was not stored, the key talks to %q", got)
+	}
+	// And it joins the list, so the second time it is a row rather than something to retype exactly.
+	added := store.added["claude"]
+	if len(added) != 1 || added[0].ID != "claude-something-unreleased" {
+		t.Errorf("a typed model was not remembered: %+v", added)
+	}
+}
+
+// An endpoint nobody here has a lineup for offers only what its owner added, and says so when that
+// is nothing. A one row list with no explanation reads as a program that has lost the rest.
+func TestAKeyOnAnUnknownEndpointOffersOnlyWhatItsOwnerAdded(t *testing.T) {
+	store := &stubStore{
+		keys: []core.KeyMetadata{{
+			Ref:     core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible},
+			BaseURL: "https://api.moonshot.cn/v1",
+			Model:   "moonshot-v1-8k",
+		}},
+	}
+	m := New(store)
+
+	m = key(m, "m")
+	if view := plain(m.View()); !strings.Contains(view, "knows no models for this endpoint") {
+		t.Errorf("an empty list did not say why it is empty:\n%s", view)
+	}
+
+	// With something added it is offered, and the name is shown beside the id rather than instead of
+	// it, since the id is what goes on the wire.
+	store.added = map[string][]catalog.Model{
+		"nim": {{ID: "minimaxai/minimax-m2.7", Name: "MiniMax M2.7"}},
+	}
+	m = press(m, tea.KeyEsc)
+	m = key(m, "m")
+
+	view := plain(m.View())
+	if !strings.Contains(view, "MiniMax M2.7") || !strings.Contains(view, "minimaxai/minimax-m2.7") {
+		t.Errorf("the added model is not shown with both its name and its id:\n%s", view)
+	}
+
+	m = press(m, tea.KeyEnter)
+	if got := m.ModelFor("nim"); got != "minimaxai/minimax-m2.7" {
+		t.Errorf("picking the named entry stored %q, want the id", got)
+	}
+}
+
+// Leaving a model edit must not leave the screen believing it is still in one, or the next
+// credential added on a provider that asks for a model is stored as an edit of somebody else.
+func TestLeavingAModelEditDoesNotPoisonTheNextAdd(t *testing.T) {
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}},
+	}}
+	m := New(store)
+
+	m = key(m, "m")
+	m = press(m, tea.KeyEsc)
+
+	m = key(m, "a")
+	m = typeRunes(m, "nim")
+	m = press(m, tea.KeyEnter)
+	m = key(m, "j")
+	m = press(m, tea.KeyEnter)
+	m = typeRunes(m, "https://api.moonshot.cn/v1")
+	m = press(m, tea.KeyEnter)
+	m = typeRunes(m, "moonshot-v1-8k")
+	m = press(m, tea.KeyEnter)
+
+	if m.mode != modeSecret {
+		t.Fatalf("the add flow landed on mode %v after the model, want the secret prompt", m.mode)
+	}
+	m = typeRunes(m, canary)
+	m = press(m, tea.KeyEnter)
+
+	if store.lastPut.Ref.Name != "nim" {
+		t.Errorf("the credential was not stored, Put saw %q", store.lastPut.Ref.Name)
+	}
+}
+
+// The picker says when the list it is offering was last checked, and says out loud when that was
+// long enough ago that the row underneath, the one that takes anything typed, is the row that
+// matters.
+func TestThePickerSaysWhenTheCatalogHasGoneStale(t *testing.T) {
+	fresh := catalog.AsOf
+	t.Cleanup(func() { catalog.AsOf = fresh })
+
+	store := &stubStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}, Model: "claude-opus-5"},
+	}}
+	m := key(New(store), "m")
+
+	if view := plain(m.View()); strings.Contains(view, "may be missing models") {
+		t.Errorf("a fresh list called itself stale:\n%s", view)
+	}
+
+	catalog.AsOf = time.Now().Add(-2 * catalog.MaxAge)
+	m = key(New(store), "m")
+
+	view := plain(m.View())
+	if !strings.Contains(view, "may be missing models") {
+		t.Errorf("a stale list said nothing about it:\n%s", view)
+	}
+	// Still offered, because stale is a caveat and never a gate.
+	if !strings.Contains(view, "claude-sonnet-5") {
+		t.Errorf("a stale list stopped offering anything:\n%s", view)
 	}
 }

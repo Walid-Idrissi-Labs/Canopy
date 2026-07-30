@@ -10,17 +10,20 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 // fakeKeyStore is the credential half, with no keychain involved.
 type fakeKeyStore struct {
-	keys []core.KeyMetadata
+	keys  []core.KeyMetadata
+	added map[string][]catalog.Model
 }
 
 func (f *fakeKeyStore) List() ([]core.KeyMetadata, error) { return f.keys, nil }
@@ -60,9 +63,12 @@ type stubEngine struct {
 	using    [2]string
 	created  int
 	asking   bool
-	mode     core.Mode
-	steered  []string
-	undone   []string
+	// useErr is what UseCredential answers with, for the tests about a switch the engine declines.
+	// It refuses mid answer, and what the application does with a refusal is its own decision.
+	useErr  error
+	mode    core.Mode
+	steered []string
+	undone  []string
 }
 
 func (e *stubEngine) Session(id string) (core.Session, bool) {
@@ -112,7 +118,14 @@ func (e *stubEngine) AddAgent(_ context.Context, agent session.Agent) (session.A
 }
 
 func (e *stubEngine) UseCredential(_, keyName, model string) error {
+	if e.useErr != nil {
+		return e.useErr
+	}
 	e.using = [2]string{keyName, model}
+	// The conversation follows, because the screens read the model off the session. A stub that
+	// recorded the call and left the session where it was would let a header claiming the old model
+	// pass every assertion.
+	e.session.KeyName, e.session.Model = keyName, model
 	return nil
 }
 
@@ -552,6 +565,18 @@ func (f *fakeKeyStore) SetModel(ref core.KeyRef, model string) error {
 	return errors.New("no such credential")
 }
 
+func (f *fakeKeyStore) Models(ref core.KeyRef) ([]catalog.Model, error) {
+	return f.added[ref.Name], nil
+}
+
+func (f *fakeKeyStore) AddModel(ref core.KeyRef, id, name string) error {
+	if f.added == nil {
+		f.added = map[string][]catalog.Model{}
+	}
+	f.added[ref.Name] = append(f.added[ref.Name], catalog.Model{ID: id, Name: name})
+	return nil
+}
+
 // The panic this asserts against was reachable in about four keystrokes from a fresh launch: open
 // the agents view, press n, type a name, press enter. The agents view was constructed as a zero
 // value, so its engine was nil, its list silently showed nothing, and creating an agent
@@ -657,3 +682,357 @@ func (e *stubEngine) Aside(_ context.Context, _, _ string) (string, error) { ret
 func (e *stubEngine) Steering(string) []string { return nil }
 
 func (s *stubEngine) Tools() (*core.ToolRegistry, bool) { return nil, false }
+
+// twoKeys is a credential on each provider: one the catalog knows a lineup for, and one pointed at
+// a gateway nobody here has heard of, which is the pair the picker has to draw honestly.
+func twoKeys() *fakeKeyStore {
+	return &fakeKeyStore{keys: []core.KeyMetadata{
+		{
+			Ref:         core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic},
+			Model:       "claude-opus-5",
+			Fingerprint: "abc123def456",
+		},
+		{
+			Ref:     core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible},
+			BaseURL: "https://api.moonshot.cn/v1",
+		},
+	}}
+}
+
+// onOpus is the conversation the picker tests start from: a real credential and a real model, so
+// "what is it on now" has an answer to mark and to move away from.
+func onOpus() *stubEngine {
+	return &stubEngine{session: core.Session{ID: "session-1", KeyName: "claude", Model: "claude-opus-5"}}
+}
+
+func openPicker(t *testing.T, keyStore keysui.Store, engine tui.Engine) tui.App {
+	t.Helper()
+
+	store := fake.New()
+	t.Cleanup(func() { store.Close() })
+
+	app := launchWith(store, keyStore, engine)
+	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model")})
+	sent, cmd := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("/model produced no command, so nothing was asked of the application")
+	}
+	opened, _ := sent.(tui.App).Update(cmd())
+
+	if opened.(tui.App).Screen() != "model" {
+		t.Fatalf("/model landed on %q", opened.(tui.App).Screen())
+	}
+	return opened.(tui.App)
+}
+
+// The command has to be in the menu, or the screen is reachable only by people who already know it
+// is there, which is the same as it not existing.
+func TestTheModelCommandIsOfferedInTheSlashMenu(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	app := launchWith(store, twoKeys(), onOpus())
+	menu, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+
+	if !strings.Contains(plain(menu.(tui.App).View()), "model") {
+		t.Errorf("a bare slash does not offer /model:\n%s", plain(menu.(tui.App).View()))
+	}
+}
+
+// Opening it costs nothing. A screen that could change what you run by being looked at is one people
+// stop opening, and esc is the key everything else in this program leaves by.
+func TestOpeningTheModelPickerAndLeavingChangesNothing(t *testing.T) {
+	engine := onOpus()
+	app := openPicker(t, twoKeys(), engine)
+
+	// Moved around first, because a cursor that has been walked is where an accidental apply would
+	// come from if leaving applied anything.
+	moved, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	left, _ := moved.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if left.(tui.App).Screen() != "chat" {
+		t.Errorf("esc from the picker landed on %q", left.(tui.App).Screen())
+	}
+	if engine.using != [2]string{} {
+		t.Errorf("leaving the picker changed the conversation to %v", engine.using)
+	}
+}
+
+// The current model is marked, every credential gets a section with its provider on the header, and
+// a key with nothing to offer says so rather than disappearing.
+func TestThePickerMarksWhereYouAreAndKeepsEmptySections(t *testing.T) {
+	app := openPicker(t, twoKeys(), onOpus())
+	view := plain(app.View())
+
+	for _, want := range []string{
+		"claude (anthropic)",
+		"* Claude Opus 5",
+		"claude-opus-5",
+		"Claude Sonnet 5",
+		"nim (openai-compatible)",
+		"api.moonshot.cn",
+		"none set",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the picker is missing %q:\n%s", want, view)
+		}
+	}
+}
+
+// Picking under the same credential changes what the next request runs on, and the header says so.
+// A change nothing on screen reflects is one somebody has to take on faith.
+func TestPickingAModelMovesTheConversationAndTheHeaderSaysSo(t *testing.T) {
+	engine := onOpus()
+	app := openPicker(t, twoKeys(), engine)
+
+	moved, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	applied, _ := moved.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if applied.(tui.App).Screen() != "chat" {
+		t.Errorf("applying landed on %q, want back where it was opened from", applied.(tui.App).Screen())
+	}
+	if engine.using[0] != "claude" || engine.using[1] != "claude-opus-4-8" {
+		t.Fatalf("the conversation moved to %v, want the row under the one it was on", engine.using)
+	}
+	if !strings.Contains(plain(applied.(tui.App).View()), "claude-opus-4-8") {
+		t.Errorf("the header does not name the model now in use:\n%s", plain(applied.(tui.App).View()))
+	}
+}
+
+// A row under another section switches the credential as well, which is the case that makes this a
+// picker rather than a list: two keys, two providers, one conversation.
+func TestPickingUnderAnotherKeySwitchesCredentialAsWell(t *testing.T) {
+	keyStore := twoKeys()
+	keyStore.added = map[string][]catalog.Model{
+		"nim": {{ID: "minimaxai/minimax-m2.7", Name: "MiniMax M2.7"}},
+	}
+	engine := onOpus()
+	app := openPicker(t, keyStore, engine)
+
+	// All the way down, which the cursor clamps at, and then one back up: the last row of every
+	// section is the one that takes a typed model, so the last model row in the whole list is the
+	// row above it, and that is the one the other credential offers.
+	next := tea.Model(app)
+	for range 20 {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if !strings.Contains(plain(next.(tui.App).View()), "> ") {
+		t.Fatal("the cursor left the list entirely")
+	}
+	applied, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if engine.using[0] != "nim" || engine.using[1] != "minimaxai/minimax-m2.7" {
+		t.Fatalf("the conversation moved to %v, want the model under the other credential", engine.using)
+	}
+	// The header follows both, since the credential is as much a fact about the next request as the
+	// model is.
+	if header := plain(applied.(tui.App).View()); !strings.Contains(header, "nim") {
+		t.Errorf("the header does not name the credential now in use:\n%s", header)
+	}
+}
+
+// Picking is about this conversation and nothing else. Rewriting the credential's recorded default
+// would move every future conversation on that key because somebody tried something once.
+func TestPickingAModelNeverRewritesTheKeysDefault(t *testing.T) {
+	keyStore := twoKeys()
+	app := openPicker(t, keyStore, onOpus())
+
+	moved, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	if _, cmd := moved.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		_ = cmd
+	}
+
+	if keyStore.keys[0].Model != "claude-opus-5" {
+		t.Errorf("the key's own default moved to %q", keyStore.keys[0].Model)
+	}
+}
+
+// With no colour at all the picker still says which model is in use and which row the cursor is on,
+// because both are characters rather than hues. D-10.
+func TestThePickerReadsWithNoColour(t *testing.T) {
+	mono, ok := theme.ByName("mono")
+	if !ok {
+		t.Fatal("there is no colourless theme to check against")
+	}
+	theme.Set(mono)
+	defer theme.Set(theme.Default)
+
+	app := openPicker(t, twoKeys(), onOpus())
+	view := plain(app.View())
+
+	if !strings.Contains(view, "* Claude Opus 5") {
+		t.Errorf("with no colour, nothing marks the model in use:\n%s", view)
+	}
+	if !strings.Contains(view, "> ") {
+		t.Errorf("with no colour, nothing marks the row the cursor is on:\n%s", view)
+	}
+}
+
+// A pick the engine declines must change nothing at all, including the note the application keeps of
+// which credential to start the next conversation on.
+//
+// It used to move regardless. The conversation correctly stayed where it was, and then ctrl+n opened
+// a new one on the credential the refusal had just declined, with no model on it, so the first
+// message failed at the far end for a reason nothing on this side explained.
+func TestARefusedPickLeavesTheNextConversationWhereItWas(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := onOpus()
+	engine.useErr = errors.New("this session is mid answer, so wait for it to finish or stop it first")
+
+	// The pick has to be under the other credential, since that is the case the defect was visible
+	// in: a refusal that moved the note to a key the conversation never reached.
+	keyStore := twoKeys()
+	keyStore.added = map[string][]catalog.Model{
+		"nim": {{ID: "minimaxai/minimax-m2.7", Name: "MiniMax M2.7"}},
+	}
+
+	app := launchWith(store, keyStore, engine)
+	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model")})
+	sent, cmd := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	opened, _ := sent.(tui.App).Update(cmd())
+
+	// All the way down and one back up, which is the last model row: the one under the other key.
+	next := tea.Model(opened)
+	for range 20 {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	refused, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if engine.using != [2]string{} {
+		t.Fatalf("a refused pick reached the conversation as %v", engine.using)
+	}
+
+	// The refusal is on screen rather than swallowed, or the screen looks broken.
+	if view := plain(refused.(tui.App).View()); !strings.Contains(view, "mid answer") {
+		t.Errorf("the refusal is not shown:\n%s", view)
+	}
+
+	before := engine.created
+	started, _ := refused.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	_ = started
+
+	if engine.created != before+1 {
+		t.Fatalf("ctrl+n created %d conversations", engine.created-before)
+	}
+	created := engine.session
+	if created.KeyName != "claude" || created.Model != "claude-opus-5" {
+		t.Errorf("the new conversation opened on %q running %q, want the credential and model that "+
+			"were in use before the refusal", created.KeyName, created.Model)
+	}
+}
+
+// The picker is the last model surface that had no way to name something the lists have never heard
+// of, which made it the one place a list Canopy ships could stand between somebody and the model
+// they wanted. D-46 rule 1.
+func TestThePickerTakesAModelItHasNeverHeardOf(t *testing.T) {
+	engine := onOpus()
+	app := openPicker(t, twoKeys(), engine)
+
+	if !strings.Contains(plain(app.View()), "something else, type it") {
+		t.Fatalf("the picker offers no way to type a model:\n%s", plain(app.View()))
+	}
+
+	// Down to the row that takes typing under the first credential. The cursor opens on the model
+	// the conversation is running, which is the second of that credential's eight, so its typing row
+	// is seven below.
+	next := tea.Model(app)
+	for range 7 {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	opened, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	// Enter opens the field rather than applying, since there is nothing on it yet to apply.
+	if engine.using != [2]string{} {
+		t.Fatalf("the typing row applied something by itself: %v", engine.using)
+	}
+
+	typing := tea.Model(opened)
+	for _, r := range "claude-something-unreleased" {
+		typing, _ = typing.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	// Every key belongs to the field while it is up, including the ones that would otherwise move.
+	if view := plain(typing.(tui.App).View()); !strings.Contains(view, "claude-something-unreleased") {
+		t.Errorf("what was typed is not on screen:\n%s", view)
+	}
+
+	applied, _ := typing.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if engine.using[0] != "claude" || engine.using[1] != "claude-something-unreleased" {
+		t.Errorf("the typed model reached the conversation as %v", engine.using)
+	}
+	if applied.(tui.App).Screen() != "chat" {
+		t.Errorf("applying a typed model landed on %q", applied.(tui.App).Screen())
+	}
+	if view := plain(applied.(tui.App).View()); !strings.Contains(view, "claude-something-unreleased") {
+		t.Errorf("the header does not name the typed model:\n%s", view)
+	}
+}
+
+// Esc while typing is the more local meaning: it puts the keyboard back on the list rather than
+// leaving the screen, and nothing has been chosen either way.
+func TestLeavingTheTypedRowChangesNothing(t *testing.T) {
+	engine := onOpus()
+	app := openPicker(t, twoKeys(), engine)
+
+	next := tea.Model(app)
+	for range 7 {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	for _, r := range "half-typed" {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	back, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if back.(tui.App).Screen() != "model" {
+		t.Errorf("esc while typing left the picker for %q", back.(tui.App).Screen())
+	}
+	if engine.using != [2]string{} {
+		t.Errorf("abandoning a half typed model applied %v", engine.using)
+	}
+	if view := plain(back.(tui.App).View()); strings.Contains(view, "half-typed") {
+		t.Errorf("what was abandoned is still on screen:\n%s", view)
+	}
+
+	// And a second esc leaves the picker, which is what it always meant.
+	left, _ := back.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if left.(tui.App).Screen() != "chat" {
+		t.Errorf("esc from the list landed on %q", left.(tui.App).Screen())
+	}
+}
+
+// A credential with nothing to offer still says so, and can still be typed into, which is the state
+// an unrecognised endpoint is in on the day it is added.
+func TestAKeyWithNothingToOfferCanStillBeTypedInto(t *testing.T) {
+	engine := onOpus()
+	app := openPicker(t, twoKeys(), engine)
+
+	view := plain(app.View())
+	if !strings.Contains(view, "none set") {
+		t.Fatalf("the empty section lost its warning:\n%s", view)
+	}
+
+	// The last row in the list belongs to that section, since it is the only row it has.
+	next := tea.Model(app)
+	for range 20 {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	for _, r := range "moonshot-v1-32k" {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	applied, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if engine.using[0] != "nim" || engine.using[1] != "moonshot-v1-32k" {
+		t.Errorf("the typed model reached the conversation as %v, want it under the empty key",
+			engine.using)
+	}
+	// And it leaves the picker on the way, like any other choice taken from it.
+	if screen := applied.(tui.App).Screen(); screen != "chat" {
+		t.Errorf("applying a typed model under an empty key landed on %q", screen)
+	}
+}

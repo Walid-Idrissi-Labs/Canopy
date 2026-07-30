@@ -35,6 +35,7 @@ const (
 	screenReview
 	screenKeys
 	screenHelp
+	screenModel
 )
 
 // There was a launch screen here, shown for nine hundred milliseconds before the application
@@ -88,6 +89,16 @@ type App struct {
 	// helpFrom is where the help overlay returns to. Separate from cameFrom, because help is
 	// reachable from the credential screen too and one field would send you to the wrong place.
 	helpFrom screen
+
+	// keyStore is held so the model picker can be built from what is stored at the moment it is
+	// opened. The credential screen has its own copy of the same store; sharing one value rather
+	// than asking that screen for its list keeps the picker from depending on where that screen
+	// happens to have its cursor.
+	keyStore keysui.Store
+
+	// picker is the model picker while it is up, and its zero value the rest of the time. Rebuilt
+	// on every opening, so a key added since the last one is there.
+	picker modelPicker
 
 	// cameFrom is where escape goes back to. Recorded rather than assumed, because the credential
 	// screen is reachable from both chat and the dashboard, and always returning to one of them
@@ -170,6 +181,7 @@ func NewAppConfigured(
 		dashboard: New(store),
 		review:    NewReview(options.Review),
 		keys:      credentials,
+		keyStore:  keyStore,
 		cameFrom:  screenChat,
 		usingKey:  keyName,
 		dir:       dir,
@@ -266,6 +278,36 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		// The picker answers before anything else too, for the same reason help does: while it is up
+		// every key belongs to it, and the ones it does not use leave it rather than reaching a
+		// screen nobody can see. Escape changes nothing, which is what makes it safe to open.
+		if a.screen == screenModel {
+			// While a model is being typed every key belongs to the field, including the ones that
+			// would otherwise move or leave, or a model id containing j could never be written.
+			if a.picker.typing {
+				if row, ok := a.picker.typeKey(key); ok {
+					return a.applyModelRow(row)
+				}
+				return a, nil
+			}
+			switch key.String() {
+			case "j", "down":
+				a.picker.move(1)
+			case "k", "up":
+				a.picker.move(-1)
+			case "enter":
+				// The row that takes typing opens the field instead of applying, since there is
+				// nothing on it yet to apply.
+				if a.picker.startTyping() {
+					return a, nil
+				}
+				return a.applyPickedModel()
+			default:
+				a.screen = a.cameFrom
+			}
+			return a, nil
+		}
+
 		// Not while something is being typed into, or a message containing a question mark could
 		// never be written.
 		if key.String() == "?" && !a.typing() {
@@ -325,11 +367,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// here where the conversation lives. The screen states a preference and owns nothing.
 			if name, picked := a.keys.Chosen(); picked && name != a.usingKey {
 				model := a.keys.ModelFor(name)
-				a.usingKey = name
-				a.chat.UseCredential(name, model)
-				// Agents created after the switch inherit it too, or the next one would quietly go
-				// on using the credential somebody had just moved away from.
-				a.agents.SetDefaults(name, model, a.dir)
+				// Only once the engine has taken it. It refuses mid answer, and moving the
+				// application's own note of the credential in use on a refusal would point the next
+				// new conversation at a key this one never managed to switch to.
+				if a.chat.UseCredential(name, model) {
+					a.usingKey = name
+					// Agents created after the switch inherit it too, or the next one would quietly
+					// go on using the credential somebody had just moved away from.
+					a.agents.SetDefaults(name, model, a.dir)
+				}
 			}
 			return a, cmd
 		default:
@@ -576,10 +622,57 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 	case chat.ActionKeys:
 		a.cameFrom = screenChat
 		a.leaveChat(screenKeys)
+	case chat.ActionModel:
+		a.openModelPicker(screenChat)
 	}
 	// The same visibility bookkeeping the key routing does, for the same reason: the agents
 	// screen animates only while it is in front.
 	return a, a.agents.SetVisible(a.screen == screenAgents)
+}
+
+// openModelPicker builds the picker from what is stored right now and shows it.
+func (a *App) openModelPicker(from screen) {
+	a.cameFrom = from
+	a.picker = newModelPicker(a.keyStore, a.chat.KeyName(), a.chat.ModelName())
+	// Through leaveChat like every other way out of the conversation, so a mode the key had stopped
+	// on is applied rather than left to a timer that a quit from this screen would outrun.
+	a.leaveChat(screenModel)
+}
+
+// applyPickedModel points this conversation at the row the cursor is on.
+//
+// One call, through the chat screen, which is where a conversation's credential has always been
+// changed from: the credential screen does exactly this when somebody picks a key there. The engine
+// refuses mid answer and the refusal is shown rather than swallowed, because a choice that appears
+// to do nothing is how somebody concludes the screen is broken.
+//
+// Store.SetModel is deliberately not called. What this conversation runs on and what the key
+// defaults to are different facts, and rewriting the second from here would move every future
+// conversation on that credential because somebody tried something once.
+func (a App) applyPickedModel() (tea.Model, tea.Cmd) {
+	choice, ok := a.picker.Chosen()
+	if !ok {
+		a.screen = a.cameFrom
+		return a, nil
+	}
+	return a.applyModelRow(choice)
+}
+
+// applyModelRow is applyPickedModel for a row that did not come from the list, which is the one
+// somebody typed. The same path deliberately: a model Canopy has never heard of is applied exactly
+// the way a listed one is, or the escape hatch would be a second, weaker way of choosing.
+func (a App) applyModelRow(choice modelRow) (tea.Model, tea.Cmd) {
+	if a.chat.UseCredential(choice.key, choice.id) {
+		// New conversations and new agents follow the credential, but on that key's own default
+		// model rather than this choice, which belongs to this conversation alone.
+		//
+		// Only on acceptance. The engine refuses while a turn is in flight, and this used to move
+		// regardless: the conversation correctly stayed where it was, and the next ctrl+n opened on
+		// the credential the refusal had just declined, with no model at all.
+		a.usingKey = choice.key
+	}
+	a.screen = a.cameFrom
+	return a, nil
 }
 
 // newConversationModel is newConversation in the shape Update wants back.
@@ -711,6 +804,12 @@ func (a App) View() string {
 			// Only once the opening screen has gone, which is drawing the name itself.
 			Wordmark: !a.chat.Blank(),
 		}, a.chat.Body(), footer)
+	case screenModel:
+		footer := Keys(a.dim.Width, "j/k", "move", "enter", "use it here", "esc", "back, unchanged")
+		if a.picker.typing {
+			footer = Keys(a.dim.Width, "enter", "use it here", "esc", "back to the list")
+		}
+		return Frame(a.dim, Status{Screen: "model"}, a.picker.Body(), footer)
 	case screenKeys:
 		return Frame(a.dim, Status{Screen: "credentials"}, a.keys.Body(), a.keys.Footer())
 	default:
@@ -734,6 +833,8 @@ func (a App) Screen() string {
 		return "help"
 	case screenKeys:
 		return "keys"
+	case screenModel:
+		return "model"
 	default:
 		return "dashboard"
 	}

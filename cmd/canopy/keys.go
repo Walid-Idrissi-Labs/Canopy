@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
@@ -23,6 +24,7 @@ const keysUsage = `canopy keys - manage provider credentials
 usage:
   canopy keys add <name>     store a credential, read from a prompt or stdin
   canopy keys model <name> <model>   change which model this credential talks to
+  canopy keys models <name>  show every model this credential can be pointed at
   canopy keys list           show stored credentials, never their values
   canopy keys remove <name>  delete a credential
   canopy keys test <name>    check that a credential can be read back
@@ -32,6 +34,11 @@ flags for add:
   -provider string   anthropic or openai-compatible (default "anthropic")
   -base-url string   endpoint, required for openai-compatible
   -model string      the model this credential talks to, required except for anthropic
+
+subcommands of models:
+  canopy keys models <name>                     list what this key can run
+  canopy keys models add <name> <id> [label]    teach it one Canopy does not know
+  canopy keys models remove <name> <id>         forget one that was added by hand
 
 flags for rate:
   -in float          dollars per million input tokens
@@ -46,8 +53,16 @@ examples:
   canopy keys add claude
   canopy keys add kimi -provider openai-compatible -base-url https://api.moonshot.cn/v1 -model moonshot-v1-8k
   canopy keys model kimi moonshot-v1-32k
+  canopy keys models claude
+  canopy keys models add kimi minimaxai/minimax-m2.7 "MiniMax M2.7"
   pbpaste | canopy keys add claude
   canopy keys rate kimi -in 0.6 -out 2.5
+
+A key is one credential and many models. Canopy ships the lineups it knows, for
+Anthropic and for OpenAI's own endpoint, and anything else is added by hand. The
+list is a convenience and never a gate: keys model takes any id, listed or not,
+because the day the list is wrong is the day it would block the one model you
+actually want.
 
 Canopy holds published rates for Anthropic and knows that a local model is free. It
 does not hold rates for the OpenAI compatible gateways, because the gateway sets the
@@ -85,6 +100,8 @@ func runKeys(args []string, out io.Writer) error {
 		return runKeysRate(rest, out)
 	case "model":
 		return runKeysModel(rest, out)
+	case "models":
+		return runKeysModels(rest, out)
 	default:
 		return fmt.Errorf("unknown keys command %q, try `canopy keys help`", command)
 	}
@@ -484,5 +501,134 @@ func runKeysModel(args []string, out io.Writer) error {
 	}
 
 	_, err = fmt.Fprintf(out, "%q now talks to %s.\n", name, model)
+	return err
+}
+
+// runKeysModels is the plural: what a credential could be pointed at, rather than what it is.
+//
+// Two sources, kept apart in the listing on purpose. What the catalog knows is dated and may be
+// wrong, and what somebody added by hand is theirs and is not. Printing them as one list would make
+// the second look as though Canopy had supplied it, which is exactly the confusion the as-of line
+// underneath exists to prevent.
+func runKeysModels(args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("which key? For example `canopy keys models claude`")
+	}
+
+	switch args[0] {
+	case "add":
+		return runKeysModelsAdd(args[1:], out)
+	case "remove", "rm", "delete":
+		return runKeysModelsRemove(args[1:], out)
+	}
+
+	if len(args) > 1 {
+		return fmt.Errorf("unknown subcommand %q, try `canopy keys models %s`", args[1], args[0])
+	}
+	return listKeyModels(args[0], out)
+}
+
+func listKeyModels(name string, out io.Writer) error {
+	store, err := openStore(out)
+	if err != nil {
+		return err
+	}
+	meta, err := store.Metadata(core.KeyRef{Name: name})
+	if err != nil {
+		return err
+	}
+	added, err := store.Models(meta.Ref)
+	if err != nil {
+		return err
+	}
+
+	known := catalog.For(meta.Ref.Provider, meta.BaseURL)
+	if len(known) == 0 && len(added) == 0 {
+		_, err := fmt.Fprintf(out,
+			"Canopy knows no models for %q, and none have been added.\n"+
+				"Add one with `canopy keys models add %s <id>`, or point the key straight at a "+
+				"model with `canopy keys model %s <id>`.\n",
+			name, name, name)
+		return err
+	}
+
+	tab := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	w := &errWriter{w: tab}
+	w.printf("\tID\tNAME\tFROM\n")
+	for _, model := range known {
+		w.printf("%s\t%s\t%s\t%s\n", current(meta, model.ID), model.ID, model.Label(), "catalog")
+	}
+	for _, model := range added {
+		w.printf("%s\t%s\t%s\t%s\n", current(meta, model.ID), model.ID, model.Label(), "added")
+	}
+	if err := tab.Flush(); err != nil {
+		return err
+	}
+	if w.err != nil {
+		return w.err
+	}
+
+	_, err = fmt.Fprintf(out,
+		"\nThe catalog was last checked on %s. Any model can be set whether it is listed\n"+
+			"or not: `canopy keys model %s <id>`.\n",
+		catalog.AsOf.Format("2006-01-02"), name)
+	if err != nil {
+		return err
+	}
+	// And says out loud when that date is old, rather than leaving somebody to subtract it from
+	// today. A date on screen is not the same as the screen saying the date has gone stale.
+	if note := catalog.StalenessNote(time.Now()); note != "" {
+		_, err = fmt.Fprintf(out, "%s.\n", note)
+	}
+	return err
+}
+
+// current marks the model this credential actually talks to, which is the one thing a list of
+// possibilities cannot say for itself.
+func current(meta core.KeyMetadata, id string) string {
+	if meta.Model == id {
+		return "*"
+	}
+	return " "
+}
+
+func runKeysModelsAdd(args []string, out io.Writer) error {
+	if len(args) < 2 {
+		return errors.New("usage: canopy keys models add <name> <id> [label], " +
+			"for example `canopy keys models add nim minimaxai/minimax-m2.7 \"MiniMax M2.7\"`")
+	}
+	name, id := args[0], args[1]
+	label := strings.TrimSpace(strings.Join(args[2:], " "))
+
+	store, err := openStore(out)
+	if err != nil {
+		return err
+	}
+	if err := store.AddModel(core.KeyRef{Name: name}, id, label); err != nil {
+		return err
+	}
+
+	// Said out loud, because adding is not selecting and somebody who expected one call to do both
+	// would otherwise find their next conversation still on the old model with nothing to explain it.
+	_, err = fmt.Fprintf(out,
+		"%q can now be pointed at %s. Point it there with `canopy keys model %s %s`.\n",
+		name, id, name, id)
+	return err
+}
+
+func runKeysModelsRemove(args []string, out io.Writer) error {
+	if len(args) != 2 {
+		return errors.New("usage: canopy keys models remove <name> <id>")
+	}
+	name, id := args[0], args[1]
+
+	store, err := openStore(out)
+	if err != nil {
+		return err
+	}
+	if err := store.RemoveModel(core.KeyRef{Name: name}, id); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(out, "%q no longer offers %s.\n", name, id)
 	return err
 }

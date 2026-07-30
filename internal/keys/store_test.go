@@ -474,3 +474,199 @@ func TestSettingARateOnAMissingKeyIsAnError(t *testing.T) {
 		t.Errorf("err = %v, want not found", err)
 	}
 }
+
+// A key holds models, plural, and the ones its owner added are its own.
+func TestAKeyRemembersTheModelsItsOwnerAdded(t *testing.T) {
+	store, _ := newTestStore(t)
+	ref := core.KeyRef{Name: "nim"}
+	if _, err := store.Put(core.KeyMetadata{
+		Ref:     core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible},
+		BaseURL: "https://api.moonshot.cn/v1",
+		Model:   "moonshot-v1-8k",
+	}, core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if models, err := store.Models(ref); err != nil || len(models) != 0 {
+		t.Fatalf("a new key starts with models %+v, err %v", models, err)
+	}
+
+	if err := store.AddModel(ref, "minimaxai/minimax-m2.7", "MiniMax M2.7"); err != nil {
+		t.Fatalf("AddModel: %v", err)
+	}
+	if err := store.AddModel(ref, "moonshot-v1-32k", ""); err != nil {
+		t.Fatalf("AddModel: %v", err)
+	}
+
+	models, err := store.Models(ref)
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("models = %+v, want two", models)
+	}
+	// The name is kept beside the id rather than instead of it: the id is what goes on the wire.
+	if models[0].ID != "minimaxai/minimax-m2.7" || models[0].Name != "MiniMax M2.7" {
+		t.Errorf("the first model reads %+v", models[0])
+	}
+	if models[1].Name != "" {
+		t.Errorf("a model added with no name grew one: %+v", models[1])
+	}
+
+	// Adding an id that is already there corrects its name rather than listing it twice.
+	if err := store.AddModel(ref, "moonshot-v1-32k", "Moonshot 32k"); err != nil {
+		t.Fatalf("AddModel again: %v", err)
+	}
+	models, _ = store.Models(ref)
+	if len(models) != 2 || models[1].Name != "Moonshot 32k" {
+		t.Errorf("re-adding an id gave %+v", models)
+	}
+
+	if err := store.RemoveModel(ref, "moonshot-v1-32k"); err != nil {
+		t.Fatalf("RemoveModel: %v", err)
+	}
+	if models, _ := store.Models(ref); len(models) != 1 || models[0].ID != "minimaxai/minimax-m2.7" {
+		t.Errorf("after removal the list is %+v", models)
+	}
+
+	// A miss is refused rather than passed over, since the usual cause is a typo and a silent
+	// success leaves somebody believing they removed something they did not.
+	if err := store.RemoveModel(ref, "never-added"); err == nil {
+		t.Error("removing a model that was never added was reported as done")
+	}
+}
+
+// The plural list is a fact about the credential, so rotating the secret must not cost it, the same
+// way rotating does not cost the creation date or the rate.
+func TestRotatingAKeyKeepsTheModelsItsOwnerAdded(t *testing.T) {
+	store, _ := newTestStore(t)
+	ref := core.KeyRef{Name: "claude"}
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := store.AddModel(ref, "claude-something-unreleased", "The New One"); err != nil {
+		t.Fatalf("AddModel: %v", err)
+	}
+
+	if _, err := store.Put(anthropic("claude"), core.NewSecret("sk-ant-rotated")); err != nil {
+		t.Fatalf("Put after rotation: %v", err)
+	}
+
+	models, err := store.Models(ref)
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "The New One" {
+		t.Errorf("models after rotation = %+v", models)
+	}
+}
+
+// A keys.json written by the build before this one has no models field at all. It has to load with
+// an empty list and lose nothing else, or an upgrade silently drops credentials.
+func TestAKeysFileFromThePreviousBuildLoadsWithNothingLost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "keys.json")
+	previous := `[
+  {
+    "name": "claude",
+    "provider": "anthropic",
+    "model": "claude-opus-5",
+    "fingerprint": "abcd1234",
+    "createdAt": "2026-07-01T00:00:00Z",
+    "inputPerMTok": 5,
+    "outputPerMTok": 25
+  }
+]`
+	if err := os.WriteFile(path, []byte(previous), 0o600); err != nil {
+		t.Fatalf("writing: %v", err)
+	}
+
+	store := NewStore(NewMemoryBackend(), path)
+	all, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("%d keys loaded from a file written by the previous build", len(all))
+	}
+	if all[0].Model != "claude-opus-5" || all[0].Fingerprint != "abcd1234" {
+		t.Errorf("the record lost something: %+v", all[0])
+	}
+	if all[0].Rate.InputPerMTok != 5 || all[0].Rate.OutputPerMTok != 25 {
+		t.Errorf("the rate did not survive: %+v", all[0].Rate)
+	}
+
+	models, err := store.Models(core.KeyRef{Name: "claude"})
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	if len(models) != 0 {
+		t.Errorf("a file with no models field loaded %+v", models)
+	}
+
+	// And writing it back leaves the field absent rather than writing an empty array, so a file
+	// that has never had a model added round trips to the same document.
+	if err := store.SetRate(core.KeyRef{Name: "claude"}, core.KeyRate{InputPerMTok: 5, OutputPerMTok: 25}); err != nil {
+		t.Fatalf("SetRate: %v", err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading back: %v", err)
+	}
+	if strings.Contains(string(written), "models") {
+		t.Errorf("an empty model list was written to disk:\n%s", written)
+	}
+}
+
+// The store and the resolver have to agree about what counts as one model.
+//
+// Matching forgives case and punctuation, so two spellings of one id would be two rows the resolver
+// then refuses to choose between, and the request would be refused with the same model listed twice
+// as the alternatives. Refused here instead, where somebody is present to be told why, and refused
+// rather than folded into the existing entry: what is stored goes on the wire exactly as typed, and
+// an unknown provider's ids may well be case sensitive.
+func TestASecondSpellingOfOneModelIsRefusedRatherThanStored(t *testing.T) {
+	store, _ := newTestStore(t)
+	ref := core.KeyRef{Name: "nim"}
+	if _, err := store.Put(core.KeyMetadata{
+		Ref:     core.KeyRef{Name: "nim", Provider: core.ProviderOpenAICompatible},
+		BaseURL: "https://api.moonshot.cn/v1",
+		Model:   "moonshot-v1-8k",
+	}, core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	if err := store.AddModel(ref, "minimaxai/minimax-m2.7", "MiniMax M2.7"); err != nil {
+		t.Fatalf("AddModel: %v", err)
+	}
+
+	err := store.AddModel(ref, "MiniMaxAI/MiniMax-M2.7", "")
+	if err == nil {
+		t.Fatal("a second spelling of one id was stored beside the first")
+	}
+	// The refusal names what it collided with, or somebody has to go and find it themselves.
+	if !strings.Contains(err.Error(), "minimaxai/minimax-m2.7") {
+		t.Errorf("the refusal does not say what it collides with: %v", err)
+	}
+
+	models, err := store.Models(ref)
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("the key offers %+v", models)
+	}
+	// And the one that is there is byte for byte what was typed, not a normalised version of it.
+	if models[0].ID != "minimaxai/minimax-m2.7" {
+		t.Errorf("the stored id reads %q", models[0].ID)
+	}
+
+	// The exact id is still the way to correct a name, which is a different thing from adding a
+	// second spelling and must keep working.
+	if err := store.AddModel(ref, "minimaxai/minimax-m2.7", "MiniMax"); err != nil {
+		t.Fatalf("renaming through the exact id: %v", err)
+	}
+	if models, _ := store.Models(ref); len(models) != 1 || models[0].Name != "MiniMax" {
+		t.Errorf("after renaming the key offers %+v", models)
+	}
+}

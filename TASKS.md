@@ -127,23 +127,27 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | U-15, the mode key settling on what it stops on, at Walid's direction. A8-05's visible hook-failure surface after it | `tui/mode-settle` | none |
+| Claude | The keys and surfaces round, claimed 2026-07-29: K-01 to K-03, then U-16 to U-19, from six asks by Walid. A8-05's visible hook-failure surface after it | `feat/one-key-many-models`, then `tui/ambient-attention` stacked on it | none |
 | Codex | Independent verification of the unsigned lines, the eleven phase gates, the six product runs | `verify/independent-pass` | none |
 
 ### 2.0 Where this actually stands
 
-Counted on this branch, after phases E and U were planned and U-15 built: 81 review, 39 todo, four
-partial, one claimed, six deferred, **zero done**. Counted rather than carried over, because a board
-quoting a number taken before the commit it sits in is the failure this section exists to prevent,
-and that has now happened twice. The previous figures here, 84 review and 13 todo, were taken before
-the two new phases existed and are what this recount replaces.
+Counted on this branch, in the commit these words are in, after phase K was built and reviewed:
+84 review, 40 todo, four partial, five claimed, six deferred, **zero done**. Counted rather than
+carried over, because a board quoting a number taken before the commit it sits in is the failure
+this section exists to prevent, and that has now happened twice. The figures this replaces, 81
+review and eight claimed, were true when the round was claimed and stopped being true as K-01, K-02
+and K-03 moved to review; the four U tasks claimed alongside them are on the branch stacked after
+this one and are counted there.
 
-The number that matters is a different one. **77 task lines carry `claude [x]` and nine carry
-`codex [x]`.** By the definition in section 1.2 that means one pair has built nine phases and the
-other has independently checked almost none of them, and no amount of further building changes it. That is why
-the split for this round is not another feature split: one side finishes the contract and safety
-work, the other converts `review` into `done`, and only the second of those can produce the first
-`done` this project has ever had.
+The number that matters is a different one. **83 task lines carry `claude [x]` and nine carry
+`codex [x]`.** That first figure has also been recounted rather than carried: it read 77 here and
+was already wrong when it was written, the real count at the time being 80, and three of phase K
+have been ticked since. By the definition in section 1.2 it means one pair has built nine phases and
+the other has independently checked almost none of them, and no amount of further building changes
+it. That is why the split for this round is not another feature split: one side finishes the
+contract and safety work, the other converts `review` into `done`, and only the second of those can
+produce the first `done` this project has ever had.
 
 Nothing reaches `done` on one signature. An agent may not sign its own work, which is the whole
 mechanism, so the verification column is structurally not Claude's to fill.
@@ -4882,12 +4886,379 @@ holds the two answers together so they cannot drift. `internal/session/engine.go
 round's file boundary in section 2.1 and the change is additive, with no existing behaviour
 touched.
 
+### U-16 An agent's question reaches the screen you are on
+`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`scope: internal/tui/chat/, internal/tui/app.go, internal/session/approval.go (additive)`
+
+Deliverable: while you sit on one conversation, a permission prompt raised by any other agent in
+the project appears as a compact needs-you panel above the input box, named after the agent that
+asked, oldest first with a count when more are waiting. It never owns the keyboard by itself: one
+explicit key focuses it, and only then do the usual answer keys act, routed to the agent that
+asked. The conversation's own prompt keeps its current shape and takes precedence. The engine
+gains one additive accessor that lists pending prompts across sessions; the agents screen is
+unchanged.
+
+Acceptance: with this conversation idle and a subagent awaiting, the panel appears with the
+subagent's name and scope; typing and sending a message here answers nothing; the focus key then
+`y` approves exactly that subagent's tool and the panel leaves; two waiting subagents show the
+oldest plus a count, and answering advances to the next; when this conversation's own prompt is
+up while a subagent also waits, the own prompt shows and the count says the other is still there;
+answering from the agents screen still works as today.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: D-47. Overlaps U-03 deliberately: this block is the chat-screen surface, U-03 keeps the
+rest of the cross-screen story. The focus key must not collide with typing or an existing binding
+and must appear in help; Q-21 is where binding taste gets settled.
+
+### U-17 The top left names who you are with
+`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`scope: internal/tui/header.go, internal/tui/app.go, internal/tui/chat/model.go`
+
+Deliverable: next to the triangle the header writes the name of the agent whose conversation is
+on screen, "main" or whatever the agent is called, instead of the word canopy, which today is
+there on every screen at once. Screens that are nobody's conversation keep the brand, and so does
+the wordmark. The name is not repeated in the facts row once it has moved into the title.
+
+Acceptance: on main's conversation the top left reads the triangle then main; on a named
+subagent's conversation it reads that name; agents, keys, dashboard and help still say canopy;
+the tall header still shows the wordmark; at 80 columns a long agent name is truncated rather
+than pushing the facts off the row.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: the brand does not vanish, it stops squatting on the one line that could say where you
+are. The wordmark and the blank-screen mark are untouched.
+
+### U-18 Tasks are a block whose states you can see across the room
+`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`scope: internal/tui/chat/model.go`
+
+Deliverable: the agent's task list becomes a bordered block above the input box, drawn with the
+same chrome as the btw panel, each row carrying its state in colour as well as glyph: muted for
+pending, one theme colour for in progress, another for done. While the btw panel is up it stands
+in the block's place rather than stacking under it, and closing the btw brings the tasks back.
+
+Acceptance: a list holding all three states shows three visibly different rows, and with colour
+off the glyphs alone still tell them apart; opening the btw panel hides the tasks block and esc
+restores it; the transcript height accounts for whichever block is up, so nothing overflows an
+80x24 frame; the six-line cap and the summary collapse behave as before.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: colours come from the theme and nowhere else, the rule at the top of
+internal/tui/theme/theme.go, and the glyph stays the state's first citizen per D-10.
+
+### U-19 A btw is worth keeping
+`status: claimed | owner: claude | branch: tui/ambient-attention | depends: none`
+`scope: internal/session/storage.go, internal/session/aside.go, internal/tui/chat/`
+
+Deliverable: asides survive the screen. Schema version 8 adds an asides table keyed by session,
+each answered aside is recorded there, opening a conversation loads its past asides instead of
+clearing them, and a bare /btw opens the panel over the whole history, scrollable as today. An
+aside still never joins the conversation and never reaches the model's context.
+
+Acceptance: ask a btw, quit, reopen the same conversation, and a bare /btw shows it; a btw asked
+in one conversation does not appear in another; the request built after an aside contains nothing
+of it, retested; a schema 7 file migrates forward and a newer file is still refused; a bare /btw
+with no history anywhere still explains itself.
+
+`verify: claude [ ]   codex [ ]`
+
+notes: this deliberately retires the comment in internal/tui/chat/model.go that says the history
+leaves with the screen; the comment is rewritten to say what is now true. The engine recording an
+aside does not change what Aside sends: recording is storage, not context.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 
 Both supervisors watch a person who has used Canopy once before run three agents at the same
 task, get rate limited, retry, answer a prompt from another screen, return to yesterday's
 conversation, and stop a runaway agent, all without touching the CLI or asking a question.
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
+# Phase K: one key, many models
+
+Asked for by Walid on 2026-07-29. A named key today records exactly one model, the list of models
+a person could choose from does not exist anywhere in the program, and dispatch matches words
+against credential names only, so "spawn two sonnet agents" works just when somebody happened to
+call a key sonnet. The knowledge is already in the building twice, as the pricing table and the
+context window table, and nothing exports either. This phase writes the answer to "what can this
+key run" once, then spends it three times: in the keys screen, in dispatch, and in a picker.
+
+Principles are D-46. The short form: the catalog is a convenience and never a gate, models a
+person adds sit beside it with a display name if they want one, and resolution forgives spelling
+before it refuses, but refuses ambiguity rather than guessing.
+
+### K-01 A key holds models, not a model
+`status: review | owner: claude | branch: feat/one-key-many-models | depends: none`
+`scope: internal/catalog/ (new), internal/keys/, internal/pricing/ (drift test), internal/tui/keys/, internal/tui/ (fake), cmd/canopy/`
+
+Deliverable: a new internal/catalog package that answers "what can this provider run through
+Canopy's current transport", dated the way the pricing table is dated: the anthropic list derived
+from the eight priced IDs, an api.openai.com base URL recognised and given the models compatible
+with Canopy's OpenAI Chat Completions adapter, any other openai-compatible host given nothing.
+The keys store learns user-added models per key, an id plus an optional display name, editable from
+the CLI and the keys screen, and the keys screen's model edit becomes a picker over catalog plus
+user-added entries with free text still available for anything not listed. core.KeyMetadata is not
+touched: its Model field remains the selected default, and the plural lives in the keys record
+beside it.
+
+Acceptance: an anthropic key offers the catalog with no setup; an openai-compatible key on an
+unrecognised host offers only what its user added, and says so when that is nothing; adding a
+model with a display name shows the name and keeps the id; picking any entry records it through
+SetModel; a model on no list can still be typed; a model requiring a provider API Canopy does not
+implement is not offered as a working choice; a keys.json written by the previous build loads with
+empty model lists and nothing lost.
+
+`verify: claude [x] 2026-07-29   codex [ ]`
+
+notes: the catalog carries an as-of date like pricing.AsOf and goes stale the same way; that is
+the accepted cost of shipping knowledge, and the free-text escape is what keeps stale from
+meaning stuck. internal/keys and internal/pricing sit outside the 2.1 lane list; changes there
+are additive.
+
+Review correction, 2026-07-30: the first OpenAI list copied two Responses-only models into a
+catalog consumed by Canopy's Chat Completions client. That made the picker promise choices the
+active adapter could not invoke. The list now records transport capability, not merely provider
+availability, and TestOpenAIListDoesNotOfferModelsThisAdapterCannotCall holds the boundary. Free
+text remains deliberately ungated for compatible models that arrive before the dated list is
+refreshed.
+
+Built. internal/catalog holds its own ordered anthropic list rather than reading one out of
+pricing, because order is meaning here (newest first within a family is how a bare family word is
+resolved) and the price table is a map with no order to give. The required drift test lives in
+internal/pricing, where the rates map is: putting it there costs no exported API, where the other
+direction would have meant exporting the map for a test's benefit. Display names are carried for
+catalog entries too, not only user-added ones, so the picker and the CLI read as English.
+
+Two divergences worth naming. The keys screen adds a model but does not remove one: the Store
+interface there is documented as narrow on purpose, and deletion of something somebody recorded by
+hand wants a confirmation step that is not in this deliverable, so removal is the CLI's alone. And
+a model typed into the free-text escape is remembered as well as selected, which is not in the ask
+but is what makes the escape worth using twice.
+
+One fix taken on the way, in the function being rewired: cancelling a model edit left the screen's
+editing flag set, so the next credential added on a provider that asks for a model went down the
+edit path at the model prompt. afterModel called SetModel with the name of the credential being
+added, which is a key the store has never heard of, so the call errored, the error was shown where
+a secret prompt should have been, and the credential itself was never written. Held by
+TestLeavingAModelEditDoesNotPoisonTheNextAdd.
+
+Acceptance, clause by clause: an anthropic key offers the catalog with no setup is
+TestAnAnthropicKeyOffersTheListWithNoSetup and TestTheModelKeyOffersTheCatalogBeforeTheKeyboard; an
+unrecognised host offers only what its user added and says so is
+TestAnUnrecognisedEndpointIsOfferedNothing and TestAKeyOnAnUnknownEndpointOffersOnlyWhatItsOwnerAdded;
+a display name shows and keeps its id is TestAKeyRemembersTheModelsItsOwnerAdded and
+TestListingModelsShowsTheCatalogAndWhatWasAdded; picking records through SetModel is
+TestTheModelKeyOffersTheCatalogBeforeTheKeyboard, which also asserts Put was never called; a model
+on no list can still be typed is TestAModelOnNoListCanStillBeTyped; and the previous build's
+keys.json loading with nothing lost is TestAKeysFileFromThePreviousBuildLoadsWithNothingLost, which
+also holds that an empty list is still absent from the file rather than written as an empty array.
+
+Three defects found in review and fixed here. Stale and MaxAge were exported with nothing calling
+them, which left the "a stale list says so rather than pretending" half of D-46 rule 2 unbuilt: the
+catalog now has a StalenessNote written the way pricing.StalenessNote is, and both surfaces that
+already print the as-of date say out loud when that date has gone old, in the warning style on the
+keys screen because a stale list is exactly when the row that takes anything typed is the row that
+matters. Held by TestAStaleListSaysSoInWords,
+TestTheModelListingSaysWhenTheCatalogHasGoneStale and TestThePickerSaysWhenTheCatalogHasGoneStale,
+each of which also checks that a stale list keeps offering what it knows, since stale is a caveat
+and never a gate.
+
+Matching compared ids normalised and then counted them raw, so a model added under a second
+spelling of an id the catalog already had made "opus 5" ambiguous between one model and itself, and
+the refusal listed that id twice as the choices. Fixed at both ends. Matching now collapses
+candidates whose ids normalise alike before judging ambiguity, and the store refuses an id that
+collides with one it already holds, naming what it collides with. Refused rather than folded into
+the existing entry on purpose: what is stored goes on the wire exactly as it was typed, and an
+unknown gateway's ids may well be case sensitive, so correcting somebody's capitalisation for them
+is how a request starts failing at the far end for a reason nothing on this side explains. Held by
+TestAmbiguityComesBackAsAmbiguityAndDuplicatesDoNot, widened past byte-identical, and by
+TestASecondSpellingOfOneModelIsRefusedRatherThanStored, which also holds that the exact id is still
+the way to correct a display name.
+
+Normalisation now splits the boundary between a letter and a digit, so "sonnet5" and "gpt5.2" arrive
+where "sonnet 5" and "gpt-5.2" already did. One directional, and the direction is the point: a digit
+followed by a letter is left alone, because "gpt-4o" is one word to the provider and splitting it
+would turn an id somebody typed correctly into one nothing answers to. Two numbers run together,
+"opus48", stay unresolvable rather than being guessed at, which is the honest answer to a phrase that
+could mean two things. Held by TestANumberRunTogetherWithTheWordBeforeItStillResolves.
+
+Normalise itself is unexported now, since nothing outside the package called it. What the outside
+needed was the question rather than the machinery, so catalog.SameModel answers it and the keys
+store asks it: the store and the matcher agreeing about what one model is has to be one piece of
+code, or the store collects rows the matcher will never let anybody choose.
+
+### K-02 Words find the model
+`status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
+`scope: internal/session/dispatch.go, cmd/canopy/verification.go, internal/catalog/`
+
+Deliverable: spawn_agents gains an optional model argument and list_profiles names what each
+profile can run, so "spawn two claude sonnet 5 agents" spawns sonnet agents with no key named
+sonnet. The words are matched against catalog entries, user-added ids and display names, with
+case, spaces, hyphens and a missing family prefix all forgiven; a bare family name means the
+newest member the catalog knows; the key is the current one when it offers the model, otherwise
+the only key that does; unknown or ambiguous words are refused with the real choices listed,
+never guessed.
+
+Acceptance: with one anthropic key on opus, "spawn two sonnet agents" spawns on the newest sonnet
+and the confirmation names it before anything runs; "claude sonnet 4 6" lands on
+claude-sonnet-4-6; a display name resolves the same as its id; asking for a model no key offers
+is refused with what does exist; the estimate prices the resolved model, not the profile default.
+
+`verify: claude [x] 2026-07-29   codex [ ]`
+
+notes: internal/session/dispatch.go is outside the 2.1 lane list, same ground as U-15's engine
+change, and the additions are additive: the profile argument and every existing resolution keep
+working unchanged, held by the existing dispatch tests.
+
+Built, and additive as promised: no existing test in internal/session changed, and the plain
+fakeDispatcher is untouched, which keeps the older code path exercised.
+
+The resolution rules, as implemented. Case, spaces, underscores and dots all normalise to hyphens,
+so "Claude Sonnet 4.6" and "claude sonnet 4 6" are the same request; a missing claude- prefix is
+put back; and only then does a bare family word mean the newest member of that family, decided by
+the catalog's order rather than by parsing version numbers. Matching runs against ids and display
+names together. The key is the profile argument's when one was given, the conversation's own when
+that offers the model, and otherwise the only profile that offers it; two profiles offering it is
+refused with both named, because which credential gets billed is the same decision the key resolver
+already refuses to make silently. A named profile is never swapped for one that happens to have the
+model.
+
+Two things the ask did not name and the build needed. Estimate could not grow a model parameter
+without breaking every existing Dispatcher and its fake, so pricing the resolved model is an
+optional ModelEstimator interface that Engine and cmd/canopy's profiles implement and the spawn tool
+type asserts; a dispatcher without it is asked the older question and answers it as before.
+Engine.EstimateOn prefers turns run on that model once there are three of them and falls back to the
+project's history otherwise, saying which in the basis. And Dispatch gained ModelNamed, because
+dispatchTemplate inherits the model of an agent already running on the profile, which is right when
+nobody said and wrong the moment they did: without the flag, "two sonnet agents" from a conversation
+on opus would have produced two more opus agents.
+
+What the model-aware estimate actually covers, stated plainly because the first version of this note
+was not: every spawn, not only the ones that named a model. Resolution fills the profile's own
+default in before the estimate is asked for, so a request nobody attached a model to is priced
+against the model its agents will run rather than against the project's history at large. That is
+the better answer in both cases and it is the same answer, which is why there is no branch for one
+of them, but it was a behaviour change nothing could observe: the plain fake has no EstimateOn, so
+every existing test went down the older path either way. Pinned now by
+TestASpawnWithNoModelNamedIsStillPricedOnWhatItWillRun.
+
+Acceptance, clause by clause: "spawn two sonnet agents" with no key called sonnet, landing on the
+newest sonnet and named on the confirmation before anything runs, is
+TestSonnetAgentsSpawnWithNoKeyCalledSonnet; "claude sonnet 4 6" reaching claude-sonnet-4-6 is
+TestTheWordsForAModelAreForgivenOnTheWayToADispatch, with the matching itself held by
+TestSpellingIsForgivenBeforeAnythingIsRefused in internal/catalog; a display name resolving as its
+id is TestADisplayNameResolvesTheSameAsItsIDWhenSpawning; a model no key offers being refused with
+what does exist is TestAModelNobodyOffersIsRefusedWithWhatDoesExist; and the estimate pricing the
+resolved model is TestTheEstimatePricesTheResolvedModelNotTheProfileDefault at the tool and
+TestTheEstimatePrefersHistoryFromTheModelItWasAskedAbout at the engine. The key-choice rules are
+TestTheCurrentKeyKeepsAModelItOffers, TestAModelOnlyOneKeyOffersFindsThatKeyAndTwoIsRefused and
+TestANamedProfileIsNotSwappedForOneThatHasTheModel; the grown listing is
+TestListingProfilesNamesWhatEachOneCanRun.
+
+One defect found in review and fixed here. A profile's matchable set was its list alone, and a key
+pointed at a gateway nobody here ships a lineup for has an empty list and a default its owner typed,
+so the one model that profile was certainly about to run was the one model it refused to be asked
+for. The refusal then contradicted itself in the same breath: "no profile here can run
+moonshot-v1-8k. nim runs moonshot-v1-8k." Both the matching and the listing now read one function,
+offeredBy, which is the profile's list plus its own default when the list does not already hold it,
+compared with spelling forgiven so a differently capitalised list does not gain a second row. Held
+by TestAProfilesOwnDefaultCanBeAskedForByName, which also covers a typed default reached by the
+current key rather than by being the only one that offers it, and by
+TestARefusalDoesNotOfferWhatItJustRefused, which asks for every id a refusal names and fails if any
+of them is then refused.
+
+### K-03 The model picker is a screen
+`status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
+`scope: internal/tui/, internal/tui/chat/, internal/config/commands.go, internal/session/ (additive)`
+
+Deliverable: /model, a new reserved builtin, opens a picker drawn the way help is drawn, over the
+whole frame and back with esc: one section per named key with the provider written on the section
+header, that key's models beneath it with display names shown and the conversation's current
+model marked. Enter applies the choice to this conversation, switching key as well when the row
+sits under another section, through one additive engine method, and takes effect from the next
+request. Picking never rewrites the key's recorded default; that stays with the keys screen and
+the CLI.
+
+Acceptance: open the picker and esc changes nothing; picking under the same key changes what the
+next request is sent on, and the context line says so; picking under a different key switches
+provider and key for the next request; the current model is marked; a key with nothing to offer
+shows its section with the none-set warning rather than disappearing; /model appears in the slash
+menu; with colour off the picker is still readable.
+
+`verify: claude [x] 2026-07-29   codex [ ]`
+
+notes: "overlay" in the ask, screen swap in the build: the repository has no compositing, and
+help already set the pattern for a screen that sits over everything and leaves without a trace,
+so the picker follows it rather than inventing z-order for one feature.
+
+Built as internal/tui/modelpicker.go, keyed before everything else in Update the way help is, so
+every key belongs to it while it is up and anything it does not use leaves with nothing changed.
+
+The one additive engine method turned out to exist already. Engine.UseCredential does exactly what
+the ask describes: it sets the session's key and model, refuses while a turn is in flight, and the
+next Send reads both straight off the session on its way to the resolver. Adding SetAgentModel
+beside it would have been a second name for one behaviour, so the picker calls the existing method
+through the chat screen, which is where a conversation's credential has always been changed from.
+That the change reaches the wire rather than only the snapshot is held at the session level by
+TestChangingTheModelReachesTheNextRequest, with a resolver and a provider client that both record
+what they were asked for.
+
+Two things the ask did not name. The layering test in internal/tui forbids package tui importing
+anything outside internal/core and internal/tui/*, so the "what can this key be pointed at" list is
+assembled by an exported keysui.Offered rather than by the picker calling internal/catalog itself;
+that also collapses what would have been a third copy of the merge into the one internal/tui/keys
+already had. And the chat context line grew the model beside the credential, as its own part so a
+narrow terminal drops the model and keeps the key rather than cutting one string in half; without it
+the acceptance clause about the line saying so had nothing to say.
+
+Applying also moves App.usingKey, so a conversation started afterwards follows the credential you
+moved to. It follows that key's own recorded default rather than the picked model, since the picked
+model is a fact about one conversation. Store.SetModel is never called from here.
+
+Two defects found in review and fixed here, and one gap closed. A pick the engine refused still
+moved the application's own note of which credential to open the next conversation on: chat's
+UseCredential swallowed the refusal into a message and returned nothing, so the conversation
+correctly stayed where it was and the next ctrl+n opened on the credential that had just been
+declined, with no model on it. UseCredential now reports whether the engine took it and both callers
+wait for that answer, the credential screen's as well as the picker's, since the two had the same
+shape. Held by TestARefusedPickLeavesTheNextConversationWhereItWas, which fails with exactly the
+symptom that was reported when the check is removed.
+
+The gap: the picker was the only model surface with no way to name something the lists have never
+heard of, which made the one screen built to answer "what can this run" the one place a shipped list
+could stand between somebody and the model they wanted. Every section now ends in a row that takes a
+typed id, mirroring the credential screen's, feeding the same UseCredential path so a model Canopy
+has never heard of is applied exactly the way a listed one is. A section with nothing to offer keeps
+its none-set warning and gains the row underneath it, which is the state an unrecognised endpoint is
+in on the day it is added. It deliberately does not record what was typed: the credential screen
+remembers a typed model because that screen is where a key's offerings are edited, and this one
+changes this conversation and nothing on disk. Held by TestThePickerTakesAModelItHasNeverHeardOf,
+TestLeavingTheTypedRowChangesNothing and TestAKeyWithNothingToOfferCanStillBeTypedInto.
+
+Acceptance, clause by clause: opening and leaving changing nothing is
+TestOpeningTheModelPickerAndLeavingChangesNothing; picking under the same key changing the next
+request and the context line saying so is TestPickingAModelMovesTheConversationAndTheHeaderSaysSo,
+resting on TestChangingTheModelReachesTheNextRequest for the wire; picking under a different key
+switching credential is TestPickingUnderAnotherKeySwitchesCredentialAsWell; the current model being
+marked and an empty key keeping its section with the none-set words is
+TestThePickerMarksWhereYouAreAndKeepsEmptySections; /model in the slash menu is
+TestTheModelCommandIsOfferedInTheSlashMenu; and colour-off readability is
+TestThePickerReadsWithNoColour. That the key's own default is untouched is
+TestPickingAModelNeverRewritesTheKeysDefault, and the mid-turn refusal the spec allows is
+TestChangingTheModelMidAnswerIsRefused.
+
+### PG-K Phase K gate
+`status: todo | depends: K-01, K-02, K-03`
+
+Both supervisors watch: a key added once runs two different models in two conversations side by
+side; "spawn two sonnet agents" is understood with no key named sonnet; and a model from neither
+catalog is added by hand, picked from the picker, and answers.
 
 `signed: walid [ ]   classmate [ ]`
 
@@ -4933,3 +5304,4 @@ status or verification updates.
 | 2026-07-28 | Claude | Follow-ups from Codex's review of PRs #20 to #25, on `fix/review-followups`. Six defects fixed and two unreachable features wired. Storage schema went to version 7 for the mode column. The severe one was found on the way: the green gate never waited for the tests, so runway reverted every turn it was given. A8-05 and A8-08 were built and never called from anywhere, which is now the fourth time a complete package has shipped with nothing reaching it. |
 | 2026-07-28 | Claude | Added phases E and U after PG-A9, from an audit of the send path and of every screen rather than of this ledger: ten efficiency tasks and fourteen interface tasks, none of which blocks 0.1. Four blocks set back to partial where their prose outran the code: A3-06 (no auto compaction, meter blind to tool traffic), A2-07 (saving visible only in headless ask), A2-08 (chain has no caller), A8-03 (instructions parse and reach nothing). Notes added to A5-09 and A9-02. Principles recorded as D-42 to D-44, new questions Q-19 to Q-21. |
 | 2026-07-29 | Claude | Added U-15 from Walid using the built program: the mode key applied every rung it walked past, so cycling from cruise to build put a working agent through plan. Built the same day, out of lane order, since it is a defect in a shipped safety setting. Recorded as D-45. The engine gained `ModeUnusable`, the refusal `SetMode` already made asked as a question. Section 2.0 recounted, which the two new phases had left stale. |
+| 2026-07-29 | Claude | Added phase K, one key many models, and U-16 to U-19, from six asks by Walid: keys that hold several models over a dated catalog, dispatch that understands model words, a picker screen, other agents' permission prompts surfacing on the conversation you are on, the header naming the agent instead of the brand, a tasks block with state colours, and btw history that survives the screen. Recorded as D-46 and D-47. Claimed on feat/one-key-many-models and tui/ambient-attention, stacked in that order on tui/mode-settle. |

@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
 
@@ -56,10 +57,28 @@ type Profile struct {
 	Name  string
 	Model string
 
+	// Models is everything this profile can be asked for, which is what makes "spawn two sonnet
+	// agents" work with no key called sonnet. The catalog for the credential's provider and endpoint
+	// plus whatever its owner added, assembled by whoever builds the profiles, because a credential
+	// is something this package has never known about.
+	//
+	// Empty means nobody said, and the default above is then the only model this profile offers.
+	Models []catalog.Model
+
 	// Priced says whether Canopy knows what this profile costs. An OpenAI compatible gateway with no
 	// rate set does not, and an estimate that quietly treated it as free would be a lie in the one
 	// place a number is supposed to protect somebody.
 	Priced bool
+}
+
+// ModelEstimator is a dispatcher that can price a run on a particular model.
+//
+// Separate from Dispatcher rather than a wider Estimate on it, because the model is a late addition
+// and every caller and fake that already satisfies Dispatcher must keep satisfying it. A dispatcher
+// that does not implement this is asked the older question and answers it just as well; it simply
+// cannot tell two models apart in its own history.
+type ModelEstimator interface {
+	EstimateOn(task string, count int, model string) Estimate
 }
 
 // Dispatch is a request to create agents.
@@ -68,11 +87,20 @@ type Dispatch struct {
 	Profile string
 	Task    string
 
-	// Model is the profile's default model, resolved by the spawn tool from the profile listing.
+	// Model is the model these agents will run, resolved by the spawn tool: the profile's default
+	// unless the request named one, in which case it is whatever those words turned out to mean.
 	// It travels with the request because the engine has never known what a credential is, and the
 	// alternative it used to have, copying the model from whichever agent happened to exist, could
 	// pair one provider's key with another provider's model name and fail on the first request.
 	Model string
+
+	// ModelNamed says the model above was asked for rather than inherited from the profile.
+	//
+	// It decides exactly one thing: whether a fan out onto a profile that already has an agent takes
+	// that agent's model. Inheriting is right when nobody said which model they wanted, and wrong
+	// the moment somebody did, since "two sonnet agents" from a conversation already running opus
+	// would otherwise quietly produce two more opus agents.
+	ModelNamed bool
 
 	// Isolated gives each agent its own worktree and branch. Default for a fan out, since ranking
 	// three attempts is meaningless if all three are writing to one tree, and off for a single agent
@@ -135,8 +163,15 @@ func (c Confirmation) Question() string {
 	if c.Dispatch.Isolated {
 		where = "each with its own worktree and branch"
 	}
-	return fmt.Sprintf("start %s on %s, %s, for: %s",
-		agents, c.Dispatch.Profile, where, c.Dispatch.Task)
+
+	// The model as well as the credential, because a request can name one and land somewhere other
+	// than the profile's default. This line is the last place that can be seen before the money is
+	// spent, so the thing that was resolved from words has to be written out in full here.
+	on := c.Dispatch.Profile
+	if c.Dispatch.Model != "" {
+		on += " running " + c.Dispatch.Model
+	}
+	return fmt.Sprintf("start %s on %s, %s, for: %s", agents, on, where, c.Dispatch.Task)
 }
 
 // ErrNeedsConfirmation is returned by the spawn tool when nobody has said yes yet.
@@ -215,6 +250,17 @@ func (t *profilesTool) Run(context.Context, json.RawMessage) (core.ToolResult, e
 			out.WriteString(", the profile this conversation runs on")
 		}
 		out.WriteString("\n")
+
+		if len(profile.Models) > 0 {
+			// Ids only, on a line of their own. The display names people use are forgiven at
+			// resolution time, so printing both would double the length of this listing to restate
+			// something the caller does not have to get right.
+			ids := make([]string, 0, len(profile.Models))
+			for _, model := range profile.Models {
+				ids = append(ids, model.ID)
+			}
+			fmt.Fprintf(&out, "  also runs: %s\n", strings.Join(ids, ", "))
+		}
 	}
 	return core.ToolResult{Content: out.String()}, nil
 }
@@ -239,8 +285,10 @@ func (t *spawnTool) Description() string {
 		"asked for. Use this when the user asks for agents to be run on something, for example " +
 		"\"use 2 sonnet agents for the auth refactor\". Extract the count, the profile and the " +
 		"task from what they said, translating words to numbers: \"a couple\" is 2, \"a few\" is 3. " +
-		"If the user named no profile or model, omit the profile and the one this conversation " +
-		"runs on is used. If the count or the task is unclear, ask them rather than guessing: " +
+		"If the user named no profile or model, omit both and the profile this conversation " +
+		"runs on is used. If they named a model rather than a profile, pass their words as the " +
+		"model and leave the profile out: Canopy resolves the words and finds the credential. " +
+		"If the count or the task is unclear, ask them rather than guessing: " +
 		"spawning the wrong number costs real money and real time. Call " +
 		"list_profiles first if you are not certain a named profile exists."
 }
@@ -256,6 +304,10 @@ func (t *spawnTool) Schema() json.RawMessage {
 			"profile": {
 				"type": "string",
 				"description": "The profile name to run them on, from list_profiles. Omit it when the user named no profile or model, and the profile this conversation runs on is used."
+			},
+			"model": {
+				"type": "string",
+				"description": "The model the user asked for, in their own words, for example \"sonnet\" or \"claude sonnet 4.6\". Omit it unless they named one. Spelling, spacing and a missing claude- prefix are all forgiven, a family name on its own means the newest of that family, and the credential is chosen from whichever profile offers the model. Do not translate a model into a profile name yourself."
 			},
 			"task": {
 				"type": "string",
@@ -274,6 +326,7 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	var args struct {
 		Count    int     `json:"count"`
 		Profile  string  `json:"profile"`
+		Model    string  `json:"model"`
 		Task     string  `json:"task"`
 		Isolated *bool   `json:"isolated"`
 		Budget   float64 `json:"-"`
@@ -292,11 +345,21 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		request.Isolated = *args.Isolated
 	}
 
+	// Whether a profile was named is remembered before resolve fills the empty case in, because the
+	// two mean different things once a model is also in play: a named profile is a decision already
+	// made, and a defaulted one is only where to look first.
+	named := request.Profile != ""
+
 	if refusal := t.resolve(&request); refusal != "" {
 		return core.ToolResult{Content: refusal, IsError: true}, nil
 	}
+	if spoken := strings.TrimSpace(args.Model); spoken != "" {
+		if refusal := t.resolveModel(&request, spoken, named); refusal != "" {
+			return core.ToolResult{Content: refusal, IsError: true}, nil
+		}
+	}
 
-	estimate := t.dispatcher.Estimate(request.Task, request.Count)
+	estimate := t.estimate(request)
 	confirmation := Confirmation{
 		Dispatch: request,
 		Estimate: estimate,
@@ -402,6 +465,161 @@ func (t *spawnTool) resolve(request *Dispatch) string {
 		request.Profile, strings.Join(names, ", "))
 }
 
+// resolveModel turns the words somebody used for a model into one that will actually be asked for,
+// and picks the credential to ask on when they did not name one.
+//
+// The rules, which are D-46's rule 3 in code:
+//
+//   - Spelling is forgiven. Case, spaces, underscores, dots and a missing claude- prefix are all
+//     the same request typed differently, and a bare family word means the newest of that family.
+//   - The credential is the profile argument's when there was one, the conversation's own when that
+//     offers the model, and otherwise the only profile that does. Never a choice between two:
+//     picking which key gets billed is not a decision to make on somebody's behalf.
+//   - Anything unknown or ambiguous is refused with the real choices listed. A model told which
+//     models exist picks one; a model told "no" guesses again, and a guess that spawns the wrong
+//     model spends real money politely.
+func (t *spawnTool) resolveModel(request *Dispatch, spoken string, named bool) string {
+	profiles := t.dispatcher.Profiles()
+
+	// Where the request already points gets first refusal. Somebody who says "two sonnet agents"
+	// while talking on a key that offers sonnet means that key, and moving them onto another one
+	// because it also has sonnet would move their bill without saying so.
+	for _, profile := range profiles {
+		if profile.Name != request.Profile {
+			continue
+		}
+		hits := catalog.Match(offeredBy(profile), spoken)
+		if len(hits) == 1 {
+			request.Model, request.ModelNamed = hits[0].ID, true
+			return ""
+		}
+		if len(hits) > 1 {
+			return fmt.Sprintf(
+				"%q could mean more than one model on %s: %s. Ask the user which they meant.",
+				spoken, profile.Name, strings.Join(idsOf(hits), " or "))
+		}
+		break
+	}
+
+	if named {
+		// A named profile is not a suggestion. Quietly running the agents on a different credential
+		// because that one happens to have the model would be answering a question nobody asked.
+		return fmt.Sprintf("%s cannot run %q. %s Use one of those, name a different profile, "+
+			"or ask the user which they meant.",
+			request.Profile, spoken, whatRuns(profiles))
+	}
+
+	var offering []Profile
+	var hits []catalog.Model
+	for _, profile := range profiles {
+		if found := catalog.Match(offeredBy(profile), spoken); len(found) > 0 {
+			offering = append(offering, profile)
+			hits = found
+		}
+	}
+
+	switch len(offering) {
+	case 1:
+		if len(hits) > 1 {
+			return fmt.Sprintf(
+				"%q could mean more than one model on %s: %s. Ask the user which they meant.",
+				spoken, offering[0].Name, strings.Join(idsOf(hits), " or "))
+		}
+		request.Profile = offering[0].Name
+		request.Model, request.ModelNamed = hits[0].ID, true
+		return ""
+
+	case 0:
+		return fmt.Sprintf("No profile here can run %q. %s Ask the user which they meant, or "+
+			"they can add the model with `canopy keys models add`.", spoken, whatRuns(profiles))
+
+	default:
+		names := make([]string, 0, len(offering))
+		for _, profile := range offering {
+			names = append(names, profile.Name)
+		}
+		sort.Strings(names)
+		return fmt.Sprintf("%q is offered by more than one profile: %s. Which credential gets "+
+			"billed is not something to decide for the user, so ask them which to use and pass it "+
+			"as the profile.", spoken, strings.Join(names, ", "))
+	}
+}
+
+// offeredBy is everything a profile can be asked for by name.
+//
+// Its list plus its own default, which is not always in the list. A key pointed at a gateway nobody
+// here ships a lineup for has an empty list and a default its owner typed, and without this that
+// default was the one model the profile was certainly about to run and the one model it refused to
+// be asked for. The refusal then contradicted itself out loud: "no profile here can run
+// moonshot-v1-8k. nim runs moonshot-v1-8k."
+//
+// Matching and the refusals both read this, which is what stops them ever disagreeing again. The
+// default is compared with spelling forgiven, so a list that already holds it in another
+// capitalisation does not gain a second row for the same model.
+func offeredBy(profile Profile) []catalog.Model {
+	if profile.Model == "" {
+		return profile.Models
+	}
+	for _, model := range profile.Models {
+		if catalog.SameModel(model.ID, profile.Model) {
+			return profile.Models
+		}
+	}
+	// A fresh slice, since appending to the profile's own would write into whatever built it.
+	offered := make([]catalog.Model, 0, len(profile.Models)+1)
+	offered = append(offered, profile.Models...)
+	return append(offered, catalog.Model{ID: profile.Model})
+}
+
+// whatRuns is every profile and what it can be asked for, which is what a refusal has to carry.
+//
+// A refusal that only says no sends a model round again with another guess. A refusal that names the
+// real choices ends the exchange in one turn.
+func whatRuns(profiles []Profile) string {
+	lines := make([]string, 0, len(profiles))
+	for _, profile := range profiles {
+		offered := offeredBy(profile)
+		if len(offered) == 0 {
+			lines = append(lines, fmt.Sprintf("%s runs %s", profile.Name, orDefault(profile.Model)))
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("%s runs %s",
+			profile.Name, strings.Join(idsOf(offered), ", ")))
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "; ") + "."
+}
+
+func orDefault(model string) string {
+	if model == "" {
+		return "its provider's default"
+	}
+	return model
+}
+
+func idsOf(models []catalog.Model) []string {
+	ids := make([]string, 0, len(models))
+	for _, model := range models {
+		ids = append(ids, model.ID)
+	}
+	return ids
+}
+
+// estimate prices the run, on the model it will actually happen on where the dispatcher can tell
+// the difference. A dispatcher that cannot is asked the question it does understand.
+//
+// "The model it will actually happen on" is meant literally and covers the ordinary spawn as well as
+// the one that named a model: by this point resolve has filled in the profile's own default, so a
+// request nobody attached a model to is still priced against the model its agents will run rather
+// than against the project's history at large. That is the better answer in both cases, and it is
+// the same answer, which is why there is no branch here for one of them.
+func (t *spawnTool) estimate(request Dispatch) Estimate {
+	if on, ok := t.dispatcher.(ModelEstimator); ok && request.Model != "" {
+		return on.EstimateOn(request.Task, request.Count, request.Model)
+	}
+	return t.dispatcher.Estimate(request.Task, request.Count)
+}
+
 // warnings are things worth saying that are not reasons to refuse.
 func (t *spawnTool) warnings(request Dispatch, estimate Estimate) []string {
 	var warnings []string
@@ -445,12 +663,27 @@ const MaxConcurrentAgents = 8
 // happened here, and the number of turns an agent takes is a range wide enough to be honest about
 // not knowing. A narrow range computed from four samples would look like a measurement.
 func (e *Engine) Estimate(task string, count int) Estimate {
+	return e.EstimateOn(task, count, "")
+}
+
+// EstimateOn is the same question asked about a particular model.
+//
+// Worth asking separately because the models a key can run differ in price by a factor of ten, so
+// an estimate built from opus turns is not an estimate of a haiku fan out. The model's own history
+// is used when there is enough of it and the project's is used when there is not, and the basis says
+// which, since a range from three turns of the right model is not obviously better than one from
+// thirty of the wrong model and pretending otherwise would be the same overconfidence this whole
+// function is written against.
+func (e *Engine) EstimateOn(task string, count int, model string) Estimate {
 	const (
 		fewestTurns = 4
 		mostTurns   = 25
+		// Three is not a statistical threshold, it is the point below which showing a number would be
+		// pretending. One expensive turn is not a rate.
+		fewestSamples = 3
 	)
 
-	var costs []float64
+	var costs, onModel []float64
 	wanted := taskWords(task)
 	e.mu.Lock()
 	for _, id := range e.order {
@@ -460,14 +693,21 @@ func (e *Engine) Estimate(task string, count int) Estimate {
 		for _, turn := range e.sessions[id].Turns {
 			if turn.Usage.CostKnown && turn.Usage.CostUSD > 0 && similarTask(wanted, taskWords(turn.Request.Text)) {
 				costs = append(costs, turn.Usage.CostUSD)
+				if model != "" && turn.Model == model {
+					onModel = append(onModel, turn.Usage.CostUSD)
+				}
 			}
 		}
 	}
 	e.mu.Unlock()
 
-	if len(costs) < 3 {
-		// Three is not a statistical threshold, it is the point below which showing a number would be
-		// pretending. One expensive turn is not a rate.
+	measured := "similar priced turns in this project"
+	if len(onModel) >= fewestSamples {
+		costs = onModel
+		measured = "similar priced turns in this project on " + model
+	}
+
+	if len(costs) < fewestSamples {
 		return Estimate{Basis: fmt.Sprintf(
 			"there is not enough similar cost history in this project to estimate, %d priced turns matched",
 			len(costs))}
@@ -487,8 +727,8 @@ func (e *Engine) Estimate(task string, count int) Estimate {
 		High:       median * mostTurns * float64(count),
 		Samples:    len(costs),
 		Confidence: confidence,
-		Basis: fmt.Sprintf("from %d similar priced turns in this project at a median of $%.3f, assuming %d to %d turns per agent",
-			len(costs), median, fewestTurns, mostTurns),
+		Basis: fmt.Sprintf("from %d %s at a median of $%.3f, assuming %d to %d turns per agent",
+			len(costs), measured, median, fewestTurns, mostTurns),
 	}
 }
 
@@ -589,7 +829,14 @@ func (e *Engine) dispatchTemplate(request Dispatch) (Agent, error) {
 	// so two agents on one profile with different settings always yield the same template.
 	for _, name := range e.agentOrder {
 		if agent := e.agents[name]; agent.KeyName == request.Profile {
-			return Agent{KeyName: request.Profile, Model: agent.Model, Trust: agent.Trust, Dir: agent.Dir}, nil
+			model := agent.Model
+			if request.ModelNamed {
+				// Unless the request said which model. Somebody asking for sonnet agents from a
+				// conversation already running opus means sonnet, and inheriting here would answer
+				// them with two more of what they were trying to move away from.
+				model = request.Model
+			}
+			return Agent{KeyName: request.Profile, Model: model, Trust: agent.Trust, Dir: agent.Dir}, nil
 		}
 	}
 	if len(e.agentOrder) == 0 {

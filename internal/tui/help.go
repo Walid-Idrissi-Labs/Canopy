@@ -100,6 +100,11 @@ func bindings() []section {
 			{"K", "credentials"},
 			{"esc / tab / q", "agents"},
 		}},
+		{"the model picker, on /model", []binding{
+			{"j / k", "move, across credentials as well as within one"},
+			{"enter", "run this conversation on it from the next message"},
+			{"any other key", "back, with nothing changed"},
+		}},
 		{"credentials", []binding{
 			{"j / k", "move"},
 			{"enter", "use this one for the conversation"},
