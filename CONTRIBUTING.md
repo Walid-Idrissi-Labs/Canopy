@@ -41,10 +41,13 @@ make install   # same build, into $(go env GOPATH)/bin, with version stamping
 `-count=1` because a green result from the test cache is a statement about code from ten minutes
 ago. That is the same reason the verification engine treats a stale result as no result at all.
 
-Run all four of `gofmt -l .`, `go vet ./...`, `golangci-lint run ./...` and `go test -race ./...`
-before you push. CI runs exactly those, on ubuntu-latest and macos-latest, and the formatting check
-fails the build rather than reformatting anything for you. See
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the authoritative version.
+Run all four of `gofmt -l .`, `go vet ./...`, `golangci-lint run ./...` and
+`go test -race -count=1 ./...` before you push. The local test command deliberately disables the Go
+test cache. CI checks formatting, builds, vets and runs `go test -race ./...` on both ubuntu-latest
+and macos-latest; lint is a separate ubuntu-latest job. The formatting check fails rather than
+rewriting files. CI does not currently pass `-count=1`, so “exactly the same as CI” would be
+incorrect and the local command is intentionally stricter on cached results. See
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the authoritative workflow.
 
 `golangci-lint` runs with the standard linter set and, deliberately, no exclusion for unchecked
 write errors. If a write genuinely cannot be acted on, drop it explicitly at the call site with
