@@ -373,16 +373,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// A credential chosen on that screen is a fact about the conversation, so it is applied
 			// here where the conversation lives. The screen states a preference and owns nothing.
-			if name, picked := a.keys.Chosen(); picked && name != a.usingKey {
-				model := a.keys.ModelFor(name)
-				// Only once the engine has taken it. It refuses mid answer, and moving the
-				// application's own note of the credential in use on a refusal would point the next
-				// new conversation at a key this one never managed to switch to.
-				if a.chat.UseCredential(name, model) {
-					a.usingKey = name
-					// Agents created after the switch inherit it too, or the next one would quietly
-					// go on using the credential somebody had just moved away from.
-					a.agents.SetDefaults(name, model, a.dir)
+			if name, picked := a.keys.Chosen(); picked {
+				if name == a.usingKey {
+					// Already true, but still acknowledged: the child deliberately does not claim
+					// a switch until its parent confirms the session state.
+					a.keys.SelectionApplied(name)
+				} else {
+					model := a.keys.ModelFor(name)
+					// Only once the engine has taken it. It refuses mid answer, and moving the
+					// application's own note of the credential in use on a refusal would point the
+					// next new conversation at a key this one never managed to switch to.
+					if a.chat.UseCredential(name, model) {
+						a.usingKey = name
+						a.keys.SelectionApplied(name)
+						// Agents created after the switch inherit it too, or the next one would
+						// quietly go on using the credential somebody had just moved away from.
+						a.agents.SetDefaults(name, model, a.dir)
+					} else {
+						a.keys.SelectionRefused(name, a.chat.Error())
+					}
 				}
 			}
 			return a, cmd

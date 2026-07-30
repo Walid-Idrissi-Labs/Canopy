@@ -86,6 +86,11 @@ type Model struct {
 	// clears nothing: the screen states a preference, and switching sessions is the parent's job.
 	chosen string
 
+	// storedChoice distinguishes a selection produced by the add wizard from one made on the list.
+	// Both require the parent conversation to acknowledge the switch, but a refusal after the wizard
+	// must still say that the credential was safely stored.
+	storedChoice bool
+
 	status string
 	err    error
 
@@ -125,6 +130,46 @@ func (m Model) Adding() bool { return m.mode != modeList && m.mode != modeConfir
 // Read by the application rather than acted on here, because which credential a conversation runs
 // on is a fact about the conversation, and this screen does not own one.
 func (m Model) Chosen() (string, bool) { return m.chosen, m.chosen != "" }
+
+// SelectionApplied acknowledges that the parent conversation accepted Chosen.
+//
+// The credential screen cannot make this claim itself: the engine may refuse while an answer is in
+// flight. Keeping the acknowledgement explicit prevents "is now the credential" from appearing
+// before the component that owns the session has actually changed it.
+func (m *Model) SelectionApplied(name string) {
+	if name == "" || m.chosen != name {
+		return
+	}
+	if m.storedChoice {
+		m.status += " It is now the credential for this conversation."
+	} else {
+		m.status = fmt.Sprintf("%s is now the credential for this conversation.", name)
+	}
+	m.chosen = ""
+	m.storedChoice = false
+	m.err = nil
+}
+
+// SelectionRefused records that the parent conversation did not accept Chosen.
+//
+// The preference is cleared so an unrelated later keystroke cannot retry it after a running turn
+// ends and silently apply a choice the user already saw refused.
+func (m *Model) SelectionRefused(name, reason string) {
+	if name == "" || m.chosen != name {
+		return
+	}
+	if reason == "" {
+		reason = "the conversation did not accept the switch"
+	}
+	if m.storedChoice {
+		m.err = fmt.Errorf("stored %q, but it is not selected for this conversation: %s", name, reason)
+	} else {
+		m.err = fmt.Errorf("%q was not selected for this conversation: %s", name, reason)
+	}
+	m.chosen = ""
+	m.storedChoice = false
+	m.status = ""
+}
 
 // Model returns the model the chosen credential talks to, for the caller that has to set both.
 func (m Model) ModelFor(name string) string {
@@ -212,7 +257,9 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 		// add and remove keys and nowhere to pick one, so with two stored, nothing could run at all.
 		if len(m.keys) > 0 {
 			m.chosen = m.keys[m.cursor].Ref.Name
-			m.status = fmt.Sprintf("%s is now the credential for this conversation", m.chosen)
+			m.storedChoice = false
+			m.status = fmt.Sprintf("Selecting %s for this conversation...", m.chosen)
+			m.err = nil
 		}
 	}
 }
@@ -448,9 +495,10 @@ func (m *Model) afterSecret() {
 	// A key somebody has just typed in is the key they want to use. Selecting it here is what makes
 	// the wizard end where its user thinks it ended.
 	m.chosen = meta.Ref.Name
+	m.storedChoice = true
 
-	m.status = fmt.Sprintf("Stored %q for %s (fingerprint %s), and it is now the credential for "+
-		"this conversation.", meta.Ref.Name, meta.Ref.Provider, meta.Fingerprint)
+	m.status = fmt.Sprintf("Stored %q for %s (fingerprint %s).", meta.Ref.Name, meta.Ref.Provider,
+		meta.Fingerprint)
 	m.err = nil
 	m.mode = modeList
 	m.reload()

@@ -656,6 +656,59 @@ func TestChoosingACredentialReachesTheConversation(t *testing.T) {
 	}
 }
 
+// The wizard stores a secret in its child screen, but only the application can ask the session
+// engine to use it. A running turn may refuse that second operation, and the final screen must keep
+// those two outcomes separate.
+func TestAStoredCredentialDoesNotClaimARefusedConversationSwitch(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	keyStore := &fakeKeyStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "claude", Provider: core.ProviderAnthropic}},
+	}}
+	engine := &stubEngine{
+		useErr: errors.New("this session is mid answer, so wait for it to finish or stop it first"),
+	}
+	current := launchWith(store, keyStore, engine)
+
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyCtrlK},
+		{Type: tea.KeyRunes, Runes: []rune("a")},
+		{Type: tea.KeyRunes, Runes: []rune("kimi")},
+		{Type: tea.KeyEnter},
+		{Type: tea.KeyEnter}, // Anthropic, the first provider.
+		{Type: tea.KeyRunes, Runes: []rune("test-secret")},
+		{Type: tea.KeyEnter},
+	} {
+		current, _ = current.(tui.App).Update(key)
+	}
+
+	if len(keyStore.keys) != 2 || keyStore.keys[1].Ref.Name != "kimi" {
+		t.Fatalf("the credential was not stored: %+v", keyStore.keys)
+	}
+	if engine.using != [2]string{} {
+		t.Fatalf("the refused credential reached the conversation as %v", engine.using)
+	}
+	view := plain(current.(tui.App).View())
+	for _, want := range []string{`stored "kimi"`, "not selected", "mid answer"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the screen lost %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "now the credential") {
+		t.Errorf("the refused switch is presented as applied:\n%s", view)
+	}
+
+	// The refusal clears the pending preference. Merely moving the cursor after the turn ends must
+	// not retry and silently apply it.
+	engine.useErr = nil
+	after, _ := current.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	if engine.using != [2]string{} {
+		t.Errorf("an unrelated later key retried the refused switch as %v", engine.using)
+	}
+	_ = after
+}
+
 // Several credentials stored and none chosen is not the same as none stored, and it used to land on
 // the chat, where the only way to find out was to type a message and watch it fail.
 func TestWithNoCredentialChosenTheKeyScreenComesFirst(t *testing.T) {

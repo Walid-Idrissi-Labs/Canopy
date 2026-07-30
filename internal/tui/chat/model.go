@@ -1341,6 +1341,12 @@ func (m *Model) SetCommands(commands config.CommandSet) { m.commands = commands 
 // Notice is what is currently being said. For tests.
 func (m Model) Notice() string { return m.notice }
 
+// Error is the last visible chat error.
+//
+// The application uses it when a credential switch is refused so the credential screen can show
+// the same reason rather than claiming success or reducing a precise engine refusal to "failed".
+func (m Model) Error() string { return m.err }
+
 // UseCredential switches this conversation to a different credential and model, and reports whether
 // the engine accepted.
 //

@@ -668,10 +668,16 @@ func TestAddingACredentialSelectsIt(t *testing.T) {
 	if chosen != "claude" {
 		t.Errorf("selected %q after adding claude", chosen)
 	}
-	// Said on screen as well as recorded, because a selection nobody is told about is one they will
-	// make again by hand.
-	if view := plain(m.View()); !strings.Contains(view, "credential for this conversation") {
-		t.Errorf("the screen does not say the new credential is now in use:\n%s", view)
+	// Stored is the only fact this component owns. It must not say "now in use" until the parent
+	// conversation acknowledges the switch.
+	if view := plain(m.View()); !strings.Contains(view, `Stored "claude"`) ||
+		strings.Contains(view, "now the credential") {
+		t.Errorf("the wizard claimed more than the store had established:\n%s", view)
+	}
+
+	m.SelectionApplied("claude")
+	if view := plain(m.View()); !strings.Contains(view, "now the credential for this conversation") {
+		t.Errorf("the parent acknowledgement is not shown:\n%s", view)
 	}
 }
 
@@ -692,5 +698,33 @@ func TestAddingASecondCredentialSelectsTheNewOne(t *testing.T) {
 
 	if chosen, _ := m.Chosen(); chosen != "kimi" {
 		t.Errorf("selected %q after adding kimi as a second credential", chosen)
+	}
+}
+
+// A refusal clears the pending preference. Otherwise every later key on this screen retries it, and
+// the credential can switch unexpectedly once the active turn that caused the refusal ends.
+func TestARefusedSelectionStaysStoredButIsNotRetriedOrClaimed(t *testing.T) {
+	store := &stubStore{}
+	m := New(store)
+
+	m = key(m, "a")
+	m = typeRunes(m, "claude")
+	m = press(m, tea.KeyEnter)
+	m = press(m, tea.KeyEnter)
+	m = typeRunes(m, canary)
+	m = press(m, tea.KeyEnter)
+	m.SelectionRefused("claude", "this session is mid answer")
+
+	if _, chosen := m.Chosen(); chosen {
+		t.Error("the refused preference remained armed for a later retry")
+	}
+	view := plain(m.View())
+	for _, want := range []string{`stored "claude"`, "not selected", "mid answer"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the refusal lost %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "now the credential") {
+		t.Errorf("the refused switch is presented as applied:\n%s", view)
 	}
 }

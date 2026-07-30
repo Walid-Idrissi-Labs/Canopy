@@ -5245,14 +5245,16 @@ called s1 holding a turn called turn-1 is what nearly every test builds.
 
 ### U-24 The wizard ends where its user thinks it ended
 `status: review | owner: claude | branch: tui/first-key-selects | depends: none`
-`scope: internal/tui/keys/`
+`scope: internal/tui/keys/, internal/tui/app.go, internal/tui/chat/model.go`
 
 Deliverable: the first half of U-06. Storing a credential selects it for the conversation, and the
 list's cursor moves to the row that will actually answer.
 
 Acceptance: on a machine with no credentials, somebody adds one through the wizard and the credential
 they typed is the credential the next message runs on, with no further keystroke and no coaching. The
-same holds for a second credential added later. The screen says so rather than leaving it implied.
+same holds for a second credential added later. The screen says so only after the session engine
+accepts the switch. If an active turn refuses it, the screen says the credential was stored but not
+selected, shows the engine's reason, and does not retry on a later unrelated keystroke.
 
 `verify: claude [x]   codex [ ]`
 
@@ -5262,6 +5264,15 @@ falls back to the only one there is, so the wizard appeared to work, and the bug
 second key, on a different screen, as a conversation answering on the wrong provider. The rest of
 U-06 stays open: the live credential check in the wizard, rate entry for OpenAI-compatible endpoints
 in the interface, and startup warnings that currently go to a stderr the alt screen erases.
+
+Review correction, 2026-07-30: afterSecret said the new key “is now the credential” before its parent
+called Engine.UseCredential. That call can refuse while a turn is active, leaving the key safely
+stored but the conversation unchanged. Selection is now a pending request: the keys model says only
+what its store established, and the application explicitly acknowledges acceptance or reports the
+precise refusal. Refused and accepted requests are both disarmed after the acknowledgement so later
+keys cannot retry them. TestAStoredCredentialDoesNotClaimARefusedConversationSwitch holds the full
+wizard-to-engine path; TestARefusedSelectionStaysStoredButIsNotRetriedOrClaimed holds the child
+contract.
 
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`

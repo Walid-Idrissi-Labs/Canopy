@@ -140,7 +140,10 @@ be rediscovered by getting burned by it.
 
 - Choosing a credential applies to the conversation you are in, not to agents that already exist.
   Agents created afterwards inherit it; ones already running keep the credential they were started
-  with, and there is no way to move a running agent to a different one.
+  with, and there is no way to move a running agent to a different one. A conversation also refuses
+  a credential change while its answer is in flight, so usage and attribution cannot name a key
+  different from the one that actually paid for the reply. A key added during that interval remains
+  stored but is reported as not selected.
 
 - A credential can only talk to one model. Using the same key against two models means storing it
   twice under two names, which is what naming keys is for, but it does mean pasting the secret in
