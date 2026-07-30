@@ -5142,7 +5142,8 @@ a `+` for the line that came in, with the unchanged lines around it unmarked. A 
 read shows a bounded head, states the full size, and names `ctrl+o`. A build failure shows more than
 its opening line. A tool whose arguments this code does not understand gets no diff, because a diff
 drawn from arguments nothing can read is a confident lie about somebody's repository. `ctrl+o` twice
-returns to where it started. Every marker survives NO_COLOR.
+returns to where it started. Tool output and diff content render terminal controls as visible text
+rather than executing them. Every marker survives NO_COLOR.
 
 `verify: claude [x]   codex [ ]`
 
@@ -5154,6 +5155,13 @@ output belongs to the model and not to the screen, and keeps the half of it that
 bounding what is shown. Recorded as D-48. The running clock is the screen's own, first-seen rather
 than started, because a `ToolCall` carries no timestamp and `internal/core` is frozen; the label says
 "running for" rather than "took" for exactly that reason.
+
+Review correction, 2026-07-30: the new previews passed tool output and file content directly into
+the terminal renderer. That made OSC 52 clipboard writes, CSI screen changes, BEL, carriage return
+and similar controls executable terminal input. terminalSafe now escapes all C0 controls except
+newline and tab, plus DEL and C1, before styling. TestToolOutputCannotEmitTerminalControlSequences
+and TestADiffCannotEmitTerminalControlSequences hold both public render paths; the package-level
+tests hold the complete control ranges and ordinary Unicode.
 
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`

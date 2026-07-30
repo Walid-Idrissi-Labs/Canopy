@@ -80,6 +80,29 @@ func TestAFailedToolCallSaysSoAndWhy(t *testing.T) {
 	}
 }
 
+// A tool's stdout is data, not a terminal program. OSC 52 can write to the clipboard, CSI can
+// erase the screen, and BEL can make the terminal signal; all three must be visible text by the
+// time untrusted output reaches the renderer.
+func TestToolOutputCannotEmitTerminalControlSequences(t *testing.T) {
+	const hostile = "before\x1b]52;c;YXR0YWNrZXI=\x07after\x1b[2J"
+	engine := &fakeEngine{session: withCall(
+		"run_command", `{"command":"hostile-program"}`,
+		core.ToolResult{Content: hostile, Duration: time.Millisecond},
+	)}
+
+	body := model(engine).Body()
+	if strings.Contains(body, "\x1b]52;") || strings.Contains(body, "\x1b[2J") ||
+		strings.ContainsRune(body, '\a') {
+		t.Fatalf("tool output reached the terminal as an active control sequence: %q", body)
+	}
+	view := plain(body)
+	for _, visible := range []string{`\x1b]52;c;YXR0YWNrZXI=\x07`, `\x1b[2J`} {
+		if !strings.Contains(view, visible) {
+			t.Errorf("the escaped control %q is not visible to the user:\n%s", visible, view)
+		}
+	}
+}
+
 // A long error is still bounded, because "show the reason" cannot mean "hand the screen to whatever
 // came back". The bound is stated in the same line that applies it, so nobody has to wonder whether
 // they are looking at all of it.

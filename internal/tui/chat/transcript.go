@@ -192,7 +192,7 @@ func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kind
 		// Truncated to the width rather than wrapped. The argument line is a label, and a file path
 		// spilling onto three lines turns a glance into a paragraph.
 		spent := 2 + lipgloss.Width(label) + 1 + lipgloss.Width(call.Name) + 2
-		head += "  " + t.Muted.Render(truncate(subject, width-spent))
+		head += "  " + t.Muted.Render(truncate(terminalSafe(subject), width-spent))
 	}
 	lines := []string{head}
 
@@ -209,17 +209,18 @@ func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kind
 	}
 
 	timing := formatDuration(result.Duration)
+	content := terminalSafe(result.Content)
 	if result.IsError {
 		lines = append(lines, t.Danger.Render(indent+"✗ failed after "+timing))
 		// The reason, in the agent's own words, and as many of those words as fit. Showing only the
 		// first line was a quiet loss of exactly the thing a person needs: a compiler error, a stack
 		// trace and a refused permission all start with a line that does not say which one it is.
-		lines = append(lines, renderOutput(result.Content, width, errorLines, detail, t.Muted)...)
+		lines = append(lines, renderOutput(content, width, errorLines, detail, t.Muted)...)
 		return lines
 	}
 
 	summary := indent + "✓ " + timing
-	if extra := summariseResult(result.Content); extra != "" {
+	if extra := summariseResult(content); extra != "" {
 		summary += ", " + extra
 	}
 	lines = append(lines, t.Muted.Render(summary))
@@ -230,7 +231,7 @@ func renderToolCall(call core.ToolCall, result *core.ToolResult, width int, kind
 	if change := renderChange(call, width, detail); len(change) > 0 {
 		return append(lines, change...)
 	}
-	return append(lines, renderOutput(result.Content, width, outputLines, detail, t.Muted)...)
+	return append(lines, renderOutput(content, width, outputLines, detail, t.Muted)...)
 }
 
 // How much of what came back is worth putting on screen, before ctrl+o.
@@ -313,6 +314,7 @@ func renderChange(call core.ToolCall, width int, detail Detail) []string {
 // wrong was the other half, that the screen therefore shows none of it, which left a `run_command`
 // printing a test failure rendering as a tick and a duration.
 func renderOutput(content string, width int, limit int, detail Detail, style lipgloss.Style) []string {
+	content = terminalSafe(content)
 	content = strings.TrimRight(content, "\n")
 	if strings.TrimSpace(content) == "" {
 		return nil

@@ -1083,6 +1083,13 @@ the reason is why somebody is reading. The cap is always stated in the line that
 `ctrl+o` lifts all of them at once. Nothing is ever cut silently, which is the same rule the
 compaction marker follows and for the same reason.
 
+Output is displayed as terminal-safe text, never replayed as terminal instructions. Newline and
+tab keep their layout meaning; ESC, carriage return, backspace, BEL, DEL, and the rest of the C0/C1
+control ranges are rendered as visible escapes before Canopy adds its own styling. The stored tool
+result remains unchanged. This applies equally to output previews and file content drawn as a diff:
+an agent reading or writing a hostile file must not let that file clear the screen, rewrite earlier
+lines, change the title, or place text on the clipboard.
+
 Two limits are part of the decision, not implementation detail. A diff is drawn only from arguments
 this code understands, `edit_file` and `write_file`, because a diff inferred from an unknown tool's
 arguments would be a confident and specific claim about somebody's repository that nothing verified.

@@ -234,6 +234,7 @@ func renderDiff(lines []DiffLine, lang string, width, limit int) []string {
 			out = append(out, t.Muted.Render(indent+" ⋮"))
 			continue
 		}
+		textLine := terminalSafe(line.Text)
 
 		marker, style := " ", t.Muted
 		switch line.Op {
@@ -246,7 +247,7 @@ func renderDiff(lines []DiffLine, lang string, width, limit int) []string {
 
 		// Wrapped, not truncated. A diff that silently drops the end of a long line is a diff that
 		// can hide the change it exists to show.
-		for j, fragment := range wrapLine(expandTabs(line.Text), body) {
+		for j, fragment := range wrapLine(expandTabs(textLine), body) {
 			prefix := style.Render(marker) + " "
 			if j > 0 {
 				prefix = "  "

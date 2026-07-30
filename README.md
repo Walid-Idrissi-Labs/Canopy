@@ -74,6 +74,9 @@ real keys, and a misread number should be a question rather than an invoice.
 ## Watch them, and steer without stopping them
 
 Split panes show several agents working at once. Move between them by keyboard or by clicking.
+The transcript shows bounded tool output and file diffs. Control characters from commands or file
+content are printed as visible escapes before terminal styling, so viewed output cannot act as a
+second terminal program.
 
 Steering and interrupting are deliberately two different things:
 
