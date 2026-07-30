@@ -17,6 +17,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
 	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -59,12 +60,16 @@ type stubEngine struct {
 	// is asked for.
 	sessions map[string]core.Session
 	sent     []string
-	agents   []session.AgentStatus
-	added    []session.Agent
-	using    [2]string
-	created  int
-	asking   bool
-	waiting  []session.Waiting
+	// compacted and asked count the two calls that reach a provider without being a message, so a
+	// test can assert that a key started neither.
+	compacted int
+	asked     []string
+	agents    []session.AgentStatus
+	added     []session.Agent
+	using     [2]string
+	created   int
+	asking    bool
+	waiting   []session.Waiting
 	// useErr is what UseCredential answers with, for the tests about a switch the engine declines.
 	// It refuses mid answer, and what the application does with a refusal is its own decision.
 	useErr  error
@@ -90,7 +95,11 @@ func (e *stubEngine) Cancel(string) {}
 
 func (e *stubEngine) Events(uint64) <-chan core.Event { return make(chan core.Event) }
 
+// Counted, not just answered. "No unconfirmed keystroke starts a paid call" is a claim about
+// whether this was reached at all, and a stub that quietly returned an empty result would let every
+// key in the table look innocent.
 func (e *stubEngine) Compact(context.Context, string) (session.CompactionResult, error) {
+	e.compacted++
 	return session.CompactionResult{}, nil
 }
 
@@ -684,7 +693,10 @@ func (e *stubEngine) Steer(_, guidance string) error {
 	return nil
 }
 
-func (e *stubEngine) Aside(_ context.Context, _, _ string) (string, error) { return "", nil }
+func (e *stubEngine) Aside(_ context.Context, _, question string) (string, error) {
+	e.asked = append(e.asked, question)
+	return "", nil
+}
 
 func (e *stubEngine) Asides(string) []session.Aside { return nil }
 
@@ -914,6 +926,32 @@ func TestTheCornerNamesTheConversationsAgent(t *testing.T) {
 	}
 	if strings.Contains(moved, "main") {
 		t.Errorf("the corner names two agents at once:\n%s", moved)
+	}
+}
+
+// A visitor panel can summarize a request, but it cannot approve one. Its only action asks the
+// application to open the owning conversation, where the chat's full canonical prompt is the
+// surface that receives y or a.
+func TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Turns: []core.Turn{{
+				ID: "t1", State: core.TurnComplete,
+				Request: core.Message{Role: core.RoleUser, Text: "hello"},
+			}}},
+			"session-7": {ID: "session-7"},
+		},
+	}
+	app := tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+
+	switched, _ := app.Update(chat.SwitchMsg{SessionID: "session-7", AgentName: "worker-2"})
+	view := plain(switched.(tui.App).View())
+	if !strings.Contains(view, "worker-2") || strings.Contains(view, "main") {
+		t.Errorf("the surfaced question did not open its owning conversation:\n%s", view)
 	}
 }
 

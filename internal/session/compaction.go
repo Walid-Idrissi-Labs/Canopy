@@ -55,6 +55,34 @@ type CompactionResult struct {
 	TokensAfter  int
 }
 
+// CompactionPlan is what compacting a conversation now would do, worked out without sending
+// anything.
+//
+// It exists because the key that starts a compaction has to say what it is about to spend before it
+// spends it, and no unconfirmed keystroke may start a paid call. A screen working this out for
+// itself would be a second opinion about how much of a conversation survives, free to drift from
+// the one Compact actually acts on, and the sentence somebody agreed to would stop describing what
+// happened.
+type CompactionPlan struct {
+	// Turns is how many exchanges would be summarised and Kept how many stay verbatim.
+	Turns int
+	Kept  int
+
+	// Tokens is roughly what would be sent, by the same estimate the result reports afterwards.
+	// Rough is the honest word: see bytesPerToken.
+	Tokens int
+}
+
+// Possible reports whether there is anything to compact. False on a conversation short enough that
+// everything in it is inside the window kept verbatim.
+func (p CompactionPlan) Possible() bool { return p.Turns > 0 }
+
+// PlanCompaction is what compacting this conversation now would cover.
+func PlanCompaction(s core.Session) CompactionPlan {
+	older, kept := splitForCompaction(s.Turns)
+	return CompactionPlan{Turns: len(older), Kept: len(kept), Tokens: estimateTokensOf(older)}
+}
+
 // Compact summarises the older part of a session so the next turn has room.
 //
 // Returns the result rather than applying it, so the caller decides whether to announce it, store

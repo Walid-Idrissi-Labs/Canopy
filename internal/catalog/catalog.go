@@ -26,7 +26,7 @@ import (
 //
 // Update it whenever a model is added or removed below. Leaving it while changing the list is worse
 // than changing nothing, because it launders a guess as a checked fact.
-var AsOf = time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC)
+var AsOf = time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC)
 
 // MaxAge is how long a lineup is presented without comment.
 //
@@ -98,16 +98,18 @@ var anthropicModels = []Model{
 	{ID: "claude-haiku-4-5", Name: "Claude Haiku 4.5"},
 }
 
-// openAIModels are OpenAI's own lineup, and only OpenAI's.
+// openAIModels are the part of OpenAI's own lineup that Canopy's current transport can invoke.
 //
 // Short on purpose. This list is offered for exactly one host, because the OpenAI compatible family
 // is whatever endpoint a key was pointed at, and offering GPT ids to somebody's local gateway would
-// be inviting them to pick a model that endpoint has never heard of.
+// be inviting them to pick a model that endpoint has never heard of. It is also a transport
+// capability list, not a transcription of OpenAI's marketing catalog: this provider posts to
+// /chat/completions, so models documented as Responses-only do not belong here. Free text remains
+// the escape hatch for newer Chat Completions models before this dated list catches up; it is not a
+// promise that a model which needs a different API will work through this adapter.
 var openAIModels = []Model{
 	{ID: "gpt-5.2", Name: "GPT-5.2"},
-	{ID: "gpt-5.2-pro", Name: "GPT-5.2 Pro"},
 	{ID: "gpt-5.1", Name: "GPT-5.1"},
-	{ID: "gpt-5.1-codex-max", Name: "GPT-5.1 Codex Max"},
 }
 
 // openAIHost is the one OpenAI compatible endpoint whose lineup Canopy knows.

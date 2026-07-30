@@ -195,9 +195,11 @@ func TestTheConfirmationLapsesOnTheNextKey(t *testing.T) {
 	}
 }
 
-// Every navigation key is refused while a tool call is waiting, and this is one. Leaving the screen
-// with a question up hides the thing that is blocking.
-func TestANewConversationIsRefusedWhileAQuestionIsUp(t *testing.T) {
+// This test used to assert the opposite, and D-43 reverses it. Every navigation key was refused
+// while a tool call waited, on the argument that leaving hides the thing that is blocking. What it
+// actually hid was every other agent: no screen is ever locked, and a conversation you walk away
+// from keeps its question for when you come back.
+func TestANewConversationIsAllowedWhileAQuestionIsUp(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
@@ -205,8 +207,8 @@ func TestANewConversationIsRefusedWhileAQuestionIsUp(t *testing.T) {
 	app := launchWith(store, withOneKey(), engine)
 
 	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
-	if engine.created != 0 {
-		t.Error("a new conversation was started with a tool call waiting on an answer")
+	if engine.created != 1 {
+		t.Errorf("%d conversations were started, want the one that was asked for", engine.created)
 	}
 	if next.(tui.App).Screen() != "chat" {
 		t.Errorf("the screen moved to %q", next.(tui.App).Screen())

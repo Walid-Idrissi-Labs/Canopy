@@ -137,8 +137,11 @@ func TestABlockedAgentSaysWhatItIsWaitingFor(t *testing.T) {
 	}
 }
 
-// The header is the reason somebody opens this screen at all.
-func TestTheHeaderLeadsWithWhatNeedsYou(t *testing.T) {
+// The count of who needs a person was here, and is in the frame's header now, on every screen
+// rather than on this one. This asserts it left rather than being written twice: the header counts
+// every conversation waiting on somebody and this can only ever count agents, so two numbers a row
+// apart would eventually disagree about the same question.
+func TestTheAgentsContextCountsTheAgentsAndLeavesNeedsYouToTheHeader(t *testing.T) {
 	m := model(engine(
 		status("a", core.AgentIdle, ""),
 		status("b", core.AgentAwaitingPermission, ""),
@@ -146,11 +149,11 @@ func TestTheHeaderLeadsWithWhatNeedsYou(t *testing.T) {
 	))
 
 	context := plain(m.Context())
-	if !strings.Contains(context, "2 need you") {
-		t.Errorf("context = %q, want the count of agents needing a person first", context)
-	}
 	if !strings.Contains(context, "3 agents") {
-		t.Errorf("context = %q, want the total too", context)
+		t.Errorf("context = %q, want the total", context)
+	}
+	if strings.Contains(context, "need you") {
+		t.Errorf("context = %q, and the header says this from every screen now", context)
 	}
 }
 
