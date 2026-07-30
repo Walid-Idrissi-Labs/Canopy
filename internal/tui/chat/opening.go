@@ -22,10 +22,10 @@ import (
 // **There is no name drawn in the middle of it, and that is a reversal.** This screen used to carry
 // "canopy" in outlined block letters four times the size of the header's, with the pair arranged so
 // that the middle of the space between the name and the box landed on the middle of the screen. It
-// was asked for directly that it go. The header draws the name in the top right corner of every
-// screen and now draws it here too, which is where a brand belongs once somebody has already opened
-// the program: a logo in the middle of a screen is a splash, and this one is a screen somebody is
-// about to type into.
+// was asked for directly that it go. The header now owns identity here too: Canopy when no agent is
+// named and the agent's name when one is. That is where identity belongs once somebody has already
+// opened the program: a logo in the middle of a screen is a splash, and this one is a screen
+// somebody is about to type into.
 //
 // The commands along the bottom are the frame's own footer, which already lists them and already
 // drops the least important from the right when they do not fit. Drawing a second row of them here
@@ -231,8 +231,9 @@ func tint(line string, spans ...span) string {
 //
 // Dropped rather than clipped or shrunk, which is the rule the brand package already applies to
 // width, and the reason is the same here: half a tent looks like the program is broken, while a
-// screen carrying the drawn name and no mark looks deliberate. On a short terminal that is what
-// happens, and it is the right trade, because the alternative is a logo overlapping the message box.
+// screen carrying its identity in the header and no mark looks deliberate. On a short terminal that
+// is what happens, and it is the right trade, because the alternative is a logo overlapping the
+// message box.
 func (o opening) mark(rows int) []string {
 	if !brand.Fits(o.width) {
 		return nil

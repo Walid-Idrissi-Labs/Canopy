@@ -326,6 +326,12 @@ be rediscovered by getting burned by it.
 
 ## Interface
 
+- The opening conversation deliberately does not reserve space for a large central wordmark. Canopy
+  or the named agent stays in the header from the first frame, and the message box is centred on
+  itself. On a short terminal the header falls back from the three-line wordmark to written text;
+  when there is not enough room for the complete campfire scene, the scene is omitted rather than
+  clipped into the message box.
+
 - Canopy asks the terminal for mouse events, so the wheel scrolls the conversation. The cost is that
   dragging to select text no longer reaches the terminal, so copying out of Canopy means holding a
   modifier while you drag: option on macOS terminals, shift on most others. Without this the wheel

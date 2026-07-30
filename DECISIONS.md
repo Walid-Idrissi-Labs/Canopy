@@ -1161,6 +1161,24 @@ Supersedes the marker rule in `internal/tui/chat/markdown.go` and the five tests
 which are rewritten to assert the new marks rather than deleted. The vocabulary changed; the property
 did not.
 
+## D-51 The header owns identity; the opening conversation is not a splash. Decided 2026-07-30.
+
+The empty conversation no longer draws a second, oversized `canopy` wordmark above the message box.
+The opening screen is already a usable conversation, not a splash screen somebody must visually
+leave before typing. Its message box is centred on itself, notices and command results stack above
+without moving it, and the animated campfire remains in the bottom-right when the terminal has room.
+
+Identity stays in the header corner from the first frame onward. The header shows Canopy when there
+is no named agent and the agent's name when a conversation has one; at short heights it uses the
+written fallback instead of the three-line wordmark. Sending the first message must not cause a
+large centre logo to disappear and a different header identity to appear.
+
+This supersedes M-08's original requirement for a large drawn name centred above the opening message
+box and its note that the header placement remained open. It does not supersede M-07: the smaller
+drawn header wordmark, its measured width, the palette and the campfire remain part of the release
+interface. This is a presentation decision only and changes no session, provider, permission or
+workspace behaviour.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
