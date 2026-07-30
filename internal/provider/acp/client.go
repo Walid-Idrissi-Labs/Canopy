@@ -510,7 +510,13 @@ func (c *Client) spawn(ctx context.Context) (*process, error) {
 				// the ones that do not.
 				_ = stdin.Close()
 				child.Stop()
-				_ = cmd.Wait()
+				// child.Wait rather than cmd.Wait, and the difference is not stylistic. Stop leaves
+				// an escalation waiting to send SIGKILL to the whole group once the grace period is
+				// up, and only Child.Wait marks the leader reaped under the same lock that guards
+				// that signal. Reaping through cmd.Wait releases the pid while the escalation still
+				// believes the group is live, so the SIGKILL that follows lands on whichever group
+				// the kernel handed the number to next. See D-37.
+				_ = child.Wait()
 			})
 		},
 	}, nil
