@@ -36,6 +36,18 @@ var renderedTurns = struct {
 	sync.Mutex
 	lines map[string][]string
 	order []string
+
+	// generation counts theme changes.
+	//
+	// Emptying the map is not enough on its own. A render is produced outside the lock, on purpose,
+	// and a theme change can land in that window: the map is cleared and then the render that was
+	// already in flight, carrying the old palette, is stored into the map that was just emptied.
+	// The result is half a conversation in each palette, with no error and nothing to notice except
+	// that it looks wrong, which is the failure this cache is supposed to make impossible.
+	//
+	// So a render records which generation it was made in and is only stored if that is still the
+	// current one.
+	generation uint64
 }{lines: make(map[string][]string)}
 
 // cacheLimit is how many rendered turns to keep.
@@ -63,6 +75,7 @@ func cachedTurn(sessionID string, turn core.Turn, width int, spinner string, kin
 		renderedTurns.Unlock()
 		return lines
 	}
+	drawnIn := renderedTurns.generation
 	renderedTurns.Unlock()
 
 	// Rendered outside the lock. It is the expensive part and it depends on nothing the lock
@@ -71,7 +84,7 @@ func cachedTurn(sessionID string, turn core.Turn, width int, spinner string, kin
 	lines := renderTurn(turn, width, spinner, kinds, detail)
 
 	renderedTurns.Lock()
-	if _, ok := renderedTurns.lines[key]; !ok {
+	if _, ok := renderedTurns.lines[key]; !ok && renderedTurns.generation == drawnIn {
 		renderedTurns.lines[key] = lines
 		renderedTurns.order = append(renderedTurns.order, key)
 		for len(renderedTurns.order) > cacheLimit {
@@ -199,5 +212,6 @@ func forgetRenders() {
 	renderedTurns.Lock()
 	renderedTurns.lines = make(map[string][]string)
 	renderedTurns.order = nil
+	renderedTurns.generation++
 	renderedTurns.Unlock()
 }

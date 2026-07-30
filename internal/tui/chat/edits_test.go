@@ -195,3 +195,22 @@ func TestAnUnknownWritingToolIsNotGuessedAt(t *testing.T) {
 		t.Errorf("a diff was invented for a tool whose arguments are not known to mean that:\n%s", body)
 	}
 }
+
+// A turn that ended with calls still out never gets an answer to them. Saying one is running is the
+// interface claiming something it cannot know, and it used to say it directly under the line
+// admitting the reply was cut short.
+func TestACallLeftOverByAStoppedTurnDoesNotClaimToBeRunning(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{{
+		ID: "t1", State: core.TurnInterrupted, Request: core.Message{Text: "go"},
+		Text:      "partial",
+		ToolCalls: []core.ToolCall{{ID: "c1", Name: "run_command", Input: []byte(`{"command":"sleep 100"}`)}},
+	}}}}
+
+	body := plain(model(engine).Body())
+	if strings.Contains(body, "running") {
+		t.Errorf("an abandoned call still says it is running:\n%s", body)
+	}
+	if !strings.Contains(body, "never finished") {
+		t.Errorf("the abandoned call does not say what became of it:\n%s", body)
+	}
+}
