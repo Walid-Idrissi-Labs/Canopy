@@ -170,9 +170,10 @@ func runChat(resume string) error {
 	// on every run. Leaving this out is what made `canopy` reopen the oldest chat in the history
 	// database while the agent it had just started talked to nobody.
 	last, err := tui.RunAppConfigured(
-		monitor, keyStore, engine, filepath.Base(dir), keyName, tui.AppOptions{
+		monitor, signInAware{keyStore}, engine, filepath.Base(dir), keyName, tui.AppOptions{
 			Review: review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
+			SignIn: signInRoutes,
 		})
 	if err != nil {
 		return err

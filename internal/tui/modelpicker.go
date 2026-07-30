@@ -52,6 +52,11 @@ type modelSection struct {
 	// offered is how many of the rows are models rather than the row that takes typing, so a section
 	// with nothing to offer can still say so while still being typed into.
 	offered int
+
+	// vendorPicks marks a credential whose turns run inside the vendor's own agent, which chooses
+	// the model itself. Empty and "there is nothing to choose from here" are different states and
+	// the catalog has no way to tell them apart, so the credential says which it is.
+	vendorPicks bool
 }
 
 type modelPicker struct {
@@ -95,6 +100,14 @@ func newModelPicker(store keysui.Store, currentKey, currentModel string) modelPi
 			key:      meta.Ref.Name,
 			provider: meta.Ref.Provider,
 			host:     hostOfURL(meta.BaseURL),
+		}
+
+		// A delegated credential runs the vendor's own agent, which owns the model choice inside its
+		// own loop. Asked of the store rather than guessed from an empty list, because "the catalog
+		// has no lineup for this endpoint" and "there is no choice to make" look identical from here
+		// and only one of them is worth a person's time.
+		if identity, err := store.Identity(meta.Ref); err == nil {
+			section.vendorPicks = identity.Kind == keysui.KindDelegated
 		}
 
 		offered, err := keysui.Offered(store, meta)
@@ -241,10 +254,20 @@ func (p modelPicker) Body() string {
 		b.WriteString("\n")
 
 		if section.offered == 0 {
-			// The same words the credential screen uses for the same state, so the two screens agree
-			// about what an empty list means rather than each inventing its own phrasing. The row
-			// underneath still takes a model, which is what keeps an unknown endpoint usable.
-			b.WriteString(styleCaveat.Render("      none set, press ctrl+k"))
+			if section.vendorPicks {
+				// Not a caveat and not something to fix, so not in the caveat colour. The row
+				// underneath still takes a typed model, because D-46 rule 1 does not have an
+				// exception for a list Canopy is confident about and this is a claim about somebody
+				// else's agent.
+				b.WriteString(styleMuted.Render(
+					"      the vendor's own agent chooses the model on this credential"))
+			} else {
+				// The same words the credential screen uses for the same state, so the two screens
+				// agree about what an empty list means rather than each inventing its own phrasing.
+				// The row underneath still takes a model, which is what keeps an unknown endpoint
+				// usable.
+				b.WriteString(styleCaveat.Render("      none set, press ctrl+k"))
+			}
 			b.WriteString("\n")
 		}
 

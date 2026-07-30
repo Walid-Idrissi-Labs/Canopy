@@ -125,6 +125,14 @@ type AppOptions struct {
 	Commands chat.Commands
 	Costs    CostOutcomeSource
 
+	// SignIn is how a subscription is signed in to, and nil where this build offers no route.
+	//
+	// Resolved by the caller rather than here, for the reason Review is: which vendors can be
+	// reached is a fact about the machine and the build, and the interface is the last place that
+	// should be working it out. Nil is a legitimate state and means the credential screen offers
+	// exactly what it offered before phase S.
+	SignIn keysui.SignIn
+
 	// Agent names the agent whose conversation is being opened, for the corner of the header.
 	//
 	// Handed in rather than looked up, because the conversation Canopy opens on belongs to an agent
@@ -173,7 +181,7 @@ func NewAppConfigured(
 	store core.SnapshotStore, keyStore keysui.Store, engine Engine, dir, keyName string,
 	options AppOptions,
 ) App {
-	credentials := keysui.New(keyStore)
+	credentials := keysui.NewWithSignIn(keyStore, options.SignIn)
 	model := credentials.ModelFor(keyName)
 
 	// Nothing named means a fresh conversation, made here because there is nothing to show
@@ -384,30 +392,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenKeys:
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
-
-			// A credential chosen on that screen is a fact about the conversation, so it is applied
-			// here where the conversation lives. The screen states a preference and owns nothing.
-			if name, picked := a.keys.Chosen(); picked {
-				if name == a.usingKey {
-					// Already true, but still acknowledged: the child deliberately does not claim
-					// a switch until its parent confirms the session state.
-					a.keys.SelectionApplied(name)
-				} else {
-					model := a.keys.ModelFor(name)
-					// Only once the engine has taken it. It refuses mid answer, and moving the
-					// application's own note of the credential in use on a refusal would point the
-					// next new conversation at a key this one never managed to switch to.
-					if a.chat.UseCredential(name, model) {
-						a.usingKey = name
-						a.keys.SelectionApplied(name)
-						// Agents created after the switch inherit it too, or the next one would
-						// quietly go on using the credential somebody had just moved away from.
-						a.agents.SetDefaults(name, model, a.dir)
-					} else {
-						a.keys.SelectionRefused(name, a.chat.Error())
-					}
-				}
-			}
+			a.applyCredentialChoice()
 			return a, cmd
 		default:
 			updated, cmd := a.dashboard.Update(key)
@@ -442,7 +427,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.agents, agentsCmd = a.agents.Update(msg)
 	cmds = append(cmds, agentsCmd)
 
-	a.keys, _ = a.keys.Update(msg)
+	// The credential screen's command is kept rather than dropped, which it was until a sign-in
+	// arrived to need it. Every other message this screen answers is answered in one step, so
+	// discarding the command was invisible; a sign-in is three steps with a vendor between them, and
+	// the second command being thrown away left the screen waiting on an answer nobody had asked for.
+	var keysCmd tea.Cmd
+	a.keys, keysCmd = a.keys.Update(msg)
+	cmds = append(cmds, keysCmd)
+
+	// And a credential chosen without a keystroke, which is what a finished sign-in is. The wizard
+	// ends on a message from the vendor rather than on a key, so a choice applied only on the key
+	// path would sit unapplied until the person pressed something unrelated, and "the conversation's
+	// next message runs on it with no further keystroke" would be false.
+	a.applyCredentialChoice()
 
 	// Who needs a person is worked out here rather than on the key path, because a keystroke of
 	// yours cannot make another agent ask a question. Everything that starts one arrives as an
@@ -450,6 +447,42 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	a.noticeAttention()
 
 	return a, tea.Batch(cmds...)
+}
+
+// applyCredentialChoice moves the conversation onto the credential the screen picked, if it picked
+// one.
+//
+// A credential chosen on that screen is a fact about the conversation, so it is applied here where
+// the conversation lives. The screen states a preference and owns nothing.
+//
+// One function rather than one copy per path it can be reached from. The refusal protocol below is
+// three lines that have to stay in step with each other, and the second copy of it is where they
+// stop being in step.
+func (a *App) applyCredentialChoice() {
+	name, picked := a.keys.Chosen()
+	if !picked {
+		return
+	}
+	if name == a.usingKey {
+		// Already true, but still acknowledged: the child deliberately does not claim a switch
+		// until its parent confirms the session state.
+		a.keys.SelectionApplied(name)
+		return
+	}
+
+	model := a.keys.ModelFor(name)
+	// Only once the engine has taken it. It refuses mid answer, and moving the application's own
+	// note of the credential in use on a refusal would point the next new conversation at a key this
+	// one never managed to switch to.
+	if a.chat.UseCredential(name, model) {
+		a.usingKey = name
+		a.keys.SelectionApplied(name)
+		// Agents created after the switch inherit it too, or the next one would quietly go on using
+		// the credential somebody had just moved away from.
+		a.agents.SetDefaults(name, model, a.dir)
+		return
+	}
+	a.keys.SelectionRefused(name, a.chat.Error())
 }
 
 // attention is every conversation waiting on a person anywhere in the project, named once each.

@@ -7,7 +7,6 @@ package keys
 
 import (
 	"fmt"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 // Store is the part of the credential store this screen needs.
@@ -35,6 +35,14 @@ type Store interface {
 	// spent effort recording wants a confirmation of its own before it is worth having.
 	AddModel(ref core.KeyRef, id, name string) error
 
+	// Identity is who a credential is signed in as, and the zero value for one somebody pasted.
+	//
+	// The narrowness survives this: an account and an expiry are facts the vendor publishes about a
+	// person, not secrets, and the point of S-01 keeping them out of the keychain half is that a
+	// list can draw them without unlocking anything. There is still no method here that returns a
+	// secret and there is still nowhere for one to appear.
+	Identity(ref core.KeyRef) (Identity, error)
+
 	BackendName() string
 	UsingInsecureBackend() bool
 }
@@ -49,6 +57,13 @@ const (
 	modeModelPick
 	modeModel
 	modeSecret
+
+	// modeSignIn is the branch that reaches a stored credential without a secret prompt. Every other
+	// path through this machine ends at modeSecret, because before phase S every credential was a
+	// string somebody held. There is nothing to hold on a subscription, so this step shows what the
+	// vendor needs shown and waits.
+	modeSignIn
+
 	modeConfirmRemove
 )
 
@@ -56,15 +71,42 @@ const (
 type Model struct {
 	store Store
 
+	// signIn is how a subscription is signed in to, and nil in a build with no routes. Nil is a
+	// legitimate state rather than a missing dependency: the provider list is then exactly what it
+	// was before phase S, which is the honest thing to show when there is no way in to offer.
+	signIn SignIn
+
 	mode   mode
 	keys   []core.KeyMetadata
 	cursor int
+
+	// identities is who each credential is signed in as, read once per reload rather than per frame.
+	// Keyed by credential name, which is what the list has in hand while it draws.
+	identities map[string]Identity
 
 	// draft holds the credential being added.
 	draftName     string
 	draftProvider core.Provider
 	draftBaseURL  string
 	draftModel    string
+
+	// draftRoute is the way in being signed in through, held so the step can say which vendor it is
+	// waiting on and so a caveat is on screen before anything is stored.
+	draftRoute Route
+
+	// attempt is the sign-in in flight, and attemptID is which one it is. The number is what makes a
+	// cancelled sign-in stay cancelled: an answer that arrives after somebody pressed escape carries
+	// the old number and is dropped rather than being taken for the next attempt's.
+	attempt   Attempt
+	attemptID int
+
+	// signingIn is whether the vendor has been asked and has not answered, which is the difference
+	// between "nothing to show yet" and "nothing to show at all".
+	signingIn bool
+
+	// prompt is what the vendor needs the person to do: a code, a page, or an explanation of what is
+	// being waited on.
+	prompt Prompt
 
 	// draftSecret is the one place in this design where a credential exists as a plain string, and
 	// it is unavoidable: the user is typing it. It is cleared the moment it reaches the store, and
@@ -97,9 +139,18 @@ type Model struct {
 	width int
 }
 
-// New builds the credential screen.
-func New(store Store) Model {
-	m := Model{store: store, draftProvider: core.ProviderAnthropic, width: 80}
+// New builds the credential screen with no way to sign in, which is every build before phase S and
+// every test that is about something else.
+func New(store Store) Model { return NewWithSignIn(store, nil) }
+
+// NewWithSignIn builds the credential screen with the routes a subscription can be signed in
+// through.
+//
+// A second constructor rather than a field set afterwards, because a screen whose sign-in arrives
+// later has a window in which its provider list is wrong, and the list is drawn from the first
+// frame.
+func NewWithSignIn(store Store, signIn SignIn) Model {
+	m := Model{store: store, signIn: signIn, draftProvider: core.ProviderAnthropic, width: 80}
 	m.reload()
 	return m
 }
@@ -115,7 +166,23 @@ func (m *Model) reload() {
 	if m.cursor >= len(m.keys) {
 		m.cursor = max(0, len(m.keys)-1)
 	}
+
+	// Read here rather than while drawing. A row is drawn on every keystroke and a lookup that goes
+	// to disk once per row per frame is a screen that stutters for a reason nobody can see.
+	m.identities = make(map[string]Identity, len(m.keys))
+	for _, key := range m.keys {
+		identity, err := m.store.Identity(key.Ref)
+		if err != nil {
+			// Not fatal to the list. A credential whose sign-in could not be read is still a
+			// credential, and hiding the whole list over one row is worse than a row with less on it.
+			continue
+		}
+		m.identities[key.Ref.Name] = identity
+	}
 }
+
+// identityOf is what the list knows about one credential's sign-in.
+func (m Model) identityOf(name string) Identity { return m.identities[name] }
 
 // IsEmpty reports whether no credentials are stored, which is what makes this the first thing a
 // new user sees.
@@ -198,6 +265,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyMsg:
 		cmd := m.handleKey(msg)
 		return m, cmd
+
+	// A sign-in waits on a browser, a device code or another process, which is minutes rather than
+	// milliseconds. Bubble Tea runs one goroutine, so waiting for any of that inside a handler would
+	// freeze every screen in the program including the one that would have said why. It arrives as a
+	// message instead, and the screen stays answerable to escape the whole time.
+	case signInStartedMsg:
+		return m, m.signInStarted(msg)
+	case signInDoneMsg:
+		return m, m.signInDone(msg)
 	}
 	return m, nil
 }
@@ -215,7 +291,9 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	case modeSecret:
 		m.handleTextKey(msg, &m.draftSecret, (*Model).afterSecret)
 	case modeProvider:
-		m.handleProviderKey(msg)
+		return m.handleProviderKey(msg)
+	case modeSignIn:
+		return m.handleSignInKey(msg)
 	case modeModelPick:
 		m.handleModelPickKey(msg)
 	case modeConfirmRemove:
@@ -230,6 +308,7 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 		m.mode = modeName
 		m.draftName, m.draftBaseURL, m.draftModel, m.draftSecret = "", "", "", ""
 		m.draftProvider = core.ProviderAnthropic
+		m.draftRoute = Route{}
 		m.providerCursor = 0
 		m.status, m.err = "", nil
 	case "d", "x", "delete":
@@ -513,11 +592,42 @@ func (m *Model) afterSecret() {
 	}
 }
 
-func (m *Model) handleProviderKey(msg tea.KeyMsg) {
-	providers := core.AllProviders()
+// providerRow is one line of the provider step.
+//
+// Two kinds of row on one list, because from where the person is standing they are answering one
+// question: where does this credential come from. Splitting them across two screens would mean
+// somebody with a Copilot seat and no API key having to guess that the answer to "which provider"
+// is a screen they have not seen yet.
+type providerRow struct {
+	provider core.Provider
+	route    Route
+	signIn   bool
+}
+
+// providerRows is the provider step's list: what can be pasted, then what can be signed in to.
+//
+// Pasted first, and not out of seniority. The routes are the rows that change what the wizard does
+// next, so putting them last keeps the two familiar rows exactly where they have always been for
+// everybody whose credential is still a string.
+func (m Model) providerRows() []providerRow {
+	rows := make([]providerRow, 0, len(core.AllProviders()))
+	for _, provider := range core.AllProviders() {
+		rows = append(rows, providerRow{provider: provider})
+	}
+	if m.signIn == nil {
+		return rows
+	}
+	for _, route := range m.signIn.Routes() {
+		rows = append(rows, providerRow{route: route, signIn: true})
+	}
+	return rows
+}
+
+func (m *Model) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
+	rows := m.providerRows()
 	switch msg.String() {
 	case "j", "down":
-		if m.providerCursor < len(providers)-1 {
+		if m.providerCursor < len(rows)-1 {
 			m.providerCursor++
 		}
 	case "k", "up":
@@ -527,7 +637,18 @@ func (m *Model) handleProviderKey(msg tea.KeyMsg) {
 	case "esc":
 		m.cancelDraft()
 	case "enter":
-		m.draftProvider = providers[m.providerCursor]
+		if m.providerCursor >= len(rows) {
+			return nil
+		}
+		row := rows[m.providerCursor]
+		if row.signIn {
+			// The branch this task exists for. Nothing between here and a stored credential asks for
+			// a value, because there is no value: the vendor holds it and the person proves who they
+			// are to the vendor.
+			return m.startSignIn(row.route)
+		}
+
+		m.draftProvider = row.provider
 		if m.draftProvider.RequiresBaseURL() {
 			m.mode = modeBaseURL
 		} else {
@@ -537,6 +658,7 @@ func (m *Model) handleProviderKey(msg tea.KeyMsg) {
 			m.mode = modeSecret
 		}
 	}
+	return nil
 }
 
 func (m *Model) handleConfirmKey(msg tea.KeyMsg) {
@@ -565,6 +687,18 @@ func (m *Model) cancelDraft() {
 	// on a provider that asks for a model gets its model prompt treated as an edit of the last key
 	// somebody looked at, storing nothing.
 	m.editing = false
+
+	// And the sign-in half of a draft, which is the same rule applied to the step that has no field
+	// in it. A route and a device code left behind would put the last vendor's instructions on the
+	// next sign-in's screen.
+	//
+	// The attempt itself is not touched here. Only modeSignIn can be holding one and only its key
+	// handler can leave that mode, and it calls abandonAttempt first, because stopping a live
+	// attempt needs a command back to the runtime and this returns nothing.
+	m.draftRoute = Route{}
+	m.prompt = Prompt{}
+	m.signingIn = false
+
 	m.mode = modeList
 	m.err = nil
 	m.status = "Cancelled."

@@ -26,6 +26,9 @@ import (
 type fakeKeyStore struct {
 	keys  []core.KeyMetadata
 	added map[string][]catalog.Model
+
+	// identities is who each credential is signed in as, empty for the ones nobody signed in to.
+	identities map[string]keysui.Identity
 }
 
 func (f *fakeKeyStore) List() ([]core.KeyMetadata, error) { return f.keys, nil }
@@ -50,6 +53,10 @@ func (f *fakeKeyStore) Remove(ref core.KeyRef) error {
 
 func (f *fakeKeyStore) BackendName() string        { return "test" }
 func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
+
+func (f *fakeKeyStore) Identity(ref core.KeyRef) (keysui.Identity, error) {
+	return f.identities[ref.Name], nil
+}
 
 // stubEngine stands in for the session engine. The app level tests are about routing and chrome,
 // not about conversations, so it answers with an empty session and records nothing.

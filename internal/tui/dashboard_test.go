@@ -3,7 +3,9 @@ package tui_test
 import (
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -62,6 +64,34 @@ func TestRendersTheFourWorkspaces(t *testing.T) {
 	}
 }
 
+// allowedOutside is what each interface package may import from beyond internal/core, and why.
+//
+// One entry per package rather than one list shared by all of them, so an import that is defensible
+// on one screen does not become defensible on every screen by having been written down once. A
+// package with no entry may import internal/core and other internal/tui packages and nothing else,
+// which is the rule as it was originally written.
+//
+// The entries below are a description of what is true today and not an endorsement of it. Two of
+// them are genuine engine dependencies that predate this table, and writing them down is what makes
+// them visible enough to be argued with; the previous arrangement made them invisible, because the
+// check walked one directory and the packages holding them were not in it.
+var allowedOutside = map[string]map[string]string{
+	"chat": {
+		"internal/session": "the conversation is a session.Prompt and a session.CompactionResult, " +
+			"which reach this screen as values rather than as an engine it calls",
+		"internal/permission": "a permission request is what the question panel draws",
+		"internal/config":     "the slash commands a project declares",
+	},
+	"agents": {
+		"internal/session": "an agent and its status are session types, drawn rather than driven",
+	},
+	"keys": {
+		"internal/catalog": "the model lineups, which are a dated table of strings with no engine " +
+			"behind them: no I/O, no network and no credential, so swapping the fake for the real " +
+			"engine does not touch it",
+	},
+}
+
 // The real architectural constraint: the interface depends on the contract and on other interface
 // packages, and on no engine package. That is what lets the fake be swapped for the real engine
 // without any of this changing, and a test is the only thing keeping it true, because the first
@@ -70,48 +100,85 @@ func TestRendersTheFourWorkspaces(t *testing.T) {
 // Sibling UI packages are allowed. Screens have to be composed somewhere, and app.go importing
 // internal/tui/keys says nothing about where state comes from. Importing internal/keys,
 // internal/git or internal/provider would, which is what this actually forbids.
-func TestDashboardOnlyDependsOnCore(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading the package directory: %v", err)
-	}
-
+//
+// It walked one directory and did not recurse, which meant the rule applied to the package that
+// already obeyed it and to none of the packages where a screen is actually written. internal/tui/keys
+// was not held to it and had been importing internal/catalog for two phases with nothing to notice.
+// That mattered the moment a sign-in arrived: a screen that reached internal/keys or internal/provider
+// to sign somebody in is exactly what this forbids, and the check would have said nothing.
+//
+// Replaces TestDashboardOnlyDependsOnCore, which is the same check over one directory. Renamed
+// rather than kept, because "dashboard" was the name of the one package it happened to cover.
+func TestEveryInterfacePackageDependsOnTheContractAndNotOnTheEngine(t *testing.T) {
 	const own = "github.com/Walid-Idrissi-Labs/Canopy/"
 	const uiPrefix = own + "internal/tui/"
-	allowed := map[string]bool{own + "internal/core": true}
 
 	checked := 0
-	for _, entry := range entries {
+	err := filepath.WalkDir(".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
+		if entry.IsDir() {
+			// testdata is a convention the toolchain already ignores, and a fixture is not the
+			// interface.
+			if name == "testdata" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
 		}
 		checked++
 
-		file, err := parser.ParseFile(token.NewFileSet(), name, nil, parser.ImportsOnly)
-		if err != nil {
-			t.Fatalf("parsing %s: %v", name, err)
+		// The package's own name inside internal/tui, which is what the table above is keyed on.
+		// The root is the dashboard and has no entry, so it is held to core alone.
+		pkg := filepath.ToSlash(filepath.Dir(path))
+		if pkg == "." {
+			pkg = ""
+		}
+
+		file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, parser.ImportsOnly)
+		if parseErr != nil {
+			t.Fatalf("parsing %s: %v", path, parseErr)
 		}
 		for _, imp := range file.Imports {
-			value, err := strconv.Unquote(imp.Path.Value)
-			if err != nil {
-				t.Fatalf("%s: bad import %s", name, imp.Path.Value)
+			value, unquoteErr := strconv.Unquote(imp.Path.Value)
+			if unquoteErr != nil {
+				t.Fatalf("%s: bad import %s", path, imp.Path.Value)
 			}
 			if !strings.HasPrefix(value, own) {
 				continue // stdlib and third party are fine
 			}
-			if allowed[value] || strings.HasPrefix(value, uiPrefix) {
+			if value == own+"internal/core" || strings.HasPrefix(value, uiPrefix) {
 				continue
 			}
-			t.Errorf("%s imports %q. The interface may depend on internal/core and on other "+
-				"internal/tui packages, and on nothing else, otherwise it stops being swappable "+
-				"between the fake and the real engine.", name, value)
+			if _, ok := allowedOutside[pkg][strings.TrimPrefix(value, own)]; ok {
+				continue
+			}
+			t.Errorf("%s imports %q. The interface may depend on internal/core, on other "+
+				"internal/tui packages, and on what allowedOutside records for its own package, and "+
+				"on nothing else. Reaching internal/keys or internal/provider from a screen is what "+
+				"this exists to stop: it is how the interface stops being swappable between the fake "+
+				"and the real engine, and it is how a credential ends up one mistake away from a "+
+				"rendered frame.", path, value)
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the interface: %v", err)
 	}
 
-	// A check that silently inspects nothing would pass forever.
-	if checked == 0 {
-		t.Fatal("no non-test source files were checked")
+	// A check that silently inspects nothing would pass forever. Counted across the whole tree now,
+	// so a walk that stopped recursing would be caught rather than reported as a clean run.
+	if checked < 20 {
+		t.Fatalf("only %d source files were checked, so this is not covering the interface", checked)
+	}
+	for _, pkg := range []string{"keys", "chat"} {
+		if _, err := os.Stat(pkg); err != nil {
+			t.Errorf("internal/tui/%s was not walked: %v", pkg, err)
+		}
 	}
 }
 
