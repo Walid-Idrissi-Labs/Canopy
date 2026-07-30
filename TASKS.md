@@ -5228,7 +5228,8 @@ Acceptance: two hundred turns of ordinary replies render in under a millisecond 
 measurement before this task was a hundred and five. A streaming turn's text keeps growing on screen.
 Two sessions whose turns are both numbered from one are never shown each other's answers. The same
 turn at a second width, or with `ctrl+o` open, is drawn again rather than reused. Nothing rendered in
-one palette survives a switch to the other.
+one palette survives a switch to the other. If two surfaces resolve a call to different tool kinds,
+each renders the label and colour from its own registry rather than reusing the other's cached line.
 
 `verify: claude [x]   codex [ ]`
 
@@ -5239,6 +5240,12 @@ Both figures grow with the conversation, which means the product got worse the l
 it. The content is hashed rather than fingerprinted by length: the first version compared the lengths
 of a turn's parts and collided inside this package's own test suite within one run, where a session
 called s1 holding a turn called turn-1 is what nearly every test builds.
+
+Review correction, 2026-07-30: the cache key omitted the result of KindOf even though kindLabel uses
+it to choose visible text and colour. A turn first rendered with a nil, read, or stale registry could
+therefore retain that classification when another surface knew the call was execute, network, write,
+or Git. turnKey now hashes the resolved known/unknown kind for every call.
+TestAChangedToolClassificationRendersAgain holds the cross-surface regression.
 
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`

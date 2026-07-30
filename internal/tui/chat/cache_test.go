@@ -45,6 +45,36 @@ func TestAStreamingTurnIsNeverCached(t *testing.T) {
 	}
 }
 
+// Tool kind is supplied by the surface rendering the transcript rather than stored on the turn.
+// Reusing a cache entry across two registries used to leave an execute call labelled as a read (or
+// unlabelled) until the whole cache was cleared.
+func TestAChangedToolClassificationRendersAgain(t *testing.T) {
+	session := core.Session{ID: "classification-session", Turns: []core.Turn{{
+		ID:      "classification-turn",
+		State:   core.TurnComplete,
+		Request: core.Message{Text: "run it"},
+		Text:    "done",
+		ToolCalls: []core.ToolCall{{
+			ID: "call-1", Name: "dynamic_tool", Input: []byte(`{}`),
+		}},
+		ToolResults: []core.ToolResult{{
+			CallID: "call-1", Content: "ok", Duration: time.Millisecond,
+		}},
+	}}}
+
+	read := func(string) (core.ToolKind, bool) { return core.ToolRead, true }
+	execute := func(string) (core.ToolKind, bool) { return core.ToolExecute, true }
+
+	first := plain(strings.Join(chat.Transcript(session, 80, ".", read), "\n"))
+	second := plain(strings.Join(chat.Transcript(session, 80, ".", execute), "\n"))
+	if !strings.Contains(first, "read dynamic_tool") {
+		t.Fatalf("the first registry was not reflected in the render:\n%s", first)
+	}
+	if !strings.Contains(second, "run  dynamic_tool") || strings.Contains(second, "read dynamic_tool") {
+		t.Errorf("the second registry was served the first classification:\n%s", second)
+	}
+}
+
 // The same turn at two widths is two different sets of lines.
 func TestTheSameTurnAtADifferentWidthIsRenderedAgain(t *testing.T) {
 	session := oneTurn("s1", "turn-1", strings.Repeat("word ", 40), core.TurnComplete)
