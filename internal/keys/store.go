@@ -348,6 +348,9 @@ func (s *Store) Remove(ref core.KeyRef) error {
 // correcting a typo in a model id should not have to go and find their API key again, and a flow
 // that asked them to would get the key pasted from somewhere less careful than where it lives now.
 func (s *Store) SetModel(ref core.KeyRef, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	records, err := s.load()
 	if err != nil {
 		return err

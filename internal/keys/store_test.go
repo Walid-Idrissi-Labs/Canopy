@@ -2,9 +2,11 @@ package keys
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -558,6 +560,52 @@ func TestRotatingAKeyKeepsTheModelsItsOwnerAdded(t *testing.T) {
 	}
 	if len(models) != 1 || models[0].Name != "The New One" {
 		t.Errorf("models after rotation = %+v", models)
+	}
+}
+
+// Every mutating method here reads the whole metadata file, changes one thing in it and writes all
+// of it back, which is only safe because they take the store's lock first. SetModel was the one that
+// did not, so a model selection landing at the same moment as any other write put back a copy of the
+// file from before that write and the other change was gone.
+func TestChangingTheModelDoesNotDiscardAConcurrentChange(t *testing.T) {
+	store, _ := newTestStore(t)
+	ref := core.KeyRef{Name: "claude"}
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	const rounds = 32
+	var wg sync.WaitGroup
+	failures := make(chan error, rounds*2)
+	for i := 0; i < rounds; i++ {
+		id := fmt.Sprintf("model-%02d", i)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := store.AddModel(ref, id, ""); err != nil {
+				failures <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := store.SetModel(ref, id); err != nil {
+				failures <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	for err := range failures {
+		t.Fatalf("a concurrent write failed: %v", err)
+	}
+
+	models, err := store.Models(ref)
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	if len(models) != rounds {
+		t.Errorf("%d of %d added models survived, so selecting a model discarded work done "+
+			"alongside it", len(models), rounds)
 	}
 }
 
