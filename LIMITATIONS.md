@@ -351,9 +351,11 @@ be rediscovered by getting burned by it.
   test that applies seven sizes in sequence to one model, across the threshold where the header
   changes shape, which is what every earlier size test failed to do: they rebuilt the application per
   size, so nothing was ever carried across a change. Readability at 80 columns and every state being
-  distinguishable without colour are covered per screen. What is still not covered is quitting with
-  several agents live, and rapid updates not moving the selection under load. That is the rest of
-  A9-02.
+  distinguishable without colour are covered per screen. Selection is held by identity rather than by
+  row index, and there are tests for a row moving under it and for its subject disappearing entirely,
+  so the mechanism that keeps a selection honest is proven. What is still not covered is quitting
+  with several agents live, and a burst of updates arriving faster than the screen redraws. That is
+  the rest of A9-02.
 
 - A model that streams a very long answer is still rendered in full, and that is now the only
   unbounded rendering path left: finished turns are rendered once and cached, so the cost of a long
