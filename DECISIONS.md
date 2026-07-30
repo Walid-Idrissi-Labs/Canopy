@@ -1132,6 +1132,11 @@ and links were not recognised at all. Underscores are only a marker at a word bo
 snake_case identifiers are commoner in a coding agent's output than underscore emphasis and
 italicising the middle of one is the worse error.
 
+A table never widens the frame to preserve a preferred column floor. Gaps shrink from two cells to
+one, column floors shrink from three cells to one, and when the terminal is too narrow to give each
+column even one cell and each boundary one separator, the table becomes labelled rows. That fallback
+is taller but lossless: every header and value remains, and no rendered line exceeds the width.
+
 Supersedes the marker rule in `internal/tui/chat/markdown.go` and the five tests that asserted it,
 which are rewritten to assert the new marks rather than deleted. The vocabulary changed; the property
 did not.
