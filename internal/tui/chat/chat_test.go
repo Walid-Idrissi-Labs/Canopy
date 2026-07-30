@@ -881,11 +881,11 @@ func TestThePromptShowsTheCommandInFull(t *testing.T) {
 	}
 }
 
-// The reflex key on a prompt somebody has not read is enter, and enter meaning no is the difference
-// between a misread prompt costing a retry and costing a repository.
+// Enter now answers yes, once, beside y; D-50 renamed the accept key to the one under a person's
+// finger. Every other non-answer key still refuses, which is the half of the reflex default that
+// survives: escape and anything typed at an unread prompt still cost a retry, never a repository.
 func TestAnythingOtherThanYesRefuses(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyEnter},
 		{Type: tea.KeyEsc},
 		{Type: tea.KeyRunes, Runes: []rune{'n'}},
 		{Type: tea.KeyRunes, Runes: []rune{'q'}},

@@ -88,6 +88,12 @@ type Engine interface {
 	// git and does not block the event loop. An isolated agent started from here would have to go
 	// through a command rather than straight from a keypress.
 	AddAgent(ctx context.Context, agent session.Agent) (session.Agent, error)
+
+	// Answer replies to the question a session is waiting on, and reports whether there was one.
+	// Here so a waiting pane can be answered from the grid (D-50). This view only ever answers
+	// once: remember stays false from here, because a pane summarises the request and a standing
+	// approval must come from the full canonical prompt, which is D-35's line unmoved.
+	Answer(sessionID string, approved, remember bool) bool
 }
 
 // SwitchMsg asks the application to open an agent's conversation.
@@ -200,7 +206,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch pressed := key.String(); pressed {
 	case "enter":
+		// With the selected agent waiting on a person, enter answers rather than opens: yes, once,
+		// which is what somebody hovering a pane that names its request almost always means (D-50).
+		// Opening is still one digit away, and enter goes back to opening the moment nothing waits.
+		if m.answerSelected(true) {
+			return m, m.ensureFlame()
+		}
 		return m, m.open()
+	case "backspace":
+		// The other half of the same popup: backspace declines the selected agent's question. A
+		// refusal costs the agent a retry, which is the safe direction to be wrong in.
+		if m.answerSelected(false) {
+			return m, m.ensureFlame()
+		}
 	case "n":
 		m.naming = true
 		m.draft = ""
@@ -486,6 +504,28 @@ func (m Model) Selected() (session.AgentStatus, bool) {
 		return session.AgentStatus{}, false
 	}
 	return m.statuses[m.cursor], true
+}
+
+// SelectedAwaiting reports whether the agent under the cursor is waiting on a person, which is
+// when enter and backspace answer instead of navigating. The frame asks so its footer can say so.
+func (m Model) SelectedAwaiting() bool {
+	status, ok := m.Selected()
+	return ok && status.State == core.AgentAwaitingPermission
+}
+
+// answerSelected answers the selected agent's pending question, and reports whether there was one
+// to answer. Always once and never remembered, for the reason on the Engine interface: what a pane
+// shows may be a summary, and only the full canonical prompt may widen an approval.
+func (m *Model) answerSelected(approved bool) bool {
+	if !m.SelectedAwaiting() || m.engine == nil {
+		return false
+	}
+	status, _ := m.Selected()
+	m.engine.Answer(status.Agent.SessionID, approved, false)
+	// Read back at once rather than waiting for the engine's event, so the popup and the state
+	// badge cannot spend a frame claiming a question that has just been answered.
+	m.refresh()
+	return true
 }
 
 // Count is how many agents there are.

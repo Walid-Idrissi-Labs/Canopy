@@ -113,11 +113,12 @@ func TestPagingUnderAQuestionScrollsAndComesBack(t *testing.T) {
 	}
 }
 
-// The safety property U-01 keeps rather than removes. The reflex key on an unread prompt is enter,
-// and enter meaning no is the difference between a misread prompt costing a retry and costing a
-// repository.
+// The refusal default U-01 wrote and D-50 narrows. Enter used to refuse with everything else,
+// which was the reflex-safety reading; it now approves once, at the owner's direction, and what
+// this test holds instead is the boundary around that change: every other non-navigation key still
+// means no, and the key that remembers is still its own deliberate letter.
 func TestEveryKeyThatIsNotNavigationStillRefuses(t *testing.T) {
-	for _, key := range []string{"enter", "esc", "tab", "n", "q", "space", "ctrl+g", "ctrl+r", "?"} {
+	for _, key := range []string{"esc", "tab", "n", "q", "space", "ctrl+g", "ctrl+r", "?"} {
 		engine, m := asking()
 
 		_, _ = m.Update(keyMsg(key))
@@ -131,18 +132,19 @@ func TestEveryKeyThatIsNotNavigationStillRefuses(t *testing.T) {
 		}
 	}
 
-	// And the two that decide still decide.
+	// And the three that decide still decide, none of them remembering except the one that says so.
 	for _, run := range []struct {
 		key      string
+		approved bool
 		remember bool
-	}{{"y", false}, {"a", true}} {
+	}{{"enter", true, false}, {"y", true, false}, {"a", true, true}} {
 		engine, m := asking()
 		_, _ = m.Update(keyMsg(run.key))
 
 		if len(engine.answers) != 1 {
 			t.Fatalf("%s gave %d answers, want one", run.key, len(engine.answers))
 		}
-		if !engine.answers[0][0] || engine.answers[0][1] != run.remember {
+		if engine.answers[0][0] != run.approved || engine.answers[0][1] != run.remember {
 			t.Errorf("%s gave %+v", run.key, engine.answers[0])
 		}
 	}
