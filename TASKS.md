@@ -5816,7 +5816,7 @@ Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, 
 
 ### S-02 A token is refreshed before it is needed, not after it fails
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
 `scope: internal/keys/, internal/session/, cmd/canopy/`
 
 Deliverable: refresh runs when a credential is resolved for use, ahead of the request being built,
@@ -5848,7 +5848,125 @@ valid token still classifies as `ErrAuthentication` and still neither retries no
 is `fallbackAllowed` at internal/provider/chain.go:79 behaving exactly as it does today. No file
 under `internal/core` is modified.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `keys.Refresher` in internal/keys/refresh.go, with `Store.Renew` beside PutSignIn
+and one call site each in internal/session/resolver.go and cmd/canopy/ask.go. Nothing under
+internal/core is touched, and no change to it was needed or nearly needed.
+
+Proactive, as the task settles it. `Refresher.Credential` is what both client-building paths ask for
+a credential now, and it renews before it answers. That is one call rather than a rule written twice
+on purpose: constraint 4 says the provider switch exists in two places, and "how old is too old" is
+exactly the kind of rule that gets fixed in one of them.
+
+The margin is five minutes, and the argument is that renewing at expiry is renewing too late for two
+ordinary reasons rather than one exotic one. Clocks disagree, and the direction that hurts is a
+machine running fast, which still believes a token the vendor retired minutes ago. And a turn is not
+a request: an agent turn runs a tool loop, so several requests go out over several minutes under one
+resolution, and a margin shorter than a turn is a token that dies in the middle of one. Ten seconds,
+which is what x/oauth2 uses, was considered and rejected as a figure sized for a library that renews
+per request and one that sits inside any unsynchronised machine's drift. The cost of five is at
+worst one extra renewal every several turns, against a failure that costs a turn and a wrong
+diagnosis. It is exported, because a screen saying when a credential expires should be able to say
+when Canopy will act rather than leaving somebody to find the difference by watching.
+
+The two failures are separated because their remedies are, and the wrong one wastes a specific
+amount of somebody's time. A vendor that refuses the renewal has ended the grant, and the only thing
+that helps is signing in again; that error wraps `ErrSignInLapsed` so a caller can act on it as well
+as print it. A vendor nobody could reach has said nothing about the grant, and telling that person
+to sign in again sends them through a flow they did not need and, on a rotating route, throws away a
+working refresh token to do it. A source that cannot tell which it has hit says transient, because
+that is the mistake with the smaller cost. Neither is a `core.ProviderError` of any kind, and that
+was a decision rather than an omission: a ProviderError describes what a provider said about a
+request, no request was made, and every kind available is a lie about what to do next. Held by the
+two failure tests, which both assert `errors.As` finds no provider error.
+
+Concurrency follows what the store already does and adds one thing. Store writes are the mutex round
+load-change-save, and `Renew` is another of those. The refresher's own lock is per credential rather
+than one for everything, so two conversations on two subscriptions do not queue behind each other,
+and it is deliberately not the store's mutex, since holding the lock that every read of keys.json
+takes for the length of a network call would stop an unrelated turn from starting. Everything is
+read again after the lock is taken, which is what makes the second turn cost nothing: it finds the
+expiry the first one just wrote and returns. Two Canopy processes can still both renew, and that is
+recorded in the code as a known limit rather than left to be discovered. The fix would be a lock
+file, and a lock file held across a network call is how a crashed process leaves a credential
+unusable until somebody deletes a file they have never heard of. The cost of the limit is one wasted
+renewal.
+
+`Store.Renew` is separate from `PutSignIn` rather than a call to it, and the reason is the same
+concurrency: PutSignIn is handed a whole record and writes back whatever the caller was holding, so
+a renewal arriving beside a rate change would put back the values it read before that change and
+lose the other silently. This edits the two fields a renewal owns, which is what SetModel and
+SetRate already do. It writes tokens before the record, as Put does, but the consequence is sharper
+here. Failing between the two leaves an expiry older than the tokens behind it, which costs one
+unneeded renewal next turn. The other order leaves a record promising another hour with the old dead
+token still in the keychain, which is a 401 and a user told to replace a credential that only needed
+renewing: the exact failure this task exists to remove.
+
+Considered and rejected. Reactive refresh, meaning catch the 401 and renew, which is what most
+libraries do: rejected because it cannot tell an expired token from a wrong one without a new
+`ProviderErrorKind`, and internal/core is frozen for both pairs. Worth saying that the frozen
+package was not the only objection. A retry that renews on 401 also has to decide how many times,
+and the honest answer on a credential the vendor has genuinely revoked is a loop. Keying the token
+sources by `core.Provider`, which is the shape the two existing switches use: rejected because
+Copilot and Codex are both openai-compatible, so the map collides the moment the second route lands;
+`SourceFor` is a function, and whatever S-03 or S-05 adds to tell routes apart, they key on it
+without refresh.go changing. Returning the new token when it could not be written down, so the turn
+still gets its answer: rejected because on a rotating route the refresh token it replaced is already
+dead at the vendor, so that is the last renewal that will work, and somebody has to hear about it
+then rather than a turn later when the credential stops for no visible reason. Threading the turn's
+context into the renewal: rejected because it would change `session.Resolver`, which four callers
+and every fake implement, to bound an exchange that already has its own deadline, and because a
+renewal that outlives a cancelled turn is finished, written down and waiting for the next one rather
+than wasted. Renewing a credential whose expiry the vendor never stated: rejected because silence is
+not evidence the token is old, and acting on that guess spends a refresh token every turn for the
+life of the credential.
+
+One correction to the task's own framing, verified rather than assumed. The block leans on
+`ErrAuthentication` being "never retry and never fall back", and only the second half of that is
+live. `Retryable()` has no production caller anywhere in the tree and there is no retry loop, so the
+only enforced behaviour is `AllowsFallback()` at internal/provider/chain.go:88, reached through
+`fallbackAllowed` at :83. The acceptance is pinned to what exists: the 401 test asserts the chain
+does not move to the next credential and that nothing renews in response, not that a retry loop
+declined to run. The doc comment's ambition is unchanged and still correct as intent.
+
+Acceptance, clause by clause: a credential expiring inside the window renewed before the request is
+built, against a fake clock and a fake token endpoint, with the request carrying the new token and
+the store holding it, is `TestATokenInsideTheRefreshWindowIsRenewedBeforeItIsHandedOut` for the
+store's half and `TestASignedInCredentialReachesTheProviderWithTheTokenItJustRenewed` for the
+request's, which reads the Authorization header off an httptest server and runs on the real clock so
+that what decides is the shipped margin rather than one the test moved; a token valid past the
+window not renewed, so a working session makes no call it did not need, is
+`TestATokenValidPastTheRefreshWindowIsNotRenewed`, which counts calls at both a comfortable margin
+and one second outside it, with `TestASignInWhoseExpiryTheVendorNeverGaveIsNotRenewedOnAGuess` for
+the case where there is no window at all; a refused renewal surfacing as a lapsed sign-in naming its
+remedy, never as `ErrAuthentication` on a request that was never sent and never as a retry loop, is
+`TestARefusedRenewalIsALapsedSignInThatNamesItsRemedy`, paired with
+`TestARenewalThatCouldNotReachTheVendorIsNotALapsedSignIn` which holds the other side, that a
+dropped connection does not say "sign in again"; two concurrent turns producing one refresh is
+`TestTwoTurnsStartingAtOnceRenewOneCredentialOnce`, eight goroutines released together against a
+source that lingers; a genuine 401 from a valid token still classifying as `ErrAuthentication` and
+still neither retrying nor falling back is
+`TestA401FromALiveTokenIsStillTerminalAndIsNotAnsweredByRenewing`, which puts the resolved client in
+a real `provider.Chain` and holds that the second credential is never touched, alongside
+`TestAuthenticationFailuresDoNotFallThrough` in internal/provider/chain_test.go, which is that
+behaviour unchanged from before this task; and no file under internal/core modified is a diff that
+touches none, with `TestSigningInAddsNoProvider` from S-01 still green.
+
+Five more covering behaviour the clauses imply rather than name: a renewed token surviving a restart
+is `TestARenewedTokenIsWrittenDownSoTheNextRunDoesNotBuyAnother`, which reopens the same two files
+as a new process would; `TestARenewalThatIssuesNoNewRefreshTokenKeepsTheOneItHas`, without which a
+non-rotating vendor's credential renews exactly once; `TestOnlyASignInIsEverRenewed`, since one call
+now serves pasted, signed-in and delegated credentials and the last two must keep answering as they
+did; `TestARenewalThatCannotBeRecordedIsReportedRatherThanUsed`; and
+`TestRenewingTouchesTheTokensAndTheExpiryAndNothingElse` with
+`TestACredentialThatStoppedBeingASignInIsNotRenewedIntoOneAgain`, which hold that a renewal in
+flight cannot resurrect a credential somebody deleted or overwrite one they pasted over.
+
+Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues. Run against a clone of this branch at the commit rather
+than in the shared worktree, because S-06 and S-07 are in flight in the same tree and
+internal/tui/keys does not compile between their edits.
 
 ### S-03 GitHub Copilot signs in through its own SDK
 
