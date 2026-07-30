@@ -6175,12 +6175,17 @@ It reported `{InputTokens:2 OutputTokens:4 CacheReadTokens:15273 CacheWriteToken
 CostKnown:false}`, which is the cost clause happening rather than being asserted, and the opening
 notice arrived first.
 
-S-03 landed in the same worktree while this was being written and composed the two registries into
-`routeSet` rather than replacing either, which is what the note in credentials.go asked whoever landed
-second to do. It also added `keys.SignIn.Route`, so `canopy keys test` asks the vendor a credential
-actually belongs to. This route records `claude-code` there, held by
-`TestADelegatedClaudeCredentialRecordsThatItCameFromTheClaudeCodeRoute`. `pricing.ModelID.Delegated`
-turned out to be needed by both routes for the same reason and is used by both.
+One seam is left for whoever lands next, deliberately and not silently. S-03 was in flight in the same
+worktree while this was written and had, uncommitted at the time of this commit, composed the two
+registries into `routeSet` and added `keys.SignIn.Route` so that `canopy keys test` asks the vendor a
+credential actually belongs to rather than whichever registry answers first. This route does not set
+that field, because setting it would make this commit depend on a field that does not exist at this
+commit, and a commit that does not build on its own is worse than a seam somebody has been told
+about. Whoever lands `keys.SignIn.Route` sets `Route: claudeCodeRouteID` in
+`claudeCodeAttempt.Wait`; `TestTestingADelegatedCredentialSaysSomethingTrueRatherThanReportingAMissingSecret`
+fails until they do, which is the right way round.
+`pricing.ModelID.Delegated`, added here, turned out to be needed by both routes for the same reason
+and is used by both.
 
 Acceptance, clause by clause: adding the credential on a machine with Claude Code installed and
 signed in finding it and reporting the account is

@@ -433,20 +433,3 @@ func TestAConversationOnADelegatedCredentialStartsWithNoModelOfCanopysChoosing(t
 		t.Error("a pasted Anthropic credential stopped getting this build's default model")
 	}
 }
-
-// Which way in produced a credential has to be recorded, or `canopy keys test` asks the wrong vendor
-// on a machine with more than one route built.
-func TestADelegatedClaudeCredentialRecordsThatItCameFromTheClaudeCodeRoute(t *testing.T) {
-	store, _ := claudeRouteOn(t, signedInMachine())
-
-	if err := runKeys([]string{"signin", "claude"}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("signing in through Claude Code: %v", err)
-	}
-	in, err := store.SignIn(core.KeyRef{Name: "claude"})
-	if err != nil {
-		t.Fatalf("reading the stored credential: %v", err)
-	}
-	if in.Route != claudeCodeRouteID {
-		t.Errorf("the credential records route %q, want %q", in.Route, claudeCodeRouteID)
-	}
-}

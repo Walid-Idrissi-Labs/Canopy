@@ -186,13 +186,7 @@ func (a *claudeCodeAttempt) Wait() (keysui.Outcome, error) {
 	// enforces, and this call is the only place in Canopy that exercises it.
 	meta, err := a.store.PutSignIn(
 		core.KeyMetadata{Ref: ref},
-		keys.SignIn{
-			Kind:    keys.KindDelegated,
-			Account: found.Account.Email,
-			// Which way in produced this, so `canopy keys test` asks the vendor this credential
-			// actually belongs to rather than whichever registry answers first.
-			Route: claudeCodeRouteID,
-		},
+		keys.SignIn{Kind: keys.KindDelegated, Account: found.Account.Email},
 		keys.Tokens{},
 	)
 	if err != nil {
