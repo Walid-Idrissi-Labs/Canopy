@@ -570,6 +570,39 @@ delegated turn.** Today the turn opens with a notice saying Canopy's permissions
 which stops the mode indicator from being a lie by contradicting it in words. A mode indicator that
 knew about delegation would be better than a sentence that argues with it.
 
-**Who decides:** both supervisors. One delegated route now works end to end, so the remaining
-question is a product one rather than an engineering one: whether a weaker agent that says so is
-worth having next to a stronger one that costs money per token.
+**Answered differently by S-03, 2026-07-30, on the GitHub Copilot route, and the difference is the
+protocol rather than the principle.** The second option, exposing Canopy's tools to the delegated
+agent and re-imposing Canopy's gating at that boundary, is unavailable in ACP v1 and is available in
+GitHub's SDK. So on the Copilot route it is what Canopy does, and the three answers come out as:
+
+Canopy's own tools **are** offered, and they are the only tools in the session. The client is created
+in the SDK's `empty` mode, which starts a session with no built-in tools, and the session's tool
+allowlist names Canopy's tools by source and no vendor source at all, so nothing of GitHub's reaches
+the model to be called.
+
+Canopy's permission gate **is** in force, and by construction rather than by cooperation. Canopy's
+tools are declared to the vendor with no implementation behind them, which is the SDK's
+declaration-only form: a call arrives as an event and stays pending until somebody resolves it. That
+somebody is Canopy's own loop, one layer up, after the call has been through the agent's trust level
+and, where the level requires it, past a person. There is no path by which the vendor runs one of
+Canopy's tools, because it was never given a way to run any of them.
+
+A4's audit trail and A6's verification **do** apply, for the same reason: every tool call in a
+Copilot turn was made by Canopy.
+
+The trap S-04 found holds here too and was checked rather than assumed. `internal/agent/loop.go`
+invokes every tool call event it is handed, so the only vendor event this route maps onto
+`core.EventToolCall` is the one that means "waiting for you to run this". The events that mean a tool
+is running or has run produce nothing at all, and a test holds that.
+
+**What this leaves genuinely open, and it is narrower than before.** The question is no longer
+whether a delegated turn can be governed, because one of them is. It is whether a route that cannot
+be governed should ship beside one that can. The Copilot route shows that the ceiling is set by each
+vendor's protocol rather than by Canopy's design, which means the answer will differ per route and
+the product decision is how to say that on screen without three different explanations. It also
+sharpens the first option: refusing to delegate a turn that needs Canopy's tools would now cost
+nothing on Copilot and everything on Claude Code, so it is a per-route policy rather than a phase-wide
+one.
+
+**Who decides:** both supervisors. Two delegated routes now work end to end and they sit at opposite
+ends of what a protocol allows, which is the comparison this question was waiting for.

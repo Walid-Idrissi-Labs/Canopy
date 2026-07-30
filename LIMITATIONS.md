@@ -260,6 +260,80 @@ Two more things about the route itself:
   credits. Paused is not cancelled (Q-22), and if it returns this paragraph is wrong and the route's
   cost story needs rewriting before the release that follows it.
 
+### The GitHub Copilot route, and where its conversation lives
+
+Canopy can run turns on a GitHub Copilot seat without an API key. This is the one route of the three
+that the vendor documents for exactly this case: you register an app, the user authorises it, and
+their token is handed to GitHub's official SDK so that requests are made on their behalf against
+their own subscription (D-51, S-03). Canopy registers and uses its own GitHub app, drives the device
+flow so that nothing has to listen on a port, and identifies itself as `canopy`. It does not reuse
+another editor's client id and does not send another editor's version headers.
+
+**What is preserved, and it is the reason this design was chosen.** Unlike the Claude Code route, a
+Copilot turn still runs under Canopy's rules:
+
+- **Canopy's own tools are the only tools in the session.** The session is created in the SDK's
+  `empty` mode with an allowlist naming Canopy's tools and no vendor source at all, so `bash`,
+  `powershell`, `edit`, `grep`, `web_fetch` and the rest are not offered to the model. GitHub's
+  agent decides what it wants done; it has no way to do any of it itself.
+- **Canopy's permission gate is in the path.** Canopy's tools are declared to the vendor with no
+  implementation behind them, so a call comes back out to Canopy, through the agent's trust level
+  and, where the level requires it, past a person, and only then goes back down as a result. The
+  permission mode on screen is the one actually in force.
+- **The audit trail is complete**, because Canopy ran every tool call there was.
+
+**Where the conversation lives, and what that costs.** GitHub's SDK owns the conversation: a session
+accumulates its own history and there is no call that seeds one. Canopy therefore holds one session
+per conversation and sends only the newest message. The consequences are real:
+
+- **Editing history, re-rolling a turn and compacting locally do not reach it.** Canopy notices when
+  its history and the vendor's have diverged and refuses the turn rather than answering from a
+  conversation you can no longer see. Start a new conversation to change what has been said.
+- **A conversation picked up after a restart is seeded from a transcript, not resumed.** The earlier
+  turns go into the next prompt as a labelled record. That is weaker than having had them, and it is
+  the only surface the SDK offers.
+- **The model and the reasoning effort belong to the session.** They are set when the conversation
+  starts. Naming a different model mid-conversation does not restart it, because restarting it would
+  throw the conversation away to honour a flag.
+- **`MaxTokens` is not sent.** The SDK exposes no per-turn output cap for a Copilot session.
+
+**No cost figure is shown.** The token counts are real and are reported. The dollar value is not: a
+Copilot seat is billed monthly and this usage is metered against that plan's allowance, so a list
+price would be a correct number about an invoice nobody receives, and zero would say the turn was
+free. Unpriced is the honest answer.
+
+**Two things have to be present, and Canopy ships neither.**
+
+- **The Copilot CLI.** `npm install -g @github/copilot`, or `COPILOT_CLI_PATH` pointing at it. The
+  SDK offers a bundler that would embed a per-platform copy in Canopy's binary, and it is
+  deliberately not used: it would multiply the size of a release that is one small static binary, it
+  would pin a vendor version your Copilot would then be stuck at, and it would put a proprietary
+  vendor binary inside Canopy's release archives, which is a redistribution question nobody asked.
+- **A GitHub app of Canopy's own.** Register an **OAuth app** with the device flow enabled, and set
+  `CANOPY_GITHUB_CLIENT_ID` to its client id, which is not a secret. An OAuth app is recommended over
+  a GitHub app for one specific reason: its user tokens do not expire, so Canopy never has to renew
+  one, and renewing needs a client secret that a program you can download cannot keep. If you use a
+  GitHub app with expiring user tokens instead, supply `CANOPY_GITHUB_CLIENT_SECRET` as well or
+  accept that a lapsed grant is signed in to again by hand.
+
+**The scopes are not documented by GitHub and Canopy's list is evidence rather than fact.** Canopy
+requests `copilot` and `read:user`. There is no published GitHub scope table entry containing the
+word Copilot, GitHub's own Copilot SDK setup page names no scope at all, and the SDK's Go source
+validates nothing about the token it is given. `copilot` is what every third-party Copilot client
+sends; `read:user` is documented and is what lets a credential say whose subscription it is.
+Whether both are needed has not been confirmed against a live seat. `CANOPY_GITHUB_SCOPES` overrides
+the list so the question can be settled by experiment.
+
+**A seat is not checked at sign-in.** GitHub publishes no endpoint Canopy can ask, and the SDK's own
+`account.getQuota` is defined in its schema and not implemented in the CLI as of v1.0.8, which
+GitHub's own end-to-end test skips over. An account with no Copilot seat is told exactly that on its
+first turn rather than at sign-in, and it is told that rather than being shown an authentication
+failure that would send somebody to replace a credential that is fine.
+
+**Canopy cannot revoke the grant for you.** `canopy keys signout` deletes the tokens and the record.
+Revoking Canopy's access at GitHub needs a client secret, for the same reason renewing does, so the
+command says plainly that it did the local half only and where to do the other.
+
 ## Tools and permissions
 
 - Web search is **cut from 0.1** (A4-07, D-40). `fetch_url` works and ships, so an agent can read a

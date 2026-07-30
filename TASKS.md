@@ -5970,7 +5970,7 @@ internal/tui/keys does not compile between their edits.
 
 ### S-03 GitHub Copilot signs in through its own SDK
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
 `scope: internal/provider/copilot/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
 
 Deliverable: the Copilot route, first of the three because it is the one whose vendor documents this
@@ -5999,7 +5999,251 @@ exactly that, not shown a generic authentication failure. Both internal/session/
 `newClient` in cmd/canopy/ask.go reach the new client, so `canopy ask` and the interface agree, and
 a test holds that the two switches know the same set of providers.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as internal/provider/copilot, with `copilotSignIn` in cmd/canopy/signin_copilot.go, the
+`copilot` branch in internal/session/resolver.go and in `clientFor` in cmd/canopy/ask.go, and one
+field added to the credential record. Nothing under internal/core is touched and no change to it was
+needed.
+
+Where the token comes from, which the task left genuinely undecided. Canopy's own GitHub app, driven
+by the device flow. The task's own acceptance had already decided most of it: "on a machine with no
+GitHub credentials" rules out reusing a login from the `gh` CLI, since that is a machine that has
+one. The rest of the argument is that `gh`'s token is not Canopy's to use. It carries whatever
+scopes `gh` asked for, which by default include `repo`, `read:org`, `gist` and `workflow`, so
+borrowing it would hand a third-party runtime a far more powerful credential than this route needs,
+obtained for a different purpose. Revoking Canopy's access would mean revoking `gh`'s. And D-51's
+sentence is that a subscription is signed in to: borrowing is neither signing in nor pasting. The
+cost is real and is the one the task named, a vendor identity that outlives the task, so it is made
+configurable rather than invented: `CANOPY_GITHUB_CLIENT_ID`, or `-X ...copilot.clientID` at build
+time, with INSTALL.md saying exactly what to tick. A build with no registration says so in those
+words and names the file, rather than failing at GitHub with something about a missing client id.
+Held by TestABuildWithNoGitHubAppSaysWhatHasToBeRegistered.
+
+An OAuth app rather than a GitHub app, recommended for one reason that took a while to see. GitHub
+renews a user token only for an app that can prove who it is, which needs a client secret, and a
+program people download cannot keep one. An OAuth app's user tokens do not expire, so the renewal
+never happens, `ExpiresAt` is nil, and S-02's refresher correctly never marks the credential due:
+that is `TestASignInWhoseExpiryTheVendorNeverGaveIsNotRenewedOnAGuess` from S-02 turning out to be
+the ordinary case on this route rather than an edge. The `keys.TokenSource` is still implemented, so
+the seam exists and works where a maintainer has supplied a secret, and where they have not it
+reports a lapsed sign-in naming the two things that would fix it rather than asking for another try.
+A missing secret does not become present by waiting.
+
+The scopes, which the task asked to be established empirically and which could not be. This is the
+one place the answer is an honest "unverified" rather than a finding. GitHub's published OAuth scope
+table has no entry containing the word Copilot; their Copilot SDK setup page tells you to create an
+app and names no scope at all; and the SDK's Go source validates nothing about the token it is
+handed, so there is no code to read either. What the list is built from is stated in the source
+beside it: `copilot` because every third-party Copilot client sends it and GitHub's own editor flow
+does, and `read:user` because it is documented, is the smallest scope that answers `GET /user`, and
+is what lets a credential say whose subscription it is, which S-01 requires. Neither has been
+confirmed against a live seat, because confirming it needs a seat. `CANOPY_GITHUB_SCOPES` overrides
+the list so the question is settled by narrowing it one entry at a time, and the live test logs which
+scopes the working grant was obtained with so the answer is recorded when somebody first runs it.
+
+The CLI is discovered, never bundled. The SDK ships an opt-in bundler that embeds a per-platform
+binary, and it was rejected on three counts in increasing order of weight. It would multiply the size
+of a release that is one small static binary built with CGO_ENABLED=0. It would pin a vendor version
+the user's Copilot would then be stuck at, which is the wrong way round for a runtime GitHub updates
+weekly. And it would put a proprietary vendor binary inside Canopy's release archives, which is a
+redistribution question nobody has asked and that would have to be answered before every tag. The
+cost is one failure mode, an absent binary, and it is answered before the SDK is asked so the message
+is a sentence naming what to install rather than `exec: "copilot": executable file not found in
+$PATH` wrapped in "failed to start CLI server". Held by
+TestAnAbsentRuntimeSaysWhatToInstallRatherThanThatAnExecFailed.
+
+The architectural problem, which is most of this task. GitHub's SDK is session-shaped: a session is
+the conversation, it accumulates its own history, and `MessageOptions.Prompt` is one string with no
+call anywhere that seeds one. `core.ProviderClient` is request-shaped and hands over the whole
+message list every turn. The naive integration makes a session per turn and loses everything.
+
+The fix is that a Copilot client is bound to a conversation and sends only what its session has not
+already heard, and the seam that makes that possible is `conversationResolver`, an optional interface
+in internal/session/engine.go beside `usageMarker`. It is optional for `usageMarker`'s reason and for
+one more: S-02 rejected threading a context through `Resolver` because four callers and every fake
+implement it, and that objection applies to any signature change. An assertion adds a method for one
+implementation and leaves the other four untouched. `KeyResolver` holds the clients in a map keyed on
+the conversation, the credential name and the account, so a credential signed in again as somebody
+else starts a new conversation with the vendor rather than inheriting the previous person's session.
+
+Three cases fall out of it and each is a test. A session that has heard nothing gets everything, with
+the older turns rendered as a labelled transcript, because there is no other surface. A session that
+is up to date gets only the new user text, with the assistant messages in the unseen range skipped
+since the session said them. And a caller whose history is shorter than what the session has heard
+has edited, re-rolled or compacted it, which cannot reach GitHub's copy, so it is refused by name
+rather than answered from a conversation the user can no longer see. That refusal is the design
+becoming visible, and a vague failure there would read as a bug rather than as the documented limit
+it is.
+
+Asides and compactions deliberately do not go through it. Both call the plain `Resolve`, so both get
+a fresh client, and on this route that is right rather than a gap: an aside is a separate
+conversation by definition, and a compaction is one question asked once about a transcript. Handing
+either the conversation's session would put a summarisation request into the middle of somebody's
+session. It also means the seeding path above is what makes both work at all.
+
+ModeEmpty plus the allowlist, and what could actually be verified. The claim is that GitHub's agent
+gets none of its own tools, and it rests on three things rather than one. `ClientOptions.Mode =
+ModeEmpty` starts a session with no built-in tools, no environment context in the system message, and
+file hooks, host git operations, the cross-session store, skills and memory forced off; every one of
+those is also set explicitly in the session config, because the defaults are the SDK's promise and
+these are Canopy's requirement and a release that relaxed one should be a failing test rather than a
+silent widening. The allowlist is the second, and the brief's advice was wrong here in a way worth
+recording: `[]string{}` is right only for a conversation with no tools, because an empty allowlist
+excludes Canopy's own tools along with the vendor's. What ships is `NewToolSet().AddCustom("*")`,
+which names every tool registered through `SessionConfig.Tools`, which is Canopy's and nobody else's,
+and names no built-in and no MCP source at all. `OnPermissionRequest` is the third and refuses
+anything that is not one of Canopy's own tools by name, which should be unreachable and is there
+because a request Canopy does not recognise arriving at all means one of the first two has stopped
+working.
+
+Verified how: the allowlist and the session config are asserted against the values that ship, by
+source prefix rather than by tool name, so a vendor tool that arrives under a new name in a later
+release is still outside it. That is a check on Canopy's request rather than on GitHub's behaviour,
+and the difference matters. GitHub verify the behaviour themselves, in
+internal/e2e/mode_empty_e2e_test.go, by capturing the chat completion request through a proxy and
+asserting `bash`, `powershell`, `edit`, `grep` and `web_fetch` are absent, and their harness needs a
+real CLI. It could not be re-run from here without a Copilot seat, so what this build adds is
+TestLiveTheModelIsGivenNoneOfTheVendorsOwnTools, which asks the model to list its tools and is
+skipped by default. That is not a proof, a model can be wrong about itself, and it says so; it is the
+strongest check available from outside GitHub's harness and it would catch the change that matters
+most, a release where the mode stops meaning what it means today.
+
+Q-23, which this route answers differently from S-04 and the difference is the protocol rather than
+the principle. The second of the three options that question lists, exposing Canopy's tools to the
+delegated agent and re-imposing Canopy's gating at that boundary, is unavailable in ACP v1 and is
+available here. Canopy's tools are declared with a nil `Handler`, which is the SDK's
+declaration-only form: the call arrives as `*ExternalToolRequestedData` and stays pending, and this
+package resolves it through `session.RPC.Tools.HandlePendingToolCall` only after Canopy's own loop
+has run it. So the whole of A4 is in the path, the audit trail is complete because Canopy ran every
+call there was, and the permission mode on screen is the one in force. Q-23 is updated with that and
+with what it leaves open, which is narrower than before: not whether a delegated turn can be
+governed, but whether a route that cannot be should ship beside one that can.
+
+The trap S-04 found, checked rather than assumed, because the coordinator was right that the cost is
+the same here. `internal/agent/loop.go` invokes every tool call event it is handed, so any vendor
+event mapped onto `core.EventToolCall` for a tool the vendor already ran would have Canopy run it a
+second time. How I convinced myself: the adapter's type switch names seven event types and
+`*ExternalToolRequestedData` is the only one that produces a tool call, which is the event that means
+"waiting for you to run this" rather than "I ran this". `*ToolExecutionStartData`,
+`*ToolExecutionProgressData`, `*ToolExecutionCompleteData`, `*ExternalToolCompletedData` and both
+permission events fall through the switch and produce nothing. That is asserted directly, event by
+event, in TestNoEventThatMeansAToolAlreadyRanBecomesAToolCallCanopyWouldRunAgain. It is also
+unreachable for a second reason worth stating: with ModeEmpty and the allowlist there is no tool in
+the session that the vendor can execute, so a tool-execution event could only ever describe one of
+Canopy's, and Canopy's have no handler. The test makes that a property rather than a coincidence.
+
+Cost, which the coordinator asked to be decided rather than inherited. A Copilot turn is reported as
+unpriced, using S-04's `pricing.ModelID.Delegated` rather than a parallel concept, and the sentence
+that field prints is true of this route too: the user did sign in themselves, at github.com, with a
+device code. The tokens are real and are reported, because the vendor sends them per model call and
+they are worth having. The dollar value is not, and the reason is one step further than S-04's: a
+Copilot seat is billed monthly and metered per prompt rather than per token, so a figure derived from
+token counts would not merely be an invoice nobody receives, it would be computed from the wrong
+unit. Held by TestATurnOnACopilotSeatIsReportedAsUnpricedRatherThanAsFree.
+
+The credential's shape, and the one field this adds. A Copilot credential is `ProviderOpenAICompatible`
+because that is the closer of the two shapes core knows and core is frozen, which means a route
+marker was unavoidable: Copilot and a future Codex are both openai-compatible, so a switch on
+provider alone would send a Copilot turn to a chat completions client pointed at a host that does not
+serve one. `keys.SignIn.Route` is that marker, and it is exactly the field S-02 anticipated when it
+wrote `SourceFor` as a function rather than a map. It is optional rather than required, deliberately:
+requiring it would mean rewriting tests belonging to tasks in review, and an absent route is not
+damage, it is a credential from a build that predated the field. The base URL is
+`https://api.githubcopilot.com`, which `RequiresBaseURL` forces to be non-empty and which is where the
+turn genuinely ends up even though Canopy never dials it, rather than a placeholder somebody would
+read in `canopy keys test`.
+
+Two things landed in neighbouring files and both are flagged rather than done quietly. S-04's
+delegated sign-in now records `Route: claudeCodeRouteID`, one line, without which `routeSet` cannot
+tell `canopy keys test` which vendor to ask about a credential; the coordinator asked for it and
+their own note records it. And `signInRoutes` became `routeSet`, the composition S-04's note left for
+whoever landed second, dispatching `Begin` on the route named and `Report` on the route recorded with
+the credential. `Report` keeps a fallback that asks each vendor in turn for a credential with no route
+recorded, and that fallback is safe rather than lucky: a registry handed a credential that is not its
+own fails on the credential rather than answering about it, since the Copilot route reads tokens and a
+delegated credential has none by design.
+
+Acceptance, clause by clause: signing in on a machine with no GitHub credentials producing a user
+code and a verification URL, waiting, and completing when the user authorises is
+TestSigningInProducesACodeAndAPageAndCompletesWhenThePersonAuthorises for the flow and
+TestSigningInToCopilotShowsACodeAndAPageAndEndsAsTheGitHubLogin for the command that shows them;
+nothing listening on a loopback port at any point is TestNothingInThisRouteListensOnAPort, which
+sweeps this route's own source rather than trusting a comment, alongside
+TestThisRouteUsesNobodyElsesClientIdAndSendsNobodyElsesVersion for the identity half of the same
+promise; the credential storing its tokens per S-01 and listing as signed in under the GitHub login
+it belongs to is TestSigningInToCopilotShowsACodeAndAPageAndEndsAsTheGitHubLogin, which reads the
+account and the route off the store and asserts against keys.json's bytes that no token reached it,
+with TestAGrantGitHubWillNotNameAnOwnerForIsRefusedRatherThanStoredAnonymously for the case where
+GitHub will not name one; a turn running through the SDK and streaming back is
+TestATurnRunsOnTheDelegatedAgentAndStreamsBack against the agent seam and
+TestLiveATurnRunsOnTheSubscriptionAndStreamsBack against a real seat, skipped without one; refresh
+following S-02 is TestARenewalGoesThroughTheRefresherAndReplacesTheStoredToken, driven through
+keys.Refresher rather than by calling Refresh directly, with TestAGrantWithNoStatedExpiryIsNeverRenewed
+for the recommended registration's ordinary case, TestARefusedRenewalIsLapsedAndAnUnreachableVendorIsNot
+for S-02's two-failure split, and TestRenewingWithoutAClientSecretSaysWhatToChangeRatherThanAskingForAnotherTry;
+a GitHub account with no Copilot seat being told exactly that is
+TestAnAccountWithNoCopilotSeatIsToldThatRatherThanThatItsCredentialIsWrong, which also holds that the
+message does not send somebody to replace a credential that is fine, with
+TestAMissingSeatIsRecognisedWhenItArrivesDuringATurnToo for the other way it arrives; and both
+client-building paths reaching the new client, with a test that the two switches know the same
+routes, is TestBothWaysOfBuildingAClientAgreeAboutWhichRouteACredentialTakes, which drives
+`clientFor` and `KeyResolver.Resolve` over one real store and compares what each reached and how each
+would price it.
+
+Nine more that cover behaviour the clauses imply rather than name.
+TestOnlyTheNewestMessageReachesASessionThatHeardTheRest and
+TestAConversationThatStartedElsewhereIsSeededAsALabelledTranscript are the two halves of the
+session-versus-request translation, and TestAnEditedHistoryIsRefusedRatherThanAnsweredFromTheVendorsCopy
+is its cost.
+TestAToolCallLeavesTheAgentAndItsResultComesBackToTheSameTurn is Q-23's answer as a test, with
+TestARefusedToolIsReportedToTheAgentAsAFailureRatherThanAsSilence for what a gated refusal does.
+TestTheToolAllowlistNamesCanopysOwnToolsAndNoVendorSourceAtAll and
+TestASessionIsCreatedWithEveryFeatureThatTouchesTheMachineSwitchedOff are the ModeEmpty claim.
+TestCancellingATurnStopsTheVendorRatherThanAbandoningIt holds that a stopped turn stops spending
+somebody's allowance and leaves the conversation usable, and
+TestClosingTheResolverEndsEveryConversationItWasHolding is the resource story: a session per
+conversation and a process per client both end at Engine.Close, which calls the resolver's Close after
+the turns have settled.
+
+Considered and rejected. A session per turn with the whole history rendered into every prompt, which
+would have kept Canopy's history editing, re-rolls and compaction working: rejected because it makes
+every turn a role-flattening hack rather than only a restored one, throws away the vendor's own
+context handling and caching, and is not what the task describes. Changing `Resolver`'s signature
+instead of adding an optional interface: rejected for S-02's stated reason, four callers and every
+fake. Refusing to run at all on a conversation with unseen history: rejected because a Copilot
+conversation that cannot survive closing the program is a worse product than one whose restored
+context is slightly weaker, and the transcript is labelled so the model is told it is reading a record
+rather than being given instructions. Draining every pending tool request into one step: rejected
+because "however many happened to have arrived by now" is a rule whose answer depends on scheduling,
+which is a test that passes on one machine and fails on another; one per step is deterministic and
+costs a round trip. Restarting the session when a request names a different model: rejected, it
+throws the conversation away to honour a flag, and the limit is written down instead. Asking the SDK's
+`account.getQuota` to check for a seat at sign-in: rejected because it is defined in the schema and
+not implemented in the CLI as of v1.0.8, which GitHub's own e2e test skips over, so it would be a
+check that silently never worked. Starting a runtime during sign-in to read the login from
+`GetAuthStatus`: rejected because somebody on a machine without the CLI can still complete a sign-in
+and be told what to install, and `GET /user` is one documented request against a documented scope.
+Implementing `revokesCredentials`: not done, because revoking needs the client secret renewing needs,
+so `canopy keys signout` says plainly that it did the local half only, which S-07 already wrote.
+
+Corrections to the reconnaissance the task and the brief were built on, all verified against
+v1.0.8 rather than assumed. The Go SDK does no token prefix validation at all: there is no code
+anywhere in the module that inspects `gho_`, `ghu_`, `ghp_` or `github_pat_`, and the token is passed
+through verbatim to the CLI via `--auth-token-env`. The accepted-and-rejected table is GitHub's
+documentation describing runtime behaviour, and it could not be confirmed from here. `AvailableTools`
+is not "nil means no filter": in ModeEmpty the SDK refuses to create a session at all when it is nil,
+which is better than the brief described, and `[]string{}` is the right value only when Canopy has no
+tools of its own. There is no `Session.Close`; teardown is `Session.Disconnect` plus `Client.Stop`,
+and cancelling a turn is `Session.Abort`, which leaves the session usable. `AssistantUsageData`
+carries input, output and both cache token counts, so a Copilot turn does report tokens, which the
+brief did not mention. And `ClientOptions.Env` defaults to `os.Environ()` inside `NewClient`, so
+`COPILOT_CLI_PATH` is consulted as the brief said, but only because of that default: a caller that
+sets `Env` to anything else loses it.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree:
+`go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
+./...` reports no issues.
 
 ### S-04 Claude runs through the user's own Claude Code
 

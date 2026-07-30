@@ -125,6 +125,43 @@ credential written to the file is not in the keychain and will not be found ther
 | `CANOPY_THEME` | Picks a palette by name: `canopy` is the default, `mono` is the monochrome one. An unrecognised name falls back to the default rather than failing, since a typo in an environment variable should not stop the program from starting. |
 | `NO_COLOR` | Honoured, and it wins over `CANOPY_THEME`. Set to anything except the literal `0`, including empty, and Canopy starts monochrome. Every state carries a word and a glyph rather than colour alone, so nothing becomes unreadable. |
 | `CANOPY_COMMANDS_FILE` | Path to the global custom command definitions, overriding `commands.json` in the config directory. |
+| `CANOPY_GITHUB_CLIENT_ID` | The client id of the GitHub app that `canopy keys signin -route copilot` signs people in as. Not a secret. See "Signing in with a GitHub Copilot seat" below. |
+| `CANOPY_GITHUB_CLIENT_SECRET` | Only needed if the app above issues user tokens that expire, since GitHub will only renew one for an app that can prove who it is. The recommended registration does not, and then this is never read. |
+| `CANOPY_GITHUB_SCOPES` | Space-separated OAuth scopes for that sign-in, overriding the default `copilot read:user`. GitHub documents no scope for Copilot, so the default is evidence rather than fact and this exists to narrow it by experiment. |
+| `COPILOT_CLI_PATH` | Where the GitHub Copilot CLI lives, when it is not on `PATH`. Read by Canopy and by GitHub's SDK, so the two cannot find different binaries. |
+
+## Signing in with a GitHub Copilot seat
+
+The Copilot route runs turns on a user's own Copilot subscription. Two things have to be present and
+Canopy ships neither.
+
+**The Copilot CLI**, which is what actually talks to GitHub:
+
+```sh
+npm install -g @github/copilot
+```
+
+Canopy does not bundle a copy, so that your Copilot is the version GitHub currently supports rather
+than the one Canopy was built against. Set `COPILOT_CLI_PATH` if it lives somewhere unusual.
+
+**A GitHub app of your own**, if you are building Canopy rather than using a release that has one
+compiled in. GitHub's own guidance for the Copilot SDK is to create an app, have users authorise it,
+and pass their token to the SDK. Canopy needs its own identity for that and must not borrow another
+editor's.
+
+1. GitHub, Settings, Developer settings, **OAuth Apps**, New OAuth App.
+2. Any name and homepage URL. The callback URL is required by the form and never used: Canopy signs
+   people in with the device flow so that nothing has to listen on a port.
+3. Tick **Enable Device Flow**.
+4. Copy the **Client ID** and set `CANOPY_GITHUB_CLIENT_ID` to it, or build with
+   `-ldflags "-X github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot.clientID=<id>"`.
+
+An OAuth app rather than a GitHub app, and for one specific reason: an OAuth app's user tokens do not
+expire, so Canopy never has to renew one. Renewing needs a client secret, and a program people
+download cannot keep a secret. A GitHub app works too, and if you leave expiring user tokens on you
+have to supply `CANOPY_GITHUB_CLIENT_SECRET` as well.
+
+Then `canopy keys signin mycopilot -route copilot`, which prints a code and a page to enter it on.
 
 The config directory is `~/Library/Application Support/canopy` on macOS and
 `$XDG_CONFIG_HOME/canopy`, usually `~/.config/canopy`, on Linux. Credentials metadata, secrets if
