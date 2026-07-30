@@ -128,8 +128,10 @@ about them.
 ## Sign in with a subscription instead of a key
 
 If you pay for a model by the month and have never opened a billing account, there is nothing to
-paste, and `canopy keys signin <name>` is the way in. Three routes are permitted, each because the
-vendor's own terms allow that particular shape as of 2026-07-30 (D-51):
+paste, and `canopy keys signin <name>` is the way in. Three routes are permitted, each for a reason
+recorded with the date it was true (D-51, 2026-07-30). Only the Copilot route is one the vendor
+unambiguously invites; the other two rest on narrower arguments, and LIMITATIONS sets out the
+counter-position on the ChatGPT one rather than leaving you to find it:
 
 - **GitHub Copilot**, `-route copilot`. Canopy runs GitHub's device flow, holds the resulting token
   in your keychain, and puts turns through GitHub's official Copilot SDK against your seat.
@@ -333,7 +335,10 @@ the pass.
 
 ## What it will not do
 
-- No cloud, no account, no hosted control plane. Keys never leave your machine.
+- No cloud of Canopy's, no Canopy account, no hosted control plane. A key you paste never leaves
+  your machine. Signing in with a subscription is the one exception and it is the vendor's own: on
+  the Copilot route Canopy obtains a token from github.com and hands it to GitHub's own runtime, and
+  on the other two the vendor's program holds the grant. See "Sign in with a subscription".
 - No unattended merging. A human stays in the loop on anything destructive.
 - **No sandboxing claims.** Canopy runs agent-generated commands under your account. A worktree is
   file isolation, not a security boundary, and pretending otherwise would be the same class of

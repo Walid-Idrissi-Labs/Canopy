@@ -45,8 +45,11 @@ one you have before deciding what a compromise would cost you:
 - **A token Canopy obtained and holds**, which today means the GitHub Copilot route only. The access
   token and the refresh token go into the same credential store, as one entry under the credential's
   name, marked so that somebody who opens Keychain Access can tell what they found. They are never
-  written to `keys.json`: `core.Secret` refuses to be serialised at all, so that is enforced by the
-  type rather than by care.
+  written to `keys.json`, and two separate things hold that. The record that file is made of has no
+  field a token could go in, so there is nothing to write; and if a later edit added one,
+  `core.Secret.MarshalJSON` emits `[redacted]` rather than the value, so the token still would not
+  reach the disk. `core.Secret.UnmarshalJSON` refuses outright, which closes the other direction: a
+  secret cannot be loaded out of a file somebody committed.
 - **A delegation with nothing behind it**, which is the Claude route and the ChatGPT route. Canopy
   holds no vendor token, and `internal/keys` refuses to store one against such a credential. The
   grant lives with the vendor's own program, in that program's own storage, and Canopy neither reads
