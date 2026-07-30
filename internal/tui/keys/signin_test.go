@@ -623,3 +623,50 @@ func TestACredentialWhoseSignInCannotBeReadIsStillListed(t *testing.T) {
 		t.Errorf("the credential vanished because its sign-in could not be read:\n%s", view)
 	}
 }
+
+// A sign-in that started after somebody had already escaped out of it is stopped, not merely
+// ignored.
+//
+// The two are easy to confuse and cost different things. Dropping the message keeps the screen
+// correct, which is what the sibling test above holds. But the attempt on the other end of it is a
+// live device-code poll: on a real route it goes on asking the vendor every few seconds, for as long
+// as the program runs, on behalf of somebody who pressed escape and believes they are done. Nothing
+// on screen would ever show it.
+//
+// The window is ordinary rather than exotic. Begin talks to a vendor, so it is a command, and escape
+// is deliberately live for the whole of that wait; cancel-then-retry produces this sequence every
+// time the first route is slow.
+func TestASignInThatArrivesAfterEscapeIsStoppedRatherThanLeftPolling(t *testing.T) {
+	store := &stubStore{}
+	abandoned := newAttempt(store, "nobody", Prompt{Code: "AAAA-AAAA"})
+	abandoned.release = make(chan struct{})
+	service := &fakeSignIn{routes: []Route{fakeRoute}, attempt: abandoned}
+
+	m, cmd := signInWizard(t, NewWithSignIn(store, service), "one")
+	_ = cmd
+
+	// Escape first, so the attempt number moves on before the vendor has answered Begin.
+	m, cancel := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cancel != nil {
+		collect(t, cancel)
+	}
+
+	// Now Begin's answer turns up, carrying a live attempt that belongs to nobody.
+	stale := signInStartedMsg{attemptID: 0, attempt: abandoned}
+	next, out := m.Update(stale)
+	m = next
+	if out != nil {
+		collect(t, out)
+	}
+
+	abandoned.mu.Lock()
+	stopped := abandoned.cancelled
+	abandoned.mu.Unlock()
+	if !stopped {
+		t.Error("the abandoned sign-in was dropped but never cancelled, so its device code goes on " +
+			"polling the vendor for the life of the program on behalf of somebody who pressed escape")
+	}
+	if chosen, picked := m.Chosen(); picked {
+		t.Errorf("a stale start selected %q", chosen)
+	}
+}

@@ -279,10 +279,14 @@ func TestCanopyDeclinesEveryApprovalTheDelegatedAgentAsksFor(t *testing.T) {
 		if err := json.Unmarshal(answer.Result, &decision); err != nil {
 			t.Fatalf("the answer for %s did not decode: %v", what, err)
 		}
-		if decision.Decision != decisionDecline {
-			t.Errorf("Canopy answered %q for %s, want %q: approving would be Canopy standing in as "+
-				"the user's approver for a call it did not make", decision.Decision, what,
-				decisionDecline)
+		// The literal wire value, not decisionDecline. Comparing against the constant that produced
+		// it makes this test pass for whatever that constant is set to, including "approve": the
+		// assertion and the implementation would move together and nothing would report it. What is
+		// being held here is a fact about the protocol rather than about Canopy's spelling of it, so
+		// the protocol's own word is what it is held against.
+		if decision.Decision != "decline" {
+			t.Errorf("Canopy answered %q for %s, want \"decline\": approving would be Canopy standing "+
+				"in as the user's approver for a call it did not make", decision.Decision, what)
 		}
 	}
 

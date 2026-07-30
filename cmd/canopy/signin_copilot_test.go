@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -293,5 +294,99 @@ func TestNamingARouteThisBuildDoesNotHaveSaysWhichOnesItDoes(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), copilot.Route) {
 		t.Errorf("the refusal does not say what this build offers: %v", err)
+	}
+}
+
+// The Cancel contract, held on the one route of the three where cancelling badly costs something.
+//
+// The Claude and ChatGPT routes have both halves of this and this route had neither, which is the
+// wrong way round: those two store a delegation with nothing behind it, and this one stores a real
+// GitHub access token and a real refresh token in the user's keychain. A cancelled sign-in that
+// left the record behind here would leave a live grant under a credential the person believes they
+// backed out of, and the only sign of it would be a row in `canopy keys list` they did not expect.
+func TestCancellingACopilotSignInThatAlreadyCompletedRemovesTheCredential(t *testing.T) {
+	store := keys.NewStore(keys.NewMemoryBackend(), filepath.Join(t.TempDir(), "keys.json"))
+	route := copilotSignIn{store: store, vendor: gitHubThatSignsAnybodyIn(t, "walid")}
+
+	attempt, err := route.Begin(route.Routes()[0], "mycopilot")
+	if err != nil {
+		t.Fatalf("beginning the sign-in: %v", err)
+	}
+	if _, err := attempt.Wait(); err != nil {
+		t.Fatalf("the sign-in failed: %v", err)
+	}
+	if _, err := store.Metadata(core.KeyRef{Name: "mycopilot"}); err != nil {
+		t.Fatalf("the sign-in stored nothing, so this test would pass for the wrong reason: %v", err)
+	}
+
+	attempt.Cancel()
+
+	if _, err := store.Metadata(core.KeyRef{Name: "mycopilot"}); err == nil {
+		t.Error("cancelling left the credential behind, which is a credential nobody knows they have")
+	}
+	// And the tokens with it, which is the half that matters on this route: a record somebody can
+	// see is recoverable, a grant left in the keychain under a name they cancelled is not.
+	if _, err := store.Tokens(core.KeyRef{Name: "mycopilot"}); err == nil {
+		t.Error("cancelling left a live GitHub access token in the keychain")
+	}
+}
+
+// The other half: cancelling before GitHub ever answers stores nothing at all.
+func TestCancellingACopilotSignInBeforeItFinishesStoresNothing(t *testing.T) {
+	store := keys.NewStore(keys.NewMemoryBackend(), filepath.Join(t.TempDir(), "keys.json"))
+
+	// GitHub holds the exchange open until the test lets it through, which is the window Cancel
+	// exists for: a person reading a device code has minutes in which to change their mind.
+	released := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/login/device/code", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONTo(w, map[string]any{
+			"device_code": "DEVICE", "user_code": "ABCD-1234",
+			"verification_uri": "https://github.com/login/device",
+			"expires_in":       900, "interval": 1,
+		})
+	})
+	mux.HandleFunc("/login/oauth/access_token", func(w http.ResponseWriter, _ *http.Request) {
+		<-released
+		writeJSONTo(w, map[string]any{"access_token": "gho_A-REAL-LOOKING-TOKEN"})
+	})
+	mux.HandleFunc("/user", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSONTo(w, map[string]any{"login": "walid"})
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	route := copilotSignIn{store: store, vendor: copilot.Vendor{
+		HTTP:     server.Client(),
+		ClientID: "Iv23liCANOPYSOWN",
+		Endpoints: copilot.Endpoints{
+			DeviceCode: server.URL + "/login/device/code",
+			Token:      server.URL + "/login/oauth/access_token",
+			API:        server.URL,
+		},
+	}}
+
+	attempt, err := route.Begin(route.Routes()[0], "mycopilot")
+	if err != nil {
+		t.Fatalf("beginning the sign-in: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	var waitErr error
+	go func() {
+		defer wg.Done()
+		_, waitErr = attempt.Wait()
+	}()
+
+	attempt.Cancel()
+	close(released)
+	wg.Wait()
+
+	if waitErr == nil {
+		t.Fatal("a cancelled sign-in reported success")
+	}
+	if _, err := store.Metadata(core.KeyRef{Name: "mycopilot"}); err == nil {
+		t.Error("a cancelled sign-in stored a credential")
 	}
 }

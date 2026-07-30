@@ -186,7 +186,27 @@ func TestASignInRefusedByTheConversationIsStoredAndNotClaimed(t *testing.T) {
 	if engine.using != [2]string{} {
 		t.Errorf("an unrelated later key retried the refused switch as %v", engine.using)
 	}
-	_ = after
+
+	// The half of the refusal protocol that lives in the application rather than on the screen: the
+	// note of which credential to start the next conversation on must not move either.
+	//
+	// This is the same defect TestARefusedPickLeavesTheNextConversationWhereItWas exists for, on the
+	// other path into the same three lines. It was held there and not here, and the two paths were
+	// only merged into applyCredentialChoice during this phase, so the sign-in path had the guard
+	// and nothing that would notice it going. Without it, ctrl+n after a refused sign-in opens a new
+	// conversation on the credential the refusal just declined.
+	// Back to the conversation first, since ctrl+n belongs to that screen.
+	onChat, _ := after.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	before := engine.created
+	started, _ := onChat.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	_ = started
+	if engine.created != before+1 {
+		t.Fatalf("ctrl+n created %d conversations", engine.created-before)
+	}
+	if engine.session.KeyName != "" {
+		t.Errorf("the new conversation opened on %q, and a refused sign-in must leave the next "+
+			"conversation where the refusal found it", engine.session.KeyName)
+	}
 }
 
 // The S-06 acceptance criterion: a vendor that chooses the model says so where the picker would
