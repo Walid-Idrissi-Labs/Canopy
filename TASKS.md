@@ -6090,7 +6090,7 @@ LIMITATIONS. Refresh follows S-02.
 
 ### S-06 The wizard has a path that never asks for a secret
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
 `scope: internal/tui/keys/, internal/tui/`
 
 Deliverable: a branch of the add-credential wizard that ends without a secret prompt. The state
@@ -6124,11 +6124,116 @@ stores nothing and leaves no partial record. A vendor that chooses the model say
 would otherwise be empty. Every new screen renders at 80 columns and under `NO_COLOR`. The import
 boundary test covers `internal/tui/keys` and `internal/tui/chat` and passes.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `modeSignIn` in internal/tui/keys, reached from the provider step, with the port it
+runs behind in internal/tui/keys/signin.go and the conversion to internal/keys in
+cmd/canopy/credentials.go.
+
+The port, which the task left open between "the narrow Store at model.go:24" and "a new interface
+just as narrow": both, split by what each answers. Signing somebody in is `SignIn`, two methods,
+`Routes` and `Begin`, with `Begin` returning an `Attempt` that has `Prompt`, `Wait` and `Cancel`.
+Reading what a credential already is, which the list and the model picker need on every frame, is one
+method on `Store` called `Identity`. Putting the second on `SignIn` was tried first and is wrong: a
+build with no routes has a nil `SignIn` and still has credentials somebody signed in to on a previous
+build, so the list would have gone blank for exactly the person this phase is for. The narrowness
+property survives, and it is worth saying which property that is rather than counting methods: no
+method in this package can return a secret. `Identity` carries a kind, an account and an expiry,
+which are the three facts S-01 deliberately keeps out of the keychain half so a list can draw them
+without unlocking anything. `Attempt.Wait` stores the credential itself and hands back a name and an
+account, so a token never enters this package at all rather than entering it and being handled
+carefully.
+
+The asynchronous half, which is the part with a real failure mode behind it. Bubble Tea runs one
+goroutine and a device code takes minutes, so `Begin` and `Wait` are both commands and both arrive
+back as messages, and escape is live for the whole wait. Cancellation is an attempt number rather
+than a flag: `abandonAttempt` bumps it before anything else, so a `signInDoneMsg` from a sign-in
+somebody has already escaped out of carries a stale number and is dropped rather than being taken for
+the next attempt's answer, which matters because the obvious sequence of cancel-then-retry produces
+exactly that. A `signInStartedMsg` with a stale number is not merely dropped, it is cancelled: an
+abandoned device code otherwise goes on polling a vendor every few seconds for as long as the program
+runs, on behalf of somebody who pressed escape. And `Attempt.Cancel` is documented as undoing a
+sign-in that completed between the keystroke and the call, not only stopping one that had not, since
+a credential nobody knows they have is worse than one that failed to appear. Held by
+TestCancellingASignInThatHadAlreadySucceededTakesTheCredentialBackOut.
+
+Found on the way and fixed here, because S-06's first acceptance clause is false without it: the
+application read the credential screen's choice only while handling a key, at app.go:390 in the
+`screenKeys` branch. A sign-in ends on a message from a vendor, so the choice sat unapplied until the
+person pressed something unrelated, and "the conversation's next message runs on it with no further
+keystroke" would have been wrong by one keystroke. The three lines of the refusal protocol are now
+`applyCredentialChoice`, called from both paths, rather than copied into the second one where the
+copy would drift. Two lines above it, `a.keys.Update(msg)` discarded its command on the non-key path,
+which was invisible while every message this screen answered was answered in one step and broke the
+sign-in chain the moment there were two steps with a vendor between them.
+
+The import boundary test, and the one place this reports back rather than complying. The task is
+right that the gap is a gap: `TestDashboardOnlyDependsOnCore` walked one directory, so
+internal/tui/keys was never held to it and had been importing internal/catalog for two phases. It now
+walks the whole interface, and is renamed to
+TestEveryInterfacePackageDependsOnTheContractAndNotOnTheEngine, since "dashboard" was the name of the
+one package it happened to cover. But the acceptance clause as written cannot be met by the rule as
+written: internal/tui/chat imports internal/session, internal/permission and internal/config today,
+in non-test code, and removing those is a refactor of `chat.Engine`'s signatures rather than anything
+S-06 could carry. So the check became an allow-list keyed by package, `allowedOutside`, with a
+sentence of reason per entry, defaulting to internal/core and internal/tui alone. That is weaker than
+"only core" for chat and agents and stronger than what existed for everything, because the previous
+arrangement enforced the rule only where it was already true. The property the task actually wants is
+enforced everywhere with no exemption available: a screen reaching internal/keys, internal/provider,
+internal/git or internal/store fails immediately, which is what would have happened had the sign-in
+been built the obvious way.
+
+Acceptance, clause by clause: somebody with no credentials adds a subscription one, is never shown a
+secret prompt, and the next message runs on it with no further keystroke is
+TestASubscriptionIsAddedThroughTheWizardWithoutASecretPromptAnywhere for the screen and
+TestTheConversationRunsOnASignedInCredentialWithNoFurtherKeystroke for the application, the second
+being the one that holds the "no further keystroke" half, since only the application knows what the
+conversation runs on; the list row saying the account and the expiry is
+TestTheListRowNamesTheAccountAndWhenTheGrantExpires, with
+TestALapsedGrantSaysSoInWordsAndNotOnlyInColour and
+TestADelegatedRowSaysCanopyHoldsNothingOfTheUsers for the two rows that are not a plain unexpired
+grant; cancelling at the sign-in step storing nothing and leaving no partial record is
+TestCancellingAtTheSignInStepStoresNothingAndLeavesNoPartialRecord, with
+TestCancellingASignInThatHadAlreadySucceededTakesTheCredentialBackOut and
+TestAnAnswerFromACancelledSignInIsNotTakenForTheNextOne for the two races that clause implies; a
+vendor that chooses the model saying so where the picker would otherwise be empty is
+TestThePickerSaysTheVendorChoosesRatherThanShowingAnEmptyList, with
+TestAnEndpointWithNoLineupStillSaysNoneSet holding that the other empty state kept its own words;
+eighty columns and no colour is TestTheSignInStepRendersAtEightyColumnsWithNoColour for the screen and
+TestTheSignInStepFitsEightyColumnsInsideTheApplicationFrame for the frame around it; and the import
+boundary test covering internal/tui/keys and internal/tui/chat is
+TestEveryInterfacePackageDependsOnTheContractAndNotOnTheEngine, with the caveat two paragraphs above.
+
+Five more that cover behaviour the clauses imply rather than name:
+TestTheScreenStaysAnswerableWhileASignInIsWaiting, which is the one that would fail if the wait ever
+moved back inside a handler; TestTheSignInStepShowsTheCodeAndTheAddressForAMachineWithNoBrowser;
+TestARouteThatCannotStartLeavesTheOtherRoutesWhereTheyAre;
+TestAWizardWithNoRoutesOffersExactlyWhatItOfferedBefore; and
+TestACredentialWhoseSignInCannotBeReadIsStillListed.
+
+Considered and rejected. Opening a browser from the screen: rejected because a coding agent is
+routinely run over ssh and a flow that only works where a browser exists does not work on the
+machines this program is for, so the code and the address are text and a route may still open a
+browser as a convenience on top of that. Widening `Store` with something that returns tokens so the
+screen could store the credential itself: rejected, and it is the whole reason `Attempt.Wait` stores.
+A countdown in the list row instead of a timestamp: rejected because the list redraws on every
+keystroke and a number that moves while somebody reads it is worse than one they can compare against
+a clock. Hiding the whole list when one credential's sign-in cannot be read: rejected, one row with
+less on it beats no rows. Dropping the free-text row from a delegated credential's picker section:
+rejected, D-46 rule 1 has no exception for a claim about somebody else's agent. Making `SignIn`
+required rather than nillable: rejected because every existing test and every build before S-03 has
+no route, and a required dependency would have meant inventing an empty one in nineteen places.
+
+A correction to the task text, both harmless: `mode` is at model.go:42 rather than 41, and
+`cancelDraft` at 561 rather than 559.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree:
+`go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
+./...` reports no issues.
 
 ### S-07 The command line signs in, and a test says what it can
 
-`status: todo | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
 `scope: cmd/canopy/keys.go, cmd/canopy/`
 
 Deliverable: the CLI half of S-06. `canopy keys` gains a way to sign in, a way to see which
@@ -6155,7 +6260,103 @@ the output is unchanged. On a signed-in credential it reports the account and th
 and refuses to claim a network check it did not make. On a lapsed credential it says lapsed and names
 the command that fixes it. No output anywhere mentions A2.
 
-`verify: claude [ ]   codex [ ]`
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built in cmd/canopy/signin.go, with `canopy keys signin`, `canopy keys signout`, an account
+column on `canopy keys list` and a rewritten `canopy keys test`. The routes it drives are S-06's
+`keysui.SignIn`, deliberately the same interface rather than a second one: two definitions of one
+contract is how the wizard and the command end up with credentials that differ in some detail nobody
+notices until a user has both.
+
+What this ships with no route behind it, said plainly because it is the honest state of the build.
+`signInRoutes` is empty. The three permitted routes are D-51's and each arrives with its own task,
+S-03, S-04 and S-05, so today `canopy keys signin` names them and says they are being built. The
+surfaces are here first on purpose: without them each of those three tasks builds its own command and
+its own wizard branch and the three disagree, and the parts a vendor integration is least likely to
+get right are exactly the parts that are not about the vendor. Refusing `-token`, cancelling without
+leaving a credential, and saying out loud when nothing was asked of anybody are all held by tests now,
+against a fake route, and whichever route lands first inherits them. Held by
+TestSigningInWithNoRouteBuiltSaysWhichRoutesAreComing, which also holds that the refusal answers "am I
+allowed to" rather than only "no".
+
+What `keys test` means now, per kind, since the task asked for the strongest honest statement rather
+than a check that skips. A pasted key is the fingerprint comparison it has always been, output
+unchanged down to the column widths, minus the closing sentence. A signed-in credential is: the
+account, the kind, whether both tokens are behind it, when the grant expires, and when Canopy will
+renew it, which is `keys.RefreshMargin` from S-02 printed as "5 minutes" rather than as "5m0s"
+because this line is read rather than parsed. A delegated one is the account and the sentence that
+its keychain half is empty and empty is correct, which is what S-04 needs and is the opposite of the
+missing-secret damage the pasted path reports. And in every case a closing statement of what was not
+asked. `account/rateLimits/read` is reachable through `reportsOnCredentials`, an optional interface a
+registry may implement, and when it is absent the output says no vendor was contacted rather than
+letting a stored account read as a checked one. That last sentence is the whole point of the clause
+and is the same dishonesty the A2 line had settled into, one level in.
+
+Two optional interfaces rather than one, `reportsOnCredentials` and `revokesCredentials`. They are
+separately available in the real world: Codex publishes rate limits and no revocation, a GitHub token
+can be revoked and says nothing about a plan. A registry that had to implement both to offer either
+would offer neither, and a single interface whose methods return "not supported" moves the same
+decision into the caller with less type checking.
+
+The A2 line is gone and what replaced it is a different claim rather than the same claim reworded.
+The old text gave a reason that had been untrue since A2 shipped; the reason it gives now is that the
+only way to ask whether a value is still accepted is to make a request the account is billed for, and
+a command somebody runs to check something should not spend their money to answer it. Held by
+TestNoKeyCommandMentionsAPhaseThatIsLongGone, which sweeps every keys command rather than the one it
+was found in.
+
+Acceptance, clause by clause: signing in from the CLI producing a credential the interface lists, and
+one added in the interface being visible to the CLI, is
+TestACredentialSignedInFromEitherSurfaceIsVisibleToTheOther, which drives both surfaces over one real
+`keys.Store` in both directions rather than asserting each against its own fake; signing out leaving
+no token in the backend and no record in keys.json is
+TestSigningOutLeavesNoTokenInTheBackendAndNoRecordInKeysJson, asserted against the backend, the store
+and the file's bytes, and it also holds that the vendor was told rather than only the local half
+being done; `keys test` on a pasted key behaving as it does today with unchanged output where the
+output is unchanged is TestKeysTestOnAPastedKeyStillReportsStorageAndNothingMore; reporting the
+account and the state of the grant on a signed-in credential is
+TestKeysTestOnASignedInCredentialReportsTheAccountAndTheStateOfTheGrant, which also holds that no
+fingerprint is invented and that neither token reaches the output; refusing to claim a network check
+it did not make is TestKeysTestRefusesToClaimANetworkCheckItDidNotMake, in three states, no route
+that can ask, a route that answers, and a route that could not be reached; and lapsed saying lapsed
+and naming the command that fixes it is
+TestKeysTestOnALapsedCredentialSaysLapsedAndNamesTheCommandThatFixesIt, in both of its cases, since a
+lapsed grant with a refresh token is a note and one without is a failure with an exit code. No output
+mentioning A2 is TestNoKeyCommandMentionsAPhaseThatIsLongGone.
+
+Five more that cover behaviour the clauses imply rather than name:
+TestKeysTestOnADelegatedCredentialDoesNotReportAnEmptyKeychainAsDamage, which S-04 depends on;
+TestSigningOutAPastedCredentialRefusesAndNamesWhatRemovesIt;
+TestSigningInRefusesAFlagThatWouldPutACredentialInShellHistory;
+TestNamingARouteThatDoesNotExistSaysWhichOnesDo; and TestAnInterruptedSignInStoresNothing.
+TestTheStoreAndTheScreenAgreeAboutWhatAKindIsCalled belongs to S-06's boundary and lives here because
+this is the package that can see both sides of it.
+
+Considered and rejected. Making `keys signout` an alias for `keys remove`: rejected, and the
+difference is the task's own word "revokes or discards rather than only forgetting". Doing only the
+local half while calling it signing out is how somebody comes to believe they revoked access they
+still have, so the command says which of the two it managed. Refusing to delete anything when the
+vendor cannot be reached: rejected in the other direction, since that leaves the tokens in the
+keychain of somebody who has just said they want them gone; it reports the failure and deletes.
+Adding the account column to `keys list` unconditionally: rejected so a machine with nothing but
+pasted keys sees the listing it has always seen rather than an empty column asking about a feature it
+does not use. Letting ctrl+c during a sign-in kill the process the usual way: rejected because the
+vendor can confirm in the same moment, and a process that dies between confirmation and cleanup
+leaves the credential `Attempt.Cancel` exists to remove, so the signal is selected against the wait
+and the cancellation runs. Requiring `-route` even when the build offers exactly one: rejected as a
+question with one possible answer, and the sentence printed instead says which was used and why.
+Naming `canopy keys signin` in internal/keys' lapsed-token errors, which S-01 and S-02 both left
+unnamed because the command did not exist: not done here, since those errors belong to two tasks
+currently in review and editing their text while a reviewer is reading it is worse than a remedy
+named one layer out. It is named where this task owns the output, in `keys test`. Worth a look when
+S-02 is signed off.
+
+A correction to the task text, both harmless: `runKeysTest` was at cmd/canopy/keys.go:437 as stated,
+and the A2 sentence was at 475 rather than 473.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree:
+`go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
+./...` reports no issues.
 
 ### S-08 The documents say what is permitted and what is not
 
