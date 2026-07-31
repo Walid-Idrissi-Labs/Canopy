@@ -392,6 +392,15 @@ own app rather than reusing another editor's client id or version headers.
   next prompt as a labelled transcript. That is weaker than having had them and it is the only
   surface the SDK offers.
 
+- **It also happens without a restart, to the conversation you have left alone the longest.** Each
+  held session is a resident `copilot` process, so Canopy keeps at most eight of them and closes the
+  least recently used one when a ninth conversation opens. Nothing is lost from Canopy's own
+  transcript and nothing is announced; the next turn on that conversation re-seeds a new session
+  from it, by the same labelled transcript as after a restart and with the same loss. Eight is one
+  more than the largest ordinary arrangement, a conversation that has dispatched a full fleet of six
+  agents and is still being talked to, so nothing anybody does deliberately reaches it. A
+  conversation with a turn still running is never the one closed; the bound gives way instead.
+
 - **The model and the reasoning effort belong to the session**, set when the conversation starts.
   Naming a different model mid-conversation does not restart it, because restarting would throw the
   conversation away to honour a flag, and this route says nothing on screen when that happens: it is

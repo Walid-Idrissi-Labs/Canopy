@@ -278,11 +278,10 @@ func readPrompt(args []string) (string, error) {
 	return prompt, nil
 }
 
-// newClient builds the provider client a credential points at.
+// clientFor builds the client for a credential and says how a turn on it should be priced.
 //
 // The credential decides, not a flag. That is the whole point of naming keys: `-key nemotron`
 // carries its provider and endpoint with it, so nothing above has to be told which API to speak.
-// clientFor builds the client for a credential and says how a turn on it should be priced.
 //
 // Kind before provider, for the reason internal/session/resolver.go gives at the same fork: a
 // delegated credential is Anthropic by provider and holds no secret at all, so asking the refresher
@@ -339,6 +338,10 @@ func clientFor(
 		WithUserRate(meta.Rate), nil
 }
 
+// newClient builds the pasted-key provider client a credential points at.
+//
+// Only the two that hold nothing reach this: a provider with a process, a session or an identity
+// behind it is built by session.Vendors instead, so that one thing closes it. See clientFor.
 func newClient(meta core.KeyMetadata, secret core.Secret, model string) (core.ProviderClient, error) {
 	switch meta.Ref.Provider {
 	case core.ProviderAnthropic:
