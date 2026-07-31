@@ -5997,7 +5997,7 @@ the provider switch exists twice and the two copies disagree.
 
 ### S-03 GitHub Copilot signs in through its own SDK
 
-`status: blocked | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
 `scope: internal/provider/copilot/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
 
 Deliverable: the Copilot route, first of the three because it is the one whose vendor documents this
@@ -6026,7 +6026,7 @@ exactly that, not shown a generic authentication failure. Both internal/session/
 `newClient` in cmd/canopy/ask.go reach the new client, so `canopy ask` and the interface agree, and
 a test holds that the two switches know the same set of providers.
 
-`verify: claude [x] 2026-07-30   codex [ ]`
+`verify: claude [x] 2026-07-31   codex [ ]`
 
 notes: built as internal/provider/copilot, with `copilotSignIn` in cmd/canopy/signin_copilot.go, the
 `copilot` branch in internal/session/resolver.go and in `clientFor` in cmd/canopy/ask.go, and one
@@ -6308,6 +6308,95 @@ mutated to approve everything and is held. What was missing was the Cancel contr
 no cancellation test at all, where the other two have both halves, and it is the only route of the
 three whose credential holds real tokens. Both halves added in a separate commit, and the completed
 half fails against the mutation that removes Cancel's undo.
+
+fixed (claude, 2026-07-31): the resource story is now true, and it is true by construction rather
+than by everybody remembering. What the verification found is exactly what was there: `Resolve`
+returns a `core.ProviderClient`, which has no Close, so the three callers that resolve without a
+conversation had no way to end anything, and the notes claimed a guarantee that held on one path out
+of four.
+
+The contract that changed is not `Resolve` but who is allowed to build a client. `copilot.New` is
+gone and every client comes from `copilot.Clients`, which is holding it from the moment it exists.
+Nothing outside internal/provider/copilot can construct one at all, so a future call path cannot
+leak by forgetting: there is nothing for it to call except the pool. Two shapes come out of it. A
+conversation's client outlives its turns and ends when the pool does or when it is evicted. A
+one-shot ends itself when its stream closes, which is what an aside, a compaction and `canopy ask`
+each are, and it is also held by the pool until then so that a caller who never streamed at all
+still leaves nothing behind. `Stream` closes a one-shot itself when the turn never started, because
+at that point the session is open and the caller has an error and no stream to close.
+
+The test that holds this against the next person rather than against today's three paths is
+TestTheOnlyWayToBuildAClientIsOneTheCleanupIsHolding, which reads the package's own source and fails
+if any file but clients.go builds a Client or if anything exported hands one back that is not a
+method on Clients. Source-read for TestNothingInThisRouteListensOnAPort's reason: "there is no other
+way to build one" is a property of the code and not of a value it computes.
+TestAnAsideAndACompactionEndTheSessionsTheyOpen drives the engine's own aside and compaction and
+counts the vendor sessions opened and closed, and
+TestClosingTheResolverEndsEveryConversationItWasHolding was rewritten, because the version of it
+that shipped asserted an empty map: a shutdown that dropped every client without closing one
+satisfies that perfectly, which is why the bug survived a green test.
+
+Eviction, and the policy argued rather than picked. Held conversations are bounded at eight, and the
+least recently used one is closed when a ninth arrives. Eight because the largest ordinary
+arrangement is a conversation that dispatched a full fleet, MaxAgentsPerDispatch is six, and one
+more than seven means nothing anybody does deliberately evicts anything. An idle timer was rejected
+and the reason is this route specifically: evicting costs GitHub's own copy of the conversation,
+which cannot be handed back, and the next turn re-seeds from Canopy's transcript, weaker because
+roles collapse into a labelled record. Time since somebody last typed is therefore the wrong axis,
+since it ends the conversation of the person who went to lunch while keeping eight nobody will
+return to; how many are held at once is what the machine actually pays for. Eviction never takes a
+session from a turn in flight and never takes the conversation just asked for: when everything is
+busy the bound gives way, because a bound that loses somebody's reply is worse than nine processes
+for a minute.
+
+Idempotence, held in TestClosingIsSafeTwiceOnASessionThatNeverStartedAndWithNoVendorInstalled and
+TestClosingWhileATurnIsInFlightEndsTheTurnRatherThanHanging: closing twice, closing a conversation
+that never opened a session, closing on a machine with no Copilot CLI, and closing while somebody is
+mid-reply, where the reader is released by the event channel closing and the turn ends with what had
+arrived. The two locks are ordered rather than trusted: Client.Close takes the pool's lock only
+after releasing its own, and the pool closes evicted clients after unlocking.
+
+The version, which the same verification found and which is the same fault as the leak. `canopy ask`
+passed `WithVersion(version)` and internal/session/resolver.go did not, so an installed release told
+Claude Code and Codex it was Canopy "dev" for anybody working in the interface. Both paths now build
+through session.Vendors, which takes the version as a constructor argument rather than a setter or a
+default, so it cannot be left out of one path. Held from both ends:
+TestBothDelegatedRoutesTellTheVendorTheVersionCanopyWasBuiltWith reads what the client will send,
+and TestEveryWayOfBuildingAVendorClientIsGivenTheBuildsVersion reads cmd/canopy's source and fails
+if any place that builds one passes anything other than this build's `version`. The two pasted-key
+providers are deliberately still forked between the two surfaces: they hold no process, no session
+and no identity, so nothing about them can drift into a difference anybody could see.
+
+routeSet.Report, the third thing found. The ChatGPT route ignored the metadata it was handed, so the
+fallback for a credential with no route recorded answered with whoever came first in the list: a
+ChatGPT plan and a ChatGPT account printed under a Copilot credential's name. Every route now
+refuses a credential that is not its own, recognising its own by the recorded route or, where there
+is none, by the shape it stores. The verification named the ChatGPT route; the Claude route had it
+too, and the Copilot route is the one where it is worse than a wrong answer, since that Report reads
+a token out of the keychain and sends it to github.com. It was safe by accident before, because
+internal/keys refuses to produce tokens for a delegated credential and the read failed first, which
+is not the same as being safe. TestNoRouteAnswersAboutACredentialThatBelongsToAnotherVendor drives
+every member of the registry against every other member's credential and fails if the build grows a
+route the test is not driving.
+
+Mutation results: 21 attempted, 20 caught. The survivor is removing routeSet's own skip of members
+that do not offer a recorded route, which
+TestACredentialFromARouteThisBuildDroppedIsNotAnsweredBySomebodyElse survives because the per-route
+refusal now catches the same case; removing both layers fails it, which was run to check the test is
+not vacuous. Caught: a second constructor outside the pool; a one-shot that does not end with its
+turn, seen both in the package and through the engine's aside and compaction; a failed turn that
+leaves its session open; no eviction at all, which is what shipped; eviction that ignores a turn in
+flight; eviction that takes the most recently used; eviction that forgets a client without closing
+it; a pool Close that drops its clients rather than closing them, seen both directly and through the
+resolver's shutdown; a client that closes without telling the pool; a shut down pool that still
+starts conversations; each delegated route forgetting the version; each surface naming itself
+something other than the build's version; and each of the three routes answering about another
+route's credential.
+
+Left for the documentation task rather than done here, to avoid two people editing one file:
+LIMITATIONS.md's "a conversation picked up after a restart is seeded, not resumed" is now also true
+of a conversation whose session was evicted, which happens to the least recently used one when a
+ninth is opened in a single run.
 
 ### S-04 Claude runs through the user's own Claude Code
 
