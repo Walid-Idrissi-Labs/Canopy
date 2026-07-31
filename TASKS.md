@@ -3565,7 +3565,7 @@ silhouette and wrong for a scene, and what it was really protecting is checked d
 `scope: internal/tui/chat/model.go, internal/tui/chat/opening.go, internal/tui/app.go, cmd/canopy/`
 
 Deliverable: opening Canopy puts you in a new conversation, composed the way the supervisors asked
-for it after D-51: the message box itself centred near the middle of the screen, the commands along
+for it after D-52: the message box itself centred near the middle of the screen, the commands along
 the bottom, the animated mark in the bottom right corner, and identity in the header from the first
 frame rather than repeated as a large central wordmark. Ending a session prints a code, and
 `canopy pickup <code>` returns to that conversation.
@@ -3576,7 +3576,7 @@ does not move the message box. Sending the first message does not swap a central
 header treatment. A printed code resumes the exact session it names and says so plainly when it does
 not match one.
 
-Revised 2026-07-30 by D-51: the earlier large opening wordmark and the note leaving header placement
+Revised 2026-07-30 by D-52: the earlier large opening wordmark and the note leaving header placement
 open are superseded. The existing header now owns identity on the opening screen as it does after a
 turn: Canopy where no agent is named, the agent name where one is. The short-height written fallback
 remains intentional.
@@ -3592,7 +3592,7 @@ highest ID it finds, so after the first run `session-1` is the oldest chat in th
 launch reopened it while the agent that had just been started talked into a session with no screen
 attached to it. Which conversation to open is passed in now, and nothing named starts a new one.
 
-The empty conversation is composed rather than being a transcript with nothing in it. D-51 removed
+The empty conversation is composed rather than being a transcript with nothing in it. D-52 removed
 the large central name, so the box itself now lands on the middle of the screen. Status rows and
 command output stack above it and menus hang below it; neither changes that anchor while somebody is
 typing.
@@ -5343,6 +5343,46 @@ all passed with a reachable freeze of the entire interface in the tree. Worth re
 time a green gate is mistaken for a reviewed change. The hang is the reason `v0.1.0-beta.1` was not
 tagged on 2026-07-30 until this landed.
 
+### U-26 A question is answered where it is seen
+`status: review | owner: claude | branch: tui/answer-where-you-are | depends: U-16`
+`scope: internal/tui/chat/, internal/tui/agents/, internal/tui/app.go, internal/tui/help.go`
+
+Deliverable: the two surfaces U-16 built as summaries become bounded approval surfaces, and the
+accept key is enter everywhere, both directed by Walid from using the built program. On the
+conversation you sit in, another agent's needs-you panel takes enter to approve once and backspace
+to decline, only while the message box is empty; typing still answers nothing and ctrl+g still
+opens the full request. On the agents screen, a waiting pane pins a compact needs-you popup naming
+its request, and the selected pane answers on the same two keys, enter going back to meaning open
+the moment nothing waits. The conversation's own prompt takes enter as yes-once too, `y` staying
+beside it and `a` alone still remembering. Inline answers are always once and never remembered,
+which is D-35 unmoved. Recorded as D-50, superseding the enter-refuses reflex and the focus-step
+half of D-47.
+
+Acceptance: with a subagent waiting and the box empty, enter approves it once and backspace
+declines it, the answer naming exactly the session on the panel; with anything typed, enter sends
+and backspace deletes and nobody is answered; the oldest question is the one answered and the next
+comes forward unanswered; the own prompt outranks a visitor on the same key; on the agents screen
+enter approves the selected waiting agent once, backspace declines, the answer follows the cursor
+and not the queue, and enter opens as before when nothing waits; the selected waiting pane names
+both keys and unselected waiting panes name their request only; the footer relabels enter while
+the selection waits; no inline answer ever carries remember; the full prompt still refuses on
+every non-answer key. If a request stops waiting between being drawn and the answer key arriving,
+both compact surfaces say it is no longer waiting and never claim that an approval or refusal
+succeeded.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: D-50. The chat surface is TestEnterOnAnEmptyBoxApprovesTheVisitorOnce,
+TestBackspaceOnAnEmptyBoxDeclinesTheVisitor, TestATypedMessageKeepsEnterAndBackspaceToItself,
+TestEnterAnswersTheOldestVisitorAndTheNextComesForward, TestYourOwnPromptTakesEnterBeforeAnyVisitor
+and TestThePanelNamesTheKeysOnlyWhileTheyAreLive in inline_answer_test.go; stale panels are held by
+TestAVisitorThatStoppedWaitingIsNotClaimedAsAnswered and
+TestASelectedAgentThatStoppedWaitingIsNotClaimedAsAnswered; the agents surface is answer_test.go
+entire; the own-prompt key rename and the preserved refusal default are the
+rewritten TestEveryKeyThatIsNotNavigationStillRefuses. U-16's own tests still hold unchanged
+except that rewrite, which is the supersession made visible. The agents Engine grew Answer, wired
+to the same engine method the chat already used; nothing additive was needed engine-side.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 
@@ -5679,3 +5719,4 @@ status or verification updates.
 | 2026-07-28 | Claude | Added phases E and U after PG-A9, from an audit of the send path and of every screen rather than of this ledger: ten efficiency tasks and fourteen interface tasks, none of which blocks 0.1. Four blocks set back to partial where their prose outran the code: A3-06 (no auto compaction, meter blind to tool traffic), A2-07 (saving visible only in headless ask), A2-08 (chain has no caller), A8-03 (instructions parse and reach nothing). Notes added to A5-09 and A9-02. Principles recorded as D-42 to D-44, new questions Q-19 to Q-21. |
 | 2026-07-29 | Claude | Added U-15 from Walid using the built program: the mode key applied every rung it walked past, so cycling from cruise to build put a working agent through plan. Built the same day, out of lane order, since it is a defect in a shipped safety setting. Recorded as D-45. The engine gained `ModeUnusable`, the refusal `SetMode` already made asked as a question. Section 2.0 recounted, which the two new phases had left stale. |
 | 2026-07-29 | Claude | Added phase K, one key many models, and U-16 to U-19, from six asks by Walid: keys that hold several models over a dated catalog, dispatch that understands model words, a picker screen, other agents' permission prompts surfacing on the conversation you are on, the header naming the agent instead of the brand, a tasks block with state colours, and btw history that survives the screen. Recorded as D-46 and D-47. Claimed on feat/one-key-many-models and tui/ambient-attention, stacked in that order on tui/mode-settle. |
+| 2026-07-30 | Claude | Added U-26 from Walid using the built program: U-16's summaries become bounded approval surfaces, answered with enter and backspace where they are seen, and the accept key is enter on every prompt. Built the same day on tui/answer-where-you-are. Recorded as D-50, superseding the enter-refuses reflex and the focus-step half of D-47; the once-only and typing-answers-nothing guards stay. |

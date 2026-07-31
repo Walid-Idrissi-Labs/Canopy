@@ -147,9 +147,14 @@ The transcript shows bounded tool output and file diffs. Control characters from
 content are printed as visible escapes before terminal styling, so viewed output cannot act as a
 second terminal program.
 
-If another agent needs permission, a compact notice reaches the conversation you are on. The
-notice cannot approve anything: `ctrl+g` opens the asking conversation, where the complete
-canonical request is shown before `y` or `a` can act.
+If another agent needs permission, a compact notice reaches the conversation you are on, and with
+your message box empty you can answer it right there: `enter` approves that one call, `backspace`
+declines it. The same two keys answer for the selected pane on the agents screen. An inline answer
+is always a single yes or no, never a standing approval, because the notice may summarise the
+request; `a`, the answer that is remembered for the session, only works on the asking
+conversation's own prompt, one `ctrl+g` away, where the complete canonical request is shown.
+If the request stops waiting between being shown and the keypress, Canopy says so instead of
+claiming that it was approved or declined.
 
 Steering and interrupting are deliberately two different things:
 

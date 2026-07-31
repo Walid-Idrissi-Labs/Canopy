@@ -88,6 +88,12 @@ type Engine interface {
 	// git and does not block the event loop. An isolated agent started from here would have to go
 	// through a command rather than straight from a keypress.
 	AddAgent(ctx context.Context, agent session.Agent) (session.Agent, error)
+
+	// Answer replies to the question a session is waiting on, and reports whether there was one.
+	// Here so a waiting pane can be answered from the grid (D-50). This view only ever answers
+	// once: remember stays false from here, because a pane summarises the request and a standing
+	// approval must come from the full canonical prompt, which is D-35's line unmoved.
+	Answer(sessionID string, approved, remember bool) bool
 }
 
 // SwitchMsg asks the application to open an agent's conversation.
@@ -135,6 +141,9 @@ type Model struct {
 	confirmingDirect bool
 	draft            string
 	err              string
+	// notice is a one-keystroke outcome from the grid, such as a request disappearing before an
+	// answer arrived. The application draws it in the footer, where it cannot disturb pane geometry.
+	notice string
 
 	// defaults are what a new agent inherits, since there is nowhere to choose them yet.
 	keyName string
@@ -188,6 +197,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// work, so every refresh is a chance to relight the fires.
 		return m, m.ensureFlame()
 	}
+	// A grid outcome lasts until the next deliberate action. Keeping it longer would leave a stale
+	// warning under an unrelated selection; clearing it before dispatch lets this key replace it.
+	m.notice = ""
 
 	// The creation flow takes the keyboard while it is happening, or the letters of the name would
 	// be read as layout commands and typing "vim" would change the layout twice.
@@ -200,7 +212,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch pressed := key.String(); pressed {
 	case "enter":
+		// With the selected agent waiting on a person, enter answers rather than opens: yes, once,
+		// which is what somebody hovering a pane that names its request almost always means (D-50).
+		// Opening is still one digit away, and enter goes back to opening the moment nothing waits.
+		if m.answerSelected(true) {
+			return m, m.ensureFlame()
+		}
 		return m, m.open()
+	case "backspace":
+		// The other half of the same popup: backspace declines the selected agent's question. A
+		// refusal costs the agent a retry, which is the safe direction to be wrong in.
+		if m.answerSelected(false) {
+			return m, m.ensureFlame()
+		}
 	case "n":
 		m.naming = true
 		m.draft = ""
@@ -488,6 +512,35 @@ func (m Model) Selected() (session.AgentStatus, bool) {
 	return m.statuses[m.cursor], true
 }
 
+// SelectedAwaiting reports whether the agent under the cursor is waiting on a person, which is
+// when enter and backspace answer instead of navigating. The frame asks so its footer can say so.
+func (m Model) SelectedAwaiting() bool {
+	status, ok := m.Selected()
+	return ok && status.State == core.AgentAwaitingPermission
+}
+
+// answerSelected answers the selected agent's pending question, and reports whether there was one
+// to answer. Always once and never remembered, for the reason on the Engine interface: what a pane
+// shows may be a summary, and only the full canonical prompt may widen an approval.
+func (m *Model) answerSelected(approved bool) bool {
+	if !m.SelectedAwaiting() || m.engine == nil {
+		return false
+	}
+	status, _ := m.Selected()
+	if !m.engine.Answer(status.Agent.SessionID, approved, false) {
+		// A turn can stop between the pane being drawn and this key arriving. The engine reports that
+		// stale answer rather than silently accepting it, and the screen must do the same: otherwise
+		// enter appears to release a call that was no longer waiting.
+		m.refresh()
+		m.notice = status.Agent.Name + "'s request is no longer waiting"
+		return true
+	}
+	// Read back at once rather than waiting for the engine's event, so the popup and the state
+	// badge cannot spend a frame claiming a question that has just been answered.
+	m.refresh()
+	return true
+}
+
 // Count is how many agents there are.
 func (m Model) Count() int { return len(m.statuses) }
 
@@ -715,3 +768,7 @@ func (m Model) Context() string {
 	}
 	return summary
 }
+
+// Notice is the last grid-level outcome the frame should say. It is separate from err, which belongs
+// to the new-agent form and is rendered inside that form.
+func (m Model) Notice() string { return m.notice }

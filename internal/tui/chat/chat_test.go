@@ -42,9 +42,11 @@ type fakeEngine struct {
 	// it.
 	waiting  []session.Waiting
 	answered []answeredPrompt
-	trust    core.TrustLevel
-	undone   []string
-	undoErr  error
+	// staleAnswer makes Answer report that the displayed request disappeared before the key arrived.
+	staleAnswer bool
+	trust       core.TrustLevel
+	undone      []string
+	undoErr     error
 
 	forkedThrough string
 	trail         *permission.Trail
@@ -119,6 +121,19 @@ func (e *fakeEngine) Pending(string) (session.Prompt, bool) {
 }
 
 func (e *fakeEngine) Answer(sessionID string, approved, remember bool) bool {
+	if e.staleAnswer {
+		// The real engine returns false only once the pending request is gone. Mirror that state so a
+		// refresh after the refused answer cannot keep drawing a request it says is no longer waiting.
+		e.prompt = nil
+		remaining := e.waiting[:0]
+		for _, w := range e.waiting {
+			if w.SessionID != sessionID {
+				remaining = append(remaining, w)
+			}
+		}
+		e.waiting = remaining
+		return false
+	}
 	e.answers = append(e.answers, [2]bool{approved, remember})
 	e.answered = append(e.answered,
 		answeredPrompt{session: sessionID, approved: approved, remember: remember})
@@ -883,11 +898,11 @@ func TestThePromptShowsTheCommandInFull(t *testing.T) {
 	}
 }
 
-// The reflex key on a prompt somebody has not read is enter, and enter meaning no is the difference
-// between a misread prompt costing a retry and costing a repository.
+// Enter now answers yes, once, beside y; D-50 renamed the accept key to the one under a person's
+// finger. Every other non-answer key still refuses, which is the half of the reflex default that
+// survives: escape and anything typed at an unread prompt still cost a retry, never a repository.
 func TestAnythingOtherThanYesRefuses(t *testing.T) {
 	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyEnter},
 		{Type: tea.KeyEsc},
 		{Type: tea.KeyRunes, Runes: []rune{'n'}},
 		{Type: tea.KeyRunes, Runes: []rune{'q'}},
