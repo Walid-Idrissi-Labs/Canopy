@@ -649,16 +649,17 @@ func NavigationKeys() []string {
 
 // answerPrompt handles the keys that reply to a permission question.
 //
-// Deliberately few, and deliberately not a single key for the widest option. Approving once is `y`,
-// approving everything like this for the rest of the session is `a`, and refusing is anything else
-// including escape and enter. That last part matters: the reflex key on a prompt somebody has not
-// read is enter, and enter meaning no is the difference between a misread prompt costing a retry
-// and costing a repository.
+// Deliberately few, and deliberately not a single key for the widest option. Approving once is
+// `enter` or `y`, approving everything like this for the rest of the session is `a`, and refusing
+// is anything else including escape. Enter used to refuse alongside everything else, which was
+// Q-09's reflex-safety reading; D-50 renames the accept key to the one a person actually reaches
+// for, on the owner's direction, and keeps the wide option behind its own letter. What enter can
+// never do is remember: the widest approval still takes the deliberate key.
 //
 // Everything except the navigation set, which the caller has already dealt with. See navigation.
 func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
-	case "y":
+	case "enter", "y":
 		m.engine.Answer(m.sessionID, true, false)
 	case "a":
 		m.engine.Answer(m.sessionID, true, true)
@@ -716,7 +717,7 @@ func (m Model) promptLines() []string {
 	body = append(body, t.Muted.Render(m.prompt.Decision.Reason))
 	body = append(body, "")
 	body = append(body,
-		t.Key.Render("y")+t.Muted.Render(" once   ")+
+		t.Key.Render("enter")+t.Muted.Render(" yes, once   ")+
 			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
 
@@ -736,8 +737,8 @@ func (m Model) promptLines() []string {
 // recognisable as the same kind of thing from across the room, and it says four lines at most:
 // who is asking, what they want, how many others are behind them, and which key opens the asking
 // conversation. The full canonical request lives on that agent's own screen, one keystroke away.
-// No answer key is accepted here: a compact summary and an approval can never share a surface,
-// which preserves D-35's rule that what is displayed is what is remembered.
+// A once-only answer is accepted here under D-50. A standing approval is not: the compact summary
+// may truncate the request, so D-35 still requires the full canonical prompt for anything remembered.
 //
 // While this conversation has a question of its own the panel shrinks to a single line. Your own
 // prompt outranks a visitor, and two heavy boxes stacked over one message box would be two things
@@ -779,8 +780,25 @@ func (m Model) visitorPanel() []string {
 		body = append(body, t.Muted.Render(othersWaiting(m.visitors[1:])))
 	}
 
-	body = append(body, t.Key.Render(visitorFocusKey)+
-		t.Muted.Render(" to open the full request and answer it there"))
+	// The keys are named only while they are live. With anything in the box every keystroke
+	// belongs to the message, so naming enter and backspace there would describe keys that type
+	// and delete; the line says what is true instead, which is that the full request is one
+	// keystroke away.
+	if m.input.Empty() {
+		answer := t.Key.Render("enter") + t.Muted.Render(" approve once   ") +
+			t.Key.Render("backspace") + t.Muted.Render(" decline")
+		open := t.Key.Render(visitorFocusKey) + t.Muted.Render(" open the full request")
+		// One line where it fits, stacked where it does not, because a hint that pushes the
+		// panel's wall past the terminal's edge tears the frame it is explaining.
+		if joined := answer + t.Muted.Render("   ") + open; lipgloss.Width(ansi.Strip(joined)) <= inner {
+			body = append(body, joined)
+		} else {
+			body = append(body, answer, open)
+		}
+	} else {
+		body = append(body, t.Key.Render(visitorFocusKey)+
+			t.Muted.Render(" to open the full request and answer it there"))
+	}
 	return promptPanel(body, inner)
 }
 
@@ -984,9 +1002,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.answerPrompt(msg)
 	}
 
-	// Another agent's question takes one explicit key to open, and no answer is routed from this
-	// compact panel. The asking conversation renders the full canonical arguments and owns the
-	// ordinary answer keys once the application switches to it.
+	// Another agent's question takes one explicit key to open, and, with the message box empty, two
+	// more to answer it from here: enter approves the front of the queue once, backspace declines
+	// it. D-50 opens this surface on the owner's direction, and the guards are the decision's
+	// terms. Only with the box empty, so a keystroke aimed at a message can never answer; only the
+	// oldest question, which is the one the panel is showing; and only ever once, because the
+	// summary here may be truncated and a standing approval must come from the full canonical
+	// prompt, which is D-35 unchanged. The asking conversation remains one ctrl+g away.
+	if len(m.visitors) > 0 && !m.awaiting && m.input.Empty() {
+		asking := m.visitors[0]
+		switch msg.String() {
+		case "enter":
+			if m.engine.Answer(asking.SessionID, true, false) {
+				m.notice = "approved " + asking.Agent + "'s request, once"
+			} else {
+				// The turn may have stopped after the panel was drawn and before the key arrived.
+				// Answer reports that race explicitly; claiming success here would leave the user
+				// believing a call was released when nothing was waiting to receive the answer.
+				m.notice = asking.Agent + "'s request is no longer waiting"
+			}
+			m.refresh()
+			return m, nil
+		case "backspace":
+			if m.engine.Answer(asking.SessionID, false, false) {
+				m.notice = "declined " + asking.Agent + "'s request"
+			} else {
+				m.notice = asking.Agent + "'s request is no longer waiting"
+			}
+			m.refresh()
+			return m, nil
+		}
+	}
 	if msg.String() == visitorFocusKey && len(m.visitors) > 0 {
 		asking := m.visitors[0]
 		return m, func() tea.Msg {

@@ -244,11 +244,16 @@ be rediscovered by getting burned by it.
   injection rather than removing sensitive data from the stored result.
 
 - On the permission prompt, the key that grants broad, standing approval for the rest of the session
-  ('a') sits directly next to the one-time, single-use answer ('y'), with no separate confirmation
-  step of its own. `y` covers only the current call; `a` remembers the displayed scope for the
-  session. Every other key, including enter and escape, refuses (Q-09). A compact notice about
-  another agent's prompt never accepts either approval key; it first opens the owning conversation
-  so the full canonical request is the approval surface.
+  ('a') sits directly next to the one-time answers, with no separate confirmation step of its own.
+  `enter` and `y` cover only the current call; `a` remembers the displayed scope for the session.
+  Enter approving is a deliberate reversal of the old reflex-safety default, in which enter refused
+  (Q-09, superseded by D-50): a misread prompt now costs whatever the one displayed call does,
+  rather than a retry. Every other key, including escape, still refuses. A compact notice about
+  another agent's prompt, and a waiting pane on the agents screen, accept a once-only enter or
+  backspace while nothing is being typed; both may summarise the request they answer for. The
+  remembered approval can still only be given on the owning conversation's full canonical prompt.
+  A compact request that stops waiting before the key arrives is reported as gone; the surface does
+  not claim that the stale approval or refusal succeeded.
 
 - A field can be set on an agent, stored, displayed, and never actually consulted by the code
   responsible for enforcing it. This already happened with per-agent trust. A deliberate review

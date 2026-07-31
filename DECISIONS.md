@@ -1161,6 +1161,47 @@ Supersedes the marker rule in `internal/tui/chat/markdown.go` and the five tests
 which are rewritten to assert the new marks rather than deleted. The vocabulary changed; the property
 did not.
 
+## D-50 The accept key is enter, and a question can be answered where it is seen. Decided 2026-07-30.
+
+Directed by Walid, from using the built program: the focus step was the right guard and the wrong
+tax. Every question an agent raised cost a walk, ctrl+g there and an answer and a way back, and
+with several agents running the walk is most of what a person does. Two changes, and the guards
+that survive them, recorded together because each one narrows a rule an earlier decision wrote.
+
+**Enter approves, once.** On every approval surface the accept key is enter: the conversation's own
+prompt, the visitor panel above the box, and the selected pane on the agents screen. `y` still
+works on the full prompt and `a` still remembers, but the key named on the panel is the one under a
+person's finger. This supersedes the reflex reading Q-09 settled and D-43 restated, that enter on a
+prompt means no. What it deliberately does not supersede is the rest of the refusal default: every
+other non-answer key still refuses, escape still refuses, and the remembering answer never moves
+off its own deliberate letter. Enter can only ever spend one call.
+
+**A surfaced question is an approval surface, bounded.** The visitor panel answers with enter and
+backspace while the message box is empty, and the agents screen answers for the selected pane with
+the same two keys. This supersedes the focus-step half of D-47 and the addendum recorded under
+D-48: seeing a summary and answering it may now share a surface. Three guards are the terms of
+that reversal, and a surface that drops any of them is wrong even if every test passes:
+
+1. **Typing still answers nothing.** With anything in the box, every key belongs to the message;
+   printable keys never answer anybody from anywhere. The empty box is the explicit gesture.
+2. **An inline answer is always once and never remembered.** The compact surfaces may truncate a
+   request, so a standing approval must still come from the full canonical prompt, which is D-35
+   holding exactly where it stood. The full request stays one keystroke away: ctrl+g from the
+   conversation, the pane's digit on the grid.
+3. **The answer follows the eye.** The chat panel answers the oldest question, which is the one it
+   shows; the agents screen answers the cursor's pane, which is the one lit blue. Nothing answers
+   an agent that is not on screen.
+
+Every compact answer is conditional on that request still being pending when the key arrives. A
+request can disappear between drawing and input because its turn stopped elsewhere. In that case
+the surface says it is no longer waiting and never claims that an approval or refusal succeeded.
+
+Declining stays cheap and stays wide: backspace declines inline, and a decline costs the asking
+agent a retry, which is the safe direction to be wrong in. Your own conversation's prompt still
+outranks visitors on the shared key. D-43's other two rules, ambient attention and no reflex
+spending a paid model call, are untouched; an approval releases a tool call that was already paid
+for by somebody's explicit send.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

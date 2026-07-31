@@ -289,7 +289,7 @@ func (m Model) paneBox(
 
 	lines = append(lines, m.paneTop(status, border, inner, focused, digit))
 
-	body := m.paneBody(status, content, maxInt(height-2, 1))
+	body := m.paneBody(status, content, maxInt(height-2, 1), focused)
 	working := status.State == core.AgentWorking
 	if working && len(body) > 0 {
 		// The tip of the flame dances on the last row of the pane, directly over the ember on the
@@ -360,11 +360,13 @@ func (m Model) paneBottom(status session.AgentStatus, border lipgloss.Style, inn
 // screen uses, so a pane is a split screen of the view you would get by opening the agent rather
 // than a summary of it. What is blocked stays pinned above the transcript, and the tail wins the
 // space, because what an agent is doing now is at the bottom of its conversation.
-func (m Model) paneBody(status session.AgentStatus, width, height int) []string {
+func (m Model) paneBody(status session.AgentStatus, width, height int, focused bool) []string {
 	t := theme.Current()
 
 	var top []string
-	if status.Waiting != "" {
+	if status.State == core.AgentAwaitingPermission {
+		top = m.panePrompt(status, width, focused)
+	} else if status.Waiting != "" {
 		top = append(top, t.Warning.Render(truncate("waiting: "+status.Waiting, width)))
 	}
 
@@ -403,6 +405,35 @@ func (m Model) paneBody(status session.AgentStatus, width, height int) []string 
 		}
 	}
 	return lines
+}
+
+// panePrompt is the small popup a waiting pane pins above its conversation: what the agent wants,
+// and, on the selected pane, the keys that answer it from right here (D-50).
+//
+// The same heavy needs-you frame the chat's prompt and the direct-mode confirmation wear, because
+// it is the same kind of moment at a smaller size. Every pane that waits shows its request, so the
+// grid says who is stuck without being walked; only the selected pane names enter and backspace,
+// because those keys answer for the selection and a grid of eight identical key hints would read
+// as eight live buttons.
+func (m Model) panePrompt(status session.AgentStatus, width int, focused bool) []string {
+	t := theme.Current()
+
+	// The frame spends six columns on itself: the shared indent and the walls with their padding.
+	inner := maxInt(width-6, 8)
+
+	body := []string{t.Warning.Render(truncate("waiting: "+status.Waiting, inner))}
+	if focused {
+		keys := t.Key.Render("enter") + t.Muted.Render(" approve once   ") +
+			t.Key.Render("backspace") + t.Muted.Render(" decline")
+		if lipgloss.Width(keys) > inner {
+			// The short form for a narrow pane, chosen by measure rather than truncated, because
+			// cutting styled text tears its escape codes before it tears the frame.
+			keys = t.Key.Render("enter") + t.Muted.Render(" yes   ") +
+				t.Key.Render("backspace") + t.Muted.Render(" no")
+		}
+		body = append(body, keys)
+	}
+	return needsYouPanel(body, inner)
 }
 
 // spinnerFrames matches the chat's working indicator, so a turn in flight looks the same at every

@@ -870,7 +870,19 @@ func (a App) View() string {
 		footer := Keys(a.dim.Width, "enter", "open", "1-8", "jump", "v", "layout", "n", "new",
 			"esc", "chat", "K", "credentials", "?", "help", "hjkl", "move", "[ ]", "page",
 			"w", "worktrees", "r", "review")
-		if a.agents.ConfirmingDirect() {
+		if a.agents.SelectedAwaiting() {
+			// While the selection is a waiting agent, enter answers rather than opens, so a footer
+			// still saying "open" would name the one key whose meaning just changed and lie about
+			// it. The answer keys lead, and opening moves to the digit, which is what it costs.
+			footer = Keys(a.dim.Width, "enter", "approve once", "backspace", "decline",
+				"1-8", "jump, again to open", "v", "layout", "esc", "chat", "?", "help",
+				"hjkl", "move", "[ ]", "page")
+		}
+		if notice := a.agents.Notice(); notice != "" {
+			// A stale compact answer is an outcome, not a key hint. It gets the whole footer for one
+			// keystroke so the screen cannot imply an approval succeeded when the request was gone.
+			footer = notice
+		} else if a.agents.ConfirmingDirect() {
 			// The confirmation panel in the body already names its keys, with more room to say what
 			// they mean. A footer repeating them is two lists to keep agreeing, so the footer goes
 			// quiet for the one keystroke the panel is up.
