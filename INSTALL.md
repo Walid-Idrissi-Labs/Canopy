@@ -156,7 +156,9 @@ canopy keys signin mysub -route codex-device   # the same, with a code to type e
 Leaving `-route` off on a build that offers several prints the list and asks you to name one. Every
 route prints, before anything is stored, what signing in through it means; that text is worth the
 ten seconds. Afterwards, `canopy keys test <name>` says what the vendor currently reports about the
-credential, and `canopy keys signout <name>` ends it.
+credential, and `canopy keys signout <name>` removes Canopy's half of it. Only Canopy's half: no
+route in this build revokes anything at the vendor, and the command says so rather than letting you
+assume it did. SECURITY.md says what is left behind on each route.
 
 Read the subscription sections of [LIMITATIONS.md](LIMITATIONS.md) before choosing a route. They are
 not disclaimers: on two of the three, Canopy's permission gate is not in the path at all.
