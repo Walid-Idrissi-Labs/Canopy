@@ -7312,7 +7312,7 @@ unfixed because it is the two routes' shared dispatch rather than this task's ou
 
 ### S-08 The documents say what is permitted and what is not
 
-`status: blocked | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
 `scope: README.md, INSTALL.md, LIMITATIONS.md, SECURITY.md`
 
 Deliverable: the documents move with the code, and for this phase they carry more weight than usual,
@@ -7547,6 +7547,160 @@ custom-agent tool out appears to be ModeEmpty's own defaults rather than the all
 may still be true of this configuration; it is not true for the reason the document gives. Left for
 whoever owns S-03, because establishing it needs the SDK read properly rather than a verifier's
 reading of one method's doc comment.
+
+second pass (claude, 2026-07-31): redone end to end after the block above, and returned to review.
+The verifier's four were real, their fixes are kept, and the density argument was right: six more of
+the same kind were on the page. The clause is now checked against the code rather than against these
+notes, which is the thing the first pass did not do.
+
+What was done differently. Every claim was taken to the code or to the vendor SDK in the module
+cache, never to a task's notes, since the first pass inherited two false premises from its own block
+and repeated them. GitHub's SDK at v1.0.8 was read directly rather than trusted from a comment.
+
+Found and fixed beyond the verifier's four, all six the same shape: a sentence stated generally that
+is true of one route.
+
+1. LIMITATIONS said the tools in a delegated turn are the vendor's own plus whatever MCP servers
+`$CODEX_HOME/config.toml` starts. That bullet covers both delegated routes and names only the
+ChatGPT one's configuration. Claude Code has its own. Both are now named.
+
+2. LIMITATIONS' "The model is the vendor's to choose" sat under "What is true of all three routes"
+and described only the two delegated ones. A Copilot credential does take a model, fixed when the
+session opens, and the Copilot package emits no notices at all, so it is the one route where naming
+a different model mid-conversation is neither honoured nor reported. Both delegated routes do report
+a substitution, at internal/provider/acp/client.go:338 and internal/provider/codex/client.go:186.
+Split by route, and the Copilot section now carries the reporting half rather than only the
+honouring half.
+
+3. INSTALL said `canopy keys signout <name>` "ends it". SECURITY is emphatic that signout never ends
+a vendor's grant on any route, and that a command doing the local half while calling it signing out
+is how somebody comes to believe they revoked access they still have. INSTALL now says it removes
+Canopy's half and points at SECURITY.
+
+4. LIMITATIONS' "Nothing here listens on a loopback port" is followed in the same bullet by the
+vendor's program hosting a callback, which is a loopback listener. True of Canopy, ambiguous as
+written. It now says Canopy never listens on any route, and says which route's app server does.
+
+5. LIMITATIONS' "Providers and cost" said an OpenAI-compatible endpoint reports cost unknown until
+you set a rate on the key yourself. A Copilot credential is openai-compatible by provider and
+`pricing.ModelID.Delegated` beats `UserRate` at internal/pricing/table.go:176, so a rate set on a
+subscription credential changes nothing. The subscription section already said so and the general
+bullet contradicted it. The exception is now named where the general rule is stated.
+
+6. SECURITY listed "when the grant expires" among the metadata keys.json holds "in all three cases".
+`SignIn.validate` refuses an ExpiresAt on a delegated credential outright at
+internal/keys/signin.go:179. Expiry exists on the Copilot route and nowhere else. Corrected, and
+`route` added, which the list had omitted.
+
+Two more corrections that are not contradictions but were claims the code does not support.
+
+README gave "so Canopy holds no token here either" as the reason the ChatGPT route is permitted.
+That is the Claude route's reason. D-51 permits the ChatGPT route on OpenAI publishing the app
+server under Apache-2.0 as the interface for this case, plus honest identification. README now says
+that, says it is not the same thing as holding no token, and says this is the contested one.
+
+README's Requirements said "One more program per subscription route" and then named two for the
+Claude route. Reworded.
+
+The one the verifier flagged and could not confirm, now established. LIMITATIONS described the
+Copilot allowlist as "naming Canopy's own tools and no vendor source at all". What ships is
+`custom:*` at internal/provider/copilot/runtime.go:232. The SDK's own `AddCustom` doc comment says
+it matches tools registered via `SessionConfig.Tools` or via custom agents, so the pattern names a
+source and not any tool. The conclusion holds and the stated reason did not. What actually keeps a
+custom agent's tool out is that there is no custom agent: `SessionConfig.CustomAgents` is never set,
+`ModeEmpty` forces `CustomAgentsLocalOnly` true and `InstalledPlugins` empty at the SDK's
+mode_empty.go:216-241, `EnableConfigDiscovery` is false, and `WorkingDirectory` and
+`ConfigDirectory` both point at a Canopy-owned state directory rather than the user's project. So
+the allowlist keeps out every built-in and every MCP tool, which is what the sentence was for, and
+the absence of a custom agent keeps out the rest. LIMITATIONS now says exactly that. Q-23's summary
+of S-03 says "names Canopy's tools by source", which was already the accurate wording and is left
+alone.
+
+The gating asymmetry, which is the claim that matters most, checked in all four documents against
+the code rather than against each other. It is stated correctly in all four, and softened or
+overstated in none. README's two sentences, LIMITATIONS' heading of its own, INSTALL's "on two of
+the three, Canopy's permission gate is not in the path at all", and SECURITY's documented-behaviour
+entry all say the same thing. The code agrees: on Copilot, tools are declared with a nil handler at
+runtime.go:324 so a call arrives pending and is resolved by Canopy's own loop, `ModeEmpty` at
+runtime.go:192 removes the built-ins, and `refuseAnythingNotCanopys` at runtime.go:357 rejects
+anything else; on ACP every client capability is false at wire.go:107 and `mcpServers` is sent empty
+at wire.go:143, and `requestPermission` at stream.go:141 declines; on Codex the app server has no
+field for a client's tools and every approval is declined. One correction was needed in this area
+and it runs the safe direction rather than the dangerous one: LIMITATIONS and SECURITY both said the
+ChatGPT thread being read-only means it "cannot write files at all". Canopy asks for
+`sandboxReadOnly` at internal/provider/codex/client.go:164 and declines every escalation, and the
+app server's own sandbox is what enforces it. Both files now say whose bound it is, because a
+read-only sandbox Canopy requested is not Canopy's gate under another name.
+
+Checked and found accurate, so a later reader knows these were looked at rather than skipped.
+Copilot: the device flow with no listener, the token in the credential store, `custom:*` admitting
+no built-in and no MCP source, declaration-only tools, the audit trail and verification applying,
+history divergence refused by `ErrHistoryRewritten` at client.go:83, a restarted conversation seeded
+as a labelled transcript at client.go:242, model and effort belonging to the session, `MaxTokens`
+never sent, `clientID` empty in every build with `.goreleaser.yaml` setting only the three `main.*`
+flags, `ErrNotRegistered` on a build with no id, the scopes `copilot read:user` with
+`CANOPY_GITHUB_SCOPES` overriding at signin.go:162, no seat check at sign-in with `ErrNoSeat` on the
+first turn at errors.go:28, and signout doing the local half only because no production route
+implements `revokesCredentials`. Claude: two programs with `bridgeNames` accepting the old name at
+acp/discover.go:61, the system prompt as the first content block and nothing in ACP that could
+replace Claude Code's own, a Console account named as billed per token at acp/discover.go:87, and
+the Q-22 pause with both dates. ChatGPT: ephemeral threads, `clientInfo.name` of `canopy` read back
+off the handshake and refused on mismatch at codex/server.go:130, `account/logout` never sent,
+`browserReachable` reading exactly `SSH_CONNECTION`, `SSH_TTY`, `SSH_CLIENT`, `DISPLAY` and
+`WAYLAND_DISPLAY` at login.go:130, the missing-binary path naming the account rather than lifting
+its tokens, `canopy keys test` reading real limits through `account/rateLimits/read`, and Canopy
+renewing nothing. Shared: no dollar figure on any of the three because all three set `Delegated`,
+the five-minute `RefreshMargin` at keys/refresh.go:30 with the per-process lock and no lock file,
+`core.Secret` marshalling to `[redacted]` and refusing to unmarshal, keys.json holding no token
+field, and every route printing its caveat before anything is stored on both surfaces.
+
+The `~/.codex` sweep the verifier asked for. LIMITATIONS and README contain none. INSTALL names it
+twice and correctly both times, as the documented default and as the thing you may have moved. The
+caveat string in cmd/canopy/signin_codex.go now says `$CODEX_HOME`. Two loose mentions survive
+outside this task's scope and are recorded rather than changed: OPEN-QUESTIONS.md:610 in Q-23's
+record of what S-05 found, and TASKS.md:6981. Neither is user-facing copy and both are historical
+records of a finding rather than instructions. Also outside scope and worth somebody's attention:
+cmd/canopy/signin_codex_test.go:417 asserts a message containing the literal `~/.codex`.
+
+What cannot be verified from this repository, and now says so in LIMITATIONS rather than only here.
+A new paragraph in the subscription section names four classes at once instead of hedging every
+sentence, which would have wrecked the voice. Which plan tiers work: Canopy asks no vendor whether a
+plan is Max or Pro, Plus or Team, and the app server reports a plan name it does not enumerate, so
+the tiers listed are the vendors' word. What the terms permit: no terms page was re-fetched for this
+pass either, so every date is still the one D-51 or the building task recorded. That GitHub needs a
+client secret to renew or revoke, and that an OAuth app's user tokens do not expire: GitHub's
+documented behaviour, relied on and not confirmed against a live registration. The Copilot scopes,
+which already had their own paragraph. Two further items are marked in place rather than in that
+list: the Codex app server having no field for a client's tools is now attributed to the schema the
+binary generates for itself, and the Claude route's token counts are now marked as riding a field
+ACP v1 does not define, which the bridge sends anyway and Canopy reads defensively at
+acp/wire.go:195, so a bridge that stops sending it leaves a turn with no count rather than a wrong
+one. The three routes' token counts were previously claimed with equal confidence and one of them
+does not deserve it.
+
+Considered and not done. Marking every vendor-dependent sentence individually: rejected, one
+paragraph naming the classes carries the same information and LIMITATIONS states limits plainly
+rather than in parentheses. Rewriting OPEN-QUESTIONS.md's `~/.codex`: outside this task's declared
+scope, and Q-23's text is a dated record of what a task found rather than live instruction.
+Softening "Canopy's permission gate does not apply": rejected again, for the reason the first pass
+gave. Removing the arrow at README.md:319, now :324 after this pass: rejected again, it quotes
+literal program output.
+
+No Go file was touched, so `gofmt -l .` is empty for the reason that there was nothing to format,
+and `make test` is not offered as evidence for a documentation change. `grep -rnP '[^\x00-\x7F]'`
+over the four documents finds only the pre-existing arrow. Another agent's Go changes to
+internal/session, internal/provider/copilot and cmd/canopy were in the worktree during this pass.
+They were read to confirm they change none of the behaviour documented here, which they do not: the
+Copilot work is a session-pooling and lifecycle refactor, and the resolver work moves the same
+delegated and Copilot branches into internal/session/vendors.go unchanged, `Delegated: true` and
+all. Only these five files were staged.
+
+Honest assessment for whoever signs PG-S. The documents are safe to put in front of somebody who
+will rely on them for the question this phase exists to answer, which is whether they are allowed to
+use their subscription and what they give up by doing it. The gating asymmetry is stated correctly
+in four places and no document claims a gate Canopy does not have. What a reader still cannot get
+from these files is confirmation of anybody's terms, because nothing in this repository can supply
+it, and the files now say so in those words.
 
 ### PG-S Phase S gate
 
