@@ -139,8 +139,11 @@ counter-position on the ChatGPT one rather than leaving you to find it:
   It drives the Claude Code you installed and signed in to yourself. Anthropic do not permit
   third-party tools to offer Claude.ai login, so Canopy does not implement it and will not.
 - **ChatGPT**, `-route codex`. OpenAI's own `codex app-server` runs the sign-in, hosts the callback
-  and keeps the grant afterwards, so Canopy holds no token here either. `-route codex-device` prints
-  a code to type on another device, for a machine you only reach over ssh.
+  and keeps the grant afterwards, so Canopy holds no token here either. That is not what makes the
+  route permitted, and it is worth not confusing the two: it rests on OpenAI publishing that app
+  server under Apache-2.0 as the interface for exactly this kind of integration, and on Canopy
+  identifying itself honestly to it. This is the contested one. `-route codex-device` prints a code
+  to type on another device, for a machine you only reach over ssh.
 
 There is no Gemini route. Google's consumer sign-in was prohibited by terms and then switched off on
 2026-06-18.
@@ -352,9 +355,10 @@ the pass.
 - `/bin/sh`, since shell tools and test commands run through it
 - macOS or Linux
 - Go 1.26 or newer, only if you are building from source rather than taking a binary
-- One more program per subscription route, none of which Canopy bundles: Claude Code plus the ACP
-  bridge for the Claude route, the Copilot CLI for the Copilot route, the Codex CLI for the ChatGPT
-  route. [INSTALL.md](INSTALL.md) names each one and what installs it.
+- The vendor's own program for whichever subscription route you use, none of which Canopy bundles:
+  Claude Code plus the ACP bridge for the Claude route, which is two programs rather than one, the
+  Copilot CLI for the Copilot route, the Codex CLI for the ChatGPT route. [INSTALL.md](INSTALL.md)
+  names each one and what installs it.
 
 ## Development
 
