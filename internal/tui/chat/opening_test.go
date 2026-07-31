@@ -32,34 +32,54 @@ func rowContaining(lines []string, want string) int {
 	return -1
 }
 
+func lastRowContaining(lines []string, want string) int {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.Contains(lines[i], want) {
+			return i
+		}
+	}
+	return -1
+}
+
 // The composition that was asked for, stated precisely.
 //
-// Not the box centred and not the name centred: the middle of the space between them is what lands
-// on the middle of the screen, so the pair reads as one object with the eye falling between the two.
-// The three readings look similar in a mock-up and put the box in visibly different places.
-func TestTheSpaceBetweenTheNameAndTheBoxIsAtTheMiddleOfTheScreen(t *testing.T) {
+// The message box is what lands on the middle of the screen. That is a change of requirement rather
+// than a change of arithmetic: this screen used to draw the name above the box and centre the space
+// between the pair, so that the eye fell between them. The name is gone at the owner's direction and
+// the box is the only thing left to centre, so it is centred on itself.
+func TestTheBoxIsOnTheMiddleOfTheScreen(t *testing.T) {
 	const height = 30
 	lines := openingAt(100, height)
 
-	// The bottom of the C, which is the last row of the drawn name. It used to be the written name
-	// underneath, then the bottom of a frame around it, and both of those are gone: the header draws
-	// "canopy" in text on every screen, so the line under it was saying the same thing twice, and the
-	// frame was competing with the letters it was meant to set off.
-	name := rowContaining(lines, "▀███████▀")
-	box := rowContaining(lines, "╭")
-	if name < 0 || box < 0 {
-		t.Fatalf("the name is on row %d and the box on row %d:\n%s", name, box, strings.Join(lines, "\n"))
-	}
-	if box <= name {
-		t.Fatalf("the box is above the name, at row %d against row %d", box, name)
+	top := rowContaining(lines, "╭")
+	bottom := lastRowContaining(lines, "╰")
+	if top < 0 || bottom < 0 {
+		t.Fatalf("the box runs from row %d to row %d:\n%s", top, bottom, strings.Join(lines, "\n"))
 	}
 
-	// Doubled rather than halved, so a gap of an even number of rows is not quietly rounded into
+	// Doubled rather than halved, so a box of an even number of rows is not quietly rounded into
 	// looking correct.
-	middle, screen := name+box, height-1
+	middle, screen := top+bottom, height-1
 	if middle < screen-1 || middle > screen+1 {
-		t.Errorf("the space between the name and the box is centred on row %.1f of %d:\n%s",
+		t.Errorf("the box is centred on row %.1f of %d:\n%s",
 			float64(middle)/2, height, strings.Join(lines, "\n"))
+	}
+}
+
+// And nothing is drawn above it. The big name that used to sit there is the thing this screen was
+// asked to stop showing, so its absence is the requirement rather than a side effect of one.
+func TestNothingIsDrawnAboveTheBox(t *testing.T) {
+	const height = 30
+	lines := openingAt(100, height)
+
+	box := rowContaining(lines, "╭")
+	if box < 0 {
+		t.Fatalf("there is no box on the screen:\n%s", strings.Join(lines, "\n"))
+	}
+	for i, line := range lines[:box] {
+		if strings.TrimSpace(line) != "" {
+			t.Errorf("row %d above the box is not empty: %q\n%s", i, line, strings.Join(lines, "\n"))
+		}
 	}
 }
 
@@ -117,8 +137,9 @@ func TestAShortScreenGetsNoMarkRatherThanOneOverTheBox(t *testing.T) {
 	if strings.Contains(body, "█▀█▀█") {
 		t.Errorf("the mark was drawn with no room for it:\n%s", body)
 	}
-	// And the screen is otherwise intact, or this passes by having drawn nothing at all.
-	for _, want := range []string{"Canopy", "╭", "working in canopy"} {
+	// And the screen is otherwise intact, or this passes by having drawn nothing at all. The name is
+	// not among these any more: the header writes it, above this, on every screen.
+	for _, want := range []string{"╭", "working in canopy"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the short screen lost %q:\n%s", want, body)
 		}
@@ -151,7 +172,11 @@ func TestTheOpeningScreenIsExactlyAsTallAsItWasGiven(t *testing.T) {
 }
 
 // And it is gone the moment there is a conversation, which is the other half of the same promise:
-// the logo belongs to the empty screen and not to the top of every transcript.
+// the mark belongs to the empty screen and not to the top of every transcript.
+//
+// Asserted on the mark rather than on the drawn name, which is what this used to look for. The name
+// is no longer drawn on this screen in either state, so looking for it here would pass whatever the
+// code did.
 func TestTheOpeningScreenGoesAwayOnceSomethingIsSaid(t *testing.T) {
 	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{{
 		Request: core.Message{Text: "what does this do"},
@@ -162,8 +187,8 @@ func TestTheOpeningScreenGoesAwayOnceSomethingIsSaid(t *testing.T) {
 	m.SetSize(100, 30)
 
 	body := plain(m.Body())
-	if strings.Contains(body, "▄▀▀▀▀") {
-		t.Errorf("the drawn name is still on screen over a conversation:\n%s", body)
+	if strings.Contains(body, "████▀▀▀████") {
+		t.Errorf("the mark is still on screen over a conversation:\n%s", body)
 	}
 	if !strings.Contains(body, "what does this do") {
 		t.Errorf("the conversation is not on screen:\n%s", body)
