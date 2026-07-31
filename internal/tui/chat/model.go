@@ -345,6 +345,25 @@ type Model struct {
 	// belongs to. See modeSettleMsg.
 	pendingMode    core.Mode
 	modeGeneration int
+
+	// standIn is a block drawn where the message box goes, empty the rest of the time. See
+	// InPlaceOfBox.
+	standIn []string
+}
+
+// InPlaceOfBox returns this screen drawing the given block where its message box goes.
+//
+// A copy rather than a setter, and the reason is worth stating: nothing about the conversation
+// changes while such a block is up, so there is no state here to put back afterwards. The caller
+// draws through the copy for as long as it wants the block and drops it, which makes forgetting to
+// restore the box impossible rather than unlikely.
+//
+// The status row goes with the box. The two are one thing on this screen, a notice sitting on the
+// box's top edge, and leaving a stray row of it above a block that has taken the box's place would
+// be chrome belonging to something that is not there.
+func (m Model) InPlaceOfBox(block []string) Model {
+	m.standIn = block
+	return m
 }
 
 // asideExchange is one btw question and the answer it got.
@@ -649,16 +668,17 @@ func NavigationKeys() []string {
 
 // answerPrompt handles the keys that reply to a permission question.
 //
-// Deliberately few, and deliberately not a single key for the widest option. Approving once is `y`,
-// approving everything like this for the rest of the session is `a`, and refusing is anything else
-// including escape and enter. That last part matters: the reflex key on a prompt somebody has not
-// read is enter, and enter meaning no is the difference between a misread prompt costing a retry
-// and costing a repository.
+// Deliberately few, and deliberately not a single key for the widest option. Approving once is
+// `enter` or `y`, approving everything like this for the rest of the session is `a`, and refusing
+// is anything else including escape. Enter used to refuse alongside everything else, which was
+// Q-09's reflex-safety reading; D-50 renames the accept key to the one a person actually reaches
+// for, on the owner's direction, and keeps the wide option behind its own letter. What enter can
+// never do is remember: the widest approval still takes the deliberate key.
 //
 // Everything except the navigation set, which the caller has already dealt with. See navigation.
 func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
-	case "y":
+	case "enter", "y":
 		m.engine.Answer(m.sessionID, true, false)
 	case "a":
 		m.engine.Answer(m.sessionID, true, true)
@@ -716,7 +736,7 @@ func (m Model) promptLines() []string {
 	body = append(body, t.Muted.Render(m.prompt.Decision.Reason))
 	body = append(body, "")
 	body = append(body,
-		t.Key.Render("y")+t.Muted.Render(" once   ")+
+		t.Key.Render("enter")+t.Muted.Render(" yes, once   ")+
 			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
 
@@ -736,8 +756,8 @@ func (m Model) promptLines() []string {
 // recognisable as the same kind of thing from across the room, and it says four lines at most:
 // who is asking, what they want, how many others are behind them, and which key opens the asking
 // conversation. The full canonical request lives on that agent's own screen, one keystroke away.
-// No answer key is accepted here: a compact summary and an approval can never share a surface,
-// which preserves D-35's rule that what is displayed is what is remembered.
+// A once-only answer is accepted here under D-50. A standing approval is not: the compact summary
+// may truncate the request, so D-35 still requires the full canonical prompt for anything remembered.
 //
 // While this conversation has a question of its own the panel shrinks to a single line. Your own
 // prompt outranks a visitor, and two heavy boxes stacked over one message box would be two things
@@ -779,8 +799,25 @@ func (m Model) visitorPanel() []string {
 		body = append(body, t.Muted.Render(othersWaiting(m.visitors[1:])))
 	}
 
-	body = append(body, t.Key.Render(visitorFocusKey)+
-		t.Muted.Render(" to open the full request and answer it there"))
+	// The keys are named only while they are live. With anything in the box every keystroke
+	// belongs to the message, so naming enter and backspace there would describe keys that type
+	// and delete; the line says what is true instead, which is that the full request is one
+	// keystroke away.
+	if m.input.Empty() {
+		answer := t.Key.Render("enter") + t.Muted.Render(" approve once   ") +
+			t.Key.Render("backspace") + t.Muted.Render(" decline")
+		open := t.Key.Render(visitorFocusKey) + t.Muted.Render(" open the full request")
+		// One line where it fits, stacked where it does not, because a hint that pushes the
+		// panel's wall past the terminal's edge tears the frame it is explaining.
+		if joined := answer + t.Muted.Render("   ") + open; lipgloss.Width(ansi.Strip(joined)) <= inner {
+			body = append(body, joined)
+		} else {
+			body = append(body, answer, open)
+		}
+	} else {
+		body = append(body, t.Key.Render(visitorFocusKey)+
+			t.Muted.Render(" to open the full request and answer it there"))
+	}
 	return promptPanel(body, inner)
 }
 
@@ -984,9 +1021,37 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.answerPrompt(msg)
 	}
 
-	// Another agent's question takes one explicit key to open, and no answer is routed from this
-	// compact panel. The asking conversation renders the full canonical arguments and owns the
-	// ordinary answer keys once the application switches to it.
+	// Another agent's question takes one explicit key to open, and, with the message box empty, two
+	// more to answer it from here: enter approves the front of the queue once, backspace declines
+	// it. D-50 opens this surface on the owner's direction, and the guards are the decision's
+	// terms. Only with the box empty, so a keystroke aimed at a message can never answer; only the
+	// oldest question, which is the one the panel is showing; and only ever once, because the
+	// summary here may be truncated and a standing approval must come from the full canonical
+	// prompt, which is D-35 unchanged. The asking conversation remains one ctrl+g away.
+	if len(m.visitors) > 0 && !m.awaiting && m.input.Empty() {
+		asking := m.visitors[0]
+		switch msg.String() {
+		case "enter":
+			if m.engine.Answer(asking.SessionID, true, false) {
+				m.notice = "approved " + asking.Agent + "'s request, once"
+			} else {
+				// The turn may have stopped after the panel was drawn and before the key arrived.
+				// Answer reports that race explicitly; claiming success here would leave the user
+				// believing a call was released when nothing was waiting to receive the answer.
+				m.notice = asking.Agent + "'s request is no longer waiting"
+			}
+			m.refresh()
+			return m, nil
+		case "backspace":
+			if m.engine.Answer(asking.SessionID, false, false) {
+				m.notice = "declined " + asking.Agent + "'s request"
+			} else {
+				m.notice = asking.Agent + "'s request is no longer waiting"
+			}
+			m.refresh()
+			return m, nil
+		}
+	}
 	if msg.String() == visitorFocusKey && len(m.visitors) > 0 {
 		asking := m.visitors[0]
 		return m, func() tea.Msg {
@@ -1362,6 +1427,25 @@ func (m *Model) UseCredential(keyName, model string) bool {
 	return true
 }
 
+// FollowCredentialRename moves this conversation's note of its credential onto the new name.
+//
+// Not UseCredential, deliberately, and the difference is the whole point. UseCredential asks the
+// engine to change what a conversation runs on, which it may refuse mid answer. This changes nothing
+// about what it runs on: it is the same credential, the same secret and the same endpoint, and only
+// the name has moved. Routing it through the switch would put a rename behind a refusal that has
+// nothing to say about it, and leave the header naming a credential that no longer exists until the
+// turn happened to end.
+//
+// Guarded on the name, because a conversation on a different credential must not be dragged onto
+// this one by a rename it has nothing to do with.
+func (m *Model) FollowCredentialRename(from, to string) {
+	if from == "" || to == "" || m.keyName != from {
+		return
+	}
+	m.keyName = to
+	m.refresh()
+}
+
 // SessionID is the conversation being shown.
 func (m Model) SessionID() string { return m.sessionID }
 
@@ -1416,12 +1500,6 @@ func (m Model) spinnerFrame() string { return spinnerFrames[m.spinner] }
 func (m Model) blank() bool {
 	return (!m.loaded || len(m.session.Turns) == 0) && !m.awaiting
 }
-
-// Blank reports whether this conversation is still on its opening screen.
-//
-// Exported for the shell, which draws the name in the header only once the opening screen has gone.
-// Two copies of the name on one screen, one in the middle and one in the corner, is one too many.
-func (m Model) Blank() bool { return m.blank() }
 
 func (m Model) transcript() []string {
 	var lines []string
@@ -1591,7 +1669,7 @@ func (m Model) transcriptHeight() int {
 	// The status row is measured rather than assumed to be one line. Several of the slash commands
 	// answer with a listing many lines tall, and budgeting one line for it pushed the box and the
 	// footer off the bottom of the frame the first time somebody ran /commands on a small terminal.
-	h := m.height - m.input.Height() - m.statusHeight()
+	h := m.height - m.floorHeight()
 	h -= len(m.taskPane())
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
@@ -1615,17 +1693,38 @@ func (m Model) transcriptHeight() int {
 	return h
 }
 
+// floorHeight is how many rows the bottom of the screen takes: the message box and the status row
+// above it, or whatever is standing in their place.
+//
+// One function rather than the same sum written at each site, because the arithmetic that decides
+// how much conversation fits and the code that draws the bottom have to agree exactly. When they do
+// not, the transcript is budgeted for a box that is not there and the frame clips a screen's worth
+// of it away.
+func (m Model) floorHeight() int {
+	if len(m.standIn) > 0 {
+		return len(m.standIn)
+	}
+	return m.input.Height() + m.statusHeight()
+}
+
 // pillHeight is how many rows the jump marker costs: two borders and its label.
 const pillHeight = 3
 
 // Body renders the screen.
 func (m Model) Body() string {
 	if m.blank() {
+		// The block takes the box's place here too, which is what keeps the opening screen the
+		// opening screen: the drawn name stays above it and the working directory and the credential
+		// stay along the floor, because those are the facts a choice made here is made against.
+		box, status := strings.Split(m.inputBox(), "\n"), m.statusRow(0)
+		if len(m.standIn) > 0 {
+			box, status = m.standIn, ""
+		}
 		return opening{
 			width:   m.width,
 			height:  m.height,
-			box:     strings.Split(m.inputBox(), "\n"),
-			status:  m.statusRow(0),
+			box:     box,
+			status:  status,
 			context: m.contextLines(),
 			step:    m.markStep,
 			// Below the box here, because the box is in the middle of the screen and below is where
@@ -1679,6 +1778,10 @@ func (m Model) Body() string {
 	var b strings.Builder
 	b.WriteString(strings.Join(rows, "\n"))
 	b.WriteString("\n")
+	if len(m.standIn) > 0 {
+		b.WriteString(strings.Join(m.standIn, "\n"))
+		return b.String()
+	}
 	b.WriteString(m.flameOver(m.statusRow(len(lines) - end)))
 	b.WriteString("\n")
 	b.WriteString(m.inputBox())
@@ -1717,7 +1820,9 @@ func (m Model) flameOver(status string) string {
 // columns — smoke goes behind words, not over them — and not at all while the view is scrolled away
 // from the tail, where the rows above the box are the middle of something being read.
 func (m Model) driftSmoke(rows []string) {
-	if m.blank() || (!m.working && !m.compacting) || m.scroll > 0 {
+	// And not while a block stands where the box does, because the fire this rises from rides the
+	// box's top edge and is not being drawn. Smoke with nothing under it is a rendering fault.
+	if m.blank() || (!m.working && !m.compacting) || m.scroll > 0 || len(m.standIn) > 0 {
 		return
 	}
 	t := theme.Current()
@@ -1919,6 +2024,27 @@ func (m Model) btwPanel() []string {
 // copies would stop being true of the first time somebody adjusted one of them. The label rides the
 // top edge in the space the rule was spending anyway, and is dropped whole on a terminal too narrow
 // for it: a label that wraps the edge breaks the frame it is written on.
+// Block is borderedBlock for a caller outside this package, sized from the terminal width.
+//
+// Exported so that a block standing in for the message box, which is drawn by whoever owns the
+// thing standing there rather than by this screen, wears the same chrome as the panes that sit
+// above the box. Two packages drawing their own version of one frame is two frames that drift apart
+// on the first change to either.
+func Block(label string, content []string, width int) []string {
+	return borderedBlock(label, content, BlockWidth(width))
+}
+
+// BlockWidth is how many columns a block has for its own text at a given terminal width.
+//
+// Asked rather than assumed, because a caller composing content for a block has to clip it to
+// something, and the only honest answer involves how many columns the chrome spends on itself.
+func BlockWidth(width int) int {
+	if inner := width - boxChrome; inner > 6 {
+		return inner
+	}
+	return 6
+}
+
 func borderedBlock(label string, content []string, inner int) []string {
 	t := theme.Current()
 

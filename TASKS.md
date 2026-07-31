@@ -3566,19 +3566,21 @@ silhouette and wrong for a scene, and what it was really protecting is checked d
 `scope: internal/tui/chat/model.go, internal/tui/chat/opening.go, internal/tui/app.go, cmd/canopy/`
 
 Deliverable: opening Canopy puts you in a new conversation, composed the way the supervisors asked
-for it: the drawn name centred above the message box, the box itself near the middle of the screen,
-the commands along the bottom, and the mark animated in the bottom right corner. Ending a session
-prints a code, and `canopy pickup <code>` returns to that conversation.
+for it after D-52: the message box itself centred near the middle of the screen, the commands along
+the bottom, the animated mark in the bottom right corner, and identity in the header from the first
+frame rather than repeated as a large central wordmark. Ending a session prints a code, and
+`canopy pickup <code>` returns to that conversation.
 
 Acceptance: a fresh start never lands in somebody's previous conversation. The animation stops
-costing anything the moment the conversation is no longer empty. A printed code resumes the exact
-session it names and says so plainly when it does not match one.
+costing anything the moment the conversation is no longer empty. A notice or an opened command menu
+does not move the message box. Sending the first message does not swap a central logo for a different
+header treatment. A printed code resumes the exact session it names and says so plainly when it does
+not match one.
 
-Still open, and deliberately not done here: the drawn name in the top right of every other screen.
-It was asked for on 2026-07-27 and then superseded for this screen on the same day by "written logo
-at the center", so what remains is whether the other screens carry it. It costs two rows of chrome
-everywhere, on screens somebody is reading rather than arriving at, and that is a decision rather
-than a detail. Left for the supervisors.
+Revised 2026-07-30 by D-52: the earlier large opening wordmark and the note leaving header placement
+open are superseded. The existing header now owns identity on the opening screen as it does after a
+turn: Canopy where no agent is named, the agent name where one is. The short-height written fallback
+remains intentional.
 
 `verify: claude [x] 2026-07-28   codex [ ]`
 
@@ -3591,15 +3593,15 @@ highest ID it finds, so after the first run `session-1` is the oldest chat in th
 launch reopened it while the agent that had just been started talked into a session with no screen
 attached to it. Which conversation to open is passed in now, and nothing named starts a new one.
 
-The empty conversation is composed rather than being a transcript with nothing in it. The middle of
-the space between the drawn name and the message box lands on the middle of the screen, which is the
-requirement stated precisely: centring the block instead is right only while the box and the name
-are the same height, and it stopped being right the moment the box grew to three lines.
+The empty conversation is composed rather than being a transcript with nothing in it. D-52 removed
+the large central name, so the box itself now lands on the middle of the screen. Status rows and
+command output stack above it and menus hang below it; neither changes that anchor while somebody is
+typing.
 
 The mark is dropped rather than clipped when the screen is too short for it, which is the rule the
 brand package already applies to width. That threshold is a real cost and is worth writing down:
 with the taller box it needs about thirty four rows, so an eighty by twenty four terminal gets the
-name and the box and no mark.
+header identity and the box and no mark.
 
 Two things found while wiring it. The animation overlaid the fire a column left of where the mark
 draws it, so starting it slid the campfire sideways under a tent that stayed put; `Frame(0)` is the
@@ -5342,6 +5344,46 @@ all passed with a reachable freeze of the entire interface in the tree. Worth re
 time a green gate is mistaken for a reviewed change. The hang is the reason `v0.1.0-beta.1` was not
 tagged on 2026-07-30 until this landed.
 
+### U-26 A question is answered where it is seen
+`status: review | owner: claude | branch: tui/answer-where-you-are | depends: U-16`
+`scope: internal/tui/chat/, internal/tui/agents/, internal/tui/app.go, internal/tui/help.go`
+
+Deliverable: the two surfaces U-16 built as summaries become bounded approval surfaces, and the
+accept key is enter everywhere, both directed by Walid from using the built program. On the
+conversation you sit in, another agent's needs-you panel takes enter to approve once and backspace
+to decline, only while the message box is empty; typing still answers nothing and ctrl+g still
+opens the full request. On the agents screen, a waiting pane pins a compact needs-you popup naming
+its request, and the selected pane answers on the same two keys, enter going back to meaning open
+the moment nothing waits. The conversation's own prompt takes enter as yes-once too, `y` staying
+beside it and `a` alone still remembering. Inline answers are always once and never remembered,
+which is D-35 unmoved. Recorded as D-50, superseding the enter-refuses reflex and the focus-step
+half of D-47.
+
+Acceptance: with a subagent waiting and the box empty, enter approves it once and backspace
+declines it, the answer naming exactly the session on the panel; with anything typed, enter sends
+and backspace deletes and nobody is answered; the oldest question is the one answered and the next
+comes forward unanswered; the own prompt outranks a visitor on the same key; on the agents screen
+enter approves the selected waiting agent once, backspace declines, the answer follows the cursor
+and not the queue, and enter opens as before when nothing waits; the selected waiting pane names
+both keys and unselected waiting panes name their request only; the footer relabels enter while
+the selection waits; no inline answer ever carries remember; the full prompt still refuses on
+every non-answer key. If a request stops waiting between being drawn and the answer key arriving,
+both compact surfaces say it is no longer waiting and never claim that an approval or refusal
+succeeded.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: D-50. The chat surface is TestEnterOnAnEmptyBoxApprovesTheVisitorOnce,
+TestBackspaceOnAnEmptyBoxDeclinesTheVisitor, TestATypedMessageKeepsEnterAndBackspaceToItself,
+TestEnterAnswersTheOldestVisitorAndTheNextComesForward, TestYourOwnPromptTakesEnterBeforeAnyVisitor
+and TestThePanelNamesTheKeysOnlyWhileTheyAreLive in inline_answer_test.go; stale panels are held by
+TestAVisitorThatStoppedWaitingIsNotClaimedAsAnswered and
+TestASelectedAgentThatStoppedWaitingIsNotClaimedAsAnswered; the agents surface is answer_test.go
+entire; the own-prompt key rename and the preserved refusal default are the
+rewritten TestEveryKeyThatIsNotNavigationStillRefuses. U-16's own tests still hold unchanged
+except that rewrite, which is the supersession made visible. The agents Engine grew Answer, wired
+to the same engine method the chat already used; nothing additive was needed engine-side.
+
 ### PG-U Phase U gate
 `status: todo | depends: U-01, U-03, U-04, U-05, U-06`
 
@@ -5546,32 +5588,35 @@ current key rather than by being the only one that offers it, and by
 TestARefusalDoesNotOfferWhatItJustRefused, which asks for every id a refusal names and fails if any
 of them is then refused.
 
-### K-03 The model picker is a screen
+### K-03 The model picker stays in the conversation
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
 `scope: internal/tui/, internal/tui/chat/, internal/config/commands.go, internal/session/ (additive)`
 
-Deliverable: /model, a new reserved builtin, opens a picker drawn the way help is drawn, over the
-whole frame and back with esc: one section per named key with the provider written on the section
-header, that key's models beneath it with display names shown and the conversation's current
-model marked. Enter applies the choice to this conversation, switching key as well when the row
-sits under another section, through one additive engine method, and takes effect from the next
-request. Picking never rewrites the key's recorded default; that stays with the keys screen and
-the CLI.
+Deliverable: /model, a new reserved builtin, replaces the message box with a bounded picker while
+the conversation remains visible, and returns with esc: one section per named key with the provider
+written on the section header, that key's models beneath it with display names shown and the
+conversation's current model marked. Enter applies the choice to this conversation, switching key
+as well when the row sits under another section, through one additive engine method, and takes
+effect from the next request. Picking never rewrites the key's recorded default; that stays with
+the keys screen and the CLI.
 
 Acceptance: open the picker and esc changes nothing; picking under the same key changes what the
 next request is sent on, and the context line says so; picking under a different key switches
 provider and key for the next request; the current model is marked; a key with nothing to offer
 shows its section with the none-set warning rather than disappearing; /model appears in the slash
-menu; with colour off the picker is still readable.
+menu; with colour off the picker is still readable; a long list scrolls inside its height budget;
+wide and combining characters never make a rendered row cross the frame.
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
-notes: "overlay" in the ask, screen swap in the build: the repository has no compositing, and
-help already set the pattern for a screen that sits over everything and leaves without a trace,
-so the picker follows it rather than inventing z-order for one feature.
+notes: revised 2026-07-30 by D-53. The first build used a whole-screen swap because the repository
+has no compositing and help already supplied that pattern. Direct use showed the cost: choosing
+what answers this conversation removed the conversation needed to make the choice. The picker is
+still not a floating overlay; it takes the composer's rows inside the existing chat layout.
 
-Built as internal/tui/modelpicker.go, keyed before everything else in Update the way help is, so
-every key belongs to it while it is up and anything it does not use leaves with nothing changed.
+Built as internal/tui/modelpicker.go. While open it is keyed before the rest of chat, so every key
+belongs to it and anything it does not use leaves with nothing changed. Its row budget shrinks on a
+short terminal and scrolls on a long list, preserving transcript context rather than consuming it.
 
 The one additive engine method turned out to exist already. Engine.UseCredential does exactly what
 the ask describes: it sets the session's key and model, refuses while a turn is in flight, and the
@@ -5624,10 +5669,45 @@ TestThePickerMarksWhereYouAreAndKeepsEmptySections; /model in the slash menu is
 TestTheModelCommandIsOfferedInTheSlashMenu; and colour-off readability is
 TestThePickerReadsWithNoColour. That the key's own default is untouched is
 TestPickingAModelNeverRewritesTheKeysDefault, and the mid-turn refusal the spec allows is
-TestChangingTheModelMidAnswerIsRefused.
+TestChangingTheModelMidAnswerIsRefused. Cell-aware clipping is held directly by
+TestModelPickerClipKeepsWideTextInsideTheFrame.
+
+### K-04 Renaming a credential moves every place its name is used
+`status: review | owner: claude | branch: tui/inline-picker-and-key-rename | depends: A2-01, A3-01`
+`scope: cmd/canopy/keys.go, internal/keys/, internal/session/, internal/tui/keys/, internal/tui/app.go`
+
+Deliverable: `canopy keys rename <old> <new>` and `e` on the credential screen change a credential's
+name without asking for its secret again. The CLI moves stored conversations with it; the interface
+moves every conversation loaded in its engine and updates the current and next-conversation header.
+
+Acceptance: a pasted secret, a signed-in grant and a metadata-only delegated credential each survive
+under the new name without changing kind, identity or route, and the old name stops resolving;
+collisions and invalid names change nothing; every affected stored or loaded conversation
+uses the new name before another message can be sent. A failed stored-history update restores the
+old credential name before suggesting a retry. A failed compensation names the exact split state.
+A failure removing either temporary or old backend copies is reported and never prevents the
+history move that keeps sessions usable. A Canopy process the CLI cannot reach is named and restart
+is required. No output includes a credential value.
+
+**Codex integration pass 2026-07-31.** The original implementation assumed every credential had a
+backend entry. That made every Claude Code or ChatGPT credential impossible to rename, because an
+empty backend half is the defining valid state of `KindDelegated`. The move now skips backend work
+only for that explicit kind; signed-in grants still move as one opaque backend document. Held by
+`TestRenamingMovesASignedInGrantWithoutChangingItsIdentity` and
+`TestRenamingADelegatedCredentialDoesNotInventABackendValue` alongside the pasted-secret cases.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: added with D-54 after review found that the first CLI implementation returned on an old-secret
+cleanup warning before moving history, and on a history error left the new credential live while
+telling the user to repeat a command whose old name no longer existed. The key store also discarded
+the error from deleting a newly copied secret after metadata persistence failed, hiding an
+untracked credential copy. The operation now compensates where it can and describes the remaining
+state where it cannot; the tests force each of those boundaries rather than inferring them from the
+happy path.
 
 ### PG-K Phase K gate
-`status: todo | depends: K-01, K-02, K-03`
+`status: todo | depends: K-01, K-02, K-03, K-04`
 
 Both supervisors watch: a key added once runs two different models in two conversations side by
 side; "spawn two sonnet agents" is understood with no key named sonnet; and a model from neither
@@ -7873,3 +7953,4 @@ status or verification updates.
 | 2026-07-29 | Claude | Added U-15 from Walid using the built program: the mode key applied every rung it walked past, so cycling from cruise to build put a working agent through plan. Built the same day, out of lane order, since it is a defect in a shipped safety setting. Recorded as D-45. The engine gained `ModeUnusable`, the refusal `SetMode` already made asked as a question. Section 2.0 recounted, which the two new phases had left stale. |
 | 2026-07-29 | Claude | Added phase K, one key many models, and U-16 to U-19, from six asks by Walid: keys that hold several models over a dated catalog, dispatch that understands model words, a picker screen, other agents' permission prompts surfacing on the conversation you are on, the header naming the agent instead of the brand, a tasks block with state colours, and btw history that survives the screen. Recorded as D-46 and D-47. Claimed on feat/one-key-many-models and tui/ambient-attention, stacked in that order on tui/mode-settle. |
 | 2026-07-30 | Claude | Added phase S after phase K, signing in with a subscription instead of pasting a key. Eight tasks and a gate, written from research into what each vendor actually permits rather than what is technically reachable: Copilot through its official Go SDK, Claude through the user's own Claude Code over ACP, OpenAI through the Codex app server with an existing `auth.json` login as the degraded fallback. claude.ai OAuth is refused as prohibited and server-enforced, and Gemini consumer sign-in is recorded as closed so neither is proposed again. Recorded as D-51, which takes that number because D-50 is reserved by work in flight. New questions Q-22, the paused Anthropic credit change, and Q-23, what Canopy's tools, permissions and verification mean in a delegated turn. Claimed on feat/subscription-sign-in, ledger pushed before any code. Nothing renumbered. |
+| 2026-07-30 | Claude | Added U-26 from Walid using the built program: U-16's summaries become bounded approval surfaces, answered with enter and backspace where they are seen, and the accept key is enter on every prompt. Built the same day on tui/answer-where-you-are. Recorded as D-50, superseding the enter-refuses reflex and the focus-step half of D-47; the once-only and typing-answers-nothing guards stay. |

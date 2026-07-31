@@ -37,7 +37,7 @@ func keyFor(name string) tea.KeyMsg {
 		"enter": tea.KeyEnter, "esc": tea.KeyEsc, "tab": tea.KeyTab, "shift+tab": tea.KeyShiftTab,
 		"space": tea.KeySpace, "up": tea.KeyUp, "down": tea.KeyDown, "pgup": tea.KeyPgUp,
 		"pgdown": tea.KeyPgDown, "home": tea.KeyHome, "end": tea.KeyEnd,
-		"alt+enter": tea.KeyEnter, "arrows": tea.KeyUp,
+		"alt+enter": tea.KeyEnter, "arrows": tea.KeyUp, "backspace": tea.KeyBackspace,
 		"ctrl+c": tea.KeyCtrlC, "ctrl+d": tea.KeyCtrlD, "ctrl+g": tea.KeyCtrlG,
 		"ctrl+k": tea.KeyCtrlK, "ctrl+n": tea.KeyCtrlN, "ctrl+r": tea.KeyCtrlR,
 		"ctrl+s": tea.KeyCtrlS, "ctrl+home": tea.KeyCtrlHome, "ctrl+end": tea.KeyCtrlEnd,

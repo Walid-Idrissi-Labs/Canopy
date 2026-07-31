@@ -39,6 +39,8 @@ func (m Model) Body() string {
 		b.WriteString(m.viewModelPick())
 	case modeSignIn:
 		b.WriteString(m.viewSignIn())
+	case modeRename:
+		b.WriteString(m.viewRename())
 	default:
 		b.WriteString(m.viewAdd())
 	}
@@ -270,6 +272,46 @@ func (m Model) viewModelPick() string {
 	return b.String()
 }
 
+// viewRename is the name field on a credential that already exists.
+//
+// Its own view rather than the add form with one field lit, because the add form is a wizard: it
+// shows the fields ahead as well as the one being filled, and here there are none. What it shows
+// instead is what is not changing, since the question somebody has before pressing enter on this is
+// whether they are about to have to find their API key again.
+func (m Model) viewRename() string {
+	var b strings.Builder
+	b.WriteString(styleMuted.Render("  Renaming " + m.renamingFrom))
+	b.WriteString("\n\n")
+
+	// The same masking the add form uses, for the same reason: a value that has stopped looking like
+	// a name is most likely a credential pasted into the wrong field.
+	shown := m.draftName
+	if core.LooksLikeCredential(shown) {
+		shown = strings.Repeat("*", len([]rune(shown)))
+	}
+	b.WriteString(m.field("name", shown, true))
+	b.WriteString("\n")
+	b.WriteString(m.field("provider", string(m.draftProvider), false))
+	b.WriteString("\n")
+	if m.draftBaseURL != "" {
+		b.WriteString(m.field("base url", m.draftBaseURL, false))
+		b.WriteString("\n")
+	}
+	if m.draftModel != "" {
+		b.WriteString(m.field("model", m.draftModel, false))
+		b.WriteString("\n")
+	}
+
+	// Two short lines rather than one long one. This is the narrowest screen in the program, the
+	// frame draws from sixty columns, and a note that wraps there pushes the footer off the bottom.
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("  the value is not asked for again"))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("  every conversation on it follows the new name"))
+	b.WriteString("\n")
+	return b.String()
+}
+
 func (m Model) viewAdd() string {
 	var b strings.Builder
 	header := "  Adding a credential"
@@ -364,7 +406,7 @@ func (m Model) footer() string {
 			// here too rather than discovered.
 			return "a add   esc back   q quit"
 		}
-		return "enter use   m model   a add   d remove   j/k move   esc back"
+		return "enter use   m model   e rename   a add   d remove   j/k move   esc back"
 	case modeConfirmRemove:
 		// The confirmation line in the body already says y or n, beside the name of the thing being
 		// removed. A footer repeating it is a second list to keep agreeing with the first.
@@ -375,7 +417,7 @@ func (m Model) footer() string {
 		// One key, because there is one thing to do. A footer offering enter here would be offering
 		// to hurry a vendor that is not listening.
 		return "esc cancel"
-	case modeModel:
+	case modeModel, modeRename:
 		return "enter save   esc cancel"
 	default:
 		return "enter continue   esc cancel"

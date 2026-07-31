@@ -81,11 +81,20 @@ canopy keys add claude                       # anthropic, model picked for you
 canopy keys add nim -provider openai-compatible \
   -base-url https://integrate.api.nvidia.com/v1 -model minimaxai/minimax-m2.7
 canopy keys list                             # the MODEL column says NOT SET where one is missing
+canopy keys rename nim minimax               # the value is not asked for again
 ```
 
 No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy keys signin` rather
 than `canopy keys add`, and read
 [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
+
+A name is the one thing here you are likely to get wrong, because you choose it before the
+credential has been used for anything. Renaming moves the credential and every conversation
+recorded on it, since the name is what each one looks up on its next message. In the interface it
+is `e` on the credential screen. The CLI reports success only after both the credential and stored
+history have moved; if history cannot be updated it restores the old name before asking you to
+retry. Restart any Canopy process that was already running, because another process cannot update
+the conversations it holds in memory.
 
 Anything that is not Anthropic needs a model named explicitly. There is no default anybody could
 guess for somebody else's gateway, and a credential without one cannot answer a single message.
@@ -99,6 +108,10 @@ limited to models the current Chat Completions adapter can invoke; models that r
 Responses API need a transport Canopy does not yet ship.
 
 Now run `canopy` in a git repository. Press `?` for every key binding.
+
+Canopy opens directly into a conversation ready for input: the message box is centred, identity
+stays in the header corner, and the campfire animates at bottom-right when the terminal has room.
+There is no separate centre-logo splash that disappears after the first message.
 
 Homebrew is not available yet and will not be until the first release without a prerelease suffix.
 [INSTALL.md](INSTALL.md) has the rest, [RELEASING.md](RELEASING.md) has what publishing involves.
@@ -186,9 +199,14 @@ The transcript shows bounded tool output and file diffs. Control characters from
 content are printed as visible escapes before terminal styling, so viewed output cannot act as a
 second terminal program.
 
-If another agent needs permission, a compact notice reaches the conversation you are on. The
-notice cannot approve anything: `ctrl+g` opens the asking conversation, where the complete
-canonical request is shown before `y` or `a` can act.
+If another agent needs permission, a compact notice reaches the conversation you are on, and with
+your message box empty you can answer it right there: `enter` approves that one call, `backspace`
+declines it. The same two keys answer for the selected pane on the agents screen. An inline answer
+is always a single yes or no, never a standing approval, because the notice may summarise the
+request; `a`, the answer that is remembered for the session, only works on the asking
+conversation's own prompt, one `ctrl+g` away, where the complete canonical request is shown.
+If the request stops waiting between being shown and the keypress, Canopy says so instead of
+claiming that it was approved or declined.
 
 Steering and interrupting are deliberately two different things:
 

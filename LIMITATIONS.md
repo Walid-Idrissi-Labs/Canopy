@@ -535,11 +535,16 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   injection rather than removing sensitive data from the stored result.
 
 - On the permission prompt, the key that grants broad, standing approval for the rest of the session
-  ('a') sits directly next to the one-time, single-use answer ('y'), with no separate confirmation
-  step of its own. `y` covers only the current call; `a` remembers the displayed scope for the
-  session. Every other key, including enter and escape, refuses (Q-09). A compact notice about
-  another agent's prompt never accepts either approval key; it first opens the owning conversation
-  so the full canonical request is the approval surface.
+  ('a') sits directly next to the one-time answers, with no separate confirmation step of its own.
+  `enter` and `y` cover only the current call; `a` remembers the displayed scope for the session.
+  Enter approving is a deliberate reversal of the old reflex-safety default, in which enter refused
+  (Q-09, superseded by D-50): a misread prompt now costs whatever the one displayed call does,
+  rather than a retry. Every other key, including escape, still refuses. A compact notice about
+  another agent's prompt, and a waiting pane on the agents screen, accept a once-only enter or
+  backspace while nothing is being typed; both may summarise the request they answer for. The
+  remembered approval can still only be given on the owning conversation's full canonical prompt.
+  A compact request that stops waiting before the key arrives is reported as gone; the surface does
+  not claim that the stale approval or refusal succeeded.
 
 - A field can be set on an agent, stored, displayed, and never actually consulted by the code
   responsible for enforcing it. This already happened with per-agent trust. A deliberate review
@@ -606,6 +611,15 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   added. In practice this means rolling back to an older build can leave your history unreadable
   until you upgrade again.
 
+- A CLI credential rename spans the credential backend, its metadata file and SQLite; those systems
+  cannot commit one shared transaction. Canopy compensates by restoring the old credential name if
+  the history update fails, and it reports the exact split state if that restoration also fails.
+  Backend cleanup failures can still leave an extra secret or signed-in grant under the old or
+  proposed name; the error names that account so it can be deleted or revoked. A delegated
+  credential holds no backend value, so only its metadata and conversation references move. A
+  Canopy process already running cannot be updated by the CLI and must be restarted after a
+  successful rename.
+
 - Compaction summarises older turns, and the model then works from that summary rather than the
   original text for anything before it. The full, original text stays in storage and stays
   searchable regardless, but the model's working context from that point on is a shortened version
@@ -616,6 +630,12 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   compact by hand. The automatic half of D-28 is planned as E-02 and does not exist yet.
 
 ## Interface
+
+- The opening conversation deliberately does not reserve space for a large central wordmark. Canopy
+  or the named agent stays in the header from the first frame, and the message box is centred on
+  itself. On a short terminal the header falls back from the three-line wordmark to written text;
+  when there is not enough room for the complete campfire scene, the scene is omitted rather than
+  clipped into the message box.
 
 - Canopy asks the terminal for mouse events, so the wheel scrolls the conversation. The cost is that
   dragging to select text no longer reaches the terminal, so copying out of Canopy means holding a

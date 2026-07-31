@@ -23,6 +23,16 @@ type Engine interface {
 	// Create starts a fresh conversation and returns it. The old one is left alone: it keeps its
 	// history, keeps running any turn that is in flight, and is still in the session list.
 	Create(keyName, model string) core.Session
+
+	// RenameCredential re-points every conversation and agent naming a credential at its new name,
+	// and reports how many conversations moved.
+	//
+	// Here because a credential's name is what a conversation writes down and what the resolver
+	// dereferences on the next message. The credential screen can rename the key and cannot reach a
+	// single conversation, so a rename that stopped there would leave every conversation started on
+	// it pointing at a name nothing answers to, and the failure would arrive one message later from
+	// the far end.
+	RenameCredential(from, to string) int
 }
 
 // screen identifies which view is in front.
@@ -44,8 +54,10 @@ const (
 // for it was recognition, which the opening screen already does while being usable. Every terminal
 // tool worth being measured against opens on something you can type into.
 //
-// The mark and the drawn name did not go with it. They are on the screen a conversation opens on,
-// which is where somebody is looking anyway.
+// The mark did not go with it: it is on the screen a conversation opens on, in the corner, which is
+// where somebody is looking anyway. The drawn name was there too and no longer is. The header
+// carries it in the top right of every screen instead, so it is on screen constantly rather than
+// large for a moment and then gone.
 
 // App is the top level model. It owns which screen is showing and routes messages to it.
 //
@@ -230,6 +242,9 @@ func (a *App) resize(dim Dimensions) {
 	a.chat.SetSize(dim.Width, dim.BodyHeight())
 	a.agents.SetSize(dim.Width, dim.BodyHeight())
 	a.review.SetSize(dim.Width, dim.BodyHeight())
+	// The picker's window follows, so a terminal resized while it is up keeps the row somebody was
+	// on in view instead of scrolling out from under them.
+	a.picker.fit(pickerHeight(dim))
 }
 
 func (a App) Init() tea.Cmd {
@@ -309,8 +324,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		// The picker answers before anything else too, for the same reason help does: while it is up
-		// every key belongs to it, and the ones it does not use leave it rather than reaching a
-		// screen nobody can see. Escape changes nothing, which is what makes it safe to open.
+		// every key belongs to it, and the ones it does not use put it away rather than reaching a
+		// conversation that cannot be typed into. Escape changes nothing, which is what makes it safe
+		// to open.
 		if a.screen == screenModel {
 			// While a model is being typed every key belongs to the field, including the ones that
 			// would otherwise move or leave, or a model id containing j could never be written.
@@ -332,6 +348,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				return a.applyPickedModel()
+			case "ctrl+k":
+				// A credential with nothing to offer says "press ctrl+k" and this is what makes that
+				// true. Without it the hint named a key that closed the picker and went nowhere, which
+				// is worse than no hint: somebody reads it, presses it, and concludes the program
+				// ignored them.
+				a.cameFrom = screenChat
+				a.screen = screenKeys
 			default:
 				a.screen = a.cameFrom
 			}
@@ -392,6 +415,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case screenKeys:
 			var cmd tea.Cmd
 			a.keys, cmd = a.keys.Update(key)
+
+			// A credential renamed on that screen is followed here, before anything else this
+			// keystroke produced is read: what a conversation runs on is named, and the name it holds
+			// has just stopped resolving. Before the selection below, because a selection made on the
+			// same keystroke would otherwise be applied under whichever of the two names got there
+			// first.
+			if renamed, ok := a.keys.TakeRename(); ok {
+				a.followRename(renamed)
+			}
 			a.applyCredentialChoice()
 			return a, cmd
 		default:
@@ -778,12 +810,34 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 	return a, a.agents.SetVisible(a.screen == screenAgents)
 }
 
+// followRename moves everything that names a credential onto its new name.
+//
+// Four things hold one, and all four are here rather than in the screen that did the renaming,
+// because that screen owns credentials and none of these. The engine's conversations and agent
+// records, which is what the next message actually looks up. The chat screen's own copy, which is
+// what the header shows and what the model picker opens on. What a new conversation and a new agent
+// inherit. Miss any one and the rename is half done in a way that only shows up later: a header
+// naming a credential that is gone, or a ctrl+n opening on one.
+//
+// Nothing is refused and nothing can be. The old name stopped resolving when the store wrote, so
+// this is keeping up rather than deciding.
+func (a *App) followRename(renamed keysui.Rename) {
+	a.engine.RenameCredential(renamed.From, renamed.To)
+	a.chat.FollowCredentialRename(renamed.From, renamed.To)
+	if a.usingKey == renamed.From {
+		a.usingKey = renamed.To
+		a.agents.SetDefaults(renamed.To, a.keys.ModelFor(renamed.To), a.dir)
+	}
+}
+
 // openModelPicker builds the picker from what is stored right now and shows it.
 func (a *App) openModelPicker(from screen) {
 	a.cameFrom = from
 	a.picker = newModelPicker(a.keyStore, a.chat.KeyName(), a.chat.ModelName())
+	a.picker.fit(pickerHeight(a.dim))
 	// Through leaveChat like every other way out of the conversation, so a mode the key had stopped
-	// on is applied rather than left to a timer that a quit from this screen would outrun.
+	// on is applied rather than left to a timer that a quit from this screen would outrun. The
+	// conversation stays on screen behind the picker; what it stops doing is taking keystrokes.
 	a.leaveChat(screenModel)
 }
 
@@ -903,7 +957,19 @@ func (a App) View() string {
 		footer := Keys(a.dim.Width, "enter", "open", "1-8", "jump", "v", "layout", "n", "new",
 			"esc", "chat", "K", "credentials", "?", "help", "hjkl", "move", "[ ]", "page",
 			"w", "worktrees", "r", "review")
-		if a.agents.ConfirmingDirect() {
+		if a.agents.SelectedAwaiting() {
+			// While the selection is a waiting agent, enter answers rather than opens, so a footer
+			// still saying "open" would name the one key whose meaning just changed and lie about
+			// it. The answer keys lead, and opening moves to the digit, which is what it costs.
+			footer = Keys(a.dim.Width, "enter", "approve once", "backspace", "decline",
+				"1-8", "jump, again to open", "v", "layout", "esc", "chat", "?", "help",
+				"hjkl", "move", "[ ]", "page")
+		}
+		if notice := a.agents.Notice(); notice != "" {
+			// A stale compact answer is an outcome, not a key hint. It gets the whole footer for one
+			// keystroke so the screen cannot imply an approval succeeded when the request was gone.
+			footer = notice
+		} else if a.agents.ConfirmingDirect() {
 			// The confirmation panel in the body already names its keys, with more room to say what
 			// they mean. A footer repeating them is two lists to keep agreeing, so the footer goes
 			// quiet for the one keystroke the panel is up.
@@ -957,24 +1023,23 @@ func (a App) View() string {
 			// disagreeing about the same three keys.
 			footer = ""
 		}
-		return Frame(a.dim, Status{
-			Screen: "chat",
-			// Whose conversation this is, in the corner where the brand used to be. Empty on a
-			// conversation no agent owns, a fresh one started with ctrl+n among them, and the brand
-			// comes back there rather than the corner naming something that does not exist.
-			Agent:     a.chat.AgentName(),
-			Attention: needing,
-			Parts:     a.chat.ContextParts(),
-			Mode:      a.chat.Mode(),
-			// Only once the opening screen has gone, which is drawing the name itself.
-			Wordmark: !a.chat.Blank(),
-		}, a.chat.Body(), footer)
+		return Frame(a.dim, a.chatStatus(needing), a.chat.Body(), footer)
 	case screenModel:
-		footer := Keys(a.dim.Width, "j/k", "move", "enter", "use it here", "esc", "back, unchanged")
+		// The conversation's own header and its own body, with the picker where the message box
+		// goes. Not a screen of its own, deliberately: what is being chosen is which model answers
+		// next in this conversation, and the last thing that should leave the screen while it is
+		// being chosen is the conversation.
+		//
+		// What the footer loses is the message box's keys, which are the ones that do nothing while
+		// there is nothing to type into. What it gains is the mark's meaning, which used to cost a
+		// line of the list and now costs none.
+		footer := Keys(a.dim.Width, "j/k", "move", "enter", "use it here", "esc", "back, unchanged",
+			"*", "in use now", "ctrl+k", "credentials")
 		if a.picker.typing {
 			footer = Keys(a.dim.Width, "enter", "use it here", "esc", "back to the list")
 		}
-		return Frame(a.dim, Status{Screen: "model", Attention: needing}, a.picker.Body(), footer)
+		return Frame(a.dim, a.chatStatus(needing),
+			a.chat.InPlaceOfBox(a.picker.Block(a.dim.Width)).Body(), footer)
 	case screenKeys:
 		return Frame(a.dim, Status{Screen: "credentials", Attention: needing},
 			a.keys.Body(), a.keys.Footer())
@@ -984,6 +1049,24 @@ func (a App) View() string {
 			a.dashboard.Body(),
 			Keys(a.dim.Width, "j/k", "move", "K", "credentials", "r", "refresh", "esc/q", "agents",
 				"?", "help"))
+	}
+}
+
+// chatStatus is the header the conversation wears.
+//
+// One function rather than one per screen that shows the conversation, because the model picker
+// shows it too and a header that changed while a block was open over the box would say the picker
+// had replaced the conversation, which is exactly what it does not do.
+func (a App) chatStatus(needing int) Status {
+	return Status{
+		Screen: "chat",
+		// Whose conversation this is, in the corner where the brand used to be. Empty on a
+		// conversation no agent owns, a fresh one started with ctrl+n among them, and the brand
+		// comes back there rather than the corner naming something that does not exist.
+		Agent:     a.chat.AgentName(),
+		Attention: needing,
+		Parts:     a.chat.ContextParts(),
+		Mode:      a.chat.Mode(),
 	}
 }
 

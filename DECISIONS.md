@@ -1167,9 +1167,48 @@ Supersedes the marker rule in `internal/tui/chat/markdown.go` and the five tests
 which are rewritten to assert the new marks rather than deleted. The vocabulary changed; the property
 did not.
 
-## D-51 A subscription is signed in to, never pasted. Decided 2026-07-30.
+## D-50 The accept key is enter, and a question can be answered where it is seen. Decided 2026-07-30.
 
-(D-50 is reserved by work in flight in `internal/tui/chat`, so this round takes the next number.)
+Directed by Walid, from using the built program: the focus step was the right guard and the wrong
+tax. Every question an agent raised cost a walk, ctrl+g there and an answer and a way back, and
+with several agents running the walk is most of what a person does. Two changes, and the guards
+that survive them, recorded together because each one narrows a rule an earlier decision wrote.
+
+**Enter approves, once.** On every approval surface the accept key is enter: the conversation's own
+prompt, the visitor panel above the box, and the selected pane on the agents screen. `y` still
+works on the full prompt and `a` still remembers, but the key named on the panel is the one under a
+person's finger. This supersedes the reflex reading Q-09 settled and D-43 restated, that enter on a
+prompt means no. What it deliberately does not supersede is the rest of the refusal default: every
+other non-answer key still refuses, escape still refuses, and the remembering answer never moves
+off its own deliberate letter. Enter can only ever spend one call.
+
+**A surfaced question is an approval surface, bounded.** The visitor panel answers with enter and
+backspace while the message box is empty, and the agents screen answers for the selected pane with
+the same two keys. This supersedes the focus-step half of D-47 and the addendum recorded under
+D-48: seeing a summary and answering it may now share a surface. Three guards are the terms of
+that reversal, and a surface that drops any of them is wrong even if every test passes:
+
+1. **Typing still answers nothing.** With anything in the box, every key belongs to the message;
+   printable keys never answer anybody from anywhere. The empty box is the explicit gesture.
+2. **An inline answer is always once and never remembered.** The compact surfaces may truncate a
+   request, so a standing approval must still come from the full canonical prompt, which is D-35
+   holding exactly where it stood. The full request stays one keystroke away: ctrl+g from the
+   conversation, the pane's digit on the grid.
+3. **The answer follows the eye.** The chat panel answers the oldest question, which is the one it
+   shows; the agents screen answers the cursor's pane, which is the one lit blue. Nothing answers
+   an agent that is not on screen.
+
+Every compact answer is conditional on that request still being pending when the key arrives. A
+request can disappear between drawing and input because its turn stopped elsewhere. In that case
+the surface says it is no longer waiting and never claims that an approval or refusal succeeded.
+
+Declining stays cheap and stays wide: backspace declines inline, and a decline costs the asking
+agent a retry, which is the safe direction to be wrong in. Your own conversation's prompt still
+outranks visitors on the shared key. D-43's other two rules, ambient attention and no reflex
+spending a paid model call, are untouched; an approval releases a tool call that was already paid
+for by somebody's explicit send.
+
+## D-51 A subscription is signed in to, never pasted. Decided 2026-07-30.
 
 Canopy has only ever held one kind of credential: a string the user pasted, which the user got from a
 billing account they opened. That covers everybody with an API key and nobody else, and most people
@@ -1234,6 +1273,65 @@ of 429 quota errors for third-party OAuth on active Plus plans, which may mean i
 in practice. An undated statement about what a vendor permits is exactly the confident wrong answer
 D-32 forbids, so anyone reading this more than a few months after it was written should re-check every
 claim in it before relying on one.
+
+## D-52 The header owns identity; the opening conversation is not a splash. Decided 2026-07-30.
+
+(D-51 is reserved by the subscription-sign-in work in `feat/subscription-sign-in`.)
+
+The empty conversation no longer draws a second, oversized `canopy` wordmark above the message box.
+The opening screen is already a usable conversation, not a splash screen somebody must visually
+leave before typing. Its message box is centred on itself, notices and command results stack above
+without moving it, and the animated campfire remains in the bottom-right when the terminal has room.
+
+Identity stays in the header corner from the first frame onward. The header shows Canopy when there
+is no named agent and the agent's name when a conversation has one; at short heights it uses the
+written fallback instead of the three-line wordmark. Sending the first message must not cause a
+large centre logo to disappear and a different header identity to appear.
+
+This supersedes M-08's original requirement for a large drawn name centred above the opening message
+box and its note that the header placement remained open. It does not supersede M-07: the smaller
+drawn header wordmark, its measured width, the palette and the campfire remain part of the release
+interface. This is a presentation decision only and changes no session, provider, permission or
+workspace behaviour.
+
+## D-53 The model picker stays in the conversation. Decided 2026-07-30.
+
+The original K-03 picker replaced the whole application frame, following the help screen's pattern.
+That made a fact about the current conversation impossible to choose while reading the conversation.
+The picker now takes the message box's place inside chat instead. It is not a floating overlay:
+nothing needs z-order, the transcript keeps its ordinary frame, and the picker is another bounded
+block in the layout. While it is open every key belongs to it, escape returns to the unchanged
+composer, and applying a row affects the next request in this conversation only.
+
+The inline block has a height budget and scrolls rather than pushing the transcript out of view.
+Every fitted row is measured in terminal cells, not rune count, because model labels and endpoints
+may contain wide or combining characters. Text that does not fit is marked with an ellipsis and no
+rendered row may cross the frame.
+
+This supersedes K-03's whole-screen deliverable and its note treating help as the controlling
+precedent. It preserves D-46: the list remains a convenience, free text remains available, and a
+conversation-level choice never rewrites the credential's recorded default.
+
+## D-54 A credential rename either moves its stored conversations or restores its old name. Decided 2026-07-30.
+
+A credential name is simultaneously a metadata identifier, the foreign name stored by conversations
+and, except for a delegated sign-in that deliberately holds nothing, an OS-backend account. Those
+systems cannot share one transaction, so `canopy keys rename` uses a compensated operation: move the
+backend value where one exists and the metadata, update all stored conversations in one SQLite
+statement, and report success only after both have landed. If the history statement fails, the
+credential is moved back before the command suggests fixing the cause and repeating. If that
+rollback also fails, the error names the split state and explicitly says not to repeat blindly.
+
+Cleanup failures are never secondary enough to hide. If metadata could not be saved and the newly
+copied secret could not be deleted, the error says an untracked live copy remains and names its
+backend account. If the main rename landed but deleting the old backend copy failed, stored
+conversations still move to the new name and the command exits with the cleanup warning afterwards.
+
+The interface has different reach: it updates the key store and every conversation loaded by its
+engine immediately. A separate Canopy process already running cannot be reached and must be
+restarted after a CLI rename. This decision does not claim atomicity across processes or storage
+systems; it requires a truthful final state, compensating rollback where possible, and an actionable
+description where it is not.
 
 ## Appendix: where the settled scope comes from
 

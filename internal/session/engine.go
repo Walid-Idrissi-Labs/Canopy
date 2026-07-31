@@ -1272,3 +1272,52 @@ func (e *Engine) UseCredential(sessionID, keyName, model string) error {
 	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: sessionID})
 	return nil
 }
+
+// RenameCredential re-points every conversation and agent naming a credential at its new name, and
+// reports how many conversations moved.
+//
+// A credential's name is not a label. It is what a conversation writes down and what the resolver
+// dereferences on the next message, so renaming one in the key store and stopping there would leave
+// every conversation started on it pointing at a name nothing answers to. The failure would arrive
+// from the far end, one message later, as "no key named ...", about a credential the user can see in
+// the list under a different name and has no reason to connect to it.
+//
+// Not refused mid answer, which is the one way this differs from UseCredential. That refuses because
+// changing which key gets billed part way through a reply would attribute the reply to a credential
+// that did not pay for it. A rename changes no such thing: it is the same credential, the same
+// secret and the same endpoint, and the turn in flight already holds the client it resolved. What it
+// changes is the name the next message will look up, and leaving that stale is the harm.
+//
+// Called by whoever performed the rename rather than triggered from inside the store, because the
+// store deliberately knows nothing about conversations, and an engine that watched a file for
+// changes would be a second source of truth about what a session runs on.
+func (e *Engine) RenameCredential(from, to string) int {
+	if from == "" || to == "" || from == to {
+		return 0
+	}
+
+	e.mu.Lock()
+	var moved []core.Session
+	for _, s := range e.sessions {
+		if s.KeyName != from {
+			continue
+		}
+		s.KeyName = to
+		s.UpdatedAt = e.events.Now()
+		moved = append(moved, copySession(*s))
+	}
+	// The agent records follow, so the agents view and anything spawned from one agree with the
+	// conversations rather than naming a credential that has gone.
+	for i := range e.agents {
+		if e.agents[i].KeyName == from {
+			e.agents[i].KeyName = to
+		}
+	}
+	e.mu.Unlock()
+
+	for _, s := range moved {
+		e.persistSession(s)
+		e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: s.ID})
+	}
+	return len(moved)
+}
