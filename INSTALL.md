@@ -203,8 +203,9 @@ npm install -g @github/copilot
 Set `COPILOT_CLI_PATH` if it lives somewhere unusual. Canopy and GitHub's SDK both read that
 variable, so the two cannot end up on different binaries.
 
-**A GitHub app of Canopy's own.** No release has a client id compiled in yet, so today every build
-needs one supplied. GitHub's own guidance for the Copilot SDK is to create an app, have users
+**A GitHub app of Canopy's own.** A release is refused unless its public client id is compiled in,
+so the repository owner must set the Actions variable `CANOPY_GITHUB_CLIENT_ID` before tagging. A
+local build needs one supplied. GitHub's own guidance for the Copilot SDK is to create an app, have users
 authorise it, and pass their token to the SDK; Canopy needs its own identity for that and must not
 borrow another editor's.
 
@@ -213,7 +214,7 @@ borrow another editor's.
    people in with the device flow so that nothing has to listen on a port.
 3. Tick **Enable Device Flow**.
 4. Copy the **Client ID** and set `CANOPY_GITHUB_CLIENT_ID` to it, or build with
-   `-ldflags "-X github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot.clientID=<id>"`.
+   `CANOPY_GITHUB_CLIENT_ID=<id> make build`.
 
 An OAuth app rather than a GitHub app, and for one specific reason: an OAuth app's user tokens do
 not expire, so Canopy never has to renew one. Renewing needs a client secret, and a program people

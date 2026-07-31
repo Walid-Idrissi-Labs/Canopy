@@ -305,7 +305,7 @@ func clientFor(
 	}
 
 	if in.Kind == keys.KindDelegated {
-		return vendors.Delegated(meta, in, model)
+		return vendors.Delegated(meta, in, model, "")
 	}
 
 	// Through the refresher rather than straight to the store, so a signed-in credential whose token

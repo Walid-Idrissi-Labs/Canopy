@@ -51,7 +51,8 @@ const ClientIDEnvVar = "CANOPY_GITHUB_CLIENT_ID"
 // lapsed grant is signed in to again by hand.
 const ClientSecretEnvVar = "CANOPY_GITHUB_CLIENT_SECRET"
 
-// clientID is the compiled-in client id, empty in every build until a registration exists.
+// clientID is the compiled-in client id. It is empty in an ordinary developer build unless an
+// ldflag supplies it; the release workflow refuses to publish an artifact without that flag.
 //
 // A var rather than a const so a release build can set it with -X and so a test can drive the flow
 // without an environment variable. See INSTALL.md for what has to be registered.

@@ -65,6 +65,20 @@ type conversationResolver interface {
 	) (client core.ProviderClient, id pricing.ModelID, err error)
 }
 
+// workspaceConversationResolver is a conversation resolver whose provider process also needs the
+// directory assigned to the conversation's agent.
+//
+// Optional for the same reason as conversationResolver. Pasted-key providers and Copilot execute
+// Canopy's own tools, whose registries are already rooted by the engine. Claude Code and Codex run
+// their own tools, so their process and protocol session must be given the same direct repository or
+// isolated worktree. Falling back to the process working directory here would make an isolated
+// agent operate on the checkout Canopy started in instead of the worktree the interface promised.
+type workspaceConversationResolver interface {
+	ResolveForWorkspace(
+		conversation, workspace, name, model string,
+	) (client core.ProviderClient, id pricing.ModelID, err error)
+}
+
 // resolverCloser is a resolver holding something that has to be shut down.
 //
 // The other half of a client that outlives a turn. A delegated provider keeps a child process and a
@@ -928,6 +942,13 @@ func (e *Engine) run(
 func (e *Engine) resolveFor(
 	conversation, keyName, model string,
 ) (core.ProviderClient, pricing.ModelID, error) {
+	if resolver, ok := e.resolver.(workspaceConversationResolver); ok {
+		workspace := ""
+		if agent, found := e.AgentFor(conversation); found {
+			workspace = agent.Dir
+		}
+		return resolver.ResolveForWorkspace(conversation, workspace, keyName, model)
+	}
 	if resolver, ok := e.resolver.(conversationResolver); ok {
 		return resolver.ResolveFor(conversation, keyName, model)
 	}

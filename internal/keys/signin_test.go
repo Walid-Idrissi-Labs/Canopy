@@ -411,7 +411,7 @@ func TestTokensLeftInTheBackendAreNotServedAsAPastedSecret(t *testing.T) {
 	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	// What a PutSignIn that wrote its tokens and then failed to save the record leaves behind.
+	// The split state an older build or an external backend edit can leave behind.
 	if err := store.writeTokens("claude", bothTokens()); err != nil {
 		t.Fatalf("writeTokens: %v", err)
 	}
@@ -424,6 +424,78 @@ func TestTokensLeftInTheBackendAreNotServedAsAPastedSecret(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error should mention %q, got: %v", want, err)
 		}
+	}
+}
+
+func TestAFailedFirstSignInRemovesTheGrantItCouldNotRecord(t *testing.T) {
+	backend := NewMemoryBackend()
+	path := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatalf("making metadata saving fail: %v", err)
+	}
+	store := NewStore(backend, path)
+
+	_, err := store.PutSignIn(
+		core.KeyMetadata{Ref: core.KeyRef{Name: "copilot", Provider: core.ProviderAnthropic}},
+		signedIn("walid@example.invalid", expiry(t)), bothTokens(),
+	)
+	if err == nil {
+		t.Fatal("a sign-in whose metadata could not be saved reported success")
+	}
+	if _, backendErr := backend.Get("copilot"); !errors.Is(backendErr, ErrNotFound) {
+		t.Fatalf("the failed sign-in left a grant in the backend: %v", backendErr)
+	}
+}
+
+func TestAFailedReplacementRestoresThePreviousGrant(t *testing.T) {
+	for name, replacement := range map[string]Tokens{
+		"another signed-in account": {
+			Access: core.NewSecret("gho_NEW-ACCOUNT"), Refresh: core.NewSecret("ghr_NEW-ACCOUNT"),
+		},
+		"a delegated account with no tokens": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := NewMemoryBackend()
+			path := filepath.Join(t.TempDir(), "keys.json")
+			store := NewStore(backend, path)
+			meta := core.KeyMetadata{
+				Ref: core.KeyRef{Name: "subscription", Provider: core.ProviderAnthropic},
+			}
+			if _, err := store.PutSignIn(
+				meta, signedIn("old@example.invalid", expiry(t)), bothTokens(),
+			); err != nil {
+				t.Fatalf("storing the previous sign-in: %v", err)
+			}
+			previous, err := backend.Get("subscription")
+			if err != nil {
+				t.Fatalf("reading the previous grant: %v", err)
+			}
+
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("removing the metadata file: %v", err)
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatalf("making metadata saving fail: %v", err)
+			}
+
+			kind := KindSignedIn
+			if replacement.IsZero() {
+				kind = KindDelegated
+			}
+			_, err = store.PutSignIn(meta, SignIn{
+				Kind: kind, Account: "new@example.invalid",
+			}, replacement)
+			if err == nil {
+				t.Fatal("a replacement whose metadata could not be saved reported success")
+			}
+			after, backendErr := backend.Get("subscription")
+			if backendErr != nil {
+				t.Fatalf("the previous grant was not restored: %v", backendErr)
+			}
+			if after != previous {
+				t.Error("the failed replacement left the new account's grant behind the old account metadata")
+			}
+		})
 	}
 }
 

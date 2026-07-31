@@ -196,9 +196,11 @@ func (in SignIn) validate(name string, tokens Tokens) error {
 
 // PutSignIn stores a credential somebody signed in to, replacing any existing one of that name.
 //
-// The counterpart of Put, and it keeps Put's ordering for Put's reason: the tokens reach the
-// backend before the record reaches disk, so a failure between the two leaves an orphaned secret
-// nobody can reach rather than a record claiming a sign-in that never happened.
+// The counterpart of Put. The tokens reach the backend before the record reaches disk, so metadata
+// can never claim a sign-in whose grant was not stored. The old backend value is preserved first and
+// restored if saving metadata fails, because the safer ordering still has to be a compensated
+// operation: an orphaned grant or an old account label backed by a new account's token is not an
+// acceptable failed sign-in.
 //
 // Signing in again is rotation, so it carries over what rotation carries over. That is not a
 // promise made twice but the same upsert Put uses, which is what stops the two answers drifting
@@ -229,6 +231,14 @@ func (s *Store) PutSignIn(meta core.KeyMetadata, in SignIn, tokens Tokens) (core
 		return core.KeyMetadata{}, err
 	}
 
+	previous, previousErr := s.backend.Get(meta.Ref.Name)
+	previousExists := previousErr == nil
+	if previousErr != nil && !errors.Is(previousErr, ErrNotFound) {
+		return core.KeyMetadata{}, fmt.Errorf(
+			"preserving the previous value for key %q before signing in: %w",
+			meta.Ref.Name, previousErr)
+	}
+
 	if err := s.writeTokens(meta.Ref.Name, tokens); err != nil {
 		return core.KeyMetadata{}, err
 	}
@@ -250,6 +260,19 @@ func (s *Store) PutSignIn(meta core.KeyMetadata, in SignIn, tokens Tokens) (core
 	records, stored = upsert(records, stored, meta.Rate)
 
 	if err := s.save(records); err != nil {
+		var restoreErr error
+		if previousExists {
+			restoreErr = s.backend.Set(meta.Ref.Name, previous)
+		} else {
+			restoreErr = s.backend.Delete(meta.Ref.Name)
+		}
+		if restoreErr != nil {
+			return core.KeyMetadata{}, fmt.Errorf(
+				"saving the sign-in for key %q failed: %w; restoring its previous %s value also "+
+					"failed: %v. The credential backend and keys.json may now disagree; do not "+
+					"retry blindly",
+				meta.Ref.Name, err, s.backend.Name(), restoreErr)
+		}
 		return core.KeyMetadata{}, err
 	}
 	return stored.toMetadata(), nil

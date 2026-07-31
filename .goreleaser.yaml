@@ -41,6 +41,7 @@ builds:
       - -X main.version={{ .Version }}
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .Date }}
+      - -X github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot.clientID={{ .Env.CANOPY_GITHUB_CLIENT_ID }}
 
 archives:
   - id: canopy

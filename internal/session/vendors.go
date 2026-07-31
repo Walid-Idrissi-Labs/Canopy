@@ -94,7 +94,7 @@ var (
 // The model identity is marked delegated, which is what stops a dollar figure appearing beside a turn
 // nobody is billed per token for. See pricing.ModelID.Delegated.
 func (v *Vendors) Delegated(
-	meta core.KeyMetadata, in keys.SignIn, model string,
+	meta core.KeyMetadata, in keys.SignIn, model, workspace string,
 ) (core.ProviderClient, pricing.ModelID, error) {
 	// The provider is carried through so a failure can still say which credential this was, and the
 	// model is carried through so the client can ask for it if the delegated agent offers a choice.
@@ -107,7 +107,11 @@ func (v *Vendors) Delegated(
 			return nil, pricing.ModelID{}, fmt.Errorf("key %q delegates to Codex: %w",
 				meta.Ref.Name, err)
 		}
-		return codex.New(found, codex.WithVersion(v.version)), id, nil
+		opts := []codex.Option{codex.WithVersion(v.version)}
+		if workspace != "" {
+			opts = append(opts, codex.WithWorkspace(workspace))
+		}
+		return codex.New(found, opts...), id, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), delegateTimeout)
@@ -118,7 +122,11 @@ func (v *Vendors) Delegated(
 		return nil, pricing.ModelID{}, fmt.Errorf("key %q delegates to Claude Code: %w",
 			meta.Ref.Name, err)
 	}
-	return acp.New(found, acp.WithVersion(v.version)), id, nil
+	opts := []acp.Option{acp.WithVersion(v.version)}
+	if workspace != "" {
+		opts = append(opts, acp.WithWorkspace(workspace))
+	}
+	return acp.New(found, opts...), id, nil
 }
 
 // Copilot builds, or finds again, the client that holds a conversation's Copilot session.

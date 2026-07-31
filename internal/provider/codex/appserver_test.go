@@ -54,6 +54,9 @@ type appServer struct {
 
 	// failThread makes thread/start refuse, with this message.
 	failThread string
+	// ignoreInitialize and ignoreInterrupt model an app server that is alive but unresponsive.
+	ignoreInitialize bool
+	ignoreInterrupt  bool
 
 	in  *bufio.Reader
 	out io.Writer
@@ -144,6 +147,9 @@ func (s *appServer) handle(m message) bool {
 
 	switch m.Method {
 	case methodInitialize:
+		if s.ignoreInitialize {
+			return true
+		}
 		var params initializeParams
 		_ = json.Unmarshal(m.Params, &params)
 		agent := s.userAgent
@@ -211,8 +217,10 @@ func (s *appServer) handle(m message) bool {
 		}
 
 	case methodTurnInterrupt:
-		s.answer(m, struct{}{})
-		s.emitTurn(turnInterrupted, nil)
+		if !s.ignoreInterrupt {
+			s.answer(m, struct{}{})
+			s.emitTurn(turnInterrupted, nil)
+		}
 
 	default:
 		if m.ID != nil {

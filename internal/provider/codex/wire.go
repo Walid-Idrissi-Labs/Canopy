@@ -58,6 +58,11 @@ const (
 
 	requestApproveCommand    = "item/commandExecution/requestApproval"
 	requestApproveFileChange = "item/fileChange/requestApproval"
+
+	// maxFrameBytes bounds memory consumed by an app server that never terminates a JSON-RPC line.
+	// Four MiB leaves ample room for real tool payloads while turning a malformed or hostile peer
+	// into a clear protocol error instead of an unbounded allocation.
+	maxFrameBytes = 4 << 20
 )
 
 // jsonRPCVersion is the only value the app server accepts, and the only one Canopy sends.
@@ -534,7 +539,7 @@ func (c *conn) write(m message) error {
 // read returns the next frame, or an error when the app server has stopped talking.
 func (c *conn) read() (message, error) {
 	for {
-		line, err := c.out.ReadBytes('\n')
+		line, err := readFrame(c.out)
 		if err != nil && len(line) == 0 {
 			return message{}, err
 		}
@@ -552,6 +557,24 @@ func (c *conn) read() (message, error) {
 				"the Codex app server sent something that is not JSON-RPC: %w", decodeErr)
 		}
 		return m, nil
+	}
+}
+
+func readFrame(r *bufio.Reader) ([]byte, error) {
+	frame := make([]byte, 0, r.Size())
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(part) > maxFrameBytes-len(frame) {
+			return nil, fmt.Errorf("JSON-RPC frame exceeds %d bytes", maxFrameBytes)
+		}
+		frame = append(frame, part...)
+		if err == nil {
+			return frame, nil
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return frame, err
 	}
 }
 

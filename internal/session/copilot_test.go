@@ -220,6 +220,32 @@ type conversationAware struct {
 	inner Resolver
 }
 
+type workspaceAware struct {
+	mu    sync.Mutex
+	asked map[string]string
+	inner Resolver
+}
+
+func (r *workspaceAware) Resolve(name, model string) (core.ProviderClient, pricing.ModelID, error) {
+	return r.inner.Resolve(name, model)
+}
+
+func (r *workspaceAware) ResolveForWorkspace(
+	conversation, workspace, name, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
+	r.mu.Lock()
+	r.asked[conversation] = workspace
+	r.mu.Unlock()
+	return r.inner.Resolve(name, model)
+}
+
+func (r *workspaceAware) workspaceFor(conversation string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	workspace, ok := r.asked[conversation]
+	return workspace, ok
+}
+
 func (r *conversationAware) Resolve(name, model string) (core.ProviderClient, pricing.ModelID, error) {
 	return r.ResolveFor("", name, model)
 }
@@ -267,6 +293,64 @@ func TestTheEngineTellsAResolverWhichConversationATurnIsFor(t *testing.T) {
 		case <-deadline:
 			t.Fatal("the turn never reached the resolver")
 		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+func TestTheEngineRootsDelegatedResolutionInEachAgentsActualWorkspace(t *testing.T) {
+	engine, repository := isolatingEngine(t)
+	resolver := &workspaceAware{
+		asked: map[string]string{},
+		inner: fixedResolver{
+			client: &scriptedClient{name: "delegated", events: reply("ok")},
+			id:     anthropicID(),
+		},
+	}
+	engine.resolver = resolver
+
+	agents := make([]Agent, 0, len(core.AllTrustLevels())*2)
+	for _, trust := range core.AllTrustLevels() {
+		direct, err := engine.AddAgent(context.Background(), Agent{
+			Name: "direct-" + string(trust), KeyName: "claude", Model: "sonnet",
+			Dir: repository, Trust: trust,
+		})
+		if err != nil {
+			t.Fatalf("adding the direct %s agent: %v", trust, err)
+		}
+		agents = append(agents, direct)
+
+		isolated, err := engine.AddAgent(context.Background(), Agent{
+			Name: "isolated-" + string(trust), KeyName: "claude", Model: "sonnet",
+			Trust: trust, Isolated: true,
+		})
+		if err != nil {
+			t.Fatalf("adding the isolated %s agent: %v", trust, err)
+		}
+		agents = append(agents, isolated)
+	}
+
+	for _, agent := range agents {
+		turnID, err := engine.Send(agent.SessionID, "where are you working?")
+		if err != nil {
+			t.Fatalf("sending to %s: %v", agent.Name, err)
+		}
+		if turn := waitForTurn(t, engine, agent.SessionID, turnID); turn.State != core.TurnComplete {
+			t.Fatalf("the %s turn ended as %s: %s", agent.Name, turn.State, turn.Error)
+		}
+	}
+
+	for _, agent := range agents {
+		got, ok := resolver.workspaceFor(agent.SessionID)
+		if !ok {
+			t.Fatalf("the %s turn never reached workspace-aware resolution", agent.Name)
+		}
+		if got != agent.Dir {
+			t.Errorf("the %s turn resolved in %q, want its assigned workspace %q", agent.Name, got, agent.Dir)
+		}
+	}
+	for _, agent := range agents {
+		if agent.Isolated && agent.Dir == repository {
+			t.Fatalf("the isolated %s agent did not receive a worktree, so the boundary assertion is vacuous", agent.Trust)
 		}
 	}
 }

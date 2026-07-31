@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -42,6 +43,8 @@ type stream struct {
 }
 
 var _ core.Stream = (*stream)(nil)
+
+const cancellationGrace = 2 * time.Second
 
 func (s *stream) Next() bool {
 	for {
@@ -380,6 +383,30 @@ func (s *stream) watchCancellation() {
 		select {
 		case <-s.ctx.Done():
 			_ = s.conn.notify(methodSessionCancel, cancelParams{SessionID: s.sessionID})
+		case <-s.done:
+		}
+	}()
+}
+
+// watchTermination makes cancellation a bound rather than a request the bridge may ignore.
+//
+// The polite ACP notification above remains first so partial output and the protocol's cancelled
+// stop reason survive when the bridge cooperates. After a short grace period, Close stops the whole
+// process group and closes the pipe Next is blocked on. Started before the handshake so cancellation
+// also bounds a bridge that never answers initialize or session/new.
+func (s *stream) watchTermination() {
+	go func() {
+		select {
+		case <-s.ctx.Done():
+		case <-s.done:
+			return
+		}
+
+		timer := time.NewTimer(cancellationGrace)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			_ = s.Close()
 		case <-s.done:
 		}
 	}()

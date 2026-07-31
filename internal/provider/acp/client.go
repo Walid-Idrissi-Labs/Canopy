@@ -120,6 +120,7 @@ func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, err
 		child: child,
 		done:  make(chan struct{}),
 	}
+	s.watchTermination()
 
 	if err := c.begin(s, req); err != nil {
 		_ = s.Close()

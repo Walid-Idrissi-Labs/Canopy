@@ -5774,6 +5774,13 @@ classified as a wrong key, which is documented as never retry and never fall bac
 would be sent to replace a credential that was never the problem. Held by
 TestTokensLeftInTheBackendAreNotServedAsAPastedSecret.
 
+**Codex corrective pass 2026-07-31.** `PutSignIn` still crossed two stores without compensating for
+the second write failing: a first sign-in could leave an orphaned grant, while a replacement could
+overwrite the last usable grant even though the metadata update was rejected. It now reads and
+preserves the old backend value before writing, and restores that value or removes the new one when
+the metadata save fails. `TestAFailedFirstSignInRemovesTheGrantItCouldNotRecord` and
+`TestAFailedReplacementRestoresThePreviousGrant` hold both sides of the operation.
+
 Found and fixed on the way, in its own commit rather than bundled here: SetModel was the only
 mutating method on the store that never took the mutex. Every one of them reads the whole of
 keys.json, changes one thing and writes all of it back, which is only safe under the lock, so a
@@ -6690,6 +6697,13 @@ Canopy meant to kill did die, which is why the suite never saw it. Held now by a
 each package, because both spellings compile and the difference is only ever visible as somebody
 else's job dying.
 
+**Codex corrective pass 2026-07-31.** The Claude bridge now receives the exact `Agent.Dir` selected
+by D-33. The direct/isolated by trust-level matrix asserts that an isolated session is rooted in its
+owned worktree rather than Canopy's launch checkout. Cancellation has a bounded forced-close path
+when the bridge ignores `session/cancel` or never answers initialization, and the ACP reader rejects
+a newline-delimited JSON-RPC frame over 4 MiB. Those are liveness and memory bounds; neither turns
+the vendor's tools into Canopy-confined tools.
+
 ### S-05 OpenAI signs in through the Codex app server
 
 `status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
@@ -7091,6 +7105,14 @@ now held. The sibling ACP test was checked for the same shape and does assert li
 
 The `cmd.Wait` defect recorded under S-04 was present in this route's server.go too and is fixed in
 the same commit, with the same source sweep added here.
+
+**Codex corrective pass 2026-07-31.** The Codex app server now receives the exact `Agent.Dir`
+selected by D-33. The direct/isolated by trust-level matrix asserts that an isolated thread is rooted
+in its owned worktree rather than Canopy's launch checkout. Cancellation has a bounded forced-close
+path when the app server ignores `turn/interrupt` or never answers initialization, and the app-server
+reader rejects a newline-delimited JSON-RPC frame over 4 MiB. These are held in
+`internal/session` and `internal/provider/codex`; the close is a liveness bound, not a new
+containment claim.
 
 ### S-06 The wizard has a path that never asks for a secret
 
@@ -7502,13 +7524,13 @@ INSTALL's runtime requirements said "An API key for at least one provider", same
 the same way.
 
 INSTALL's Copilot section, written by S-03, said a GitHub app of your own is needed "if you are
-building Canopy rather than using a release that has one compiled in". No release has one compiled
-in. `clientID` is `""` in internal/provider/copilot/signin.go and `.goreleaser.yaml` sets exactly
-three `-X` flags, all of them `main.version`, `main.commit` and `main.date`. So the sentence told
-somebody taking a release binary that they needed nothing, and what they would actually get is
-`ErrNotRegistered` on their first sign-in. It now says no release has one yet. Registering the
-OAuth app and adding the fourth ldflag are Walid's, and neither is in this task's scope; a release
-tagged before that happens ships a Copilot route nobody can use.
+building Canopy rather than using a release that has one compiled in". No release had one compiled
+in. `clientID` was `""` in internal/provider/copilot/signin.go and `.goreleaser.yaml` set only the
+three `main.*` flags. The release path now requires the public repository variable
+`CANOPY_GITHUB_CLIENT_ID`, passes it to GoReleaser and compiles it through the fourth `-X` flag; the
+workflow fails before publishing if the registration is absent. Local builds accept the same value
+through `make build`. Registering the OAuth app and setting the repository variable remain Walid's
+external actions, but a tag can no longer silently ship a Copilot route nobody can use.
 
 LIMITATIONS named `~/.codex` in four places where the code reads `$CODEX_HOME` and honours it, at
 internal/provider/codex/discover.go:42. For anybody who has moved it, four of those sentences were
@@ -7726,8 +7748,8 @@ Copilot: the device flow with no listener, the token in the credential store, `c
 no built-in and no MCP source, declaration-only tools, the audit trail and verification applying,
 history divergence refused by `ErrHistoryRewritten` at client.go:83, a restarted conversation seeded
 as a labelled transcript at client.go:242, model and effort belonging to the session, `MaxTokens`
-never sent, `clientID` empty in every build with `.goreleaser.yaml` setting only the three `main.*`
-flags, `ErrNotRegistered` on a build with no id, the scopes `copilot read:user` with
+never sent, the release workflow requiring and compiling its public client id, `ErrNotRegistered`
+on a local build with no id, the scopes `copilot read:user` with
 `CANOPY_GITHUB_SCOPES` overriding at signin.go:162, no seat check at sign-in with `ErrNoSeat` on the
 first turn at errors.go:28, and signout doing the local half only because no production route
 implements `revokesCredentials`. Claude: two programs with `bridgeNames` accepting the old name at
@@ -7741,7 +7763,9 @@ its tokens, `canopy keys test` reading real limits through `account/rateLimits/r
 renewing nothing. Shared: no dollar figure on any of the three because all three set `Delegated`,
 the five-minute `RefreshMargin` at keys/refresh.go:30 with the per-process lock and no lock file,
 `core.Secret` marshalling to `[redacted]` and refusing to unmarshal, keys.json holding no token
-field, and every route printing its caveat before anything is stored on both surfaces.
+field, and every route printing its caveat before anything is stored on both surfaces. The Copilot
+release identity is now wired through GoReleaser and the release workflow refuses to run without
+the public repository variable; the actual app registration remains an external prerequisite.
 
 The `~/.codex` sweep the verifier asked for. LIMITATIONS and README contain none. INSTALL names it
 twice and correctly both times, as the documented default and as the thing you may have moved. The

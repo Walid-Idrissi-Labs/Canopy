@@ -74,6 +74,18 @@ func (r *KeyResolver) Resolve(name, model string) (core.ProviderClient, pricing.
 func (r *KeyResolver) ResolveFor(
 	conversation, name, model string,
 ) (core.ProviderClient, pricing.ModelID, error) {
+	return r.ResolveForWorkspace(conversation, "", name, model)
+}
+
+// ResolveForWorkspace returns the client for a conversation and roots any delegated vendor agent in
+// the same directory Canopy assigned to that conversation's agent.
+//
+// An empty workspace is legitimate for asides, compaction and callers with no agent. The delegated
+// client then uses its documented process-working-directory default. A real direct or isolated
+// agent always supplies Agent.Dir through Engine.resolveFor.
+func (r *KeyResolver) ResolveForWorkspace(
+	conversation, workspace, name, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
 	// The secret is fetched at the moment of use rather than held, so a key removed while Canopy is
 	// running stops working on the next turn rather than the next restart.
 	//
@@ -96,7 +108,7 @@ func (r *KeyResolver) ResolveFor(
 		return nil, pricing.ModelID{}, err
 	}
 	if in.Kind == keys.KindDelegated {
-		return r.vendors.Delegated(meta, in, model)
+		return r.vendors.Delegated(meta, in, model, workspace)
 	}
 
 	secret, err := r.credentials.Credential(meta)

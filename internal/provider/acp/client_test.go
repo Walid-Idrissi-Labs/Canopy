@@ -379,6 +379,49 @@ func TestCancellingATurnAsksTheAgentToStopRatherThanKillingIt(t *testing.T) {
 	}
 }
 
+func TestCancellationStopsABridgeThatIgnoresTheProtocolRequest(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	a := &agent{t: t, ignoreCancel: true, script: func(*agent) { close(started) }}
+	client := New(installed(), WithWorkspace(t.TempDir()))
+	a.launch(client)
+
+	stream, err := client.Stream(ctx, turn("do not answer"))
+	if err != nil {
+		t.Fatalf("starting a delegated turn: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+	<-started
+	cancel()
+
+	got := drain(t, stream)
+	if got.stop != core.StopCancelled || got.err != nil {
+		t.Fatalf("the forcibly stopped turn ended as %q with %v", got.stop, got.err)
+	}
+	if !a.wasStopped() {
+		t.Error("the bridge ignored session/cancel and Canopy left its process running")
+	}
+}
+
+func TestCancellationBoundsABridgeThatNeverAnswersTheHandshake(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	a := &agent{t: t, ignoreInitialize: true}
+	client := New(installed(), WithWorkspace(t.TempDir()))
+	a.launch(client)
+
+	if _, err := client.Stream(ctx, turn("hello")); err == nil {
+		t.Fatal("a bridge that never answered initialize produced a stream")
+	}
+	if !a.wasStopped() {
+		t.Error("the cancelled handshake left the bridge process running")
+	}
+}
+
 func TestABridgeThatStopsMidTurnIsAFailureThatQuotesWhatItSaid(t *testing.T) {
 	t.Parallel()
 

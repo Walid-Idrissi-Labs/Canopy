@@ -43,6 +43,11 @@ const (
 	// direction a name is used in, and splitting them invites the belief that it does.
 	methodSessionUpdate     = "session/update"
 	methodRequestPermission = "session/request_permission"
+
+	// maxFrameBytes bounds memory consumed by a bridge that never terminates a JSON-RPC line.
+	// Four MiB leaves ample room for real tool payloads while turning a malformed or hostile peer
+	// into a clear protocol error instead of an unbounded allocation.
+	maxFrameBytes = 4 << 20
 )
 
 // Stop reasons, as the `stopReason` field of a session/prompt result.
@@ -327,7 +332,7 @@ func (c *conn) write(m message) error {
 // read returns the next frame, or an error when the bridge has stopped talking.
 func (c *conn) read() (message, error) {
 	for {
-		line, err := c.out.ReadBytes('\n')
+		line, err := readFrame(c.out)
 		if err != nil {
 			if len(line) == 0 {
 				return message{}, err
@@ -348,6 +353,24 @@ func (c *conn) read() (message, error) {
 				"the Claude Code bridge sent something that is not JSON-RPC: %w", decodeErr)
 		}
 		return m, nil
+	}
+}
+
+func readFrame(r *bufio.Reader) ([]byte, error) {
+	frame := make([]byte, 0, r.Size())
+	for {
+		part, err := r.ReadSlice('\n')
+		if len(part) > maxFrameBytes-len(frame) {
+			return nil, fmt.Errorf("JSON-RPC frame exceeds %d bytes", maxFrameBytes)
+		}
+		frame = append(frame, part...)
+		if err == nil {
+			return frame, nil
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return frame, err
 	}
 }
 

@@ -323,7 +323,10 @@ can is Q-23, and it is not settled.
 
 - **The delegated agent has whatever access to your machine you already gave it**, which is not
   something Canopy sets, sees or can bound. It runs under your account and under its own
-  configuration. SECURITY.md says the same thing in threat-model terms.
+  configuration. Canopy passes the exact agent workspace into the vendor process and protocol
+  session, so an isolated agent starts in its owned worktree and not in the primary checkout. That
+  is workspace selection, not containment: the vendor's own configuration and tools may still reach
+  elsewhere. SECURITY.md says the same thing in threat-model terms.
 
 - **The model is the vendor's to choose unless it offers a say**, and the three routes differ enough
   that one sentence will not cover them. On the Claude and ChatGPT routes the credential stores no
@@ -408,8 +411,9 @@ own app rather than reusing another editor's client id or version headers.
   session was opened with. **`MaxTokens` is not sent** either; the SDK exposes no per-turn output cap
   for a Copilot session.
 
-- **Canopy needs a GitHub app of its own and no release has one compiled in yet.** Register an
-  **OAuth app** with the device flow enabled and set `CANOPY_GITHUB_CLIENT_ID` to its client id,
+- **Canopy needs a GitHub app of its own.** Release builds require the public repository variable
+  `CANOPY_GITHUB_CLIENT_ID` and compile it in; the workflow refuses to publish without it. For a
+  local build, register an **OAuth app** with the device flow enabled and set that variable to its client id,
   which is not a secret. An OAuth app rather than a GitHub app for one specific reason: its user
   tokens do not expire, so Canopy never has to renew one, and renewing needs a client secret that a
   program you can download cannot keep. A GitHub app with expiring user tokens works if you supply

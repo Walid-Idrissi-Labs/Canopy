@@ -1,4 +1,4 @@
-# VERSION, COMMIT and DATE feed the same three -X ldflags that GoReleaser sets on a released
+# VERSION, COMMIT and DATE feed the same -X ldflags that GoReleaser sets on a released
 # binary. That is deliberate: `canopy version` should read the same whether the binary came from
 # `make install` or from a downloaded release archive, so nobody has to work out which build they
 # have from a mismatched format.
@@ -10,6 +10,12 @@ LDFLAGS := -s -w \
 	-X main.version=$(VERSION) \
 	-X main.commit=$(COMMIT) \
 	-X main.date=$(DATE)
+
+# A local developer may supply the public OAuth app id without modifying a source file. Release
+# builds require this value in the workflow and always compile it in.
+ifneq ($(strip $(CANOPY_GITHUB_CLIENT_ID)),)
+LDFLAGS += -X github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot.clientID=$(CANOPY_GITHUB_CLIENT_ID)
+endif
 
 .PHONY: build test lint fmt vet install snapshot clean
 

@@ -105,7 +105,9 @@ So the following are known and documented behaviour rather than vulnerabilities:
   Canopy's permission gate is not in either path. That
   agent has whatever access to your machine you gave it when you set it up, under its own
   configuration and its own permission rules, and none of that is something Canopy sets, sees or
-  can bound. A report about what somebody else's
+  can bound. Canopy does pass that agent's exact assigned workspace to the delegated process and
+  session, including an isolated agent's owned worktree, but that start directory is not a sandbox.
+  A report about what somebody else's
   agent did with the access you granted it belongs to that vendor. A report that Canopy claimed
   otherwise on screen is ours, and is in scope below.
 

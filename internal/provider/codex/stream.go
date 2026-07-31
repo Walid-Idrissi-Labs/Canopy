@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -49,6 +50,8 @@ type stream struct {
 }
 
 var _ core.Stream = (*stream)(nil)
+
+const cancellationGrace = 2 * time.Second
 
 func (s *stream) Next() bool {
 	for {
@@ -454,6 +457,30 @@ func (s *stream) watchCancellation() {
 				ThreadID: s.threadID,
 				TurnID:   s.turnID,
 			})
+		case <-s.done:
+		}
+	}()
+}
+
+// watchTermination is the non-cooperative half of cancellation.
+//
+// The app server gets its protocol interrupt first. If it does not answer and end the turn within
+// the grace period, closing the session stops its process group and breaks the pipe read blocking
+// Next. This watcher starts before thread/start, so a context also bounds setup calls that never
+// answer rather than only a turn that made it all the way to turn/start.
+func (s *stream) watchTermination() {
+	go func() {
+		select {
+		case <-s.ctx.Done():
+		case <-s.done:
+			return
+		}
+
+		timer := time.NewTimer(cancellationGrace)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			_ = s.Close()
 		case <-s.done:
 		}
 	}()

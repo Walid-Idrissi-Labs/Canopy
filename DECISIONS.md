@@ -655,6 +655,12 @@ including the primary checkout and another agent's worktree. Fan-out and any wor
 several agents may edit concurrently require isolated mode; silently falling back to a shared
 checkout is a refusal, not a convenience.
 
+The assigned workspace also travels into a delegated vendor session. A direct delegated agent is
+started in the direct workspace; an isolated delegated agent is started in its Canopy-owned
+worktree. Falling back to the repository where Canopy itself started is prohibited. This selects a
+working directory; it does not turn the delegated vendor's own tools into Canopy-confined tools or
+change the shell boundary below.
+
 **The shell is not contained in either mode.** It starts in the selected workspace, but its command
 is opaque and runs with the user's operating-system permissions. It can use `..`, an absolute path,
 or another program to reach outside an isolated worktree. Read-only and confined trust therefore do
@@ -1212,6 +1218,12 @@ provider, a delegated agent, which is not what `core.ProviderClient` describes a
 forced into its shape. A delegated turn runs somebody else's tool loop, permission model and context
 handling. What Canopy's own tools, its A4 permission gating and its A6 verification mean during one
 is open, it is Q-23, and this decision does not assume it away.
+
+Workspace selection is not part of that open question. Every delegated process and protocol
+session receives the exact workspace recorded on the agent, including the owned worktree of an
+isolated agent. That is required by D-33 and tested for direct and isolated agents at every trust
+level. It is a start directory and protocol scope, not an operating-system sandbox and not evidence
+that Canopy approved the vendor's own tool calls.
 
 The second is that this decision carries its date, the way D-46 makes the catalog carry its date and
 for the same reason. Every position above is a fact about mid-2026 and several are weeks old.

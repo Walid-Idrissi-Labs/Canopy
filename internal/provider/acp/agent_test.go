@@ -40,6 +40,9 @@ type agent struct {
 
 	// authRequired makes session/new refuse the way a logged-out bridge does.
 	authRequired bool
+	// ignoreInitialize and ignoreCancel model a bridge that is alive but no longer cooperating.
+	ignoreInitialize bool
+	ignoreCancel     bool
 
 	in  *bufio.Reader
 	out io.Writer
@@ -113,6 +116,9 @@ func (a *agent) serve() {
 func (a *agent) handle(m message) bool {
 	switch m.Method {
 	case methodInitialize:
+		if a.ignoreInitialize {
+			return true
+		}
 		a.respond(*m.ID, initializeResult{
 			ProtocolVersion: a.protocolVersion,
 			AgentInfo:       &implementation{Name: "fake-bridge", Version: "0.0.1"},
@@ -136,7 +142,9 @@ func (a *agent) handle(m message) bool {
 		}
 
 	case methodSessionCancel:
-		a.end(stopCancelled, nil)
+		if !a.ignoreCancel {
+			a.end(stopCancelled, nil)
+		}
 
 	default:
 		if m.ID != nil && m.Method != "" {

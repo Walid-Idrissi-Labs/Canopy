@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	canopyexec "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 )
@@ -67,11 +68,38 @@ func start(ctx context.Context, launch launcher, version string) (*session, erro
 	}
 
 	s := &session{conn: newConn(child.stdout, child.stdin), child: child}
-	if err := s.handshake(version); err != nil {
+	settled := make(chan struct{})
+	go stopSessionAfterCancellation(ctx, settled, s)
+	err = s.handshake(version)
+	close(settled)
+	if err != nil {
+		_ = s.Close()
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		_ = s.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// stopSessionAfterCancellation bounds the handshake, which happens before a turn stream exists and
+// therefore before the stream's own cancellation watcher can help. A cooperative app server should
+// answer within the grace period; one that does not is stopped so its pipe read can return.
+func stopSessionAfterCancellation(ctx context.Context, settled <-chan struct{}, s *session) {
+	select {
+	case <-ctx.Done():
+	case <-settled:
+		return
+	}
+
+	timer := time.NewTimer(cancellationGrace)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		_ = s.Close()
+	case <-settled:
+	}
 }
 
 // handshake says who Canopy is and checks what came back.

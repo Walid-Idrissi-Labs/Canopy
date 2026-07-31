@@ -153,7 +153,10 @@ page describes. **On the Copilot route Canopy's own tools and permission prompts
 On the Claude and ChatGPT routes they do not.** Those two are delegated: the vendor's agent runs the
 turn under the vendor's own permission rules, its auto-approved tool calls never reach Canopy, and
 so Canopy gates nothing and verifies nothing while it happens. That is set by each vendor's protocol
-rather than chosen, and [LIMITATIONS.md](LIMITATIONS.md) states it route by route.
+rather than chosen. Canopy does still start the vendor session in the exact workspace assigned to
+the agent, so an isolated agent starts in its owned worktree rather than silently falling back to
+the primary checkout. A starting directory is not a sandbox; [LIMITATIONS.md](LIMITATIONS.md) states
+that boundary route by route.
 
 Subscription turns report their token counts and no dollar figure, because a monthly plan is not
 billed per token and a list price would be a correct number about an invoice nobody receives.

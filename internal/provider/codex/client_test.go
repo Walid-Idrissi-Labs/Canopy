@@ -580,6 +580,48 @@ func TestCancellingATurnAsksTheAgentToStopRatherThanKillingIt(t *testing.T) {
 	}
 }
 
+func TestCancellationStopsAnAppServerThatIgnoresTheInterrupt(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	server := &appServer{
+		account:         chatgpt("someone@example.com", "plus"),
+		ignoreInterrupt: true,
+		script:          func(*appServer) { close(started) },
+	}
+	go func() {
+		<-started
+		cancel()
+	}()
+
+	events, err := askWith(t, server, ctx, hello())
+	if err != nil {
+		t.Fatalf("the forcibly stopped turn was reported as a failure: %v", err)
+	}
+	if got := doneOf(t, events).StopReason; got != core.StopCancelled {
+		t.Fatalf("the forcibly stopped turn ended as %q", got)
+	}
+	if !server.wasStopped() {
+		t.Error("the app server ignored turn/interrupt and Canopy left its process running")
+	}
+}
+
+func TestCancellationBoundsAnAppServerThatNeverAnswersTheHandshake(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	server := &appServer{ignoreInitialize: true}
+
+	if _, err := askWith(t, server, ctx, hello()); err == nil {
+		t.Fatal("an app server that never answered initialize produced a stream")
+	}
+	if !server.wasStopped() {
+		t.Error("the cancelled handshake left the app server process running")
+	}
+}
+
 // The turn's process is a child process, and an unclosed one keeps running.
 func TestClosingATurnStopsTheProcessBehindIt(t *testing.T) {
 	server := &appServer{
