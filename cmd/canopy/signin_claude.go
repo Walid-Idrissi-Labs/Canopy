@@ -88,7 +88,23 @@ func (c claudeCode) Begin(route keysui.Route, name string) (keysui.Attempt, erro
 // fact read back, it is the machine being looked at again. A credential that was added last month
 // against a Claude Code that has since been signed out of, uninstalled, or signed in as somebody else
 // says so here rather than at the next turn.
+// It reports on the Claude Code on this machine, which says nothing about which credential was asked
+// about, so the credential is checked first. routeSet falls back to asking every vendor in turn
+// about a credential that records no route, and without this that fallback answers a question about
+// a ChatGPT or Copilot credential with whoever Claude Code happens to be signed in as. A credential
+// from before the route field is recognised by its shape: delegated, and Anthropic by provider,
+// which is what this route stores and what no other route in this build does.
 func (c claudeCode) Report(ctx context.Context, meta core.KeyMetadata) (signInReport, error) {
+	store, storeErr := c.keyStore()
+	in, err := storeSignIn(store, storeErr, meta.Ref)
+	if err != nil {
+		return signInReport{}, err
+	}
+	if err := mayReportOn(claudeCodeRouteID, meta.Ref.Name, in,
+		in.Kind == keys.KindDelegated && meta.Ref.Provider == core.ProviderAnthropic); err != nil {
+		return signInReport{}, err
+	}
+
 	found, err := c.discovery.Find(ctx)
 	if err != nil {
 		return signInReport{}, err
@@ -99,9 +115,7 @@ func (c claudeCode) Report(ctx context.Context, meta core.KeyMetadata) (signInRe
 		{Label: "signed in", Value: found.CLI},
 		{Label: "bridge", Value: found.Bridge},
 	}
-	store, storeErr := c.keyStore()
-	if in, err := storeSignIn(store, storeErr, meta.Ref); err == nil && in.Account != "" &&
-		in.Account != found.Account.Email {
+	if in.Account != "" && in.Account != found.Account.Email {
 		// Two subscriptions on one machine is an ordinary arrangement, so this is a fact rather than
 		// a fault. It is worth saying loudly: turns on this credential bill the account below, not
 		// the one the credential is named after.

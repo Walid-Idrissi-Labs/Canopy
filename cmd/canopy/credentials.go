@@ -166,6 +166,36 @@ func signInSources() keys.SourceFor {
 	}
 }
 
+// mayReportOn refuses a credential that belongs to another route, and says why.
+//
+// Every Report in this build asks a vendor about the machine or about a token, and none of them can
+// tell from the answer whose credential the question was about: Codex reports whoever Codex is
+// signed in as, Claude Code reports whoever Claude Code is signed in as. routeSet dispatches on the
+// route recorded with a credential, so that is normally settled before a route is asked. What is not
+// settled is the fallback, which asks each vendor in turn about a credential that records no route,
+// and which was answering a question about one subscription with facts about another.
+//
+// The shape is what a route recognises its own credentials by when there is no route recorded, which
+// is a credential stored before the field existed. It is deliberately per route rather than a table
+// here: a registry that knew the shape of every route's credentials would be the coupling routeSet
+// exists to avoid, and the shape is the one thing each route certainly knows about itself.
+func mayReportOn(routeID, name string, in keys.SignIn, shaped bool) error {
+	if in.Route != "" {
+		if in.Route == routeID {
+			return nil
+		}
+		return fmt.Errorf(
+			"key %q was signed in through %q rather than %q, so this route has nothing to say about it",
+			name, in.Route, routeID)
+	}
+	if shaped {
+		return nil
+	}
+	return fmt.Errorf(
+		"key %q records no route and is not shaped like a %q sign-in, so answering about it would "+
+			"mean reporting on a different credential than the one asked about", name, routeID)
+}
+
 // offers reports whether a registry owns a route id.
 func offers(member keysui.SignIn, id string) bool {
 	for _, route := range member.Routes() {

@@ -211,7 +211,23 @@ const codexWaitTimeout = 15 * time.Minute
 // for: not a stored fact read back, but the account and its live plan limits asked for again.
 // `account/rateLimits/read` is a fact about the subscription rather than a fact about the file,
 // which is what stops `keys test` on this route from having to say that no vendor was contacted.
+// It reports on the Codex on this machine, which says nothing about which credential was asked
+// about, so the credential is checked first. Without that this route answers happily about a Copilot
+// or a Claude credential that records no route, and `canopy keys test mycopilot` prints a ChatGPT
+// plan and a ChatGPT account: facts, about somebody else's subscription. A ChatGPT credential is
+// recognised by its base URL where no route was recorded, because that is what this route stores and
+// no other route in this build points at the app server.
 func (c codexSignIn) Report(ctx context.Context, meta core.KeyMetadata) (signInReport, error) {
+	store, storeErr := c.keyStore()
+	in, err := storeSignIn(store, storeErr, meta.Ref)
+	if err != nil {
+		return signInReport{}, err
+	}
+	if err := mayReportOn(codexRouteID, meta.Ref.Name, in,
+		in.Kind == keys.KindDelegated && meta.BaseURL == codex.BaseURL); err != nil {
+		return signInReport{}, err
+	}
+
 	account, limits, err := c.codexOf().Limits(ctx)
 	if err != nil {
 		return signInReport{}, err
@@ -235,9 +251,7 @@ func (c codexSignIn) Report(ctx context.Context, meta core.KeyMetadata) (signInR
 		facts = append(facts, signInFact{Label: "credits", Value: limits.Credits})
 	}
 
-	store, storeErr := c.keyStore()
-	if in, err := storeSignIn(store, storeErr, meta.Ref); err == nil && in.Account != "" &&
-		in.Account != account.Email && account.Email != "" {
+	if in.Account != "" && in.Account != account.Email && account.Email != "" {
 		// Two ChatGPT accounts on one machine is an ordinary arrangement, and Codex holds one login
 		// at a time, so this is a fact rather than a fault. It is worth saying loudly: turns on this
 		// credential draw on the account below, not the one the credential is named after.

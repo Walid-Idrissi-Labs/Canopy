@@ -100,11 +100,27 @@ func (c copilotSignIn) Begin(route keysui.Route, name string) (keysui.Attempt, e
 // whether the seat is still active: the SDK's account.getQuota is defined in the schema and, as of
 // v1.0.8, is not implemented in the CLI, which GitHub's own end-to-end test skips over. Saying that
 // out loud is better than starting a runtime to find out and calling the result a subscription check.
+// The credential is checked before GitHub is asked, and this route is the one where that matters
+// most rather than least. Its Report reads a token out of the keychain and sends it to github.com,
+// so a route that answered about a credential which is not its own would be handing one vendor
+// another vendor's token. It happened to be safe before, because a delegated credential holds no
+// token and the read fails, but "the next call would have failed anyway" is not a reason to make the
+// call. A credential from before the route field is recognised by its base URL, which is where this
+// route's turns end up even though Canopy never dials it.
 func (c copilotSignIn) Report(ctx context.Context, meta core.KeyMetadata) (signInReport, error) {
 	store, err := c.keyStore()
 	if err != nil {
 		return signInReport{}, err
 	}
+	in, err := store.SignIn(meta.Ref)
+	if err != nil {
+		return signInReport{}, err
+	}
+	if err := mayReportOn(copilotRouteID, meta.Ref.Name, in,
+		in.Kind == keys.KindSignedIn && meta.BaseURL == copilot.BaseURL); err != nil {
+		return signInReport{}, err
+	}
+
 	tokens, err := store.Tokens(meta.Ref)
 	if err != nil {
 		return signInReport{}, err
@@ -116,7 +132,7 @@ func (c copilotSignIn) Report(ctx context.Context, meta core.KeyMetadata) (signI
 	}
 
 	facts := []signInFact{{Label: "login", Value: login}}
-	if in, storeErr := store.SignIn(meta.Ref); storeErr == nil && in.Account != "" && in.Account != login {
+	if in.Account != "" && in.Account != login {
 		// A fact rather than a fault, and worth saying loudly: turns on this credential bill the
 		// account below, not the one the credential was named after.
 		facts = append(facts, signInFact{
