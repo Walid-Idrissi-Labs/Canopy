@@ -56,9 +56,12 @@ one you have before deciding what a compromise would cost you:
   it nor renews it.
 
 In all three cases `keys.json` holds metadata only: the credential's name, provider, endpoint,
-model, and for a sign-in the kind, the account it belongs to and when the grant expires. None of
-those three is a secret, which is what lets a list say "signed in as this account, expires then"
-without unlocking anything.
+model, and for a sign-in the kind, the route it was signed in through and the account it belongs to.
+An expiry is there too on the Copilot route, and only there: a delegated credential holds no token
+of its own, so `internal/keys` refuses to record an expiry against one rather than storing a date
+that would describe nothing. None of those is a secret, which is what lets a list say "signed in as
+this account" without unlocking anything, and say "expires then" beside it wherever Canopy is
+holding the thing that expires.
 
 **What an attacker who reached the credential store would have.** For a pasted key, that key, usable
 anywhere the vendor accepts it until you rotate it. For a Copilot sign-in, an access token scoped to
@@ -96,8 +99,10 @@ So the following are known and documented behaviour rather than vulnerabilities:
   only redact what it formats itself (D-20).
 - On a delegated route, the Claude Code or Codex route, the vendor's agent read files, ran a
   command, or reached the network without Canopy asking you anything, and on the Claude route wrote
-  files too. The ChatGPT route's thread is opened read-only, so that one cannot write;
-  LIMITATIONS.md gives the per-route detail. Canopy's permission gate is not in either path. That
+  files too. On the ChatGPT route Canopy opens the thread in the app server's read-only sandbox and
+  declines every approval it is asked for, so that one does not write; the sandbox is the app
+  server's to enforce rather than a gate of Canopy's, and LIMITATIONS.md gives the per-route detail.
+  Canopy's permission gate is not in either path. That
   agent has whatever access to your machine you gave it when you set it up, under its own
   configuration and its own permission rules, and none of that is something Canopy sets, sees or
   can bound. A report about what somebody else's
