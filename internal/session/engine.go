@@ -48,6 +48,47 @@ type usageMarker interface {
 	MarkUsed(name string)
 }
 
+// conversationResolver is a resolver that wants to know which conversation a client is being built
+// for.
+//
+// Optional for usageMarker's reason and added for a specific one. Every provider until now has been
+// stateless: hand it the messages and it sends them, so which conversation they came from is not its
+// business. The delegated agents D-51 permits are not like that. GitHub's Copilot SDK owns the
+// conversation and has no API for being handed a history, so a client that did not know which
+// conversation it served would have to make a new one every turn and forget everything each time.
+//
+// The name is passed rather than the session, because a provider has no business reading Canopy's
+// view of a conversation. It needs an identity to key on and nothing else.
+type conversationResolver interface {
+	ResolveFor(
+		conversation, name, model string,
+	) (client core.ProviderClient, id pricing.ModelID, err error)
+}
+
+// workspaceConversationResolver is a conversation resolver whose provider process also needs the
+// directory assigned to the conversation's agent.
+//
+// Optional for the same reason as conversationResolver. Pasted-key providers and Copilot execute
+// Canopy's own tools, whose registries are already rooted by the engine. Claude Code and Codex run
+// their own tools, so their process and protocol session must be given the same direct repository or
+// isolated worktree. Falling back to the process working directory here would make an isolated
+// agent operate on the checkout Canopy started in instead of the worktree the interface promised.
+type workspaceConversationResolver interface {
+	ResolveForWorkspace(
+		conversation, workspace, name, model string,
+	) (client core.ProviderClient, id pricing.ModelID, err error)
+}
+
+// resolverCloser is a resolver holding something that has to be shut down.
+//
+// The other half of a client that outlives a turn. A delegated provider keeps a child process and a
+// session the vendor believes is open, and both have to end when the program does. A resolver that
+// holds nothing implements nothing, which is every resolver in the tests and both of the pasted-key
+// providers.
+type resolverCloser interface {
+	Close()
+}
+
 // Engine holds every session and runs their turns.
 type Engine struct {
 	mu       sync.Mutex
@@ -547,6 +588,14 @@ func (e *Engine) Close() {
 			e.onStorageError(err)
 		}
 	}
+
+	// After the turns, because a delegated route's client is the conversation: closing it while a
+	// turn is still reading from it would take the session away mid reply, and the partial that
+	// cancelling went to the trouble of keeping would be lost to the cleanup instead.
+	if closer, ok := e.resolver.(resolverCloser); ok {
+		closer.Close()
+	}
+
 	e.events.Close()
 }
 
@@ -781,7 +830,7 @@ func (e *Engine) run(
 		e.turns.Done()
 	}()
 
-	client, id, err := e.resolver.Resolve(keyName, model)
+	client, id, err := e.resolveFor(sessionID, keyName, model)
 	if err != nil {
 		e.finish(sessionID, turnID, failureState(ctx), err, core.Usage{}, "")
 		return
@@ -881,6 +930,29 @@ func (e *Engine) run(
 	if held {
 		e.keepGreen(context.WithoutCancel(ctx), sessionID, turnID)
 	}
+}
+
+// resolveFor asks for the client this conversation's next turn runs on.
+//
+// Only a conversation's own turns go through here. An aside and a compaction both resolve without a
+// conversation on purpose: an aside is a separate conversation by definition, and a compaction is
+// one question asked once about a transcript. Handing either the conversation's own client would put
+// a summarisation request into the middle of somebody's session on a route that keeps its history at
+// the vendor.
+func (e *Engine) resolveFor(
+	conversation, keyName, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
+	if resolver, ok := e.resolver.(workspaceConversationResolver); ok {
+		workspace := ""
+		if agent, found := e.AgentFor(conversation); found {
+			workspace = agent.Dir
+		}
+		return resolver.ResolveForWorkspace(conversation, workspace, keyName, model)
+	}
+	if resolver, ok := e.resolver.(conversationResolver); ok {
+		return resolver.ResolveFor(conversation, keyName, model)
+	}
+	return e.resolver.Resolve(keyName, model)
 }
 
 // holdConversation closes a conversation to new messages while its last turn is being checked.

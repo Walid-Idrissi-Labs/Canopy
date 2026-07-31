@@ -36,6 +36,53 @@ permission model. It decides which tools an agent may call and when it has to as
 operating-system containment layer, and "confined" is the name of a trust level whose tool surface
 excludes shell, not a claim that an enabled child process is jailed.
 
+**A credential is one of three things now, and they are not equally exposed.** Canopy used to hold
+only pasted secrets. Since subscription sign-in it holds three shapes, and it is worth knowing which
+one you have before deciding what a compromise would cost you:
+
+- **A pasted API key.** Stored in the OS credential store, or in a mode 0600 `credentials.json` when
+  `CANOPY_KEY_BACKEND=file` is set, which prints a warning on every command while it is.
+- **A token Canopy obtained and holds**, which today means the GitHub Copilot route only. The access
+  token and the refresh token go into the same credential store, as one entry under the credential's
+  name, marked so that somebody who opens Keychain Access can tell what they found. They are never
+  written to `keys.json`, and two separate things hold that. The record that file is made of has no
+  field a token could go in, so there is nothing to write; and if a later edit added one,
+  `core.Secret.MarshalJSON` emits `[redacted]` rather than the value, so the token still would not
+  reach the disk. `core.Secret.UnmarshalJSON` refuses outright, which closes the other direction: a
+  secret cannot be loaded out of a file somebody committed.
+- **A delegation with nothing behind it**, which is the Claude route and the ChatGPT route. Canopy
+  holds no vendor token, and `internal/keys` refuses to store one against such a credential. The
+  grant lives with the vendor's own program, in that program's own storage, and Canopy neither reads
+  it nor renews it.
+
+In all three cases `keys.json` holds metadata only: the credential's name, provider, endpoint,
+model, and for a sign-in the kind, the route it was signed in through and the account it belongs to.
+An expiry is there too on the Copilot route, and only there: a delegated credential holds no token
+of its own, so `internal/keys` refuses to record an expiry against one rather than storing a date
+that would describe nothing. None of those is a secret, which is what lets a list say "signed in as
+this account" without unlocking anything, and say "expires then" beside it wherever Canopy is
+holding the thing that expires.
+
+**What an attacker who reached the credential store would have.** For a pasted key, that key, usable
+anywhere the vendor accepts it until you rotate it. For a Copilot sign-in, an access token scoped to
+what Canopy asked for, plus a refresh token where the registration issues one, usable until the
+grant is revoked at GitHub. The recommended registration issues an access token that does not expire
+at all, so that one is good until somebody revokes it. For a delegated credential there is nothing
+in the store to take: what such an attacker would find instead is the vendor's own program already
+signed in on the same machine, which is a much better target and not one Canopy put there.
+
+**What signing out removes, per route.** `canopy keys signout` always removes Canopy's record and
+whatever Canopy holds in the credential store. It never ends the vendor's grant, on any of the three
+routes, and it says so rather than letting you assume otherwise. No route in this build implements
+revocation: on the Copilot route revoking needs a client secret a downloadable program cannot keep,
+and on the two delegated routes Canopy never held a credential to revoke. So a Copilot signout tells
+you the grant was not revoked and to remove Canopy's access where you granted it, and a delegated
+signout tells you that nothing was revoked anywhere and that the vendor still considers you signed
+in. A command that did only the local half while calling it signing out is how somebody comes to
+believe they revoked access they still have. If you want the ChatGPT login itself gone, that is
+`codex logout` against your own `$CODEX_HOME`; Canopy will not touch it, because OpenAI rotate
+refresh tokens and signing out a login Canopy does not own is a surprise nobody asked for.
+
 So the following are known and documented behaviour rather than vulnerabilities:
 
 - A shell command an agent ran, and you approved, read or wrote files outside its workspace. The
@@ -50,6 +97,19 @@ So the following are known and documented behaviour rather than vulnerabilities:
   run.
 - A secret was printed by a child process into its own stdout and ended up in the logs. Canopy can
   only redact what it formats itself (D-20).
+- On a delegated route, the Claude Code or Codex route, the vendor's agent read files, ran a
+  command, or reached the network without Canopy asking you anything, and on the Claude route wrote
+  files too. On the ChatGPT route Canopy opens the thread in the app server's read-only sandbox and
+  declines every approval it is asked for, so that one does not write; the sandbox is the app
+  server's to enforce rather than a gate of Canopy's, and LIMITATIONS.md gives the per-route detail.
+  Canopy's permission gate is not in either path. That
+  agent has whatever access to your machine you gave it when you set it up, under its own
+  configuration and its own permission rules, and none of that is something Canopy sets, sees or
+  can bound. Canopy does pass that agent's exact assigned workspace to the delegated process and
+  session, including an isolated agent's owned worktree, but that start directory is not a sandbox.
+  A report about what somebody else's
+  agent did with the access you granted it belongs to that vendor. A report that Canopy claimed
+  otherwise on screen is ours, and is in scope below.
 
 These are in scope, and we want to hear about them:
 
@@ -62,8 +122,16 @@ These are in scope, and we want to hear about them:
   not own.
 - Credentials leaking: a secret written to disk unencrypted when the OS keychain backend is in
   use, a secret appearing in an argument list or in shell history, a secret in a crash dump, or a
-  secret sent to an endpoint other than the one its credential names.
-- A credential being used against the wrong provider or base URL.
+  secret sent to an endpoint other than the one its credential names. An access or refresh token
+  from a sign-in counts as a secret here in every respect, including reaching `keys.json`, an
+  environment variable handed to a child process, or the terminal.
+- A credential being used against the wrong provider or base URL, including a subscription
+  credential resolving to a route other than the one it was signed in through.
+- Canopy claiming a gate it does not have: a screen showing a permission mode as being in force
+  during a turn Canopy is not gating, a delegated tool call presented as though Canopy approved it,
+  or an audit trail or verification result that covers work Canopy did not run.
+- Canopy reading, renewing or revoking a grant that belongs to a vendor's own program rather than to
+  Canopy, or signing you out of a tool you did not ask it to touch.
 - A false green: verification reporting a pass that the evidence does not support. That is a
   correctness bug rather than a memory-safety one, and it is treated with the same seriousness,
   because the whole product rests on it.

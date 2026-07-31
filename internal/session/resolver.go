@@ -10,6 +10,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
 )
 
@@ -19,29 +20,108 @@ import (
 // its provider and its endpoint. Nothing above this has to be told which vendor it is talking to,
 // which is the point of naming keys in the first place.
 type KeyResolver struct {
-	store *keys.Store
+	store       *keys.Store
+	credentials *keys.Refresher
+
+	// vendors builds the clients that keep something running, and holds them until this closes.
+	//
+	// Not a map of sessions here, which is what this used to be. Every provider before phase S was
+	// stateless, so a client that outlived a turn was a new idea, and the first version of it kept
+	// the clients the interface asked for and none of the ones anything else asked for. Vendors is
+	// where that lives now, because the two surfaces that build clients both have to reach it and
+	// only one of them has a resolver.
+	vendors *Vendors
 }
 
-var _ Resolver = (*KeyResolver)(nil)
+var (
+	_ Resolver             = (*KeyResolver)(nil)
+	_ conversationResolver = (*KeyResolver)(nil)
+	_ resolverCloser       = (*KeyResolver)(nil)
+)
 
 // NewKeyResolver builds a resolver over a key store.
-func NewKeyResolver(store *keys.Store) *KeyResolver { return &KeyResolver{store: store} }
-
-// Resolve returns the client for a credential name.
 //
-// The secret is fetched at the moment of use rather than held, so a key removed while Canopy is
-// running stops working on the next turn rather than the next restart.
-func (r *KeyResolver) Resolve(
-	name, model string,
+// The version is what Canopy calls itself to the vendors that ask, and it is a parameter rather than
+// a setting for the reason NewVendors gives: it is the thing that was forgotten on this path, and a
+// build that reports a version it was not built with is worse than one that reports none.
+func NewKeyResolver(store *keys.Store, version string) *KeyResolver {
+	return &KeyResolver{
+		store:       store,
+		credentials: keys.NewRefresher(store),
+		vendors:     NewVendors(version),
+	}
+}
+
+// Renews says where a signed-in credential buys a new token when its own is nearly out.
+//
+// Called at wiring time, by the composition root that knows which routes this build has.
+func (r *KeyResolver) Renews(sources keys.SourceFor) { r.credentials.Renews(sources) }
+
+// Resolve returns the client for a credential name, for a caller with no conversation of its own.
+//
+// An aside and a compaction both come through here, and on a route that holds its own history that
+// is the right answer rather than a limitation: an aside is a separate conversation by definition,
+// and a compaction is one question asked once about a transcript. Giving either the conversation's
+// own session would put a summarisation request into the middle of somebody's session.
+func (r *KeyResolver) Resolve(name, model string) (core.ProviderClient, pricing.ModelID, error) {
+	return r.ResolveFor("", name, model)
+}
+
+// ResolveFor returns the client a named conversation's next turn runs on.
+//
+// The conversation is empty for anything that is not one, and a route that does not care ignores it,
+// which is every route but Copilot's. See conversationResolver in engine.go for why it exists.
+func (r *KeyResolver) ResolveFor(
+	conversation, name, model string,
 ) (core.ProviderClient, pricing.ModelID, error) {
+	return r.ResolveForWorkspace(conversation, "", name, model)
+}
+
+// ResolveForWorkspace returns the client for a conversation and roots any delegated vendor agent in
+// the same directory Canopy assigned to that conversation's agent.
+//
+// An empty workspace is legitimate for asides, compaction and callers with no agent. The delegated
+// client then uses its documented process-working-directory default. A real direct or isolated
+// agent always supplies Agent.Dir through Engine.resolveFor.
+func (r *KeyResolver) ResolveForWorkspace(
+	conversation, workspace, name, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
+	// The secret is fetched at the moment of use rather than held, so a key removed while Canopy is
+	// running stops working on the next turn rather than the next restart.
+	//
+	// A signed-in credential is renewed here too, before the request exists rather than after one
+	// comes back rejected. That order is what keeps a 401 meaning what core says it means: an expired
+	// token and a wrong one arrive as the same status, and the only way to tell them apart without
+	// teaching a frozen package a new distinction is to make sure the token was valid when it went
+	// out.
 	meta, err := r.pick(name)
 	if err != nil {
 		return nil, pricing.ModelID{}, err
 	}
 
-	secret, err := r.store.Get(meta.Ref)
+	// Which kind of credential this is comes before which provider it speaks, and it has to. A
+	// delegated credential is an Anthropic credential by provider and is not a credential at all by
+	// substance: there is no secret behind it, so asking the refresher for one below would refuse it
+	// in internal/keys' own words and the route would never be reached.
+	in, err := r.store.SignIn(meta.Ref)
 	if err != nil {
 		return nil, pricing.ModelID{}, err
+	}
+	if in.Kind == keys.KindDelegated {
+		return r.vendors.Delegated(meta, in, model, workspace)
+	}
+
+	secret, err := r.credentials.Credential(meta)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+
+	// Before the provider switch, and it has to be, for the reason internal/keys wrote SourceFor as
+	// a function rather than a map: a Copilot credential and an OpenAI one are both
+	// openai-compatible, so a switch on provider alone would send a Copilot turn to a chat
+	// completions client pointed at a host that does not serve one.
+	if in.Route == copilot.Route {
+		return r.vendors.Copilot(conversation, meta, in, secret, model)
 	}
 
 	id := pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, model).WithUserRate(meta.Rate)
@@ -66,6 +146,13 @@ func (r *KeyResolver) Resolve(
 			meta.Ref.Name, meta.Ref.Provider)
 	}
 }
+
+// Close ends every conversation this resolver is holding open.
+//
+// Called by Engine.Close after the turns have settled, through the resolverCloser assertion. What is
+// actually held is Vendors, which is also what `canopy ask` holds, so both surfaces end the same
+// things the same way rather than one of them ending nothing.
+func (r *KeyResolver) Close() { r.vendors.Close() }
 
 // pick chooses a credential.
 //

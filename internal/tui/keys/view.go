@@ -37,6 +37,8 @@ func (m Model) Body() string {
 		b.WriteString(m.viewList())
 	case modeModelPick:
 		b.WriteString(m.viewModelPick())
+	case modeSignIn:
+		b.WriteString(m.viewSignIn())
 	case modeRename:
 		b.WriteString(m.viewRename())
 	default:
@@ -76,10 +78,18 @@ func (m Model) viewList() string {
 		// The model column exists because a credential with none, on a provider that has no default,
 		// is one that cannot answer a single message. Blank here is the visible form of that, so it
 		// can be noticed before a conversation fails rather than after.
+		identity := m.identityOf(key.Ref.Name)
 		model := key.Model
-		if model == "" && key.Ref.Provider == core.ProviderAnthropic {
+		switch {
+		case model != "":
+		case identity.Kind == KindDelegated:
+			// Not a gap to fill in. The vendor's own agent is running the turn and picks the model
+			// inside it, so "none set, press m" would be telling somebody to fix something that is
+			// not broken and cannot be changed from here.
+			model = styleMuted.Render("the vendor chooses")
+		case key.Ref.Provider == core.ProviderAnthropic:
 			model = styleMuted.Render("provider default")
-		} else if model == "" {
+		default:
 			model = styleWarn.Render("none set, press m")
 		}
 
@@ -97,6 +107,14 @@ func (m Model) viewList() string {
 			line = styleSelect.Render(line)
 		}
 		b.WriteString(marker + line + "\n")
+
+		// A signed-in credential has no fingerprint to show and two facts a pasted one does not: whose
+		// account it is and when the grant stops working. They go on a line of their own rather than
+		// into a sixth column, because at eighty columns a sixth column is a fifth column nobody can
+		// read, and this line is only there for the rows that have something to put on it.
+		if note := signInNote(identity); note != "" {
+			b.WriteString("      " + note + "\n")
+		}
 	}
 
 	if m.mode == modeConfirmRemove && m.cursor < len(m.keys) {
@@ -105,6 +123,89 @@ func (m Model) viewList() string {
 			"  Remove %q? Any profile using it will stop working. y/n",
 			m.keys[m.cursor].Ref.Name)))
 	}
+	return b.String()
+}
+
+// signInNote is the second line of a signed-in credential's row, and empty for a pasted one.
+//
+// Absolute times rather than "in 58 minutes". A list is redrawn on every keystroke and a countdown
+// in it is a number that moves while somebody reads it, which is worse than a timestamp they can
+// compare against a clock. Lapsed says lapsed, in the warning colour and in the word as well, so the
+// row still reads on a terminal with no colour in it. D-10.
+func signInNote(identity Identity) string {
+	if !identity.Kind.IsSignIn() {
+		return ""
+	}
+
+	who := "signed in"
+	if identity.Account != "" {
+		who = "signed in as " + identity.Account
+	}
+	if identity.Kind == KindDelegated {
+		// The fact that makes this route permitted at all, said on the row rather than only in
+		// LIMITATIONS: Canopy is driving something the user signed in to and is holding nothing of
+		// theirs. D-51.
+		return styleMuted.Render(who + " through the vendor's own agent, which holds the credential")
+	}
+
+	if identity.ExpiresAt == nil {
+		return styleMuted.Render(who + ", with no expiry given")
+	}
+	when := identity.ExpiresAt.Local().Format("2006-01-02 15:04")
+	if identity.ExpiresAt.Before(time.Now()) {
+		return styleWarn.Render(who + ", lapsed " + when + ", press a to sign in again")
+	}
+	return styleMuted.Render(who + ", expires " + when)
+}
+
+// viewSignIn is the step that asks for nothing.
+//
+// Everything here is text a person can read off a screen and type somewhere else, because a coding
+// agent is routinely run over ssh on a machine with no browser at all. A flow that depended on one
+// opening would work on a laptop and fail on exactly the machines this program is for.
+func (m Model) viewSignIn() string {
+	var b strings.Builder
+	b.WriteString(styleMuted.Render("  Signing " + m.draftName + " in through " + m.draftRoute.Label))
+	b.WriteString("\n\n")
+	b.WriteString(styleOK.Render("  Nothing is typed here and nothing is pasted."))
+	b.WriteString("\n\n")
+
+	switch {
+	case m.prompt.URL != "" || m.prompt.Code != "":
+		if m.prompt.URL != "" {
+			b.WriteString(m.field("open", m.prompt.URL, false))
+			b.WriteString("\n")
+		}
+		if m.prompt.Code != "" {
+			b.WriteString(m.field("code", m.prompt.Code, false))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(styleMuted.Render("  Waiting for " + m.draftRoute.Label + " to confirm."))
+		b.WriteString("\n")
+
+	case m.prompt.Doing != "":
+		b.WriteString(styleMuted.Render("  " + m.prompt.Doing))
+		b.WriteString("\n")
+
+	case m.signingIn:
+		// The gap between asking the vendor and the vendor answering. Short, usually, and a blank
+		// screen during it is indistinguishable from a program that has stopped.
+		b.WriteString(styleMuted.Render("  Asking " + m.draftRoute.Label + " what to do next."))
+		b.WriteString("\n")
+	}
+
+	// Before anything is stored, which is the only moment it is worth reading. A caveat that arrives
+	// after the credential exists is a caveat about a decision somebody has already made.
+	if m.draftRoute.Caveat != "" {
+		b.WriteString("\n")
+		b.WriteString(styleWarn.Render("  " + m.draftRoute.Caveat))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("  esc stops this and stores nothing."))
+	b.WriteString("\n")
 	return b.String()
 }
 
@@ -233,14 +334,24 @@ func (m Model) viewAdd() string {
 
 	if m.mode == modeProvider {
 		b.WriteString("  provider\n")
-		for i, provider := range core.AllProviders() {
+		for i, row := range m.providerRows() {
 			marker := "      "
-			label := string(provider)
+			label := string(row.provider)
+			if row.signIn {
+				label = row.route.Label
+			}
 			if i == m.providerCursor {
 				marker = "    > "
 				label = styleSelect.Render(label)
 			}
 			b.WriteString(marker + label + "\n")
+
+			// What the route needs to already be true, under the row rather than beside it. The
+			// question somebody is answering here is which of these they already have, and the
+			// answer does not fit on a line that also has to hold the vendor's name.
+			if row.signIn && row.route.Detail != "" {
+				b.WriteString("        " + styleMuted.Render(row.route.Detail) + "\n")
+			}
 		}
 	} else if m.draftName != "" && m.mode != modeName {
 		b.WriteString(m.field("provider", string(m.draftProvider), false))
@@ -302,6 +413,10 @@ func (m Model) footer() string {
 		return ""
 	case modeProvider, modeModelPick:
 		return "j/k choose   enter select   esc cancel"
+	case modeSignIn:
+		// One key, because there is one thing to do. A footer offering enter here would be offering
+		// to hurry a vendor that is not listening.
+		return "esc cancel"
 	case modeModel, modeRename:
 		return "enter save   esc cancel"
 	default:

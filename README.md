@@ -50,6 +50,7 @@ Those are stated plainly rather than deferred quietly, and
 - [Install](#install)
 - [What it is](#what-it-is)
 - [Named keys, so agents have names](#named-keys-so-agents-have-names)
+- [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key)
 - [Dispatch agents from the conversation](#dispatch-agents-from-the-conversation)
 - [Watch them, and steer without stopping them](#watch-them-and-steer-without-stopping-them)
 - [Git as a real tool, not a shell string](#git-as-a-real-tool-not-a-shell-string)
@@ -83,6 +84,10 @@ canopy keys list                             # the MODEL column says NOT SET whe
 canopy keys rename nim minimax               # the value is not asked for again
 ```
 
+No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy keys signin` rather
+than `canopy keys add`, and read
+[Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
+
 A name is the one thing here you are likely to get wrong, because you choose it before the
 credential has been used for anything. Renaming moves the credential and every conversation
 recorded on it, since the name is what each one looks up on its next message. In the interface it
@@ -113,9 +118,10 @@ Homebrew is not available yet and will not be until the first release without a 
 
 ## What it is
 
-Canopy does what a terminal coding agent does. You plug in provider API keys, talk to it, and it
-reads and writes code with tools. If that were all, there would be no reason to use it over the
-tools that already do it well.
+Canopy does what a terminal coding agent does. You give it a credential, which is either a provider
+API key you paste or a subscription you sign in to, then talk to it, and it reads and writes code
+with tools. If that were all, there would be no reason to use it over the tools that already do it
+well.
 
 The reason to use it is what happens when one agent is not enough.
 
@@ -131,6 +137,43 @@ canopy keys add minimax  --provider openai-compatible --base-url ...
 
 Once a key has a name, so does an agent, and you can talk about agents the way you already think
 about them.
+
+## Sign in with a subscription instead of a key
+
+If you pay for a model by the month and have never opened a billing account, there is nothing to
+paste, and `canopy keys signin <name>` is the way in. Three routes are permitted, each for a reason
+recorded with the date it was true (D-51, 2026-07-30). Only the Copilot route is one the vendor
+unambiguously invites; the other two rest on narrower arguments, and LIMITATIONS sets out the
+counter-position on the ChatGPT one rather than leaving you to find it:
+
+- **GitHub Copilot**, `-route copilot`. Canopy runs GitHub's device flow, holds the resulting token
+  in your keychain, and puts turns through GitHub's official Copilot SDK against your seat.
+- **Claude**, `-route claude-code`. Canopy holds no Anthropic credential at all and never sees one.
+  It drives the Claude Code you installed and signed in to yourself. Anthropic do not permit
+  third-party tools to offer Claude.ai login, so Canopy does not implement it and will not.
+- **ChatGPT**, `-route codex`. OpenAI's own `codex app-server` runs the sign-in, hosts the callback
+  and keeps the grant afterwards, so Canopy holds no token here either. That is not what makes the
+  route permitted, and it is worth not confusing the two: it rests on OpenAI publishing that app
+  server under Apache-2.0 as the interface for exactly this kind of integration, and on Canopy
+  identifying itself honestly to it. This is the contested one. `-route codex-device` prints a code
+  to type on another device, for a machine you only reach over ssh.
+
+There is no Gemini route. Google's consumer sign-in was prohibited by terms and then switched off on
+2026-06-18.
+
+One thing is worth knowing before you choose, because it is the opposite of what the rest of this
+page describes. **On the Copilot route Canopy's own tools and permission prompts stay in the path.
+On the Claude and ChatGPT routes they do not.** Those two are delegated: the vendor's agent runs the
+turn under the vendor's own permission rules, its auto-approved tool calls never reach Canopy, and
+so Canopy gates nothing and verifies nothing while it happens. That is set by each vendor's protocol
+rather than chosen. Canopy does still start the vendor session in the exact workspace assigned to
+the agent, so an isolated agent starts in its owned worktree rather than silently falling back to
+the primary checkout. A starting directory is not a sandbox; [LIMITATIONS.md](LIMITATIONS.md) states
+that boundary route by route.
+
+Subscription turns report their token counts and no dollar figure, because a monthly plan is not
+billed per token and a list price would be a correct number about an invoice nobody receives.
+[INSTALL.md](INSTALL.md) has what each route needs on the machine.
 
 ## Dispatch agents from the conversation
 
@@ -316,7 +359,10 @@ the pass.
 
 ## What it will not do
 
-- No cloud, no account, no hosted control plane. Keys never leave your machine.
+- No cloud of Canopy's, no Canopy account, no hosted control plane. A key you paste never leaves
+  your machine. Signing in with a subscription is the one exception and it is the vendor's own: on
+  the Copilot route Canopy obtains a token from github.com and hands it to GitHub's own runtime, and
+  on the other two the vendor's program holds the grant. See "Sign in with a subscription".
 - No unattended merging. A human stays in the loop on anything destructive.
 - **No sandboxing claims.** Canopy runs agent-generated commands under your account. A worktree is
   file isolation, not a security boundary, and pretending otherwise would be the same class of
@@ -330,6 +376,10 @@ the pass.
 - `/bin/sh`, since shell tools and test commands run through it
 - macOS or Linux
 - Go 1.26 or newer, only if you are building from source rather than taking a binary
+- The vendor's own program for whichever subscription route you use, none of which Canopy bundles:
+  Claude Code plus the ACP bridge for the Claude route, which is two programs rather than one, the
+  Copilot CLI for the Copilot route, the Codex CLI for the ChatGPT route. [INSTALL.md](INSTALL.md)
+  names each one and what installs it.
 
 ## Development
 

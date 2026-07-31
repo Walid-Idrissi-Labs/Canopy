@@ -127,7 +127,7 @@ that is wrong is worse than no board, because it is read instead of the ledger.
 
 | Agent | Current task | Branch | Blocker |
 |---|---|---|---|
-| Claude | Cutting `v0.1.0-beta.1`, claimed 2026-07-30. The interface round it releases is merged as PRs #42 to #49. A8-05's visible hook-failure surface after it | `release/beta-1` | none |
+| Claude | Phase S, signing in with a subscription instead of pasting a key. Claimed 2026-07-30, ledger first: S-01 to S-08 and PG-S are written and pushed before any implementation. `v0.1.0-beta.1` is cut and the interface round it releases is merged as PRs #42 to #49 | `feat/subscription-sign-in` | none |
 | Codex | Independent verification of the unsigned lines, the eleven phase gates, the six product runs | `verify/independent-pass` | none |
 
 ### 2.0 Where this actually stands
@@ -3453,7 +3453,8 @@ It lives in `internal/tui/brand` because the launch screen and the empty convers
 and neither package can import the other. Two copies would drift, and the drift would be somebody's
 idea of the logo showing up on one screen and not the other.
 
-Drawn from `█`, `▀` and `▄` only. The quadrant and corner blocks look better in the two fonts that
+Drawn from the full block, the upper half block and the lower half block only, U+2588, U+2580 and
+U+2584. The quadrant and corner blocks look better in the two fonts that
 render them correctly and like a row of missing glyph boxes everywhere else, and the first thing a
 new user sees is not where to find out which font they are running. Asserted by a test, along with
 the silhouette being symmetric about its centre on every row, since an asymmetric one reads as a
@@ -4911,7 +4912,7 @@ Deliverable: `shift+tab` moves a selection, and the mode it stops on is applied 
 the last press. Walking the ladder from cruise to build no longer puts the conversation into plan
 and confined on the way. The wait is never the last word: sending a message, naming a mode with
 `/mode`, leaving the conversation and quitting all apply the selection immediately. The box says
-what is enforced and what is coming without confusing them, `cruise → plan`, and the ladder asks
+what is enforced and what is coming without confusing them, `cruise -> plan`, and the ladder asks
 the engine which modes it would accept rather than finding out by attempting each one.
 
 Acceptance: from cruise, three presses that land on build leave the conversation in cruise
@@ -5297,7 +5298,7 @@ second key, on a different screen, as a conversation answering on the wrong prov
 U-06 stays open: the live credential check in the wizard, rate entry for OpenAI-compatible endpoints
 in the interface, and startup warnings that currently go to a stderr the alt screen erases.
 
-Review correction, 2026-07-30: afterSecret said the new key “is now the credential” before its parent
+Review correction, 2026-07-30: afterSecret said the new key "is now the credential" before its parent
 called Engine.UseCredential. That call can refuse while a turn is active, leaving the key safely
 stored but the conversation unchanged. Selection is now a pending request: the keys model says only
 what its store established, and the application explicitly acknowledges acceptance or reports the
@@ -5679,13 +5680,21 @@ Deliverable: `canopy keys rename <old> <new>` and `e` on the credential screen c
 name without asking for its secret again. The CLI moves stored conversations with it; the interface
 moves every conversation loaded in its engine and updates the current and next-conversation header.
 
-Acceptance: the secret value and metadata survive under the new name and the old name stops
-resolving; collisions and invalid names change nothing; every affected stored or loaded conversation
+Acceptance: a pasted secret, a signed-in grant and a metadata-only delegated credential each survive
+under the new name without changing kind, identity or route, and the old name stops resolving;
+collisions and invalid names change nothing; every affected stored or loaded conversation
 uses the new name before another message can be sent. A failed stored-history update restores the
 old credential name before suggesting a retry. A failed compensation names the exact split state.
 A failure removing either temporary or old backend copies is reported and never prevents the
 history move that keeps sessions usable. A Canopy process the CLI cannot reach is named and restart
 is required. No output includes a credential value.
+
+**Codex integration pass 2026-07-31.** The original implementation assumed every credential had a
+backend entry. That made every Claude Code or ChatGPT credential impossible to rename, because an
+empty backend half is the defining valid state of `KindDelegated`. The move now skips backend work
+only for that explicit kind; signed-in grants still move as one opaque backend document. Held by
+`TestRenamingMovesASignedInGrantWithoutChangingItsIdentity` and
+`TestRenamingADelegatedCredentialDoesNotInventABackendValue` alongside the pasted-secret cases.
 
 `verify: claude [x] 2026-07-30   codex [ ]`
 
@@ -5703,6 +5712,2200 @@ happy path.
 Both supervisors watch: a key added once runs two different models in two conversations side by
 side; "spawn two sonnet agents" is understood with no key named sonnet; and a model from neither
 catalog is added by hand, picked from the picker, and answers.
+
+`signed: walid [ ]   classmate [ ]`
+
+---
+
+# Phase S: signing in instead of pasting
+
+Asked for by Walid on 2026-07-30. Every credential Canopy holds is a string somebody pasted. That is
+the right shape for an API key and the wrong shape for the way most people now pay for a model:
+somebody with a Claude Max plan, a Copilot seat or a ChatGPT Pro subscription has already paid, has
+no API key, and is currently told by this program to go and open a billing account they may not
+want. This phase gives that person a way in, and writes down which ways in are permitted, because
+that turns out to be the hard part.
+
+Principles are D-51. The short form: a subscription is signed in to, never pasted, and exactly three
+routes are permitted. GitHub Copilot through its official Go SDK, which is licensed and documented
+for precisely this case. Claude through the user's own already-authenticated Claude Code
+installation over ACP, which Anthropic contemplates and meters. OpenAI through the Codex app server,
+which OpenAI publishes for host applications. Canopy will not implement claude.ai OAuth, which
+Anthropic prohibits in writing and enforces on its servers. Gemini consumer sign-in is closed and
+stays closed.
+
+One structural fact runs through all three and should be read before anything is built. Every
+sanctioned route is "drive the vendor's own agent over a protocol" rather than "call a completions
+endpoint": the Copilot SDK over JSON-RPC, Claude Code over ACP, Codex over app-server JSON-RPC. A
+subscription credential is therefore a second kind of provider, a delegated agent, and it is not
+what `core.ProviderClient` describes. A delegated turn runs the vendor's tool loop, the vendor's
+permission model and the vendor's context handling, not Canopy's, so what A4's permission gating,
+A6's verification and Canopy's own tools mean during one is a real question with no assumed answer.
+It is Q-23. Nobody is to build past it by pretending a delegated agent is a `ProviderClient` with a
+different transport.
+
+Five constraints were established by reading the code rather than assumed, and every task here
+respects them:
+
+1. **`internal/core` is frozen** for both pairs, and a new credential kind must not be a new
+   `core.Provider`. `Provider.Valid` at internal/core/key.go:28 accepts exactly two values and
+   `KeyRef.Validate` calls it, so a third constant is a core change. The kind lives in the keys
+   record beside the provider instead, which is D-46 rule 4 applied a second time: the frozen
+   contract does not grow a field for something a layer above it can carry.
+2. **Tokens are secrets.** `core.Secret.UnmarshalJSON` refuses unconditionally, at
+   internal/core/secret.go:84, so access and refresh tokens belong in the keychain `Backend` and
+   never in keys.json. Expiry and account identity are not secrets and belong in the record.
+3. **An expired token must not reach the wire.** `ErrAuthentication` means never retry and never
+   fall back, at internal/core/provider.go:351, and an expired-but-refreshable token classified that
+   way is a wrong answer. S-02 refreshes ahead of the request so a 401 stays genuinely terminal.
+4. **The provider switch exists twice**, at internal/session/resolver.go:49 and in `newClient` at
+   cmd/canopy/ask.go:285. They are the same switch with a different return arity. Change one without
+   the other and `canopy ask` silently diverges from the interface.
+5. **Nothing in the tree opens a browser or listens on a loopback port**, and no task here adds a
+   loopback listener of Canopy's own. Where a sign-in needs one, the vendor's binary hosts it.
+
+### S-01 A credential can be signed in to rather than typed
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: none`
+`scope: internal/keys/`
+
+Deliverable: the keys store learns that a credential may hold a grant instead of a pasted secret.
+The keys.json record gains the kind of credential it is, the account identity the grant belongs to,
+which is the login or email the vendor reports so that somebody with two subscriptions can tell them
+apart, and the moment the current token stops being valid. None of those three is a secret and all
+three are readable without touching the keychain, which is what lets a list say "signed in as this
+account, expires then" without unlocking anything. The tokens themselves go to the `Backend`, whose
+accounts are a flat name to string map today because `Put` writes the secret under the bare
+credential name at internal/keys/store.go:203.
+
+Storing two tokens under one credential therefore needs a choice, and the choice is to be argued for
+in the notes rather than made silently: either a second account key derived from the credential
+name, or one slot holding a JSON object. If it is a second account key the derivation must be one no
+user can collide with, and it can be, because `keyNamePattern` is `^[a-z0-9][a-z0-9_-]{0,30}$` at
+internal/core/key.go:50, so any slot named with a character outside that set is unreachable by a name
+a person is allowed to choose. Whichever is chosen, `Remove` takes the tokens with it, or a deleted
+credential leaves its refresh token in somebody's keychain forever.
+
+Acceptance: a signed-in credential round-trips through the store with its kind, account identity and
+expiry intact, and with no token anywhere in keys.json, asserted by reading the file's bytes rather
+than by reading the struct back. Re-authenticating an existing signed-in credential preserves
+`CreatedAt`, `LastUsedAt` and `Models` exactly as `Put` already preserves them on rotation at
+internal/keys/store.go:220, and replaces the tokens. Removing it removes both halves, and a `Get`
+that finds metadata with no tokens behind it reports that in the same terms the missing-secret path
+already uses. `internal/core` is unchanged: the diff touches no file under it and
+`core.AllProviders()` still returns two. `TestPublishedTypesCarryNoSecrets` at
+internal/core/secret_test.go:171 is still green, and since it stops descending at depth four, any new
+type reachable from `KeyMetadata`, `AgentProfile` or `Event` is either shallower than that or the
+test is extended until it genuinely reaches it. A keys.json written by the previous build loads with
+every credential intact and none of them claiming to be signed in.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built in internal/keys/signin.go, with the record's three new fields and a shared upsert in
+store.go. Nothing under internal/core is touched.
+
+The storage choice, which the task asked to be argued rather than made: both tokens go into one
+backend entry under the credential's own name, not two entries under names derived from it. The
+derived name was genuinely available and genuinely safe. keyNamePattern admits no character a
+derivation would use, so nothing a user is allowed to type could collide with one, and that hazard
+is not why it was rejected. It was rejected on what happens when a write stops halfway. Two entries
+are two Set calls with no transaction around them, and a failure between them leaves an access
+token with no refresh token beside it. There is no ordering that makes that half state harmless the
+way an orphaned secret is harmless, because the credential still looks usable and is quietly no
+longer renewable, which is a fault that surfaces weeks later at the moment somebody needed it to
+work. Two entries also mean Remove has to delete both, and the one a later edit forgets is a refresh
+token sitting in somebody's keychain after they believe they deleted the credential. One entry does
+not handle either problem, it does not have them: one write, one delete, and Remove needed no change
+at all to take the tokens with it. It also makes it impossible for a credential to be a pasted
+secret and a sign-in at once, since both write the same slot, so converting either into the other
+leaves nothing behind to be found later. The cost is that the backend now holds a document where it
+held a bare string, and the price of that is paid in the marker field's name: the entry begins
+`"canopyGrant": 1`, so somebody who opens Keychain Access and finds it can tell what it is.
+
+Three kinds rather than the two the task names, and this is the one place the build went past what
+was asked. S-04 says a delegated credential's keychain half is empty and that S-01 must allow that
+rather than treat it as damage. A signed-in credential with no tokens and a delegated credential
+are the same record on disk unless the record says which, so without the third word either a
+delegated credential reads as damaged for its whole life or a sign-in whose tokens were deleted
+from the keychain reads as fine, and the acceptance clause about reporting missing tokens cannot
+hold at the same time as S-04's requirement. KindDelegated also turns D-51's reason for permitting
+the Claude route into something enforced: a delegated credential handed a token at all is refused
+rather than stored, held by TestADelegatedSignInRefusesToBeGivenTokens. S-04 owns where the binary
+lives and what account it reports; only the kind is here.
+
+Considered and rejected. Putting the kind on core.Provider, which is constraint 1 and would have
+been a change to a frozen package, but also wrong on its own terms: Provider answers which API
+shape a credential speaks and Kind answers where it came from, the two are independent, and folding
+them together makes every combination a new constant. Recording a fingerprint of the access token,
+so a sign-in has the same column a pasted key has: rejected because the account already tells two
+credentials apart and does it better, and a fingerprint that changes on every refresh is a column
+that looks like an identity and moves like a clock. Writing `"kind": "pasted"` on ordinary
+credentials for symmetry: rejected so a keys.json that has never held a sign-in round trips to the
+same document, which is the rule record.Models already follows. Naming a sign-in command in the
+lapsed-tokens error the way the pasted path names `canopy keys add`: rejected because the commands
+that sign somebody in arrive with S-03 and S-04, and an error telling a user to run something that
+does not exist is worse than one that stops at what they have to do.
+
+One thing worth flagging for S-02 and after. Get now refuses a value that parses as a grant, and
+Tokens refuses a value that does not. That pair covers the window where PutSignIn wrote its tokens
+and then failed to save the record, or Put did the same in the other direction. Without it the
+first request goes out with a JSON document where the credential belongs, comes back 401, and gets
+classified as a wrong key, which is documented as never retry and never fall back, so the user
+would be sent to replace a credential that was never the problem. Held by
+TestTokensLeftInTheBackendAreNotServedAsAPastedSecret.
+
+**Codex corrective pass 2026-07-31.** `PutSignIn` still crossed two stores without compensating for
+the second write failing: a first sign-in could leave an orphaned grant, while a replacement could
+overwrite the last usable grant even though the metadata update was rejected. It now reads and
+preserves the old backend value before writing, and restores that value or removes the new one when
+the metadata save fails. `TestAFailedFirstSignInRemovesTheGrantItCouldNotRecord` and
+`TestAFailedReplacementRestoresThePreviousGrant` hold both sides of the operation.
+
+Found and fixed on the way, in its own commit rather than bundled here: SetModel was the only
+mutating method on the store that never took the mutex. Every one of them reads the whole of
+keys.json, changes one thing and writes all of it back, which is only safe under the lock, so a
+model selection running alongside any other write put back a copy of the file from before that
+write and the other change was gone with nothing reporting it. MarkUsed fires on every turn, so the
+overlap is ordinary rather than exotic. Held by
+TestChangingTheModelDoesNotDiscardAConcurrentChange, which adds thirty two models while selecting
+thirty two and counts what survived: without the lock two or three are missing every run. Worth
+recording precisely, because the brief called it a data race and it is not one the detector can
+see. Nothing is shared in memory between the two calls, since each loads its own slice; the race is
+on the file, so `-race` stays silent about it and only counting the lost writes catches it.
+
+Acceptance, clause by clause: a signed-in credential round-trips with its kind, account and expiry
+intact and no token in keys.json, asserted against the file's bytes, is
+TestASignedInCredentialKeepsItsAccountAndExpiryAndWritesNoTokenToDisk; re-authenticating preserving
+CreatedAt, LastUsedAt and Models exactly as Put preserves them and replacing the tokens is
+TestSigningInAgainKeepsWhatRotatingAPastedKeyKeepsAndReplacesTheTokens, and "exactly as" is now the
+same upsert function both paths call rather than the same rule written twice; removing it removing
+both halves is TestRemovingASignedInCredentialTakesItsTokensWithIt; a lookup that finds metadata
+with no tokens behind it reporting in the terms the missing-secret path already uses is
+TestASignInWithNoTokensBehindItIsReportedAsDamageNotAsAbsence, which shares one sentence with Get
+through halvesDisagree and differs only in the remedy; internal/core unchanged and
+core.AllProviders() still two is TestSigningInAddsNoProvider plus a diff that touches no file under
+internal/core; TestPublishedTypesCarryNoSecrets still green, with the new types unreachable from
+KeyMetadata, AgentProfile and Event because internal/core cannot import internal/keys, so the
+meaningful cover is TestTheFactsBehindASignInAreSafeToDisplay, which walks SignIn the same way and
+also holds that KeyMetadata carries no Tokens field; and a keys.json from the previous build loading
+with every credential intact and none claiming to be signed in is
+TestAKeysFileFromThePreviousBuildHasNoCredentialClaimingToBeSignedIn, which also holds that writing
+it back leaves kind, account and expiresAt absent.
+
+Four more that cover behaviour the clauses imply rather than name:
+TestASignedInCredentialIsNotHandedOutAsAPastedSecret,
+TestAPastedSecretAndASignInCannotBothBeTrueOfOneCredential,
+TestADelegatedSignInHoldsNoTokensAndIsNotDamage and
+TestASignInWithoutTheAccountItBelongsToIsRefused.
+
+Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues.
+
+verification (claude, 2026-07-31): acceptance re-run and holds, with no changes needed. Two guards
+were mutation tested rather than read. Removing the refusal in `SignIn.validate` that stops a
+delegated credential being handed tokens fails TestADelegatedSignInRefusesToBeGivenTokens. Adding a
+`core.Secret` field to the `SignIn` record, which is the shape of the mistake that would put a token
+on a published type, fails TestTheFactsBehindASignInAreSafeToDisplay. The `internal/core` claim is
+directly checkable and true: `git diff origin/main -- internal/core` is empty.
+
+### S-02 A token is refreshed before it is needed, not after it fails
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: internal/keys/, internal/session/, cmd/canopy/`
+
+Deliverable: refresh runs when a credential is resolved for use, ahead of the request being built,
+and never in response to a rejection. The distinction is the whole task. `ErrAuthentication` is
+documented as never retry and never fall back, in those words, because a wrong key is a thing to fix
+and routing around it hides the problem while billing elsewhere. An expired token is not a wrong key,
+but it arrives as the same 401, so a reactive design has to either misclassify it or teach the error
+kind a distinction that a frozen package cannot be taught. Refreshing first removes the question: by
+the time a request exists its token is valid, so a 401 means what it has always meant.
+
+A refresh that fails is a sign-in that has lapsed and says so in those terms, naming the command or
+the screen that fixes it. It is not reported as a network error and not retried in a loop. Two turns
+starting at once on one credential refresh once between them.
+
+If an implementer concludes that a change to `internal/core` is unavoidable, whether a new
+`ProviderErrorKind`, a field on `ProviderError`, or a third `Provider` constant, they stop. They do
+not make the change, do not work around it quietly, and do not widen this task to cover it. They
+record what forced it as an open question for both supervisors and leave S-02 blocked. `internal/core`
+is frozen for both pairs and the rule that changing it needs a joint discussion first is P1-01's, not
+this phase's to relax.
+
+Acceptance: a credential whose token expires inside the refresh window is refreshed before its first
+request is constructed, asserted against a fake clock and a fake token endpoint, with the request
+carrying the new token and the store holding it. A token valid past the window is not refreshed, so
+a working session makes no calls it did not need. A refused refresh surfaces as a lapsed sign-in
+naming its remedy, never as `ErrAuthentication` on a request that was never sent, and never as a
+retry loop. Two concurrent turns on one expired credential produce one refresh. A genuine 401 from a
+valid token still classifies as `ErrAuthentication` and still neither retries nor falls back, which
+is `fallbackAllowed` at internal/provider/chain.go:79 behaving exactly as it does today. No file
+under `internal/core` is modified.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `keys.Refresher` in internal/keys/refresh.go, with `Store.Renew` beside PutSignIn
+and one call site each in internal/session/resolver.go and cmd/canopy/ask.go. Nothing under
+internal/core is touched, and no change to it was needed or nearly needed.
+
+Proactive, as the task settles it. `Refresher.Credential` is what both client-building paths ask for
+a credential now, and it renews before it answers. That is one call rather than a rule written twice
+on purpose: constraint 4 says the provider switch exists in two places, and "how old is too old" is
+exactly the kind of rule that gets fixed in one of them.
+
+The margin is five minutes, and the argument is that renewing at expiry is renewing too late for two
+ordinary reasons rather than one exotic one. Clocks disagree, and the direction that hurts is a
+machine running fast, which still believes a token the vendor retired minutes ago. And a turn is not
+a request: an agent turn runs a tool loop, so several requests go out over several minutes under one
+resolution, and a margin shorter than a turn is a token that dies in the middle of one. Ten seconds,
+which is what x/oauth2 uses, was considered and rejected as a figure sized for a library that renews
+per request and one that sits inside any unsynchronised machine's drift. The cost of five is at
+worst one extra renewal every several turns, against a failure that costs a turn and a wrong
+diagnosis. It is exported, because a screen saying when a credential expires should be able to say
+when Canopy will act rather than leaving somebody to find the difference by watching.
+
+The two failures are separated because their remedies are, and the wrong one wastes a specific
+amount of somebody's time. A vendor that refuses the renewal has ended the grant, and the only thing
+that helps is signing in again; that error wraps `ErrSignInLapsed` so a caller can act on it as well
+as print it. A vendor nobody could reach has said nothing about the grant, and telling that person
+to sign in again sends them through a flow they did not need and, on a rotating route, throws away a
+working refresh token to do it. A source that cannot tell which it has hit says transient, because
+that is the mistake with the smaller cost. Neither is a `core.ProviderError` of any kind, and that
+was a decision rather than an omission: a ProviderError describes what a provider said about a
+request, no request was made, and every kind available is a lie about what to do next. Held by the
+two failure tests, which both assert `errors.As` finds no provider error.
+
+Concurrency follows what the store already does and adds one thing. Store writes are the mutex round
+load-change-save, and `Renew` is another of those. The refresher's own lock is per credential rather
+than one for everything, so two conversations on two subscriptions do not queue behind each other,
+and it is deliberately not the store's mutex, since holding the lock that every read of keys.json
+takes for the length of a network call would stop an unrelated turn from starting. Everything is
+read again after the lock is taken, which is what makes the second turn cost nothing: it finds the
+expiry the first one just wrote and returns. Two Canopy processes can still both renew, and that is
+recorded in the code as a known limit rather than left to be discovered. The fix would be a lock
+file, and a lock file held across a network call is how a crashed process leaves a credential
+unusable until somebody deletes a file they have never heard of. The cost of the limit is one wasted
+renewal.
+
+`Store.Renew` is separate from `PutSignIn` rather than a call to it, and the reason is the same
+concurrency: PutSignIn is handed a whole record and writes back whatever the caller was holding, so
+a renewal arriving beside a rate change would put back the values it read before that change and
+lose the other silently. This edits the two fields a renewal owns, which is what SetModel and
+SetRate already do. It writes tokens before the record, as Put does, but the consequence is sharper
+here. Failing between the two leaves an expiry older than the tokens behind it, which costs one
+unneeded renewal next turn. The other order leaves a record promising another hour with the old dead
+token still in the keychain, which is a 401 and a user told to replace a credential that only needed
+renewing: the exact failure this task exists to remove.
+
+Considered and rejected. Reactive refresh, meaning catch the 401 and renew, which is what most
+libraries do: rejected because it cannot tell an expired token from a wrong one without a new
+`ProviderErrorKind`, and internal/core is frozen for both pairs. Worth saying that the frozen
+package was not the only objection. A retry that renews on 401 also has to decide how many times,
+and the honest answer on a credential the vendor has genuinely revoked is a loop. Keying the token
+sources by `core.Provider`, which is the shape the two existing switches use: rejected because
+Copilot and Codex are both openai-compatible, so the map collides the moment the second route lands;
+`SourceFor` is a function, and whatever S-03 or S-05 adds to tell routes apart, they key on it
+without refresh.go changing. Returning the new token when it could not be written down, so the turn
+still gets its answer: rejected because on a rotating route the refresh token it replaced is already
+dead at the vendor, so that is the last renewal that will work, and somebody has to hear about it
+then rather than a turn later when the credential stops for no visible reason. Threading the turn's
+context into the renewal: rejected because it would change `session.Resolver`, which four callers
+and every fake implement, to bound an exchange that already has its own deadline, and because a
+renewal that outlives a cancelled turn is finished, written down and waiting for the next one rather
+than wasted. Renewing a credential whose expiry the vendor never stated: rejected because silence is
+not evidence the token is old, and acting on that guess spends a refresh token every turn for the
+life of the credential.
+
+One correction to the task's own framing, verified rather than assumed. The block leans on
+`ErrAuthentication` being "never retry and never fall back", and only the second half of that is
+live. `Retryable()` has no production caller anywhere in the tree and there is no retry loop, so the
+only enforced behaviour is `AllowsFallback()` at internal/provider/chain.go:88, reached through
+`fallbackAllowed` at :83. The acceptance is pinned to what exists: the 401 test asserts the chain
+does not move to the next credential and that nothing renews in response, not that a retry loop
+declined to run. The doc comment's ambition is unchanged and still correct as intent.
+
+Acceptance, clause by clause: a credential expiring inside the window renewed before the request is
+built, against a fake clock and a fake token endpoint, with the request carrying the new token and
+the store holding it, is `TestATokenInsideTheRefreshWindowIsRenewedBeforeItIsHandedOut` for the
+store's half and `TestASignedInCredentialReachesTheProviderWithTheTokenItJustRenewed` for the
+request's, which reads the Authorization header off an httptest server and runs on the real clock so
+that what decides is the shipped margin rather than one the test moved; a token valid past the
+window not renewed, so a working session makes no call it did not need, is
+`TestATokenValidPastTheRefreshWindowIsNotRenewed`, which counts calls at both a comfortable margin
+and one second outside it, with `TestASignInWhoseExpiryTheVendorNeverGaveIsNotRenewedOnAGuess` for
+the case where there is no window at all; a refused renewal surfacing as a lapsed sign-in naming its
+remedy, never as `ErrAuthentication` on a request that was never sent and never as a retry loop, is
+`TestARefusedRenewalIsALapsedSignInThatNamesItsRemedy`, paired with
+`TestARenewalThatCouldNotReachTheVendorIsNotALapsedSignIn` which holds the other side, that a
+dropped connection does not say "sign in again"; two concurrent turns producing one refresh is
+`TestTwoTurnsStartingAtOnceRenewOneCredentialOnce`, eight goroutines released together against a
+source that lingers; a genuine 401 from a valid token still classifying as `ErrAuthentication` and
+still neither retrying nor falling back is
+`TestA401FromALiveTokenIsStillTerminalAndIsNotAnsweredByRenewing`, which puts the resolved client in
+a real `provider.Chain` and holds that the second credential is never touched, alongside
+`TestAuthenticationFailuresDoNotFallThrough` in internal/provider/chain_test.go, which is that
+behaviour unchanged from before this task; and no file under internal/core modified is a diff that
+touches none, with `TestSigningInAddsNoProvider` from S-01 still green.
+
+Five more covering behaviour the clauses imply rather than name: a renewed token surviving a restart
+is `TestARenewedTokenIsWrittenDownSoTheNextRunDoesNotBuyAnother`, which reopens the same two files
+as a new process would; `TestARenewalThatIssuesNoNewRefreshTokenKeepsTheOneItHas`, without which a
+non-rotating vendor's credential renews exactly once; `TestOnlyASignInIsEverRenewed`, since one call
+now serves pasted, signed-in and delegated credentials and the last two must keep answering as they
+did; `TestARenewalThatCannotBeRecordedIsReportedRatherThanUsed`; and
+`TestRenewingTouchesTheTokensAndTheExpiryAndNothingElse` with
+`TestACredentialThatStoppedBeingASignInIsNotRenewedIntoOneAgain`, which hold that a renewal in
+flight cannot resurrect a credential somebody deleted or overwrite one they pasted over.
+
+Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues. Run against a clone of this branch at the commit rather
+than in the shared worktree, because S-06 and S-07 are in flight in the same tree and
+internal/tui/keys does not compile between their edits.
+
+verification (claude, 2026-07-31): acceptance re-run and holds, with no changes needed. Both of this
+task's load-bearing numbers were mutation tested in both directions. `RefreshMargin` at ten seconds
+fails seven tests and at sixty minutes fails three, so the shipped five minutes is pinned from above
+and below rather than merely asserted once. The lapsed-versus-transient split was collapsed each
+way: making every refresh failure transient fails
+TestARefusedRenewalIsALapsedSignInThatNamesItsRemedy, and making every one lapsed fails
+TestARenewalThatCouldNotReachTheVendorIsNotALapsedSignIn.
+
+One thing found outside this task's clauses but at its seam, recorded for the supervisors rather
+than fixed here, because it is a resolver change rather than a refresher one. The refresher seam
+genuinely is shared: both `cmd/canopy/ask.go` and `internal/session/resolver.go` reach
+`Refresher.Credential`, which is what this task promised. But the delegated fork beside it is not.
+`ask.go` builds both delegated clients with `WithVersion(version)`, at :311 and :322, and
+`resolver.go` builds them with neither, at :180 and :191, so the client defaults to the literal
+"dev". The interface therefore identifies itself to Anthropic's bridge and to OpenAI's app server as
+version "dev" while `canopy ask` sends the real build version. S-05's own notes record that backend
+model routing is cohort-keyed on originator plus version, and its handshake test asserts only that
+the version is non-empty, which "dev" satisfies. That is constraint 4's divergence in a new place:
+the provider switch exists twice and the two copies disagree.
+
+### S-03 GitHub Copilot signs in through its own SDK
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`scope: internal/provider/copilot/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
+
+Deliverable: the Copilot route, first of the three because it is the one whose vendor documents this
+exact case. The Copilot SDK reached GA on 2026-06-02, is MIT licensed, and publishes a Go module at
+`github.com/github/copilot-sdk/go`. Its own documentation describes the arrangement Canopy wants: you
+create a GitHub OAuth App or GitHub App, users authorise it, and you pass their access token to the
+SDK, so that requests are made on behalf of each authenticated user using their Copilot
+subscription. Canopy uses the official SDK rather than speaking to the underlying endpoints itself,
+by Walid's decision on 2026-07-30, because the SDK is the sanctioned surface and being sanctioned is
+the entire value of this route.
+
+One piece is genuinely undecided and is this task's to settle and record rather than to assume. The
+SDK is given a user's token, and where that token comes from is a choice between a GitHub App
+registered to Canopy, driven by the device flow so that constraint 5 holds and nothing listens on a
+port, and reusing a login the user already has from the `gh` CLI. The first is the only Canopy-owned
+vendor identity anywhere in this phase and so has a cost that outlives the task; the second has no
+registration but binds Canopy to another tool's storage format. Whichever is chosen, the notes say
+why.
+
+Acceptance: on a machine with no GitHub credentials, signing in produces a user code and a
+verification URL, waits, and completes when the user authorises, with nothing listening on a
+loopback port at any point. The resulting credential stores its tokens per S-01 and lists as signed
+in under the GitHub login it belongs to. A turn runs through the SDK against the user's own Copilot
+subscription and streams back. Refresh follows S-02. A GitHub account with no Copilot seat is told
+exactly that, not shown a generic authentication failure. Both internal/session/resolver.go and
+`newClient` in cmd/canopy/ask.go reach the new client, so `canopy ask` and the interface agree, and
+a test holds that the two switches know the same set of providers.
+
+`verify: claude [x] 2026-07-31   codex [ ]`
+
+notes: built as internal/provider/copilot, with `copilotSignIn` in cmd/canopy/signin_copilot.go, the
+`copilot` branch in internal/session/resolver.go and in `clientFor` in cmd/canopy/ask.go, and one
+field added to the credential record. Nothing under internal/core is touched and no change to it was
+needed.
+
+Where the token comes from, which the task left genuinely undecided. Canopy's own GitHub app, driven
+by the device flow. The task's own acceptance had already decided most of it: "on a machine with no
+GitHub credentials" rules out reusing a login from the `gh` CLI, since that is a machine that has
+one. The rest of the argument is that `gh`'s token is not Canopy's to use. It carries whatever
+scopes `gh` asked for, which by default include `repo`, `read:org`, `gist` and `workflow`, so
+borrowing it would hand a third-party runtime a far more powerful credential than this route needs,
+obtained for a different purpose. Revoking Canopy's access would mean revoking `gh`'s. And D-51's
+sentence is that a subscription is signed in to: borrowing is neither signing in nor pasting. The
+cost is real and is the one the task named, a vendor identity that outlives the task, so it is made
+configurable rather than invented: `CANOPY_GITHUB_CLIENT_ID`, or `-X ...copilot.clientID` at build
+time, with INSTALL.md saying exactly what to tick. A build with no registration says so in those
+words and names the file, rather than failing at GitHub with something about a missing client id.
+Held by TestABuildWithNoGitHubAppSaysWhatHasToBeRegistered.
+
+An OAuth app rather than a GitHub app, recommended for one reason that took a while to see. GitHub
+renews a user token only for an app that can prove who it is, which needs a client secret, and a
+program people download cannot keep one. An OAuth app's user tokens do not expire, so the renewal
+never happens, `ExpiresAt` is nil, and S-02's refresher correctly never marks the credential due:
+that is `TestASignInWhoseExpiryTheVendorNeverGaveIsNotRenewedOnAGuess` from S-02 turning out to be
+the ordinary case on this route rather than an edge. The `keys.TokenSource` is still implemented, so
+the seam exists and works where a maintainer has supplied a secret, and where they have not it
+reports a lapsed sign-in naming the two things that would fix it rather than asking for another try.
+A missing secret does not become present by waiting.
+
+The scopes, which the task asked to be established empirically and which could not be. This is the
+one place the answer is an honest "unverified" rather than a finding. GitHub's published OAuth scope
+table has no entry containing the word Copilot; their Copilot SDK setup page tells you to create an
+app and names no scope at all; and the SDK's Go source validates nothing about the token it is
+handed, so there is no code to read either. What the list is built from is stated in the source
+beside it: `copilot` because every third-party Copilot client sends it and GitHub's own editor flow
+does, and `read:user` because it is documented, is the smallest scope that answers `GET /user`, and
+is what lets a credential say whose subscription it is, which S-01 requires. Neither has been
+confirmed against a live seat, because confirming it needs a seat. `CANOPY_GITHUB_SCOPES` overrides
+the list so the question is settled by narrowing it one entry at a time, and the live test logs which
+scopes the working grant was obtained with so the answer is recorded when somebody first runs it.
+
+The CLI is discovered, never bundled. The SDK ships an opt-in bundler that embeds a per-platform
+binary, and it was rejected on three counts in increasing order of weight. It would multiply the size
+of a release that is one small static binary built with CGO_ENABLED=0. It would pin a vendor version
+the user's Copilot would then be stuck at, which is the wrong way round for a runtime GitHub updates
+weekly. And it would put a proprietary vendor binary inside Canopy's release archives, which is a
+redistribution question nobody has asked and that would have to be answered before every tag. The
+cost is one failure mode, an absent binary, and it is answered before the SDK is asked so the message
+is a sentence naming what to install rather than `exec: "copilot": executable file not found in
+$PATH` wrapped in "failed to start CLI server". Held by
+TestAnAbsentRuntimeSaysWhatToInstallRatherThanThatAnExecFailed.
+
+The architectural problem, which is most of this task. GitHub's SDK is session-shaped: a session is
+the conversation, it accumulates its own history, and `MessageOptions.Prompt` is one string with no
+call anywhere that seeds one. `core.ProviderClient` is request-shaped and hands over the whole
+message list every turn. The naive integration makes a session per turn and loses everything.
+
+The fix is that a Copilot client is bound to a conversation and sends only what its session has not
+already heard, and the seam that makes that possible is `conversationResolver`, an optional interface
+in internal/session/engine.go beside `usageMarker`. It is optional for `usageMarker`'s reason and for
+one more: S-02 rejected threading a context through `Resolver` because four callers and every fake
+implement it, and that objection applies to any signature change. An assertion adds a method for one
+implementation and leaves the other four untouched. `KeyResolver` holds the clients in a map keyed on
+the conversation, the credential name and the account, so a credential signed in again as somebody
+else starts a new conversation with the vendor rather than inheriting the previous person's session.
+
+Three cases fall out of it and each is a test. A session that has heard nothing gets everything, with
+the older turns rendered as a labelled transcript, because there is no other surface. A session that
+is up to date gets only the new user text, with the assistant messages in the unseen range skipped
+since the session said them. And a caller whose history is shorter than what the session has heard
+has edited, re-rolled or compacted it, which cannot reach GitHub's copy, so it is refused by name
+rather than answered from a conversation the user can no longer see. That refusal is the design
+becoming visible, and a vague failure there would read as a bug rather than as the documented limit
+it is.
+
+Asides and compactions deliberately do not go through it. Both call the plain `Resolve`, so both get
+a fresh client, and on this route that is right rather than a gap: an aside is a separate
+conversation by definition, and a compaction is one question asked once about a transcript. Handing
+either the conversation's session would put a summarisation request into the middle of somebody's
+session. It also means the seeding path above is what makes both work at all.
+
+ModeEmpty plus the allowlist, and what could actually be verified. The claim is that GitHub's agent
+gets none of its own tools, and it rests on three things rather than one. `ClientOptions.Mode =
+ModeEmpty` starts a session with no built-in tools, no environment context in the system message, and
+file hooks, host git operations, the cross-session store, skills and memory forced off; every one of
+those is also set explicitly in the session config, because the defaults are the SDK's promise and
+these are Canopy's requirement and a release that relaxed one should be a failing test rather than a
+silent widening. The allowlist is the second, and the brief's advice was wrong here in a way worth
+recording: `[]string{}` is right only for a conversation with no tools, because an empty allowlist
+excludes Canopy's own tools along with the vendor's. What ships is `NewToolSet().AddCustom("*")`,
+which names every tool registered through `SessionConfig.Tools`, which is Canopy's and nobody else's,
+and names no built-in and no MCP source at all. `OnPermissionRequest` is the third and refuses
+anything that is not one of Canopy's own tools by name, which should be unreachable and is there
+because a request Canopy does not recognise arriving at all means one of the first two has stopped
+working.
+
+Verified how: the allowlist and the session config are asserted against the values that ship, by
+source prefix rather than by tool name, so a vendor tool that arrives under a new name in a later
+release is still outside it. That is a check on Canopy's request rather than on GitHub's behaviour,
+and the difference matters. GitHub verify the behaviour themselves, in
+internal/e2e/mode_empty_e2e_test.go, by capturing the chat completion request through a proxy and
+asserting `bash`, `powershell`, `edit`, `grep` and `web_fetch` are absent, and their harness needs a
+real CLI. It could not be re-run from here without a Copilot seat, so what this build adds is
+TestLiveTheModelIsGivenNoneOfTheVendorsOwnTools, which asks the model to list its tools and is
+skipped by default. That is not a proof, a model can be wrong about itself, and it says so; it is the
+strongest check available from outside GitHub's harness and it would catch the change that matters
+most, a release where the mode stops meaning what it means today.
+
+Q-23, which this route answers differently from S-04 and the difference is the protocol rather than
+the principle. The second of the three options that question lists, exposing Canopy's tools to the
+delegated agent and re-imposing Canopy's gating at that boundary, is unavailable in ACP v1 and is
+available here. Canopy's tools are declared with a nil `Handler`, which is the SDK's
+declaration-only form: the call arrives as `*ExternalToolRequestedData` and stays pending, and this
+package resolves it through `session.RPC.Tools.HandlePendingToolCall` only after Canopy's own loop
+has run it. So the whole of A4 is in the path, the audit trail is complete because Canopy ran every
+call there was, and the permission mode on screen is the one in force. Q-23 is updated with that and
+with what it leaves open, which is narrower than before: not whether a delegated turn can be
+governed, but whether a route that cannot be should ship beside one that can.
+
+The trap S-04 found, checked rather than assumed, because the cost of getting it wrong is the same
+here. `internal/agent/loop.go` invokes every tool call event it is handed, so any vendor
+event mapped onto `core.EventToolCall` for a tool the vendor already ran would have Canopy run it a
+second time. How I convinced myself: the adapter's type switch names seven event types and
+`*ExternalToolRequestedData` is the only one that produces a tool call, which is the event that means
+"waiting for you to run this" rather than "I ran this". `*ToolExecutionStartData`,
+`*ToolExecutionProgressData`, `*ToolExecutionCompleteData`, `*ExternalToolCompletedData` and both
+permission events fall through the switch and produce nothing. That is asserted directly, event by
+event, in TestNoEventThatMeansAToolAlreadyRanBecomesAToolCallCanopyWouldRunAgain. It is also
+unreachable for a second reason worth stating: with ModeEmpty and the allowlist there is no tool in
+the session that the vendor can execute, so a tool-execution event could only ever describe one of
+Canopy's, and Canopy's have no handler. The test makes that a property rather than a coincidence.
+
+Cost, which is decided here rather than inherited. A Copilot turn is reported as
+unpriced, using S-04's `pricing.ModelID.Delegated` rather than a parallel concept, and the sentence
+that field prints is true of this route too: the user did sign in themselves, at github.com, with a
+device code. The tokens are real and are reported, because the vendor sends them per model call and
+they are worth having. The dollar value is not, and the reason is one step further than S-04's: a
+Copilot seat is billed monthly and metered per prompt rather than per token, so a figure derived from
+token counts would not merely be an invoice nobody receives, it would be computed from the wrong
+unit. Held by TestATurnOnACopilotSeatIsReportedAsUnpricedRatherThanAsFree.
+
+The credential's shape, and the one field this adds. A Copilot credential is
+`ProviderOpenAICompatible`, because that is the closer of the two shapes core knows and core is
+frozen, which is what made a route marker unavoidable: Copilot and a future Codex are both
+openai-compatible, so a switch on provider alone would send a Copilot turn to a chat completions
+client pointed at a host that does not serve one. `keys.SignIn.Route` is that marker, and it is
+exactly the field S-02 anticipated when it wrote `SourceFor` as a function rather than a map. It is
+optional rather than required, deliberately: requiring it would mean rewriting tests belonging to
+tasks in review, and an absent route is not damage, it is a credential from a build that predated
+the field. The base URL is `https://api.githubcopilot.com`, which `RequiresBaseURL` forces to be
+non-empty and which is where the turn genuinely ends up even though Canopy never dials it, rather
+than a placeholder somebody would read in `canopy keys test`.
+
+Two things landed in neighbouring files and both are flagged rather than done quietly. S-04's
+delegated sign-in now records `Route: claudeCodeRouteID`, one line, without which `routeSet` cannot
+tell `canopy keys test` which vendor to ask about a credential, and S-04's own notes record that it
+was left for whoever landed the field. And `signInRoutes` became `routeSet`, the composition S-04's
+note left for whoever landed second, dispatching `Begin` on the route named and `Report` on the
+route recorded with the credential. `Report` keeps a fallback that asks each vendor in turn for a
+credential with no route recorded, and that fallback is safe rather than lucky: a registry handed a
+credential that is not its own fails on the credential rather than answering about it, since the
+Copilot route reads tokens and a delegated credential has none by design.
+
+Acceptance, clause by clause: signing in on a machine with no GitHub credentials producing a user
+code and a verification URL, waiting, and completing when the user authorises is
+TestSigningInProducesACodeAndAPageAndCompletesWhenThePersonAuthorises for the flow and
+TestSigningInToCopilotShowsACodeAndAPageAndEndsAsTheGitHubLogin for the command that shows them;
+nothing listening on a loopback port at any point is TestNothingInThisRouteListensOnAPort, which
+sweeps this route's own source rather than trusting a comment, alongside
+TestThisRouteUsesNobodyElsesClientIdAndSendsNobodyElsesVersion for the identity half of the same
+promise; the credential storing its tokens per S-01 and listing as signed in under the GitHub login
+it belongs to is TestSigningInToCopilotShowsACodeAndAPageAndEndsAsTheGitHubLogin, which reads the
+account and the route off the store and asserts against keys.json's bytes that no token reached it,
+with TestAGrantGitHubWillNotNameAnOwnerForIsRefusedRatherThanStoredAnonymously for the case where
+GitHub will not name one; a turn running through the SDK and streaming back is
+TestATurnRunsOnTheDelegatedAgentAndStreamsBack against the agent seam and
+TestLiveATurnRunsOnTheSubscriptionAndStreamsBack against a real seat, skipped without one; refresh
+following S-02 is TestARenewalGoesThroughTheRefresherAndReplacesTheStoredToken, driven through
+keys.Refresher rather than by calling Refresh directly, with
+TestAGrantWithNoStatedExpiryIsNeverRenewed for the recommended registration's ordinary case,
+TestARefusedRenewalIsLapsedAndAnUnreachableVendorIsNot for S-02's two-failure split, and
+TestRenewingWithoutAClientSecretSaysWhatToChangeRatherThanAskingForAnotherTry;
+a GitHub account with no Copilot seat being told exactly that is
+TestAnAccountWithNoCopilotSeatIsToldThatRatherThanThatItsCredentialIsWrong, which also holds that the
+message does not send somebody to replace a credential that is fine, with
+TestAMissingSeatIsRecognisedWhenItArrivesDuringATurnToo for the other way it arrives; and both
+client-building paths reaching the new client, with a test that the two switches know the same
+routes, is TestBothWaysOfBuildingAClientAgreeAboutWhichRouteACredentialTakes, which drives
+`clientFor` and `KeyResolver.Resolve` over one real store and compares what each reached and how each
+would price it.
+
+Nine more that cover behaviour the clauses imply rather than name.
+TestOnlyTheNewestMessageReachesASessionThatHeardTheRest and
+TestAConversationThatStartedElsewhereIsSeededAsALabelledTranscript are the two halves of the
+session-versus-request translation, and
+TestAnEditedHistoryIsRefusedRatherThanAnsweredFromTheVendorsCopy is its cost.
+TestAToolCallLeavesTheAgentAndItsResultComesBackToTheSameTurn is Q-23's answer as a test, with
+TestARefusedToolIsReportedToTheAgentAsAFailureRatherThanAsSilence for what a gated refusal does.
+TestTheToolAllowlistNamesCanopysOwnToolsAndNoVendorSourceAtAll and
+TestASessionIsCreatedWithEveryFeatureThatTouchesTheMachineSwitchedOff are the ModeEmpty claim.
+TestCancellingATurnStopsTheVendorRatherThanAbandoningIt holds that a stopped turn stops spending
+somebody's allowance and leaves the conversation usable, and
+TestClosingTheResolverEndsEveryConversationItWasHolding is the resource story: a session per
+conversation and a process per client both end at Engine.Close, which calls the resolver's Close
+after the turns have settled.
+
+Considered and rejected. A session per turn with the whole history rendered into every prompt, which
+would have kept Canopy's history editing, re-rolls and compaction working: rejected because it makes
+every turn a role-flattening hack rather than only a restored one, throws away the vendor's own
+context handling and caching, and is not what the task describes. Changing `Resolver`'s signature
+instead of adding an optional interface: rejected for S-02's stated reason, four callers and every
+fake. Refusing to run at all on a conversation with unseen history: rejected because a Copilot
+conversation that cannot survive closing the program is a worse product than one whose restored
+context is slightly weaker, and the transcript is labelled so the model is told it is reading a
+record rather than being given instructions. Draining every pending tool request into one step:
+rejected because "however many happened to have arrived by now" is a rule whose answer depends on
+scheduling,
+which is a test that passes on one machine and fails on another; one per step is deterministic and
+costs a round trip. Restarting the session when a request names a different model: rejected, it
+throws the conversation away to honour a flag, and the limit is written down instead. Asking the
+SDK's `account.getQuota` to check for a seat at sign-in: rejected because it is defined in the
+schema and
+not implemented in the CLI as of v1.0.8, which GitHub's own e2e test skips over, so it would be a
+check that silently never worked. Starting a runtime during sign-in to read the login from
+`GetAuthStatus`: rejected because somebody on a machine without the CLI can still complete a sign-in
+and be told what to install, and `GET /user` is one documented request against a documented scope.
+Implementing `revokesCredentials`: not done, because revoking needs the client secret renewing needs,
+so `canopy keys signout` says plainly that it did the local half only, which S-07 already wrote.
+
+Corrections to the reconnaissance the task and the brief were built on, all verified against
+v1.0.8 rather than assumed. The Go SDK does no token prefix validation at all: there is no code
+anywhere in the module that inspects `gho_`, `ghu_`, `ghp_` or `github_pat_`, and the token is passed
+through verbatim to the CLI via `--auth-token-env`. The accepted-and-rejected table is GitHub's
+documentation describing runtime behaviour, and it could not be confirmed from here. `AvailableTools`
+is not "nil means no filter": in ModeEmpty the SDK refuses to create a session at all when it is nil,
+which is better than the brief described, and `[]string{}` is the right value only when Canopy has no
+tools of its own. There is no `Session.Close`; teardown is `Session.Disconnect` plus `Client.Stop`,
+and cancelling a turn is `Session.Abort`, which leaves the session usable. `AssistantUsageData`
+carries input, output and both cache token counts, so a Copilot turn does report tokens, which the
+brief did not mention. And `ClientOptions.Env` defaults to `os.Environ()` inside `NewClient`, so
+`COPILOT_CLI_PATH` is consulted as the brief said, but only because of that default: a caller that
+sets `Env` to anything else loses it.
+
+One correction to the task text, harmless: the acceptance names `newClient` in cmd/canopy/ask.go as
+the second place the provider fork lives, and by the time this landed S-04 had moved that fork up
+into `clientFor` in the same file, with `newClient` left holding only the two pasted-key providers.
+The Copilot branch is in `clientFor`, which is where the kind and the route are already known, and
+the clause is met by the same test either way.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree:
+`go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
+./...` reports no issues.
+
+verification (claude, 2026-07-31): blocked, and the reason is the resource story rather than any
+acceptance clause. The notes above say "a session per conversation and a process per client both end
+at Engine.Close, which calls the resolver's Close after the turns have settled". Three call paths
+build a Copilot client that Close never reaches, because `ResolveFor` returns before the map is
+touched when the conversation is empty, at internal/session/resolver.go:231. Every aside
+(internal/session/aside.go:68), every compaction (internal/session/compaction.go:112) and `canopy
+ask` (cmd/canopy/ask.go:89) take that branch. All three close only the stream, and this route's
+`stream.Close` deliberately does not end the session, at internal/provider/copilot/stream.go:147, so
+each one leaves a `copilot` CLI subprocess resident for the life of the program and a session GitHub
+believes is open. The package's own test closes those clients by hand
+(internal/session/copilot_test.go:87), so the need was known; production has no caller that does it.
+The cache also has no eviction at all: nothing anywhere calls `delete(r.sessions`, so ending,
+forking or walking away from a conversation leaves its process live until the program exits.
+
+Not fixed here, because it is a change to the `Resolve` contract rather than a defect inside a
+function: `Resolve` hands back a `core.ProviderClient`, which has no Close, so either the two
+callers learn to close a `conversationClient` or the resolver tracks what it hands them. That is a
+design decision for the pair that owns this route, not a verifier's edit.
+
+Everything else in this block was re-run and holds. The double-execution guard was mutation tested
+by mapping a vendor tool-execution event onto `core.EventToolCall`, and
+TestNoEventThatMeansAToolAlreadyRanBecomesAToolCallCanopyWouldRunAgain fails on it. ModeEmpty's
+hardening flags and the allowlist were both mutated and both are held. The permission handler was
+mutated to approve everything and is held. What was missing was the Cancel contract: this route had
+no cancellation test at all, where the other two have both halves, and it is the only route of the
+three whose credential holds real tokens. Both halves added in a separate commit, and the completed
+half fails against the mutation that removes Cancel's undo.
+
+fixed (claude, 2026-07-31): the resource story is now true, and it is true by construction rather
+than by everybody remembering. What the verification found is exactly what was there: `Resolve`
+returns a `core.ProviderClient`, which has no Close, so the three callers that resolve without a
+conversation had no way to end anything, and the notes claimed a guarantee that held on one path out
+of four.
+
+The contract that changed is not `Resolve` but who is allowed to build a client. `copilot.New` is
+gone and every client comes from `copilot.Clients`, which is holding it from the moment it exists.
+Nothing outside internal/provider/copilot can construct one at all, so a future call path cannot
+leak by forgetting: there is nothing for it to call except the pool. Two shapes come out of it. A
+conversation's client outlives its turns and ends when the pool does or when it is evicted. A
+one-shot ends itself when its stream closes, which is what an aside, a compaction and `canopy ask`
+each are, and it is also held by the pool until then so that a caller who never streamed at all
+still leaves nothing behind. `Stream` closes a one-shot itself when the turn never started, because
+at that point the session is open and the caller has an error and no stream to close.
+
+The test that holds this against the next person rather than against today's three paths is
+TestTheOnlyWayToBuildAClientIsOneTheCleanupIsHolding, which reads the package's own source and fails
+if any file but clients.go builds a Client or if anything exported hands one back that is not a
+method on Clients. Source-read for TestNothingInThisRouteListensOnAPort's reason: "there is no other
+way to build one" is a property of the code and not of a value it computes.
+TestAnAsideAndACompactionEndTheSessionsTheyOpen drives the engine's own aside and compaction and
+counts the vendor sessions opened and closed, and
+TestClosingTheResolverEndsEveryConversationItWasHolding was rewritten, because the version of it
+that shipped asserted an empty map: a shutdown that dropped every client without closing one
+satisfies that perfectly, which is why the bug survived a green test.
+
+Eviction, and the policy argued rather than picked. Held conversations are bounded at eight, and the
+least recently used one is closed when a ninth arrives. Eight because the largest ordinary
+arrangement is a conversation that dispatched a full fleet, MaxAgentsPerDispatch is six, and one
+more than seven means nothing anybody does deliberately evicts anything. An idle timer was rejected
+and the reason is this route specifically: evicting costs GitHub's own copy of the conversation,
+which cannot be handed back, and the next turn re-seeds from Canopy's transcript, weaker because
+roles collapse into a labelled record. Time since somebody last typed is therefore the wrong axis,
+since it ends the conversation of the person who went to lunch while keeping eight nobody will
+return to; how many are held at once is what the machine actually pays for. Eviction never takes a
+session from a turn in flight and never takes the conversation just asked for: when everything is
+busy the bound gives way, because a bound that loses somebody's reply is worse than nine processes
+for a minute.
+
+Idempotence, held in TestClosingIsSafeTwiceOnASessionThatNeverStartedAndWithNoVendorInstalled and
+TestClosingWhileATurnIsInFlightEndsTheTurnRatherThanHanging: closing twice, closing a conversation
+that never opened a session, closing on a machine with no Copilot CLI, and closing while somebody is
+mid-reply, where the reader is released by the event channel closing and the turn ends with what had
+arrived. The two locks are ordered rather than trusted: Client.Close takes the pool's lock only
+after releasing its own, and the pool closes evicted clients after unlocking.
+
+The version, which the same verification found and which is the same fault as the leak. `canopy ask`
+passed `WithVersion(version)` and internal/session/resolver.go did not, so an installed release told
+Claude Code and Codex it was Canopy "dev" for anybody working in the interface. Both paths now build
+through session.Vendors, which takes the version as a constructor argument rather than a setter or a
+default, so it cannot be left out of one path. Held from both ends:
+TestBothDelegatedRoutesTellTheVendorTheVersionCanopyWasBuiltWith reads what the client will send,
+and TestEveryWayOfBuildingAVendorClientIsGivenTheBuildsVersion reads cmd/canopy's source and fails
+if any place that builds one passes anything other than this build's `version`. The two pasted-key
+providers are deliberately still forked between the two surfaces: they hold no process, no session
+and no identity, so nothing about them can drift into a difference anybody could see.
+
+routeSet.Report, the third thing found. The ChatGPT route ignored the metadata it was handed, so the
+fallback for a credential with no route recorded answered with whoever came first in the list: a
+ChatGPT plan and a ChatGPT account printed under a Copilot credential's name. Every route now
+refuses a credential that is not its own, recognising its own by the recorded route or, where there
+is none, by the shape it stores. The verification named the ChatGPT route; the Claude route had it
+too, and the Copilot route is the one where it is worse than a wrong answer, since that Report reads
+a token out of the keychain and sends it to github.com. It was safe by accident before, because
+internal/keys refuses to produce tokens for a delegated credential and the read failed first, which
+is not the same as being safe. TestNoRouteAnswersAboutACredentialThatBelongsToAnotherVendor drives
+every member of the registry against every other member's credential and fails if the build grows a
+route the test is not driving.
+
+Mutation results: 21 attempted, 20 caught. The survivor is removing routeSet's own skip of members
+that do not offer a recorded route, which
+TestACredentialFromARouteThisBuildDroppedIsNotAnsweredBySomebodyElse survives because the per-route
+refusal now catches the same case; removing both layers fails it, which was run to check the test is
+not vacuous. Caught: a second constructor outside the pool; a one-shot that does not end with its
+turn, seen both in the package and through the engine's aside and compaction; a failed turn that
+leaves its session open; no eviction at all, which is what shipped; eviction that ignores a turn in
+flight; eviction that takes the most recently used; eviction that forgets a client without closing
+it; a pool Close that drops its clients rather than closing them, seen both directly and through the
+resolver's shutdown; a client that closes without telling the pool; a shut down pool that still
+starts conversations; each delegated route forgetting the version; each surface naming itself
+something other than the build's version; and each of the three routes answering about another
+route's credential.
+
+Left for the documentation task rather than done here, to avoid two people editing one file:
+LIMITATIONS.md's "a conversation picked up after a restart is seeded, not resumed" is now also true
+of a conversation whose session was evicted, which happens to the least recently used one when a
+ninth is opened in a single run.
+
+### S-04 Claude runs through the user's own Claude Code
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: internal/provider/acp/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
+
+Deliverable: the Claude route delegates rather than authenticates. Canopy does not implement
+claude.ai OAuth, does not hold an Anthropic subscription credential, and never sees a subscription
+token. It discovers a Claude Code installation the user has already signed in to and drives it over
+ACP, the Agent Client Protocol.
+
+The line this sits on is sharp and the task exists to stay on the correct side of it. Anthropic's
+published position is that Claude Agent SDK, `claude -p` and third-party app usage still draw from
+the subscription's usage limits, which is a sentence describing metering rather than prohibition.
+The prohibition is separate and explicit: they do not permit third-party developers to offer
+Claude.ai login or to route requests through Free, Pro or Max plan credentials on behalf of their
+users, they enforce it on their servers, and they reserve the right to do so without prior notice.
+Delegating to a binary the user already signed in to is the first thing. Holding their subscription
+credential is the second. Canopy does only the first.
+
+So the credential this task stores holds no token at all. It records that a delegated Claude Code
+exists, where its binary is, and which account it reports being signed in as. That is a credential
+kind whose keychain half is empty, which S-01 must therefore allow rather than treat as damage.
+
+Acceptance: on a machine with Claude Code installed and signed in, adding this credential finds it,
+reports the account it is signed in as, and runs a turn whose reply arrives over ACP. On a machine
+without it, the failure names the missing thing and how to install it, and does not offer to sign
+anybody in to anything. No Anthropic OAuth flow exists anywhere in the tree, meaning no claude.ai
+endpoint, no authorisation URL and no code exchange, held by a test over this repository's own source
+so that a later contributor cannot add one quietly. The stored credential has no secret behind it and
+`canopy keys test` says something true about it rather than reporting a missing secret as corruption.
+A delegated turn shows that it draws on the user's own subscription and does not show a dollar cost,
+because Canopy never sees a token count and a figure it cannot see is a figure it must not print.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `internal/provider/acp`, a `core.ProviderClient` that starts the ACP bridge as a
+child process and has a JSON-RPC conversation with it over stdio. The route is registered in
+`cmd/canopy/signin_claude.go`, which is the first entry in the `signInRoutes` registry S-07 left
+empty. `internal/session/resolver.go` and `cmd/canopy/ask.go` each gained one branch. Nothing under
+`internal/core` is touched, and no change to it was needed or nearly needed.
+
+The wire format was established rather than remembered, which the block asked for and is worth
+recording because half of what is written about ACP on the open web is the v2 draft. Method names
+come from the constants the protocol's own reference implementation exports
+(`SESSION_PROMPT_METHOD_NAME = "session/prompt"` and its neighbours), field names and enums from the
+JSON Schema it generates for v1, and `ProtocolVersion::V1 = 1` with `LATEST = V1`. All of it was then
+confirmed against a real bridge: `@agentclientprotocol/claude-agent-acp` 0.64.0 installed into a
+scratch directory, driven through `initialize`, `session/new` and `session/prompt` by hand, with every
+frame in both directions logged and read. That is where the two facts a schema would not have given
+came from. The bridge answers `initialize` with `protocolVersion: 1` and `agentInfo.name`
+`@agentclientprotocol/claude-agent-acp`, and it sends `configOptions` on `session/new` carrying `mode`,
+`model`, `effort` and `fast`, so a client can ask for a model by reading the ids off the session
+rather than guessing at them. Version 1 is what this speaks. Version 2 was published as a draft on
+2026-07-20 whose own announcement says not to ship it by default before it stabilises, so the version
+is pinned rather than negotiated upward: a client that sends the highest number it has heard of is a
+client whose behaviour changes when somebody else releases something.
+
+Q-23, which the block calls the central question, is answered in three parts and only one of them was
+a choice.
+
+The first was settled by the protocol before it could be settled by taste. Canopy's tools are not
+offered to a delegated turn because ACP v1 has no channel for it: MCP servers are the only way a
+client hands an agent its own tools, and Canopy's tools are not an MCP server. `session/new` is sent
+with an empty `mcpServers` list, explicitly rather than omitted, so the absence is a statement in the
+traffic. `TestNoCanopyToolIsOfferedToADelegatedTurn` puts two tool definitions on the request and
+holds that neither reaches the wire.
+
+The second was a choice and Canopy declines. It advertises `fs.readTextFile`, `fs.writeTextFile` and
+`terminal` all false, so the agent never routes work back through Canopy, and every
+`session/request_permission` is answered with the protocol's `reject_once` option and reported to the
+reader as a notice. Approving would be Canopy standing in as the user's approver for a call it did
+not make, cannot describe in its own vocabulary and has no trust level for, and the screen shows
+Canopy's permission mode while that happened, which is precisely the failure Q-23 forbids. Forwarding
+to A4's own gate is the right long-term answer and is not available: that gate is built around
+Canopy's tool definitions and per-agent trust levels and a vendor tool call carries neither. The
+refusal is chosen by the option's `kind` rather than its `name`, held by
+`TestARefusalIsChosenByItsKindRatherThanItsLabel` with deliberately misleading labels, because the
+names are display strings and a permission decision made by string comparison against somebody else's
+copy is a permission decision waiting to invert.
+
+The third was load-bearing rather than aesthetic. A `tool_call` update becomes a `core.EventNotice`
+and never a `core.EventToolCall`. `internal/agent/loop.go:270` collects every tool call event and
+invokes it, so the obvious mapping would have made Canopy run the vendor's tool a second time,
+through a gate, against a tool definition it does not have. Held by
+`TestAToolTheDelegatedAgentRanIsReportedAndNeverHandedBackToBeRun`.
+
+And the honest sentence the block asked for, which is in LIMITATIONS.md in these words and is the
+single most valuable thing this task produced: on a delegated turn Claude Code runs the turn and
+Canopy's permission gate does not apply. Declining permission requests does not make the turn gated.
+Claude Code's own auto-approved tools never reach Canopy at all, so A4's audit trail records no
+refused calls because Canopy refused none of its own, and A6 verifies nothing because Canopy ran
+nothing. Every turn opens with a notice saying so before the first word of the reply, which is what
+stops the mode indicator on screen from being a lie. Q-23 is updated with what is settled and what is
+not.
+
+Two corrections to the block, both verified rather than argued.
+
+The cost clause's premise is false and its conclusion is right for a better reason. It says Canopy
+never sees a token count. It does: the bridge puts real per-turn `inputTokens`, `outputTokens`,
+`cachedReadTokens` and `cachedWriteTokens` on the `session/prompt` result, and the standard
+`usage_update` notification carries context occupancy and a cumulative dollar figure. So the reason to
+show no cost is not that the figure is unavailable, it is that the figure is about somebody else's
+invoice: a Max plan is billed monthly and these tokens are metered against its limits, so the list
+price is arithmetically correct and factually wrong about what anybody pays. The tokens are therefore
+reported, because "this turn used nothing" is a worse thing to say than what the agent said, and
+`CostKnown` is false always. That needed one addition outside the declared scope, argued here rather
+than made silently: `pricing.ModelID` gains `Delegated`, which makes such a turn unpriced rather than
+free. Without it the pricing layer misreports either way, and both ways are worse than silence. Zero
+tokens through `pricing.Apply` on a model the dated table knows gives `CostKnown: true` and `$0.0000`,
+which reads as "this was free", the exact claim `pricing.Free`'s comment says only a local model gets
+to make. Real tokens give the list price. `Delegated` is checked before `UserRate` as well as before
+the table, which is the one place in that package where somebody's own figure does not win, because a
+per-million-token rate cannot describe a plan billed monthly whoever supplied it, and
+`unpricedReason` says that instead of ignoring what they set.
+
+`internal/core` is untouched and D-51's warning about `core.ProviderClient` turned out to be half
+right. The decision says a delegated agent "is not what core.ProviderClient describes and should not
+be forced into its shape". The interface fits the traffic: a request goes in, text and thinking stream
+out, a stop reason and a usage record come back. What it does not describe is the tool loop, and this
+client answers that by not having one, which is the honest shape rather than a shortcut. Nothing is
+forced. The place the mismatch does show is that `Stream` is handed a request and not a workspace, so
+the delegated session is rooted at the directory Canopy was started in unless a caller says otherwise
+with `WithWorkspace`; that is right for a conversation and wrong for an isolated agent, and it is
+recorded in the option's own comment rather than left to be found.
+
+Considered and rejected. A long-lived ACP session per conversation, reusing `session/load`: rejected
+because `core.Request` carries the whole transcript every turn, so a session that already holds the
+history would receive every earlier message twice, and sending only the last message into one would
+make the client's answers depend on a session identity `core.ProviderClient` does not have. One
+process per turn instead, which also means a turn that goes wrong leaves nothing behind. Comparing
+`claude --version` against a minimum: rejected because a version number is something somebody has to
+keep correct, it goes stale silently, and it breaks on the day the vendor changes their numbering;
+"too old" is detected instead by asking for `claude auth status --json` and by the `initialize`
+handshake's own version negotiation, both of which test the thing that actually matters. Running the
+bridge through `npx` when it is not installed: rejected because a network install in the middle of
+somebody's first turn is a surprise, and the failure that names the package is more useful than the
+convenience. Reading the credential out of `~/.claude/.credentials.json` to learn the account:
+rejected instantly and worth writing down anyway, because it is the shape of the thing D-51 forbids
+even though reading is not routing; `claude auth status --json` answers the same question by asking,
+which is what a person would do. Emitting a notice for every `tool_call_update`: rejected because one
+per status change buries the reply, so only the initial `tool_call` is reported. Mapping ACP's
+`max_turn_requests` onto `core.StopError`: rejected because it is an answer cut off by a bound rather
+than a turn that broke, so it maps onto `StopMaxTokens`, whose `Complete()` is false, with a notice
+carrying the part the enum loses. Treating an unknown `sessionUpdate` variant as a fault: rejected
+because ACP grows by adding them and a client that failed on one would break every time the protocol
+moved; an unknown *stop reason*, by contrast, is a failure, because presenting an answer nobody can
+vouch for as complete is worse than saying the protocol moved.
+
+Found on the way, in the fake agent rather than in production, and fixed in production because it is
+a real hazard: `session/set_config_option` was fired without waiting for its answer, which deadlocked
+against the test's synchronous pipes. Real pipes have a buffer and would have hidden it until a long
+enough exchange filled one. Every request in the file now waits for its response before the next one
+is sent, which is a rule about the transport rather than about politeness, and it is also the only way
+to know whether a setting took.
+
+Found by the live test and by nothing else, which is the argument for having one. The route does not
+call `core.Request.Validate`, and that is the single place it parts company with the contract every
+other provider follows. Validate requires a model. On this route Canopy does not choose the model: it
+is Claude Code's own setting, asked for only when the bridge offers that exact value. A delegated
+credential therefore stores no model and `defaultModelFor` now returns nothing for one, the same
+answer `canopy keys list` already gave in that column, so a real turn arrives with `Model` empty and
+was refused before the process started. Every scripted test had been naming a model, so every scripted
+test passed. `validate` in client.go holds what this route actually needs, with the reason written
+above it, and `TestATurnThatNamesNoModelIsTheOrdinaryCaseRatherThanAMalformedOne` and
+`TestATurnThatDoesNotStartWithTheUserIsRefused` hold both sides of the line.
+
+Verified end to end against a real installation before ticking, since a scripted peer proves only
+that Canopy is consistent with its own reading of the schema:
+`@agentclientprotocol/claude-agent-acp` 0.64.0 installed into a scratch directory and pointed at with
+`CANOPY_CLAUDE_ACP`, a real Max account, `TestLiveADelegatedTurnReachesTheUsersOwnClaudeCode` green.
+It reported `{InputTokens:2 OutputTokens:4 CacheReadTokens:15273 CacheWriteTokens:5767 CostUSD:0
+CostKnown:false}`, which is the cost clause happening rather than being asserted, and the opening
+notice arrived first.
+
+One seam is left for whoever lands next, deliberately and not silently. S-03 was in flight in the same
+worktree while this was written and had, uncommitted at the time of this commit, composed the two
+registries into `routeSet` and added `keys.SignIn.Route` so that `canopy keys test` asks the vendor a
+credential actually belongs to rather than whichever registry answers first. This route does not set
+that field, because setting it would make this commit depend on a field that does not exist at this
+commit, and a commit that does not build on its own is worse than a seam somebody has been told
+about. Whoever lands `keys.SignIn.Route` sets `Route: claudeCodeRouteID` in
+`claudeCodeAttempt.Wait`; `TestTestingADelegatedCredentialSaysSomethingTrueRatherThanReportingAMissingSecret`
+fails until they do, which is the right way round.
+`pricing.ModelID.Delegated`, added here, turned out to be needed by both routes for the same reason
+and is used by both.
+
+Acceptance, clause by clause: adding the credential on a machine with Claude Code installed and
+signed in finding it and reporting the account is
+`TestAddingTheClaudeCredentialFindsClaudeCodeAndReportsTheAccountItIsSignedInAs`, which drives
+`canopy keys signin claude` against an invented machine and then reads keys.json's bytes, with
+`TestFindingASignedInClaudeCodeReportsTheAccountAndNoSecret` for the discovery half; a turn whose
+reply arrives over ACP is `TestADelegatedTurnsReplyArrivesOverACP` against a real JSON-RPC peer over
+real pipes, plus `TestLiveADelegatedTurnReachesTheUsersOwnClaudeCode`, which is the only test here
+that needs an installation and skips unless `CANOPY_LIVE_CLAUDE_CODE` is set, following
+internal/session/live_test.go; a machine without it naming the missing thing and how to install it
+without offering to sign anybody in is
+`TestAMachineWithoutClaudeCodeIsToldWhatToInstallRatherThanShownAnExecError`,
+`TestAMachineWithNoBridgeIsToldToInstallTheBridgeAndNothingElse`,
+`TestAClaudeCodeNobodyIsSignedInToNamesTheCommandThatFixesIt` and
+`TestAMachineWithoutClaudeCodeSaysSoWhenTheCredentialIsUsedRatherThanFailingLater`, the last of which
+also holds that no exec error reaches the surface; no Anthropic OAuth flow anywhere in the tree, held
+over this repository's own source, is `TestNoAnthropicSignInFlowExistsAnywhereInThisRepository`, which
+walks every Go file outside `.git`, `vendor` and `testdata` and fails on an authorisation endpoint, a
+code challenge or a client secret in any file that also mentions Anthropic or Claude, paired with
+`TestNothingDiscoveryReturnsHasRoomForACredential`; the stored credential having no secret behind it
+is `TestADelegatedClaudeCredentialLeavesTheKeychainHalfEmpty` and
+`TestWhatIsWrittenToDiskForADelegatedCredentialIsThreeFactsAndNoCredential`; `canopy keys test` saying
+something true rather than reporting a missing secret as corruption is
+`TestTestingADelegatedCredentialSaysSomethingTrueRatherThanReportingAMissingSecret`, with
+`TestTestingADelegatedCredentialLooksAtTheMachineAgainRatherThanReadingBackWhatWasStored` for the case
+where somebody signed out afterwards; and a delegated turn showing that it draws on the user's own
+subscription and showing no dollar cost is `TestATurnSaysWhoseSubscriptionItRunsOnBeforeItSaysAnythingElse`,
+`TestADelegatedTurnReportsItsTokensAndNeverClaimsToKnowTheirCost`,
+`TestATurnOnADelegatedCredentialIsUnpricedRatherThanFree` and
+`TestATurnOnSomebodyElsesAgentIsUnpricedRatherThanFree`.
+
+The Q-23 clauses, which the block states as prose rather than as acceptance:
+`TestNoCanopyToolIsOfferedToADelegatedTurn`,
+`TestCanopyDeclinesToApproveTheDelegatedAgentsToolCalls`,
+`TestARefusalIsChosenByItsKindRatherThanItsLabel`,
+`TestAPermissionRequestWithNoWayToDeclineStopsTheTurn`,
+`TestAToolTheDelegatedAgentRanIsReportedAndNeverHandedBackToBeRun`,
+`TestTheHandshakeNamesCanopyAndOffersNoFilesystemOrTerminal` and
+`TestARequestForACapabilityCanopyNeverOfferedIsRefusedRatherThanStubbed`.
+
+The rest cover protocol behaviour the clauses imply rather than name.
+`TestEveryWayATurnCanEndArrivesAsADoneEventCanopyUnderstands` and
+`TestAStopReasonThisBuildHasNeverSeenIsAFailureRatherThanAGuess` for the stop reasons;
+`TestALimitOnRequestsWithinOneTurnSaysWhichLimitItWas`;
+`TestCancellingATurnAsksTheAgentToStopRatherThanKillingIt` and
+`TestCancellingBeforeAnythingArrivesStillEndsTheTurn`, which hold that a stopped turn keeps its
+partial reply and is not reported as a failure; `TestABridgeThatStopsMidTurnIsAFailureThatQuotesWhatItSaid`;
+`TestABridgeSpeakingAnotherProtocolVersionIsToldWhichOneCanopySpeaks`;
+`TestABridgeWithNobodySignedInSaysToSignInToClaudeCodeItself`;
+`TestClosingATurnStopsTheProcessBehindIt`, since an unclosed bridge is a Node process and a Claude
+Agent SDK beneath it still holding the plan; `TestTheModelAndEffortTheRequestNamedAreAskedForWhenTheAgentOffersThem`,
+`TestAModelTheDelegatedAgentDoesNotOfferIsSaidRatherThanSubstituted` and
+`TestAnAgentThatOffersNoChoiceOfModelIsNotToldToChangeOne`;
+`TestTheWholeConversationReachesTheDelegatedAgentWithItsVoicesLabelled`,
+`TestASingleMessageGoesAcrossOnItsOwnWithNoTranscriptAroundIt` and
+`TestToolTrafficFromAnEarlierCredentialIsRenderedRatherThanDropped`;
+`TestAnUpdateThisBuildHasNeverHeardOfIsIgnoredRatherThanFatal`,
+`TestAnImageInTheAgentsOwnOutputIsNotNarratedAsText` and
+`TestADoneEventArrivesEvenWhenTheAgentAnswersWithAnError`;
+`TestTheNameOfThisRouteIsNotAnthropic`, since usage is attributed by provider name and a delegated
+turn calling itself "anthropic" would be indistinguishable from a metered one;
+`TestTheBridgesPreviousNameIsStillFound` and `TestAnOverriddenBridgeIsCheckedRatherThanTrusted`;
+`TestAClaudeCodeTooOldToReportItsAccountIsToldToUpdate` and
+`TestAClaudeCodeThatCannotBeRunIsReportedAsSuchRatherThanAsLoggedOut`;
+`TestASignInThroughAnApiAccountIsNotDescribedAsASubscription` and
+`TestATurnOnAnAPIAccountSaysItIsBilledRatherThanMetered`, for somebody whose Claude Code is signed in
+to a Console account and whose delegated turns really are billed per token;
+`TestASecondAccountOnOneMachineIsSaidRatherThanAbsorbed`;
+`TestCancellingAClaudeSignInThatAlreadyCompletedRemovesTheCredential` and
+`TestCancellingAClaudeSignInBeforeItFinishesStoresNothing`, which are S-07's Cancel contract held on
+the first real route; `TestSigningOutOfADelegatedClaudeCredentialRevokesNothingAndSaysSo`;
+`TestADelegatedCredentialListsAsDelegatedAndLetsTheVendorChooseTheModel`;
+`TestTheClaudeRouteSaysWhatItNeedsAndWhatItGivesUp`;
+`TestAConversationOnADelegatedCredentialStartsWithNoModelOfCanopysChoosing`, which also holds that an
+ordinary Anthropic key still gets this build's default;
+`TestADelegatedCredentialResolvesToTheDelegatedRouteRatherThanToTheAnthropicApi` and
+`TestAPastedCredentialStillResolvesTheWayItAlwaysDid`, which is the regression that matters most, that
+an ordinary Anthropic key is untouched by any of this; and
+`TestARateSomebodySetOnADelegatedCredentialStillDoesNotProduceAFigure`,
+`TestTheSameModelOnAPastedCredentialIsStillPriced` and
+`TestCacheSavingsAreNotReportedForATurnWithNoPrice` in internal/pricing.
+
+One test of S-07's was changed rather than left failing.
+`TestSigningInWithNoRouteBuiltSaysWhichRoutesAreComing` asserted the shipped registry was empty, which
+was true until this task and is not now. It sets `noRoutes{}` explicitly instead, so it still holds
+exactly what it was written to hold: what a build with nothing behind it says.
+
+Run before ticking: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues. Run against a clone of this branch at this commit rather
+than in the shared worktree, because `internal/provider/copilot` is in flight there for S-03 and does
+not build until its dependency is added.
+
+verification (claude, 2026-07-31): acceptance re-run and holds. The load-bearing guard was mutation
+tested rather than read: mapping a `tool_call` update onto `core.EventToolCall` fails
+TestAToolTheDelegatedAgentRanIsReportedAndNeverHandedBackToBeRun, and changing the refusal to match
+on the option's label instead of its kind fails TestARefusalIsChosenByItsKindRatherThanItsLabel.
+
+One defect found and fixed in its own commit, in this route's process handling rather than its
+protocol. The bridge was started through internal/exec, asked to stop, and then reaped with the raw
+`cmd.Wait` instead of `Child.Wait`. Only `Child.Wait` sets `reaped`, and it does so under the lock
+that guards the group signal, so reaping the other way left `Stop`'s escalation armed against a pid
+the kernel had already been free to reissue. Every delegated turn sent SIGKILL to a process group
+250ms after Close, and on a busy machine that group need not have been the bridge's. The process
+Canopy meant to kill did die, which is why the suite never saw it. Held now by a source sweep in
+each package, because both spellings compile and the difference is only ever visible as somebody
+else's job dying.
+
+**Codex corrective pass 2026-07-31.** The Claude bridge now receives the exact `Agent.Dir` selected
+by D-33. The direct/isolated by trust-level matrix asserts that an isolated session is rooted in its
+owned worktree rather than Canopy's launch checkout. Cancellation has a bounded forced-close path
+when the bridge ignores `session/cancel` or never answers initialization, and the ACP reader rejects
+a newline-delimited JSON-RPC frame over 4 MiB. Those are liveness and memory bounds; neither turns
+the vendor's tools into Canopy-confined tools.
+
+### S-05 OpenAI signs in through the Codex app server
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01, S-02`
+`scope: internal/provider/codex/ (new), internal/keys/, internal/session/resolver.go, cmd/canopy/`
+
+Deliverable: OpenAI is the route with no third-party programme, and therefore the one where the
+choice of surface matters most. It does have a documented one. `codex app-server` is Apache-2.0,
+speaks JSON-RPC 2.0, and is published by OpenAI as the interface Codex itself uses to power rich
+clients, described in their documentation as what to use for a deep integration inside your own
+product, covering authentication, conversation history, approvals and streamed agent events. Canopy
+drives it and lets it own the ChatGPT sign-in: `account/login/start` with type `chatgpt`, where the
+app server hosts the loopback callback itself, or `chatgptDeviceCode` where no browser is available.
+Canopy adds no listener of its own, which is how constraint 5 survives this task.
+
+Canopy identifies itself honestly. A client's `clientInfo.name` at `initialize` becomes the upstream
+`originator` header, so Canopy appears as `canopy`. It must not send `originator: codex_cli_rs`.
+Impersonating another client is the one behaviour the terms plausibly reach, none of the established
+projects on this path do it, and a route chosen because it is defensible stops being defensible the
+moment it lies about who is calling. Send a `version` header beside it: backend model routing is
+cohort-keyed on originator plus version, and a missing version has been observed to change which
+models resolve, in openai/codex issue #31967, opened 2026-07-10 and closed 2026-07-25. OpenAI ask
+new integrations intended for enterprise use to contact them for a known-clients list, which is a
+thing to do rather than a thing to build.
+
+The fallback, when the binary is absent, is to reuse a login the user already has rather than mint
+one. Codex stores tokens at `$CODEX_HOME/auth.json`, by default `~/.codex/auth.json`, mode 0600,
+holding `id_token`, `access_token`, `refresh_token` and `account_id`, refreshable against
+`https://auth.openai.com/oauth/token`, with inference at `https://chatgpt.com/backend-api/codex`.
+That path is degraded on purpose and is not the design. There is also an experimental
+`chatgptAuthTokens` mode for hosts that own the token lifecycle, and it is deliberately not the first
+choice, because owning that lifecycle is precisely the liability the app server exists to take.
+
+Two costs belong to this task rather than being discovered inside it. It depends on a `codex` binary,
+either bundled or discovered on the machine, and which of the two is decided here and recorded,
+because a discovered binary is a version Canopy does not control and a bundled one is a licence
+obligation and a release artefact. And there is an open, unanswered OpenAI issue reporting 429 quota
+errors for third-party OAuth on active Plus plans, so this route may be quota-segregated from what
+the same user sees in the ChatGPT client. They are told that before they sign in, not after the
+first 429.
+
+Acceptance: with `codex` present, signing in drives `account/login/start` and completes, and the
+device-code path completes on a machine with no browser. The `initialize` handshake sends a
+`clientInfo.name` of `canopy` and a version, held by a test that fails if either is missing or if the
+originator is ever a value belonging to another client. A turn runs and streams.
+`account/rateLimits/read` returns the plan's limits and they reach a surface a user can see. With
+`codex` absent but `auth.json` present, the fallback authenticates and says out loud that it is the
+degraded path rather than pretending to be the design. With neither present, the failure says which
+of the two would fix it. The 429 caveat is shown before the credential is stored, not only in
+LIMITATIONS. Refresh follows S-02.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `internal/provider/codex`, a `core.ProviderClient` that starts `codex app-server` as
+a child process and has a JSON-RPC conversation with it over stdio. The route is registered in
+`cmd/canopy/signin_codex.go` and joins S-03's `routeSet`. `internal/session/resolver.go` and
+`cmd/canopy/ask.go` each gained one branch inside the delegated fork they already had. Nothing under
+`internal/core` is touched, and no change to it was needed or nearly needed.
+
+The primary route was taken, and it turned out to be more primary than the block assumed. The app
+server does not only host the sign-in, it keeps the grant afterwards, in `$CODEX_HOME`, and renews
+it without being asked. So this is a `KindDelegated` credential, the same kind as the Claude
+route's, and Canopy holds no ChatGPT token at any point. That is the single fact most of the notes
+below follow from, and it is a better outcome than the block expected rather than a worse one: the
+reason D-51 permits the Claude route at all is that Canopy holds none of the user's subscription
+credential, and this route now has that same property while still being a real sign-in Canopy
+initiates.
+
+The wire format was established rather than remembered, and the binary turned out to publish it.
+`codex app-server generate-json-schema --out DIR` writes the whole protocol out of the installed
+binary: 84 client requests, 10 server requests, 71 server notifications, one client notification. So
+every method name, field name and enum value in wire.go is that binary's own spelling at 0.141.0
+rather than a reading of a blog post. It was then confirmed by driving a real app server against a
+real ChatGPT account and logging every frame in both directions, which is where the three things a
+schema would not have given came from.
+
+The first is the one this route stands on. `initialize` answers with a `userAgent` composed from the
+`clientInfo.name` the client just sent: sending `canopy` gets back `canopy/0.141.0 (Mac OS 26.0.1;
+arm64) ghostty/1.2.3 (canopy; 0.1.0)`, and sending `codex_cli_rs` gets back a string beginning
+`codex_cli_rs`. That was checked by sending three different names and reading the three answers. It
+means the originator claim is checkable from inside rather than merely intended, so `checkIdentity`
+reads Canopy's own name back off the handshake and refuses to run a turn under one belonging to
+somebody else. It has never fired, which is the point: a promise is worth what it can be checked
+for. The loopback flow confirms the same thing from the other end, because the `authUrl` the app
+server returns carries `&originator=canopy` in its query string.
+
+The second is that cancelling a login still produces an `account/login/completed`, with `success`
+false and `error` "Login was not completed". That was found by starting a real device-code login,
+reading the code, and cancelling it. It matters because it is the difference between a wait that is
+always released and one that can hang: there is exactly one event that ends a sign-in and no path
+that ends it silently.
+
+The third is that a turn's tokens arrive on `thread/tokenUsage/updated` rather than on the
+`turn/start` result or on `turn/completed`, and that the notification carries `last` and `total`
+separately. Reporting `total` would have made every turn in a thread look like it cost everything
+before it as well.
+
+Q-23 is answered as S-04 answered it, and the protocol settles more of it here than it did there.
+
+Canopy's tools are not offered, and there is no field to offer them through: `thread/start` and
+`turn/start` have nowhere to put a client's tool definitions, and the only tools in the room are the
+app server's own plus whatever MCP servers the user's own `config.toml` starts. Held by
+`TestNoCanopyToolIsOfferedToADelegatedTurn`, which puts two definitions on the request and searches
+every frame that crossed.
+
+Canopy declines every approval. `item/commandExecution/requestApproval` and
+`item/fileChange/requestApproval` are both answered `{"decision":"decline"}`, and each refusal is
+reported to the reader. Declining rather than cancelling is a real choice between the protocol's two
+refusals: cancel stops the whole turn, and Canopy is refusing to vouch for one call rather than
+objecting to the work. The thread is opened `read-only` with `on-request`, which is the honest
+pairing for a client that refuses everything. `never` reads as safer and is worse: it tells the app
+server to stop asking and get on with whatever the sandbox permits, so the calls Canopy would have
+declined simply happen and nobody is told.
+
+And the load-bearing one, which S-04 asked to be checked and satisfied rather than assumed. No item
+from the delegated agent becomes a `core.EventToolCall`. `internal/agent/loop.go` collects those and
+invokes them, so the obvious mapping would have Canopy run a command the app server has already run
+inside its own sandbox, through a gate, against a tool definition it does not have. Every item type
+becomes a `core.EventNotice` except `agentMessage` and `reasoning`, which become text and thinking.
+The way I satisfied myself is a test rather than a reading: `TestNoItemFromTheDelegatedAgentIsEver
+HandedBackToBeRun` sends all eleven item types the protocol has plus two invented ones, and fails on
+any tool call event at all. The live test asserts the same thing against a real Codex. There is no
+branch in `reportItem` that can produce one, which is why the invented types are in the list.
+
+Three things belong to this task rather than being discovered inside it, and the block asks for
+each.
+
+**The binary is discovered, not bundled.** Bundling means a per-platform Rust binary inside a
+release that is one small static Go binary, an Apache-2.0 notice obligation, and a version pinned on
+release day while the protocol it speaks keeps moving. Discovering costs the opposite thing, that
+the version is not Canopy's to control, and the answer to that is that the handshake checks what it
+found rather than assuming a shape. `CANOPY_CODEX` overrides where it is looked for and is checked
+rather than trusted, because a stale override is a path that used to exist. Recorded in
+LIMITATIONS.md as well as here, because it is the user who lives with it.
+
+**Absence is reported in three different sentences, because there are three different situations.**
+No binary and no login: install the Codex CLI, with both install commands named, and no exec error
+anywhere near the surface. A login in `$CODEX_HOME` and no binary: the account and plan that login
+belongs to, the directory it is in, and the sentence that the sign-in is not what is missing, the
+program that uses it is. A binary that was found and will not run: reinstall, which is a different
+sentence from "install this". Held by `TestAMachineWithNeitherCodexNorALoginIsToldWhatToInstall` and
+`TestAMachineWithALoginAndNoCodexIsToldTheProgramIsMissingRatherThanTheSignIn`.
+
+**The 429 caveat is in `keysui.Route.Caveat`**, which both surfaces draw before anything is stored:
+`runKeysSignIn` prints it before the prompt and before the wait, and `view.go` renders it on the
+sign-in step. Held by `TestTheQuotaCaveatIsShownBeforeAnythingIsStored`, which runs a sign-in that
+never completes and then asserts both that the caveat was printed and that no credential exists.
+
+What `canopy keys test` says now on this route, which is the clause S-07 built
+`reportsOnCredentials` for and the reason it stops saying "No vendor was contacted". It asks the app
+server, which asks OpenAI: the account's email, the plan the limits belong to, the primary window as
+"42% used of a 5 hour window, resets 2026-08-29 12:00", the secondary window where there is one,
+whether a limit has actually been hit and which sort, and any credits behind the plan. Two extra
+lines when they are true: that the credential was added for one account and Codex is now signed in
+as another, so turns run as the second; and that this is an API-key Codex rather than a ChatGPT
+plan, so turns are billed per token there. A vendor that cannot be reached says it could not be
+asked and repeats what it was that failed, rather than letting the stored account read as a checked
+one. Held by
+`TestKeysTestOnAChatGPTCredentialAsksOpenAIRatherThanReadingBackTheRecord` and
+`TestKeysTestRefusesToInventAnAnswerWhenOpenAICannotBeAsked`.
+
+Considered and rejected. `chatgptAuthTokens`, the mode where the host supplies its own access token:
+rejected, and the schema is blunter about it than the block is. Its own description reads
+"[UNSTABLE] FOR OPENAI INTERNAL USE ONLY - DO NOT USE". It exists for hosts that already own the
+token lifecycle, and owning that lifecycle is precisely the liability this route was chosen to take
+off Canopy. Held by `TestCanopyNeverAsksToOwnTheTokenLifecycleItself`, which sweeps every frame of
+every mode for the string. Running Canopy's own PKCE flow with OpenAI's
+`app_EMoamEEZ73f0CkXaXp7hrann` client id: rejected without needing the argument, because it never
+came up: the app server uses that client id itself, which is visible in the `authUrl` it returns, so
+Canopy borrows nobody's OAuth client. Setting `capabilities.experimentalApi`: rejected, it opts into
+methods whose shape may change without notice, and this route already depends on a binary Canopy
+does not version.
+`capabilities.requestAttestation`: rejected harder, it opts into being asked to generate an upstream
+attestation header, which is not something Canopy has any business producing on somebody's behalf. A
+long-lived thread per conversation, the way S-03's route holds a Copilot session: rejected because
+`core.Request` carries the whole transcript every turn, so a thread that already held the history
+would receive every earlier message twice. One process and one ephemeral thread per turn instead,
+which also means Canopy's history editing, re-rolling and compaction keep working, unlike on the
+Copilot route. Comparing `codex --version` against a minimum: rejected for S-04's reason, a version
+number is something somebody has to keep correct and it breaks on the day the vendor renumbers; the
+handshake tests the thing that actually matters. Emitting a notice per `item/completed`: rejected,
+one per status change buries the reply, so only the start of an item is reported. Treating an
+unknown notification as a fault: rejected, this protocol grows by adding them. Treating an unknown
+*turn status* as normal, by contrast, is a failure, because presenting an answer nobody can vouch
+for as complete is worse than saying the protocol moved.
+
+**The counter-position, recorded because it is real and this should not read as one-sided.** Charm's
+Crush deliberately refused to add a ChatGPT subscription provider, twice closing working
+implementations, with their maintainers citing OpenAI's terms of service. Reasonable maintainers
+looked at the same facts and reached the opposite answer from the one D-51 reached, and anybody
+reading this later should know that rather than discover it. The reason this route is here anyway is
+narrower than "OpenAI seem fine with it": OpenAI publish `codex app-server` under Apache-2.0 and
+document it as the interface for exactly this case, their own app-server documentation asks new
+integrations to identify themselves through `clientInfo.name`, and the one behaviour their terms
+plausibly reach is impersonating another client, which is the thing this build refuses and holds a
+repository-wide test against. If that reading is wrong, the honest consequence is that the route
+should go, not that it should get quieter.
+
+Four corrections to the block, all verified rather than argued.
+
+The first matters most. **"Refresh follows S-02" cannot happen on this route as built, because there
+is nothing to refresh.** The clause presumes Canopy holds a token, and taking the primary route
+means it does not: the app server owns the grant and renews it. `keys.Refresher.Credential` refuses
+a delegated credential in `internal/keys`' own words before any source is consulted, and nothing is
+registered through `SourceFor`. That is the correct behaviour rather than a gap, and it is asserted
+rather than left implied by
+`TestNothingOnTheChatGPTRouteIsRenewedByCanopyBecauseCanopyHoldsNoToken`, which holds both halves:
+the refresher refuses, and no source claims the route. S-02's seam is genuinely used by S-03, and
+the reason it was written as a function rather than a map still holds.
+
+The second is the fallback, and it is where this build departs from the block rather than correcting
+it, so it is flagged for both supervisors rather than presented as settled. **The fallback reads and
+reports; it does not become a second way to make requests.** The block asks for one that
+"authenticates" against `https://auth.openai.com/oauth/token` and runs inference at
+`https://chatgpt.com/backend-api/codex`. That was not built, for three reasons. D-51 permits this
+route "through the Codex app server" and permits the Claude route on the stated ground that Canopy
+holds none of the user's subscription credential; lifting tokens out of `auth.json` and calling
+chatgpt.com with them is Canopy holding exactly that, and the appendix to DECISIONS.md says TASKS.md
+may expand a decision into executable criteria and may not contradict one. It would also break what
+it was rescuing: the refresh token in `auth.json` belongs to the user's own Codex and OpenAI rotate
+it, so whichever process redeems it last wins and the other is signed out, meaning a Canopy that
+renewed a login it does not own would sign somebody out of their own Codex to keep a copy working.
+And the premise is narrow, because `auth.json` is written by `codex login`, so a machine that has
+one and no binary is a machine whose binary was removed or is off PATH, and the sentence that fixes
+that is the one now printed. What was built reads `$CODEX_HOME/auth.json`, decodes the account and
+plan out of the identity token's claims under OpenAI's own namespace, and says whose login it is and
+what is missing. `TestTheDegradedPathReadsWhoIsSignedInAndHandsBackNoToken` holds that no token
+survives into any type this package hands out. If the supervisors want the inference path anyway, it
+is a change to D-51 first and a task second.
+
+The third is small and worth saying because it changes what a test can assert. **Canopy sets no HTTP
+headers on this route at all**, so "send a `version` header beside it" is not something this code
+can do. What Canopy controls is `clientInfo.name` and `clientInfo.version`, and the app server folds
+both into what it sends: the name becomes the originator verbatim and the version appears in the
+user agent's trailing parenthetical, both confirmed by reading the handshake back. A version is
+therefore sent, and the test asserts it is non-empty rather than asserting a header exists.
+Relatedly, I could not confirm that a standalone `version` header exists in current Codex at all;
+openai/codex issue 31967 is cited in the block and I did not verify it, so it is repeated here as
+reported rather than as established.
+
+The fourth is a citation. The block's material mentions an OpenAI OSS programme page at
+`developers.openai.com/community/codex-for-oss`; I could not confirm that page exists. What is
+confirmed, and is the stronger statement anyway, is the app-server documentation's own text asking
+integrations intended for enterprise use to contact OpenAI to be added to a known-clients list. That
+is what LIMITATIONS.md cites, with its date. The 429 report the block describes is likewise recorded
+as an open, unanswered report rather than as a fact, which is how the caveat words it.
+
+Verified end to end against a real installation before ticking, since a scripted peer proves only
+that Canopy is consistent with its own reading of the protocol: `codex-cli` 0.141.0 from Homebrew, a
+real ChatGPT account, `CANOPY_LIVE_CODEX=1`. `TestLiveADelegatedTurnReachesTheUsersOwnCodex`
+returned
+`pong` with `{InputTokens:14751 OutputTokens:5 CacheReadTokens:3456 CacheWriteTokens:0 CostUSD:0
+CostKnown:false}`, which is the cost clause happening rather than being asserted, and the opening
+notice arrived first. `TestLiveTheAppServerIdentifiesCanopyAsCanopy` read back
+`canopy/0.141.0 (Mac OS 26.0.1; arm64) ghostty/1.2.3 (canopy; 0.1.0-test)` from the real binary.
+`TestLiveThePlansLimitsComeBackFromOpenAI` returned a real window: 0% used of a 30 day window,
+resetting 2026-08-29. The device-code flow was driven against the real OpenAI auth server as well,
+producing `https://auth.openai.com/codex/device` and a code, and then cancelled;
+`~/.codex/auth.json` was backed up first and compared byte for byte afterwards, and was untouched.
+
+Acceptance, clause by clause: signing in driving `account/login/start` and completing, with `codex`
+present, is `TestSigningInDrivesTheAppServersOwnFlowAndEndsWithTheAccountItSignedIn` for the
+protocol and `TestSigningInThroughChatGPTStoresADelegatedCredentialWithNoTokenBehindIt` for what
+reaches the store, the second asserting against keys.json's bytes; the device-code path completing
+on a machine with no browser is `TestAMachineWithNoBrowserIsGivenACodeToTypeSomewhereElse`, with
+`TestASessionThatLooksRemoteIsGivenTheCodeRatherThanTheBrowser` for the choice between the two,
+which is made by looking at the session because the browser flow's callback is a localhost address
+and over ssh it never arrives; the handshake sending a `clientInfo.name` of `canopy` and a version,
+failing if either is missing or if the originator ever belongs to another client, is
+`TestTheHandshakeNamesCanopyAndAVersionAndNeverAnotherClient`, with
+`TestAnAppServerThatWouldCallCanopySomethingElseStopsTheTurn` holding the other direction and
+`TestNoOriginatorBelongingToAnotherClientAppearsAnywhereInThisRepository` holding it over every Go
+file in the tree, since a test scoped to this package would pass on the day somebody set the name
+elsewhere; a turn running and streaming is `TestADelegatedTurnsReplyArrivesOverTheAppServer` against
+a real JSON-RPC peer over real pipes, plus the live test; `account/rateLimits/read` returning the
+plan's limits and reaching a surface a user can see is
+`TestKeysTestOnAChatGPTCredentialAsksOpenAIRatherThanReadingBackTheRecord` and
+`TestLiveThePlansLimitsComeBackFromOpenAI`; `codex` absent with `auth.json` present saying out loud
+that it is the degraded path is
+`TestAMachineWithALoginAndNoCodexIsToldTheProgramIsMissingRatherThanTheSignIn`, with the departure
+from the block argued four paragraphs above; neither present naming which of the two would fix it is
+`TestAMachineWithNeitherCodexNorALoginIsToldWhatToInstall`; the 429 caveat being shown before the
+credential is stored is `TestTheQuotaCaveatIsShownBeforeAnythingIsStored`; and refresh following
+S-02 is `TestNothingOnTheChatGPTRouteIsRenewedByCanopyBecauseCanopyHoldsNoToken`, which holds the
+corrected form of the clause.
+
+The Q-23 clauses, which the block states as prose rather than as acceptance:
+`TestNoItemFromTheDelegatedAgentIsEverHandedBackToBeRun`,
+`TestCanopyDeclinesEveryApprovalTheDelegatedAgentAsksFor`,
+`TestARequestForACapabilityCanopyNeverOfferedIsRefusedRatherThanStubbed`,
+`TestNoCanopyToolIsOfferedToADelegatedTurn`,
+`TestATurnSaysWhoseSubscriptionItRunsOnBeforeItSaysAnythingElse` and
+`TestADelegatedThreadAsksToBeAskedAndIsRootedReadOnly`.
+
+The rest cover protocol behaviour the clauses imply rather than name.
+`TestADelegatedTurnReportsItsTokensAndNeverClaimsToKnowTheirCost`, which also holds that the last
+turn is reported rather than the thread total;
+`TestAReplyThatArrivesOnlyWholeIsNotLostAndOneThatArrivesTwiceIsNotDoubled`, which is the one that
+would fail if the item's whole text were read alongside its deltas;
+`TestReasoningArrivesAsThinkingRatherThanAsPartOfTheReply`;
+`TestEveryWayATurnCanEndArrivesAsADoneEventCanopyUnderstands` and
+`TestAStatusThisBuildHasNeverSeenIsAFailureRatherThanAGuess`;
+`TestAFailureTheAppServerWillRetryIsANoticeRatherThanTheEndOfTheTurn`, without which a turn the app
+server is retrying is reported dead while it is still running;
+`TestCancellingATurnAsksTheAgentToStopRatherThanKillingIt` and `TestATurnDoesNotOutliveItsContext`;
+`TestClosingATurnStopsTheProcessBehindIt`, since an unclosed app server holds the MCP servers the
+user's own config told it to start; `TestATurnThatNamesNoModelIsTheOrdinaryCaseRatherThanAMalformed
+One`, `TestAModelTheDelegatedAgentDoesNotOfferIsSaidRatherThanSubstituted` and
+`TestATurnThatDoesNotStartWithTheUserIsRefused`;
+`TestTheWholeConversationReachesTheDelegatedAgentWithItsVoicesLabelled`, which also holds that the
+system prompt goes in as the thread's developer instructions;
+`TestAnAppServerThatStopsMidTurnIsAFailureThatQuotesWhatItSaid` and
+`TestAnAppServerWithNobodySignedInSaysToSignInAgain`; `TestTheNameOfThisRouteIsNotOpenAI`, since
+usage is attributed by provider name and a delegated turn calling itself "openai" would be
+indistinguishable from a metered one; `TestAnAppServerThatReportsNoUserAgentIsNotAccusedOfLying`,
+because silence is not evidence; `TestASignInOpenAIRefusedSaysWhatOpenAISaid`,
+`TestASignInThatCompletesWithNoAccountBehindItIsRefused` and
+`TestCancellingASignInStopsThePollingAndSaysItWasStoppedRatherThanThatItFailed`;
+`TestNothingHereSpendsTheRefreshTokenTheUsersOwnCodexIsGoingToNeed` and
+`TestNothingHereCanSignTheUsersOwnCodexOut`, which hold the two things this route deliberately does
+not do to a login it does not own;
+`TestAnOverriddenBinaryIsCheckedRatherThanTrusted`,
+`TestCodexHomeIsWhereCodexSaysItIsRatherThanWhereCanopyGuesses` and
+`TestTheBinaryIsFoundOnTheMachineRatherThanShippedInside`;
+`TestALoginFileFromAnAPIKeyCodexIsNotDescribedAsASubscription` and
+`TestALoginWhoseIdentityTokenCannotBeReadIsStillALogin`;
+`TestTheChatGPTRouteIdIsTheOneRecordedOnItsCredentials` and
+`TestAnAccountWhosePlanChangedIsNotReportedAsADifferentAccount`, which are the two the live smoke
+check found; `TestCancellingAChatGPTSignInStopsThePollingAndStoresNothing` and
+`TestCancellingAChatGPTSignInThatAlreadyCompletedRemovesTheCredential`, which are S-07's Cancel
+contract held on the first route in this build where somebody genuinely has minutes to change their
+mind; `TestTheChatGPTRouteIsOfferedByTheBuildAndNamesWhatItNeeds` and
+`TestNamingAChatGPTRouteThatDoesNotExistSaysWhichOnesDo`; and, in internal/session,
+`TestACodexCredentialResolvesToTheAppServerRatherThanToAnOpenAIEndpoint`,
+`TestTheTwoDelegatedRoutesDoNotResolveToEachOthersAgents`, which is the regression that matters most
+now that there are two delegated routes and one of them is openai-compatible, and
+`TestAMachineWithoutCodexSaysSoWhenTheCredentialIsUsed`.
+
+Found on the way, in the fake app server rather than in production, and worth recording because it
+is the same hazard S-04 found from the other side: a script that talks while its own read loop is
+blocked deadlocks against a client doing the same. The fake now runs its script on its own goroutine
+and locks its writes. Production is safe for the reason S-04's is, that a refusal is small enough to
+fit an operating system pipe buffer, and the fake's unbuffered pipes are what made the shape
+visible.
+
+Found by running the built command against a real Codex rather than by reading the code, which is
+the argument for doing that before ticking anything. Two bugs, and both were invisible to a suite
+that was already green.
+
+The route ids were `chatgpt` and `chatgpt-device` and the credential recorded route `codex`.
+`routeSet.Report` dispatches by matching the recorded route against the ids its members offer, so
+nothing matched, and `canopy keys test` on a real credential answered that the credential "was
+signed in through codex, which this build no longer offers" instead of asking OpenAI anything. The
+ids are now `codex` and `codex-device`, and `codexRouteID` is `codex.Route` itself rather than a
+string that happens to agree with it. Held by
+`TestTheChatGPTRouteIdIsTheOneRecordedOnItsCredentials`, which asserts through `offers`, the
+function the dispatch actually uses.
+
+The stored account was `Account.String()`, which reads "someone@example.com (pro)". Report compares
+the stored account against the one the vendor reports now, to say when turns are running as somebody
+else, and against a real account that comparison fired immediately: the vendor reports the address
+and the record held the address plus the plan. Worse than a cosmetic false positive, it would fire
+on every credential in the world on the day its owner changed plan. The record now holds the address
+alone, which is what it should always have been: this is an identity, and folding the plan into it
+makes it move like a clock, which is exactly the objection S-01 raised against recording a
+fingerprint. Held by `TestAnAccountWhosePlanChangedIsNotReportedAsADifferentAccount`, which upgrades
+the plan and expects silence, then changes the address and expects the note, so the first half
+cannot be satisfied by deleting it.
+
+Both ids still store the same route, because how somebody signed in is not a property of the
+credential and where its turns go is. The second exists so a person the browser guess got wrong can
+ask for the code instead.
+
+Two things this route deliberately does not do, said here because the code no longer contains them
+to be read. It never asks the app server to renew the grant before answering a question, because
+OpenAI rotate refresh tokens and whichever process redeems one last wins, so a probe that renewed
+would spend the token the user's own `codex` was about to use. And it implements no
+`revokesCredentials`, so `canopy keys signout` removes Canopy's record and leaves the ChatGPT login
+in `~/.codex` where that same `codex` uses it; `account/logout` exists in the protocol and calling
+it is exactly the surprise nobody asked for. Held from the outside by
+`TestNothingHereSpendsTheRefreshTokenTheUsersOwnCodexIsGoingToNeed` and
+`TestNothingHereCanSignTheUsersOwnCodexOut`, and LIMITATIONS.md names `codex logout` for anybody who
+does want it gone.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree, because
+`internal/provider/copilot` and the two switches were in flight there for S-03 while this was
+written: `go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty,
+`golangci-lint run ./...` reports no issues.
+
+verification (claude, 2026-07-31): acceptance re-run and holds, and the route's behaviour was right
+everywhere it was checked. One test was not, and it was the most load-bearing one in the block.
+
+TestCanopyDeclinesEveryApprovalTheDelegatedAgentAsksFor read the decision off the wire and compared
+it against `decisionDecline`, the constant that produced it. Setting that constant to "approve" left
+the whole suite green. Canopy would then have approved every command execution and every file change
+the app server asked about, while the conversation showed Canopy's own permission mode: the exact
+failure this block quotes Q-23 as forbidding. The assertion now names the protocol's own word, and
+fails against the mutation. Nothing about the shipped behaviour changed; what changed is that it is
+now held. The sibling ACP test was checked for the same shape and does assert literals.
+
+The `cmd.Wait` defect recorded under S-04 was present in this route's server.go too and is fixed in
+the same commit, with the same source sweep added here.
+
+**Codex corrective pass 2026-07-31.** The Codex app server now receives the exact `Agent.Dir`
+selected by D-33. The direct/isolated by trust-level matrix asserts that an isolated thread is rooted
+in its owned worktree rather than Canopy's launch checkout. Cancellation has a bounded forced-close
+path when the app server ignores `turn/interrupt` or never answers initialization, and the app-server
+reader rejects a newline-delimited JSON-RPC frame over 4 MiB. These are held in
+`internal/session` and `internal/provider/codex`; the close is a liveness bound, not a new
+containment claim.
+
+### S-06 The wizard has a path that never asks for a secret
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: internal/tui/keys/, internal/tui/`
+
+Deliverable: a branch of the add-credential wizard that ends without a secret prompt. The state
+machine is `mode` at internal/tui/keys/model.go:41 and every path through it currently terminates at
+`modeSecret`: an Anthropic key goes name, provider, secret, and an OpenAI-compatible key goes name,
+provider, base URL, model, secret. A subscription credential has nothing to type, so the provider
+step gains the subscription choices and those route to a sign-in step instead, which shows whatever
+the vendor's flow needs shown, a user code and a URL or simply a wait, reports success as the account
+that was signed in as, and returns to the list with the new credential selected the way U-24
+established. Cancelling part way leaves nothing stored and nothing half written, which is
+`cancelDraft` at model.go:559 doing for a live sign-in what it already does for a draft.
+
+A signed-in credential appears in the list and in the model picker as itself. What it can run comes
+from the delegated agent rather than from `internal/catalog`, and where the vendor chooses the model
+and offers no say, the picker says the vendor chooses rather than showing an empty list, which is
+D-46 rule 1's spirit in a case the catalog does not cover.
+
+One boundary needs care. `TestDashboardOnlyDependsOnCore` at internal/tui/dashboard_test.go:73 holds
+that the interface imports only `internal/core` and other `internal/tui` packages, because otherwise
+it stops being swappable between the fake and the real engine. It walks one directory and does not
+recurse, so `internal/tui/keys` is not actually held to it and already imports `internal/catalog`.
+That is a gap, not a licence. A sign-in flow reaching into `internal/provider` or `internal/keys`
+from a screen is exactly what the rule exists to stop. The sign-in runs behind the narrow `Store`
+interface at model.go:24 or behind a new interface just as narrow, and the test is extended to cover
+the subpackages rather than left walking a single directory.
+
+Acceptance: somebody with no credentials adds a subscription one through the wizard, is never shown a
+secret prompt, and the conversation's next message runs on it with no further keystroke. The list row
+says which account it is signed in as and when the grant expires. Cancelling at the sign-in step
+stores nothing and leaves no partial record. A vendor that chooses the model says so where the picker
+would otherwise be empty. Every new screen renders at 80 columns and under `NO_COLOR`. The import
+boundary test covers `internal/tui/keys` and `internal/tui/chat` and passes.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built as `modeSignIn` in internal/tui/keys, reached from the provider step, with the port it
+runs behind in internal/tui/keys/signin.go and the conversion to internal/keys in
+cmd/canopy/credentials.go.
+
+The port, which the task left open between "the narrow Store at model.go:24" and "a new interface
+just as narrow": both, split by what each answers. Signing somebody in is `SignIn`, two methods,
+`Routes` and `Begin`, with `Begin` returning an `Attempt` that has `Prompt`, `Wait` and `Cancel`.
+Reading what a credential already is, which the list and the model picker need on every frame, is one
+method on `Store` called `Identity`. Putting the second on `SignIn` was tried first and is wrong: a
+build with no routes has a nil `SignIn` and still has credentials somebody signed in to on a previous
+build, so the list would have gone blank for exactly the person this phase is for. The narrowness
+property survives, and it is worth saying which property that is rather than counting methods: no
+method in this package can return a secret. `Identity` carries a kind, an account and an expiry,
+which are the three facts S-01 deliberately keeps out of the keychain half so a list can draw them
+without unlocking anything. `Attempt.Wait` stores the credential itself and hands back a name and an
+account, so a token never enters this package at all rather than entering it and being handled
+carefully.
+
+The asynchronous half, which is the part with a real failure mode behind it. Bubble Tea runs one
+goroutine and a device code takes minutes, so `Begin` and `Wait` are both commands and both arrive
+back as messages, and escape is live for the whole wait. Cancellation is an attempt number rather
+than a flag: `abandonAttempt` bumps it before anything else, so a `signInDoneMsg` from a sign-in
+somebody has already escaped out of carries a stale number and is dropped rather than being taken for
+the next attempt's answer, which matters because the obvious sequence of cancel-then-retry produces
+exactly that. A `signInStartedMsg` with a stale number is not merely dropped, it is cancelled: an
+abandoned device code otherwise goes on polling a vendor every few seconds for as long as the program
+runs, on behalf of somebody who pressed escape. And `Attempt.Cancel` is documented as undoing a
+sign-in that completed between the keystroke and the call, not only stopping one that had not, since
+a credential nobody knows they have is worse than one that failed to appear. Held by
+TestCancellingASignInThatHadAlreadySucceededTakesTheCredentialBackOut.
+
+Found on the way and fixed here, because S-06's first acceptance clause is false without it: the
+application read the credential screen's choice only while handling a key, at app.go:390 in the
+`screenKeys` branch. A sign-in ends on a message from a vendor, so the choice sat unapplied until the
+person pressed something unrelated, and "the conversation's next message runs on it with no further
+keystroke" would have been wrong by one keystroke. The three lines of the refusal protocol are now
+`applyCredentialChoice`, called from both paths, rather than copied into the second one where the
+copy would drift. Two lines above it, `a.keys.Update(msg)` discarded its command on the non-key path,
+which was invisible while every message this screen answered was answered in one step and broke the
+sign-in chain the moment there were two steps with a vendor between them.
+
+The import boundary test, and the one place this reports back rather than complying. The task is
+right that the gap is a gap: `TestDashboardOnlyDependsOnCore` walked one directory, so
+internal/tui/keys was never held to it and had been importing internal/catalog for two phases. It now
+walks the whole interface, and is renamed to
+TestEveryInterfacePackageDependsOnTheContractAndNotOnTheEngine, since "dashboard" was the name of the
+one package it happened to cover. But the acceptance clause as written cannot be met by the rule as
+written: internal/tui/chat imports internal/session, internal/permission and internal/config today,
+in non-test code, and removing those is a refactor of `chat.Engine`'s signatures rather than anything
+S-06 could carry. So the check became an allow-list keyed by package, `allowedOutside`, with a
+sentence of reason per entry, defaulting to internal/core and internal/tui alone. That is weaker than
+"only core" for chat and agents and stronger than what existed for everything, because the previous
+arrangement enforced the rule only where it was already true. The property the task actually wants is
+enforced everywhere with no exemption available: a screen reaching internal/keys, internal/provider,
+internal/git or internal/store fails immediately, which is what would have happened had the sign-in
+been built the obvious way.
+
+Acceptance, clause by clause: somebody with no credentials adds a subscription one, is never shown a
+secret prompt, and the next message runs on it with no further keystroke is
+TestASubscriptionIsAddedThroughTheWizardWithoutASecretPromptAnywhere for the screen and
+TestTheConversationRunsOnASignedInCredentialWithNoFurtherKeystroke for the application, the second
+being the one that holds the "no further keystroke" half, since only the application knows what the
+conversation runs on; the list row saying the account and the expiry is
+TestTheListRowNamesTheAccountAndWhenTheGrantExpires, with
+TestALapsedGrantSaysSoInWordsAndNotOnlyInColour and
+TestADelegatedRowSaysCanopyHoldsNothingOfTheUsers for the two rows that are not a plain unexpired
+grant; cancelling at the sign-in step storing nothing and leaving no partial record is
+TestCancellingAtTheSignInStepStoresNothingAndLeavesNoPartialRecord, with
+TestCancellingASignInThatHadAlreadySucceededTakesTheCredentialBackOut and
+TestAnAnswerFromACancelledSignInIsNotTakenForTheNextOne for the two races that clause implies; a
+vendor that chooses the model saying so where the picker would otherwise be empty is
+TestThePickerSaysTheVendorChoosesRatherThanShowingAnEmptyList, with
+TestAnEndpointWithNoLineupStillSaysNoneSet holding that the other empty state kept its own words;
+eighty columns and no colour is TestTheSignInStepRendersAtEightyColumnsWithNoColour for the screen and
+TestTheSignInStepFitsEightyColumnsInsideTheApplicationFrame for the frame around it; and the import
+boundary test covering internal/tui/keys and internal/tui/chat is
+TestEveryInterfacePackageDependsOnTheContractAndNotOnTheEngine, with the caveat two paragraphs above.
+
+Five more that cover behaviour the clauses imply rather than name:
+TestTheScreenStaysAnswerableWhileASignInIsWaiting, which is the one that would fail if the wait ever
+moved back inside a handler; TestTheSignInStepShowsTheCodeAndTheAddressForAMachineWithNoBrowser;
+TestARouteThatCannotStartLeavesTheOtherRoutesWhereTheyAre;
+TestAWizardWithNoRoutesOffersExactlyWhatItOfferedBefore; and
+TestACredentialWhoseSignInCannotBeReadIsStillListed.
+
+Considered and rejected. Opening a browser from the screen: rejected because a coding agent is
+routinely run over ssh and a flow that only works where a browser exists does not work on the
+machines this program is for, so the code and the address are text and a route may still open a
+browser as a convenience on top of that. Widening `Store` with something that returns tokens so the
+screen could store the credential itself: rejected, and it is the whole reason `Attempt.Wait` stores.
+A countdown in the list row instead of a timestamp: rejected because the list redraws on every
+keystroke and a number that moves while somebody reads it is worse than one they can compare against
+a clock. Hiding the whole list when one credential's sign-in cannot be read: rejected, one row with
+less on it beats no rows. Dropping the free-text row from a delegated credential's picker section:
+rejected, D-46 rule 1 has no exception for a claim about somebody else's agent. Making `SignIn`
+required rather than nillable: rejected because every existing test and every build before S-03 has
+no route, and a required dependency would have meant inventing an empty one in nineteen places.
+
+A correction to the task text, both harmless: `mode` is at model.go:42 rather than 41, and
+`cancelDraft` at 561 rather than 559.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree:
+`go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
+./...` reports no issues.
+
+verification (claude, 2026-07-31): acceptance re-run and holds. Two properties this block argues for
+in prose were not held by anything, and both are now, in a separate commit. No production code
+changed for either: the build was already correct and nothing would have reported it going.
+
+The refusal protocol. `applyCredentialChoice` is the merge of two call paths, and the model picker's
+path has TestARefusedPickLeavesTheNextConversationWhereItWas holding that a refusal leaves
+`usingKey` alone. The sign-in path had no equivalent. Moving `a.usingKey = name` above the
+`UseCredential` guard left every test green, and the consequence is the one the picker's test was
+written for: ctrl+n after a refused sign-in opens a conversation on the credential just declined.
+TestASignInRefusedByTheConversationIsStoredAndNotClaimed now carries that assertion.
+
+The stale attempt. These notes say a `signInStartedMsg` with a stale number "is not merely dropped,
+it is cancelled", with the reason: an abandoned device code otherwise polls a vendor every few
+seconds for as long as the program runs. Deleting the cancellation left the suite green, because the
+sibling test holds only that the screen is not disturbed.
+TestASignInThatArrivesAfterEscapeIsStoppedRatherThanLeftPolling holds the other half.
+
+A third mutation was tried and is held: dropping the stale-number check in `signInDone` fails two
+existing tests.
+
+### S-07 The command line signs in, and a test says what it can
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-01`
+`scope: cmd/canopy/keys.go, cmd/canopy/`
+
+Deliverable: the CLI half of S-06. `canopy keys` gains a way to sign in, a way to see which
+credentials are signed in and as whom, and a way to sign out that revokes or discards the tokens
+rather than only forgetting the record.
+
+And `canopy keys test` needs a new answer. Today it is storage only: it reads the metadata, reads the
+secret, recomputes the fingerprint and compares, at cmd/canopy/keys.go:437. A subscription credential
+has no secret to fingerprint, so that check has nothing to do on one. Rather than skipping it, the
+command becomes the strongest honest statement available for each kind of credential. For a pasted
+key that remains the fingerprint comparison it already does. For a signed-in credential it is that a
+grant exists, that it is unexpired or refreshable, and, where the vendor exposes it, what the account
+actually is and what its limits are. `account/rateLimits/read` from S-05 is exactly this, and it is a
+better answer than a fingerprint ever was, because it is a fact about the subscription rather than a
+fact about the file.
+
+The command currently closes by saying the provider is not contacted "because no provider client
+exists until A2", at cmd/canopy/keys.go:473. That has been untrue for eight phases. It goes.
+
+Acceptance: signing in from the CLI produces a credential the interface then lists, and one added in
+the interface is visible to the CLI. Signing out leaves no token in the backend and no record in
+keys.json. `canopy keys test` on a pasted key behaves as it does today, with unchanged output where
+the output is unchanged. On a signed-in credential it reports the account and the state of the grant,
+and refuses to claim a network check it did not make. On a lapsed credential it says lapsed and names
+the command that fixes it. No output anywhere mentions A2.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: built in cmd/canopy/signin.go, with `canopy keys signin`, `canopy keys signout`, an account
+column on `canopy keys list` and a rewritten `canopy keys test`. The routes it drives are S-06's
+`keysui.SignIn`, deliberately the same interface rather than a second one: two definitions of one
+contract is how the wizard and the command end up with credentials that differ in some detail nobody
+notices until a user has both.
+
+What this ships with no route behind it, said plainly because it is the honest state of the build.
+`signInRoutes` is empty. The three permitted routes are D-51's and each arrives with its own task,
+S-03, S-04 and S-05, so today `canopy keys signin` names them and says they are being built. The
+surfaces are here first on purpose: without them each of those three tasks builds its own command and
+its own wizard branch and the three disagree, and the parts a vendor integration is least likely to
+get right are exactly the parts that are not about the vendor. Refusing `-token`, cancelling without
+leaving a credential, and saying out loud when nothing was asked of anybody are all held by tests now,
+against a fake route, and whichever route lands first inherits them. Held by
+TestSigningInWithNoRouteBuiltSaysWhichRoutesAreComing, which also holds that the refusal answers "am I
+allowed to" rather than only "no".
+
+What `keys test` means now, per kind, since the task asked for the strongest honest statement rather
+than a check that skips. A pasted key is the fingerprint comparison it has always been, output
+unchanged down to the column widths, minus the closing sentence. A signed-in credential is: the
+account, the kind, whether both tokens are behind it, when the grant expires, and when Canopy will
+renew it, which is `keys.RefreshMargin` from S-02 printed as "5 minutes" rather than as "5m0s"
+because this line is read rather than parsed. A delegated one is the account and the sentence that
+its keychain half is empty and empty is correct, which is what S-04 needs and is the opposite of the
+missing-secret damage the pasted path reports. And in every case a closing statement of what was not
+asked. `account/rateLimits/read` is reachable through `reportsOnCredentials`, an optional interface a
+registry may implement, and when it is absent the output says no vendor was contacted rather than
+letting a stored account read as a checked one. That last sentence is the whole point of the clause
+and is the same dishonesty the A2 line had settled into, one level in.
+
+Two optional interfaces rather than one, `reportsOnCredentials` and `revokesCredentials`. They are
+separately available in the real world: Codex publishes rate limits and no revocation, a GitHub token
+can be revoked and says nothing about a plan. A registry that had to implement both to offer either
+would offer neither, and a single interface whose methods return "not supported" moves the same
+decision into the caller with less type checking.
+
+The A2 line is gone and what replaced it is a different claim rather than the same claim reworded.
+The old text gave a reason that had been untrue since A2 shipped; the reason it gives now is that the
+only way to ask whether a value is still accepted is to make a request the account is billed for, and
+a command somebody runs to check something should not spend their money to answer it. Held by
+TestNoKeyCommandMentionsAPhaseThatIsLongGone, which sweeps every keys command rather than the one it
+was found in.
+
+Acceptance, clause by clause: signing in from the CLI producing a credential the interface lists, and
+one added in the interface being visible to the CLI, is
+TestACredentialSignedInFromEitherSurfaceIsVisibleToTheOther, which drives both surfaces over one real
+`keys.Store` in both directions rather than asserting each against its own fake; signing out leaving
+no token in the backend and no record in keys.json is
+TestSigningOutLeavesNoTokenInTheBackendAndNoRecordInKeysJson, asserted against the backend, the store
+and the file's bytes, and it also holds that the vendor was told rather than only the local half
+being done; `keys test` on a pasted key behaving as it does today with unchanged output where the
+output is unchanged is TestKeysTestOnAPastedKeyStillReportsStorageAndNothingMore; reporting the
+account and the state of the grant on a signed-in credential is
+TestKeysTestOnASignedInCredentialReportsTheAccountAndTheStateOfTheGrant, which also holds that no
+fingerprint is invented and that neither token reaches the output; refusing to claim a network check
+it did not make is TestKeysTestRefusesToClaimANetworkCheckItDidNotMake, in three states, no route
+that can ask, a route that answers, and a route that could not be reached; and lapsed saying lapsed
+and naming the command that fixes it is
+TestKeysTestOnALapsedCredentialSaysLapsedAndNamesTheCommandThatFixesIt, in both of its cases, since a
+lapsed grant with a refresh token is a note and one without is a failure with an exit code. No output
+mentioning A2 is TestNoKeyCommandMentionsAPhaseThatIsLongGone.
+
+Five more that cover behaviour the clauses imply rather than name:
+TestKeysTestOnADelegatedCredentialDoesNotReportAnEmptyKeychainAsDamage, which S-04 depends on;
+TestSigningOutAPastedCredentialRefusesAndNamesWhatRemovesIt;
+TestSigningInRefusesAFlagThatWouldPutACredentialInShellHistory;
+TestNamingARouteThatDoesNotExistSaysWhichOnesDo; and TestAnInterruptedSignInStoresNothing.
+TestTheStoreAndTheScreenAgreeAboutWhatAKindIsCalled belongs to S-06's boundary and lives here because
+this is the package that can see both sides of it.
+
+Considered and rejected. Making `keys signout` an alias for `keys remove`: rejected, and the
+difference is the task's own word "revokes or discards rather than only forgetting". Doing only the
+local half while calling it signing out is how somebody comes to believe they revoked access they
+still have, so the command says which of the two it managed. Refusing to delete anything when the
+vendor cannot be reached: rejected in the other direction, since that leaves the tokens in the
+keychain of somebody who has just said they want them gone; it reports the failure and deletes.
+Adding the account column to `keys list` unconditionally: rejected so a machine with nothing but
+pasted keys sees the listing it has always seen rather than an empty column asking about a feature it
+does not use. Letting ctrl+c during a sign-in kill the process the usual way: rejected because the
+vendor can confirm in the same moment, and a process that dies between confirmation and cleanup
+leaves the credential `Attempt.Cancel` exists to remove, so the signal is selected against the wait
+and the cancellation runs. Requiring `-route` even when the build offers exactly one: rejected as a
+question with one possible answer, and the sentence printed instead says which was used and why.
+Naming `canopy keys signin` in internal/keys' lapsed-token errors, which S-01 and S-02 both left
+unnamed because the command did not exist: not done here, since those errors belong to two tasks
+currently in review and editing their text while a reviewer is reading it is worse than a remedy
+named one layer out. It is named where this task owns the output, in `keys test`. Worth a look when
+S-02 is signed off.
+
+A correction to the task text, both harmless: `runKeysTest` was at cmd/canopy/keys.go:437 as stated,
+and the A2 sentence was at 475 rather than 473.
+
+Run before ticking, in a clean clone at this commit rather than in the shared worktree:
+`go test -race -count=1 ./...` green, `go vet ./...` clean, `gofmt -l .` empty, `golangci-lint run
+./...` reports no issues.
+
+verification (claude, 2026-07-31): acceptance re-run and holds, with no changes needed here. The
+no-token clause was mutation tested: printing `tokens.Access.Reveal()` beside the storage line fails
+TestKeysTestOnASignedInCredentialReportsTheAccountAndTheStateOfTheGrant, so the output is genuinely
+swept rather than merely inspected.
+
+Two observations for whoever signs this off, neither a defect in this task. `revokesCredentials` has
+no production implementor at all, so the assertion at :293 never succeeds and `canopy keys signout`
+always reports the local half only. That matches what this block says it built, and it was SECURITY
+that described it as revoking "where it can"; the document is corrected under S-08 rather than the
+command. And `routeSet.Report`'s fallback for a credential with no route recorded is safer than the
+S-03 notes claim but not safe: the argument given is that a registry handed a credential that is not
+its own "fails on the credential rather than answering about it", which holds for the Copilot route
+because it reads tokens, and does not hold for the ChatGPT route, whose Report ignores the metadata
+and answers from whatever the machine's Codex is signed in as. A pre-Route delegated Claude
+credential on a machine with Codex installed can therefore be reported on by the wrong vendor. Left
+unfixed because it is the two routes' shared dispatch rather than this task's output.
+
+### S-08 The documents say what is permitted and what is not
+
+`status: review | owner: claude | branch: feat/subscription-sign-in | depends: S-03, S-04, S-05`
+`scope: README.md, INSTALL.md, LIMITATIONS.md, SECURITY.md`
+
+Deliverable: the documents move with the code, and for this phase they carry more weight than usual,
+because the user's first question here is not "how do I do this" but "am I allowed to". README says
+that a subscription is a way in and names the three that work. INSTALL says what has to be present
+for each: a GitHub account with a Copilot seat, a Claude Code installation the user has already
+signed in to, a `codex` binary. LIMITATIONS carries the honest list: that claude.ai login is
+prohibited and Canopy will not add it however often it is asked, that Gemini consumer sign-in is
+closed, that the OpenAI route may be quota-segregated and has an open 429 report against it, that a
+delegated turn's cost cannot be shown in money because Canopy never sees a token count, and that a
+delegated turn runs the vendor's tool loop rather than Canopy's. SECURITY says where tokens live,
+that they are in the keychain and never in keys.json, what signing out actually removes, and what an
+attacker who reached the keychain would be able to do with what they found.
+
+Every claim about a vendor's terms carries the date it was true, the way D-51 and the catalog carry
+theirs. These are facts about mid-2026, three of them changed in the eight weeks before this was
+written, and an undated claim about what a vendor permits is the confident wrong answer D-32 forbids.
+
+Acceptance: each of the four documents names the three permitted routes, and none of them contradicts
+another or contradicts D-51. Every statement about what a vendor permits carries a date. The refusal
+to implement claude.ai OAuth appears in LIMITATIONS in plain words with its reason, so that the next
+person to propose it finds the answer before writing any code. A reader whose only subscription is
+ChatGPT can tell from README alone whether Canopy is usable for them.
+
+`verify: claude [x] 2026-07-31   codex [ ]`
+
+notes: four documents, no Go file touched, so `gofmt -l .` is empty for the reason that there was
+nothing to format. `make test` is green, which is here as a statement that nothing was broken rather
+than as evidence that anything was proved: a documentation task cannot be held by this repository's
+tests and should not pretend to be.
+
+What the documents say now. README gains one section between the named-keys section and dispatch,
+about the length of the other feature sections, naming the three routes and their flags and carrying
+the gating asymmetry in two sentences; it also gains a pointer from the install block, a line in
+Requirements for the vendor programs, and a fix described below. INSTALL gains a "Signing in with a
+subscription" section with one subsection per route, four environment variables, and the
+registration Walid has to perform; the old Copilot-only section is folded into it. LIMITATIONS'
+three adjacent route sections are consolidated into one `## Subscription sign-in` section with a
+shared spine and three shorter route sections under it. SECURITY gains the three shapes a credential
+can now take, what an attacker who reached the credential store gets for each, what signing out
+removes per route, one entry in the documented-behaviour list and four in the in-scope list.
+
+Why LIMITATIONS was consolidated rather than left as three sections, which the block does not ask
+for and the brief does. The three sections were written by three tasks in flight beside each other
+and each one restated the whole of the cost argument and most of the delegation argument in its own
+words. Three copies of one paragraph is not redundancy, it is three paragraphs that will disagree
+after the first edit, and the disagreement will be about the sentence this phase most needs to stay
+exact. Worse, the three copies were not already saying the same thing: the Claude section opened
+"on a delegated turn Canopy's permission gate does not apply" and the Copilot section, four
+paragraphs later, said the opposite about itself, and a reader who stopped at the first would carry
+away a claim that is false for the route they are most likely to be told to use. So the asymmetry is
+now stated once, at the top, as a heading of its own, with the per-route sections holding only what
+is specific to a route. Nothing was dropped in the merge except three restatements of the cost
+paragraph and one of the binary-bundling paragraph.
+
+Two corrections to this block, both verified against the code rather than argued, and both are
+cases where the block describes what was planned and the build did something better.
+
+**"a delegated turn's cost cannot be shown in money because Canopy never sees a token count" has a
+false premise.** Canopy does see the token counts, on all three routes: the ACP bridge puts real
+per-turn input, output and cache counts on the `session/prompt` result, the app server sends them on
+`thread/tokenUsage/updated`, and `AssistantUsageData` carries them on the Copilot route. S-04 found
+this and the conclusion survives for a better reason, which is what the documents say: the figure is
+available and is about somebody else's invoice, because a monthly plan is metered rather than billed
+per token. The tokens are therefore reported and only the money is withheld, which is a stronger
+sentence than the one the block asked for and is the one `pricing.ModelID.Delegated` implements.
+
+**"a delegated turn runs the vendor's tool loop rather than Canopy's" is true of two routes and
+false of the third.** On the Copilot route Canopy's tools are the only tools in the session, they
+are declared with no implementation so every call comes back out through A4's gate, and the audit
+trail is complete. Writing the block's uniform claim into LIMITATIONS would have understated the
+Copilot route and, more seriously, would have made the document contradict what the product does.
+The asymmetry is per protocol rather than per principle, Q-23 records it that way after S-03, and it
+is what the documents now carry.
+
+One thing the block's INSTALL clause is missing rather than wrong: it names "a Claude Code
+installation the user has already signed in to" and the route needs two programs, not one. The ACP
+bridge is a separate package published by the protocol's maintainers, Claude Code does not speak ACP
+by itself, and a machine with only the first is the ordinary case rather than an edge. INSTALL names
+both and says which is which, including the bridge's previous name, since `bridgeNames` in
+internal/provider/acp/discover.go accepts `claude-code-acp` as well.
+
+And one where the SECURITY clause is narrower than the build: "where tokens live, that they are in
+the keychain and never in keys.json" describes one route of three. On the other two Canopy holds no
+token anywhere, which is a different and better security story and is the reason D-51 permits them
+at all, so the file states the three shapes and what a compromise costs for each rather than one
+rule for all.
+
+What was found already wrong in documents that existed before this task.
+
+README said "You plug in provider API keys, talk to it, and it reads and writes code with tools",
+which stopped being true when S-03 landed. It now names both kinds of credential. Nothing else in
+README was false; the rest of the omission was that a person whose only subscription is ChatGPT
+would have read the whole page and concluded the program was not for them, which is the acceptance
+clause about exactly that person.
+
+INSTALL's runtime requirements said "An API key for at least one provider", same defect and fixed
+the same way.
+
+INSTALL's Copilot section, written by S-03, said a GitHub app of your own is needed "if you are
+building Canopy rather than using a release that has one compiled in". No release had one compiled
+in. `clientID` was `""` in internal/provider/copilot/signin.go and `.goreleaser.yaml` set only the
+three `main.*` flags. The release path now requires the public repository variable
+`CANOPY_GITHUB_CLIENT_ID`, passes it to GoReleaser and compiles it through the fourth `-X` flag; the
+workflow fails before publishing if the registration is absent. Local builds accept the same value
+through `make build`. Registering the OAuth app and setting the repository variable remain Walid's
+external actions, but a tag can no longer silently ship a Copilot route nobody can use.
+
+LIMITATIONS named `~/.codex` in four places where the code reads `$CODEX_HOME` and honours it, at
+internal/provider/codex/discover.go:42. For anybody who has moved it, four of those sentences were
+wrong about where their own login is. They now say `$CODEX_HOME` and INSTALL records the default.
+
+LIMITATIONS said "Last reviewed: 2026-07-28", which predated three tasks that edited it. Now
+2026-07-31, and the opening inventory of what is built gains subscription sign-in.
+
+Everything else was checked and found accurate. The route ids in the documents are the constants:
+`copilot` is `copilot.Route`, `codex` and `codex-device` are `codex.Route` and `codex.Route +
+"-device"`, and `claude-code` is `claudeCodeRouteID`. The install commands are the ones the error
+messages name. The ldflag path in INSTALL resolves to the real var. The behaviour of `-route` when
+it is omitted is `chooseRoute` at cmd/canopy/signin.go:208, which prints the list and refuses rather
+than guessing, and INSTALL says that. The headless rule for the ChatGPT route is `browserReachable`
+at internal/provider/codex/login.go:129, and INSTALL names the three ssh variables and the two
+display variables it actually reads rather than saying "over ssh".
+
+What could not be verified, said rather than smoothed over. The Copilot scopes are still evidence
+rather than fact and every document that mentions them says so; confirming them needs a seat.
+No vendor's published terms page was re-fetched for this task, so every date in these documents is
+the date S-03, S-04, S-05 or D-51 recorded, carried forward unchanged and attributed there. The
+one claim in the phase's material that S-05 could not confirm, openai/codex issue 31967, is
+deliberately absent from all four documents rather than repeated as established.
+
+Considered and rejected. A table in LIMITATIONS for the per-route gating matrix, which is the
+clearest possible rendering of an asymmetry: rejected because there is no table anywhere in that
+file and one table in a file of prose bullets reads as an import from another document. The
+information is in a heading of its own instead, which is the same prominence. Leaving the three
+route sections adjacent and adding cross-references between them: rejected for the drift reason
+above, and because a reader following a cross-reference to find out whether their turn is gated has
+already been failed. Turning README into a route-by-route manual: rejected, the block puts that in
+INSTALL and a README that explains three vendors' installation requirements stops being a README.
+Softening "Canopy's permission gate does not apply" into "Canopy's permission gate does not apply to
+the vendor's own tools": rejected, it is true and it is the sentence somebody would quote back after
+an incident, and the shorter one is the one that gets read. Removing the arrow at README.md:319 to
+satisfy the ASCII rule: rejected and flagged instead, because that line quotes literal program
+output, `modeArrow` at internal/tui/chat/model.go:2215 is a rightwards arrow U+2192 with a space
+either side, and an ASCII arrow in README would be a document describing a screen that does not
+exist. It predates this task. CONTRIBUTING.md
+and story.md carry non-ASCII too and neither is in scope here.
+
+No line was added to the change log at the end of this file. The log takes structural changes to
+this ledger, meaning tasks added, removed or reordered, and this task added none: it changed four
+documents and one status block.
+
+Acceptance, clause by clause: each of the four documents naming the three permitted routes is
+README's "Sign in with a subscription instead of a key", INSTALL's "Signing in with a subscription"
+with a subsection each, LIMITATIONS' `## Subscription sign-in` with a section each, and SECURITY's
+credential-shapes block, which names the Copilot route by name and the Claude and ChatGPT routes as
+the two that hold nothing; none of them contradicting another or contradicting D-51 is the
+consolidation above, which removed the one real contradiction that existed, plus a read of all four
+against D-51's five positions, the three permitted routes, the claude.ai refusal and the Gemini
+closure, with no document making a claim D-51 does not; every statement about what a vendor permits
+carrying a date is the 2026-07-30 on Anthropic's prohibition and their metering statement, on
+GitHub's absent scope documentation, and on OpenAI's known-clients request, and the 2026-06-18 on
+Google's switch-off and the 2026-06-15 on the paused Anthropic credit change; the refusal to
+implement claude.ai OAuth appearing in LIMITATIONS in plain words with its reason is the second
+paragraph of the new section, which states the prohibition, that it is server-enforced, that other
+tools shipping it is a list of people who can be stopped rather than a precedent, and that
+`TestNoAnthropicSignInFlowExistsAnywhereInThisRepository` will fail the build of anybody who tries,
+so the next person to propose it finds the answer before writing code; and a reader whose only
+subscription is ChatGPT being able to tell from README alone whether Canopy is usable for them is
+the contents entry, the pointer in the install block, the `-route codex` line and the paragraph
+about delegated turns, which together answer both halves of that question, that it works and what
+it costs them.
+
+The brief's own additional clauses, which the block states as prose or not at all: the gating
+asymmetry per route is LIMITATIONS' "Canopy's permission gate is in the path on one of the three
+routes" and README's two sentences; Copilot history ownership is the first bullet of the Copilot
+section, including that an edited history is refused by name; unpriced turns are the first bullet of
+"What is true of all three routes", including that a rate the user set does not override it; the
+binary dependencies are the second bullet there with the three reasons bundling was refused; the
+unverified scopes are the Copilot section's fifth bullet; the paused Anthropic credit change is the
+Claude section's third bullet with both dates and what would have to be rewritten; and S-02's
+cross-process renewal limit is the fifth bullet of the shared section, with the note that it reaches
+only the Copilot route because it is the only route where Canopy holds a token.
+
+Run before ticking: `make test` green, `gofmt -l .` empty, `grep -rnP '[^\x00-\x7F]'` over all four
+documents finding only the pre-existing arrow at README.md:319 described above.
+
+verification (claude, 2026-07-31): blocked. The acceptance clause "none of them contradicts another
+or contradicts D-51" was not met, in four places, and the notes above claim a read of all four
+against D-51 that cannot have happened as described. Each was verified against the code or against
+DECISIONS.md and each is fixed in its own commit, but the density is the reason this is blocked
+rather than ticked: a reviewer should assume the pass was partial and look again.
+
+README opened the sign-in section with "each because the vendor's own terms allow that particular
+shape". D-51 says that of exactly one route, at DECISIONS.md:1180, "the only one of the three that
+is unambiguously invited". For OpenAI it argues from negative space, and LIMITATIONS:436 says
+plainly that reasonable people read those terms the other way and that Charm's Crush refused this
+route twice on them. So the first paragraph a person read about signing in contradicted both the
+decision and the file that carries the counter-position, in the direction that tells them they are
+safer than this project believes.
+
+SECURITY's known-behaviour list said the vendor's agent "read or wrote files" on both delegated
+routes. LIMITATIONS:267 says the ChatGPT thread is opened read-only so a delegated Codex turn cannot
+write at all, and internal/provider/codex/client.go:164 agrees. Two of the four documents disagreed
+about what one route can do to somebody's disk.
+
+SECURITY said `core.Secret` "refuses to be serialised at all". It refuses to be deserialised;
+MarshalJSON succeeds and emits `[redacted]`, at internal/core/secret.go:74. The conclusion holds for
+a better reason, that the record has no field to put a token in, and the file now says both.
+
+SECURITY described signing out as ending the vendor's grant "only where it can", and promised a
+per-route sentence naming `$CODEX_HOME` and `codex logout`. No production route implements
+`revokesCredentials`, so the assertion at cmd/canopy/signin.go:293 never succeeds and there is no
+route that can; and the delegated branch prints one shared message naming neither. Both corrected to
+what the build prints.
+
+One more, in the code rather than the documents and fixed with them: the caveat printed before a
+ChatGPT sign-in still said `~/.codex` where discovery reads and honours `CODEX_HOME`. The notes
+above record fixing exactly that in LIMITATIONS and the user-visible copy was left behind.
+
+Two things looked at and left alone. The undated vendor claims at LIMITATIONS:340 and :388 each
+carry a `(D-51, S-03)` or `(D-51, S-05)` citation, and the notes state the dating convention is
+attribution by reference; that is a judgement call for a supervisor rather than a defect. And
+LIMITATIONS:361 leads with "a GitHub app of its own" before explaining two lines later that it must
+be an OAuth App; loose, but it does explain itself.
+
+Not verified, and flagged rather than smoothed over: LIMITATIONS:241 describes the Copilot allowlist
+as "naming Canopy's own tools and no vendor source at all". What ships is `custom:*`, which names a
+source with a wildcard rather than any tool, and the SDK's own documentation for `AddCustom` says it
+matches tools registered via `SessionConfig.Tools` *or via custom agents*. What actually keeps a
+custom-agent tool out appears to be ModeEmpty's own defaults rather than the allowlist. The claim
+may still be true of this configuration; it is not true for the reason the document gives. Left for
+whoever owns S-03, because establishing it needs the SDK read properly rather than a verifier's
+reading of one method's doc comment.
+
+second pass (claude, 2026-07-31): redone end to end after the block above, and returned to review.
+The verifier's four were real, their fixes are kept, and the density argument was right: six more of
+the same kind were on the page. The clause is now checked against the code rather than against these
+notes, which is the thing the first pass did not do.
+
+What was done differently. Every claim was taken to the code or to the vendor SDK in the module
+cache, never to a task's notes, since the first pass inherited two false premises from its own block
+and repeated them. GitHub's SDK at v1.0.8 was read directly rather than trusted from a comment.
+
+Found and fixed beyond the verifier's four, all six the same shape: a sentence stated generally that
+is true of one route.
+
+1. LIMITATIONS said the tools in a delegated turn are the vendor's own plus whatever MCP servers
+`$CODEX_HOME/config.toml` starts. That bullet covers both delegated routes and names only the
+ChatGPT one's configuration. Claude Code has its own. Both are now named.
+
+2. LIMITATIONS' "The model is the vendor's to choose" sat under "What is true of all three routes"
+and described only the two delegated ones. A Copilot credential does take a model, fixed when the
+session opens, and the Copilot package emits no notices at all, so it is the one route where naming
+a different model mid-conversation is neither honoured nor reported. Both delegated routes do report
+a substitution, at internal/provider/acp/client.go:338 and internal/provider/codex/client.go:186.
+Split by route, and the Copilot section now carries the reporting half rather than only the
+honouring half.
+
+3. INSTALL said `canopy keys signout <name>` "ends it". SECURITY is emphatic that signout never ends
+a vendor's grant on any route, and that a command doing the local half while calling it signing out
+is how somebody comes to believe they revoked access they still have. INSTALL now says it removes
+Canopy's half and points at SECURITY.
+
+4. LIMITATIONS' "Nothing here listens on a loopback port" is followed in the same bullet by the
+vendor's program hosting a callback, which is a loopback listener. True of Canopy, ambiguous as
+written. It now says Canopy never listens on any route, and says which route's app server does.
+
+5. LIMITATIONS' "Providers and cost" said an OpenAI-compatible endpoint reports cost unknown until
+you set a rate on the key yourself. A Copilot credential is openai-compatible by provider and
+`pricing.ModelID.Delegated` beats `UserRate` at internal/pricing/table.go:176, so a rate set on a
+subscription credential changes nothing. The subscription section already said so and the general
+bullet contradicted it. The exception is now named where the general rule is stated.
+
+6. SECURITY listed "when the grant expires" among the metadata keys.json holds "in all three cases".
+`SignIn.validate` refuses an ExpiresAt on a delegated credential outright at
+internal/keys/signin.go:179. Expiry exists on the Copilot route and nowhere else. Corrected, and
+`route` added, which the list had omitted.
+
+Two more corrections that are not contradictions but were claims the code does not support.
+
+README gave "so Canopy holds no token here either" as the reason the ChatGPT route is permitted.
+That is the Claude route's reason. D-51 permits the ChatGPT route on OpenAI publishing the app
+server under Apache-2.0 as the interface for this case, plus honest identification. README now says
+that, says it is not the same thing as holding no token, and says this is the contested one.
+
+README's Requirements said "One more program per subscription route" and then named two for the
+Claude route. Reworded.
+
+The one the verifier flagged and could not confirm, now established. LIMITATIONS described the
+Copilot allowlist as "naming Canopy's own tools and no vendor source at all". What ships is
+`custom:*` at internal/provider/copilot/runtime.go:232. The SDK's own `AddCustom` doc comment says
+it matches tools registered via `SessionConfig.Tools` or via custom agents, so the pattern names a
+source and not any tool. The conclusion holds and the stated reason did not. What actually keeps a
+custom agent's tool out is that there is no custom agent: `SessionConfig.CustomAgents` is never set,
+`ModeEmpty` forces `CustomAgentsLocalOnly` true and `InstalledPlugins` empty at the SDK's
+mode_empty.go:216-241, `EnableConfigDiscovery` is false, and `WorkingDirectory` and
+`ConfigDirectory` both point at a Canopy-owned state directory rather than the user's project. So
+the allowlist keeps out every built-in and every MCP tool, which is what the sentence was for, and
+the absence of a custom agent keeps out the rest. LIMITATIONS now says exactly that. Q-23's summary
+of S-03 says "names Canopy's tools by source", which was already the accurate wording and is left
+alone.
+
+The gating asymmetry, which is the claim that matters most, checked in all four documents against
+the code rather than against each other. It is stated correctly in all four, and softened or
+overstated in none. README's two sentences, LIMITATIONS' heading of its own, INSTALL's "on two of
+the three, Canopy's permission gate is not in the path at all", and SECURITY's documented-behaviour
+entry all say the same thing. The code agrees: on Copilot, tools are declared with a nil handler at
+runtime.go:324 so a call arrives pending and is resolved by Canopy's own loop, `ModeEmpty` at
+runtime.go:192 removes the built-ins, and `refuseAnythingNotCanopys` at runtime.go:357 rejects
+anything else; on ACP every client capability is false at wire.go:107 and `mcpServers` is sent empty
+at wire.go:143, and `requestPermission` at stream.go:141 declines; on Codex the app server has no
+field for a client's tools and every approval is declined. One correction was needed in this area
+and it runs the safe direction rather than the dangerous one: LIMITATIONS and SECURITY both said the
+ChatGPT thread being read-only means it "cannot write files at all". Canopy asks for
+`sandboxReadOnly` at internal/provider/codex/client.go:164 and declines every escalation, and the
+app server's own sandbox is what enforces it. Both files now say whose bound it is, because a
+read-only sandbox Canopy requested is not Canopy's gate under another name.
+
+Checked and found accurate, so a later reader knows these were looked at rather than skipped.
+Copilot: the device flow with no listener, the token in the credential store, `custom:*` admitting
+no built-in and no MCP source, declaration-only tools, the audit trail and verification applying,
+history divergence refused by `ErrHistoryRewritten` at client.go:83, a restarted conversation seeded
+as a labelled transcript at client.go:242, model and effort belonging to the session, `MaxTokens`
+never sent, the release workflow requiring and compiling its public client id, `ErrNotRegistered`
+on a local build with no id, the scopes `copilot read:user` with
+`CANOPY_GITHUB_SCOPES` overriding at signin.go:162, no seat check at sign-in with `ErrNoSeat` on the
+first turn at errors.go:28, and signout doing the local half only because no production route
+implements `revokesCredentials`. Claude: two programs with `bridgeNames` accepting the old name at
+acp/discover.go:61, the system prompt as the first content block and nothing in ACP that could
+replace Claude Code's own, a Console account named as billed per token at acp/discover.go:87, and
+the Q-22 pause with both dates. ChatGPT: ephemeral threads, `clientInfo.name` of `canopy` read back
+off the handshake and refused on mismatch at codex/server.go:130, `account/logout` never sent,
+`browserReachable` reading exactly `SSH_CONNECTION`, `SSH_TTY`, `SSH_CLIENT`, `DISPLAY` and
+`WAYLAND_DISPLAY` at login.go:130, the missing-binary path naming the account rather than lifting
+its tokens, `canopy keys test` reading real limits through `account/rateLimits/read`, and Canopy
+renewing nothing. Shared: no dollar figure on any of the three because all three set `Delegated`,
+the five-minute `RefreshMargin` at keys/refresh.go:30 with the per-process lock and no lock file,
+`core.Secret` marshalling to `[redacted]` and refusing to unmarshal, keys.json holding no token
+field, and every route printing its caveat before anything is stored on both surfaces. The Copilot
+release identity is now wired through GoReleaser and the release workflow refuses to run without
+the public repository variable; the actual app registration remains an external prerequisite.
+
+The `~/.codex` sweep the verifier asked for. LIMITATIONS and README contain none. INSTALL names it
+twice and correctly both times, as the documented default and as the thing you may have moved. The
+caveat string in cmd/canopy/signin_codex.go now says `$CODEX_HOME`. Two loose mentions survive
+outside this task's scope and are recorded rather than changed: OPEN-QUESTIONS.md:610 in Q-23's
+record of what S-05 found, and TASKS.md:6981. Neither is user-facing copy and both are historical
+records of a finding rather than instructions. Also outside scope and worth somebody's attention:
+cmd/canopy/signin_codex_test.go:417 asserts a message containing the literal `~/.codex`.
+
+What cannot be verified from this repository, and now says so in LIMITATIONS rather than only here.
+A new paragraph in the subscription section names four classes at once instead of hedging every
+sentence, which would have wrecked the voice. Which plan tiers work: Canopy asks no vendor whether a
+plan is Max or Pro, Plus or Team, and the app server reports a plan name it does not enumerate, so
+the tiers listed are the vendors' word. What the terms permit: no terms page was re-fetched for this
+pass either, so every date is still the one D-51 or the building task recorded. That GitHub needs a
+client secret to renew or revoke, and that an OAuth app's user tokens do not expire: GitHub's
+documented behaviour, relied on and not confirmed against a live registration. The Copilot scopes,
+which already had their own paragraph. Two further items are marked in place rather than in that
+list: the Codex app server having no field for a client's tools is now attributed to the schema the
+binary generates for itself, and the Claude route's token counts are now marked as riding a field
+ACP v1 does not define, which the bridge sends anyway and Canopy reads defensively at
+acp/wire.go:195, so a bridge that stops sending it leaves a turn with no count rather than a wrong
+one. The three routes' token counts were previously claimed with equal confidence and one of them
+does not deserve it.
+
+Considered and not done. Marking every vendor-dependent sentence individually: rejected, one
+paragraph naming the classes carries the same information and LIMITATIONS states limits plainly
+rather than in parentheses. Rewriting OPEN-QUESTIONS.md's `~/.codex`: outside this task's declared
+scope, and Q-23's text is a dated record of what a task found rather than live instruction.
+Softening "Canopy's permission gate does not apply": rejected again, for the reason the first pass
+gave. Removing the arrow at README.md:319, now :324 after this pass: rejected again, it quotes
+literal program output.
+
+No Go file was touched, so `gofmt -l .` is empty for the reason that there was nothing to format,
+and `make test` is not offered as evidence for a documentation change. `grep -rnP '[^\x00-\x7F]'`
+over the four documents finds only the pre-existing arrow. Another agent's Go changes to
+internal/session, internal/provider/copilot and cmd/canopy were in the worktree during this pass.
+They were read to confirm they change none of the behaviour documented here, which they do not: the
+Copilot work is a session-pooling and lifecycle refactor, and the resolver work moves the same
+delegated and Copilot branches into internal/session/vendors.go unchanged, `Delegated: true` and
+all. Only these five files were staged.
+
+Honest assessment for whoever signs PG-S. The documents are safe to put in front of somebody who
+will rely on them for the question this phase exists to answer, which is whether they are allowed to
+use their subscription and what they give up by doing it. The gating asymmetry is stated correctly
+in four places and no document claims a gate Canopy does not have. What a reader still cannot get
+from these files is confirmation of anybody's terms, because nothing in this repository can supply
+it, and the files now say so in those words.
+
+### PG-S Phase S gate
+
+`status: todo | depends: S-01, S-02, S-03, S-04, S-05, S-06, S-07, S-08`
+
+Both supervisors watch three machines, each holding exactly one subscription and no API key: one
+with Copilot, one with Claude Code already signed in, one with ChatGPT. On each, somebody who has not
+used Canopy before signs in from the wizard without being coached, sends a message, gets a reply,
+leaves it long enough for the token to lapse, and sends another that works without signing in again.
+They then read LIMITATIONS and can say correctly why claude.ai login is not on the list. No run asked
+anybody to paste a secret, nothing listened on a loopback port, and no Anthropic subscription token
+exists anywhere on the Claude machine outside Claude Code's own storage.
 
 `signed: walid [ ]   classmate [ ]`
 
@@ -5749,4 +7952,5 @@ status or verification updates.
 | 2026-07-28 | Claude | Added phases E and U after PG-A9, from an audit of the send path and of every screen rather than of this ledger: ten efficiency tasks and fourteen interface tasks, none of which blocks 0.1. Four blocks set back to partial where their prose outran the code: A3-06 (no auto compaction, meter blind to tool traffic), A2-07 (saving visible only in headless ask), A2-08 (chain has no caller), A8-03 (instructions parse and reach nothing). Notes added to A5-09 and A9-02. Principles recorded as D-42 to D-44, new questions Q-19 to Q-21. |
 | 2026-07-29 | Claude | Added U-15 from Walid using the built program: the mode key applied every rung it walked past, so cycling from cruise to build put a working agent through plan. Built the same day, out of lane order, since it is a defect in a shipped safety setting. Recorded as D-45. The engine gained `ModeUnusable`, the refusal `SetMode` already made asked as a question. Section 2.0 recounted, which the two new phases had left stale. |
 | 2026-07-29 | Claude | Added phase K, one key many models, and U-16 to U-19, from six asks by Walid: keys that hold several models over a dated catalog, dispatch that understands model words, a picker screen, other agents' permission prompts surfacing on the conversation you are on, the header naming the agent instead of the brand, a tasks block with state colours, and btw history that survives the screen. Recorded as D-46 and D-47. Claimed on feat/one-key-many-models and tui/ambient-attention, stacked in that order on tui/mode-settle. |
+| 2026-07-30 | Claude | Added phase S after phase K, signing in with a subscription instead of pasting a key. Eight tasks and a gate, written from research into what each vendor actually permits rather than what is technically reachable: Copilot through its official Go SDK, Claude through the user's own Claude Code over ACP, OpenAI through the Codex app server with an existing `auth.json` login as the degraded fallback. claude.ai OAuth is refused as prohibited and server-enforced, and Gemini consumer sign-in is recorded as closed so neither is proposed again. Recorded as D-51, which takes that number because D-50 is reserved by work in flight. New questions Q-22, the paused Anthropic credit change, and Q-23, what Canopy's tools, permissions and verification mean in a delegated turn. Claimed on feat/subscription-sign-in, ledger pushed before any code. Nothing renumbered. |
 | 2026-07-30 | Claude | Added U-26 from Walid using the built program: U-16's summaries become bounded approval surfaces, answered with enter and backspace where they are seen, and the accept key is enter on every prompt. Built the same day on tui/answer-where-you-are. Recorded as D-50, superseding the enter-refuses reflex and the focus-step half of D-47; the once-only and typing-answers-nothing guards stay. |

@@ -24,6 +24,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Require the Canopy GitHub app registration
+        env:
+          CANOPY_GITHUB_CLIENT_ID: ${{ vars.CANOPY_GITHUB_CLIENT_ID }}
+        run: |
+          if [ -z "$CANOPY_GITHUB_CLIENT_ID" ]; then
+            echo "Set the public repository variable CANOPY_GITHUB_CLIENT_ID before releasing." >&2
+            exit 1
+          fi
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -31,6 +40,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANOPY_GITHUB_CLIENT_ID: ${{ vars.CANOPY_GITHUB_CLIENT_ID }}
           # Only needed once a tag without a hyphen is pushed, since the cask is skipped on
           # prereleases. Empty until the tap repository and the token exist, which is fine.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

@@ -16,7 +16,9 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
 
 const askUsage = `canopy ask - send one message to a provider
@@ -76,11 +78,6 @@ func runAsk(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	secret, err := store.Get(meta.Ref)
-	if err != nil {
-		return err
-	}
-
 	// The credential's own model unless one was named on the command line. The flag still wins,
 	// because trying a different model against a key you already have is most of what this command
 	// is for, and having to change the stored setting to do it would be absurd.
@@ -88,7 +85,14 @@ func runAsk(args []string, out io.Writer) error {
 		*model = meta.Model
 	}
 
-	client, err := newClient(meta, secret, *model)
+	// The one thing in this command that has to be closed, and it is closed here rather than
+	// wherever the client happens to be finished with. A Copilot turn at a terminal opens a session
+	// GitHub believes is live and a CLI process on the machine, and this command used to exit
+	// leaving both: it built the client, streamed the answer, closed the stream and returned.
+	vendors := session.NewVendors(version)
+	defer vendors.Close()
+
+	client, id, err := clientFor(vendors, store, meta, *model)
 	if err != nil {
 		return err
 	}
@@ -118,10 +122,7 @@ func runAsk(args []string, out io.Writer) error {
 
 	// Priced here rather than in the provider clients: what a turn costs depends on which endpoint
 	// answered, and only the credential knows that.
-	priced := pricer(pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, *model).
-		WithUserRate(meta.Rate))
-
-	return drain(stream, out, priced)
+	return drain(stream, out, pricer(id))
 }
 
 // pricer turns a model identity into the function that costs a turn.
@@ -277,10 +278,70 @@ func readPrompt(args []string) (string, error) {
 	return prompt, nil
 }
 
-// newClient builds the provider client a credential points at.
+// clientFor builds the client for a credential and says how a turn on it should be priced.
 //
 // The credential decides, not a flag. That is the whole point of naming keys: `-key nemotron`
 // carries its provider and endpoint with it, so nothing above has to be told which API to speak.
+//
+// Kind before provider, for the reason internal/session/resolver.go gives at the same fork: a
+// delegated credential is Anthropic by provider and holds no secret at all, so asking the refresher
+// for one refuses it before the route is ever reached.
+//
+// This is the second place the provider fork lives, which is what constraint 4 already says about
+// this command and the interface. What is left here is the fork itself and the two pasted-key
+// providers, which hold nothing: no process, no session, no identity. Everything that does hold
+// something is built by session.Vendors, which is the same object the interface builds through, and
+// that is not a tidiness. Two of those things had already drifted by the time anybody looked: this
+// command told the vendors which version of Canopy was calling and the interface did not, and this
+// command dropped the Copilot session it opened while the interface closed its own. The rule the
+// phase keeps rediscovering is that anything which must not differ between the two surfaces has to
+// be one object they both use, which is what keys.Refresher already is for "how old is too old".
+func clientFor(
+	vendors *session.Vendors, store *keys.Store, meta core.KeyMetadata, model string,
+) (core.ProviderClient, pricing.ModelID, error) {
+	in, err := store.SignIn(meta.Ref)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+
+	if in.Kind == keys.KindDelegated {
+		return vendors.Delegated(meta, in, model, "")
+	}
+
+	// Through the refresher rather than straight to the store, so a signed-in credential whose token
+	// is nearly out is renewed before the request is built rather than discovered as a 401 after it
+	// was sent. `canopy ask` and the interface have to agree about what a credential is worth, and
+	// the one place that decides is keys.Refresher.
+	// The refresher is told which routes exist before it is asked for anything, so a Copilot grant
+	// close to expiry is renewed here exactly as it would be inside the interface. Without this the
+	// two surfaces would disagree about a credential, which is the thing S-02 exists to prevent.
+	refresher := keys.NewRefresher(store)
+	refresher.Renews(signInSources())
+	secret, err := refresher.Credential(meta)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+
+	if in.Route == copilot.Route {
+		// No conversation, which on this route means a client that ends when its one turn does.
+		// That is right here and is not a shortcut: `canopy ask` sends one message and exits, so
+		// there is no second turn for a held session to remember, and a session nothing closes is a
+		// `copilot` process left resident on the machine of somebody who ran a one-line command.
+		return vendors.Copilot("", meta, in, secret, model)
+	}
+
+	client, err := newClient(meta, secret, model)
+	if err != nil {
+		return nil, pricing.ModelID{}, err
+	}
+	return client, pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, model).
+		WithUserRate(meta.Rate), nil
+}
+
+// newClient builds the pasted-key provider client a credential points at.
+//
+// Only the two that hold nothing reach this: a provider with a process, a session or an identity
+// behind it is built by session.Vendors instead, so that one thing closes it. See clientFor.
 func newClient(meta core.KeyMetadata, secret core.Secret, model string) (core.ProviderClient, error) {
 	switch meta.Ref.Provider {
 	case core.ProviderAnthropic:

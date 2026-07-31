@@ -3,6 +3,12 @@ package main
 import (
 	"bytes"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -284,4 +290,89 @@ func TestNoticesAreShown(t *testing.T) {
 	if !strings.Contains(out.String(), "hello") {
 		t.Errorf("the reply is missing:\n%s", out.String())
 	}
+}
+
+// Every surface in this build tells a vendor the same thing about which Canopy is calling.
+//
+// The two surfaces used to build their delegated clients separately, and this command passed the
+// version while the interface did not, so an installed release drove Claude Code and Codex as
+// version "dev" for anybody who used the interface. There is now one thing that builds those
+// clients, session.Vendors, and it takes the version rather than defaulting it. What this test holds
+// is the half a signature cannot: that both places which build one hand it the version this binary
+// was built with rather than a string of their own.
+//
+// Read from the source, because "the argument at that call site is the build's version" is a
+// property of the code and not of any value it computes. A test that called both paths and compared
+// them would agree happily on two wrong answers.
+func TestEveryWayOfBuildingAVendorClientIsGivenTheBuildsVersion(t *testing.T) {
+	// The constructors that decide what Canopy calls itself upstream. Both take the version last.
+	builders := map[string]bool{"NewVendors": true, "NewKeyResolver": true}
+
+	found := 0
+	for name, file := range sourceOf(t, ".") {
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || !builders[selector.Sel.Name] {
+				return true
+			}
+			if pkgName, ok := selector.X.(*ast.Ident); !ok || pkgName.Name != "session" {
+				return true
+			}
+
+			found++
+			if len(call.Args) == 0 {
+				t.Errorf("%s calls session.%s with no version at all", name, selector.Sel.Name)
+				return true
+			}
+			last, ok := call.Args[len(call.Args)-1].(*ast.Ident)
+			if !ok || last.Name != "version" {
+				t.Errorf("%s calls session.%s with %s as its version rather than this build's "+
+					"`version`. A surface that names itself differently from the others is how a "+
+					"release ends up telling a vendor it is \"dev\"",
+					name, selector.Sel.Name, types.ExprString(call.Args[len(call.Args)-1]))
+			}
+			return true
+		})
+	}
+
+	if found < 2 {
+		t.Errorf("%d places in this command build a vendor client, and there are two surfaces that "+
+			"do: `canopy ask` and the interface. This test is no longer looking at both", found)
+	}
+}
+
+// sourceOf parses this command's own source, tests excluded.
+//
+// os.ReadDir and ParseFile rather than the one call that does both, because that one is deprecated
+// for a reason that applies here: it decides which files belong to a package without looking at
+// build tags, and what is being checked is what the shipped command does.
+func sourceOf(t *testing.T, dir string) map[string]*ast.File {
+	t.Helper()
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+
+	fileset := token.NewFileSet()
+	files := map[string]*ast.File{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(fileset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", name, err)
+		}
+		files[name] = parsed
+	}
+	if len(files) == 0 {
+		t.Fatalf("no source was found in %s, so this test proves nothing", dir)
+	}
+	return files
 }

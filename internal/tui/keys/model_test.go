@@ -32,6 +32,11 @@ type stubStore struct {
 	lastPut   core.KeyMetadata
 	lastSeen  core.Secret
 	insecure  bool
+
+	// identities is who each credential is signed in as, empty for the ones nobody signed in to.
+	identities map[string]Identity
+	// identityErr is what Identity answers with, for the case where the list still has to draw.
+	identityErr error
 }
 
 func (s *stubStore) List() ([]core.KeyMetadata, error) { return s.keys, nil }
@@ -91,6 +96,13 @@ func (s *stubStore) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error)
 
 func (s *stubStore) BackendName() string        { return "test-backend" }
 func (s *stubStore) UsingInsecureBackend() bool { return s.insecure }
+
+func (s *stubStore) Identity(ref core.KeyRef) (Identity, error) {
+	if s.identityErr != nil {
+		return Identity{}, s.identityErr
+	}
+	return s.identities[ref.Name], nil
+}
 
 func typeRunes(m Model, text string) Model {
 	for _, r := range text {

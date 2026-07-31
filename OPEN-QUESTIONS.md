@@ -486,3 +486,141 @@ answering before 0.1 has many of them.
 
 **Who decides:** both supervisors, ideally by watching one person with strong shell habits use
 the product for ten minutes.
+
+## Q-22 What happens to the Claude route when the paused credit change lands?
+
+**Added 2026-07-30 by the phase S planning.**
+
+Anthropic announced, and then paused on 2026-06-15, a change that would move Claude Agent SDK,
+`claude -p` and third-party app usage off subscription limits and onto separately purchased
+credits. S-04 is built on the current arrangement, where a delegated Claude Code turn draws on the
+user's own Max or Pro limits, and that arrangement is the whole reason the route is worth having:
+the user has already paid.
+
+Paused is not cancelled, and nothing in the announcement said it would not return. If it does, S-04
+still works, because Canopy is driving a binary the user signed in to themselves and none of that
+changes. What changes is the cost story. Usage that looked included becomes a separate purchase,
+and somebody who signed in expecting the first finds out by being billed for the second.
+
+**Decided in the meantime:** build S-04 on the current arrangement, and say plainly in LIMITATIONS
+that it meters against the subscription as of the date recorded there. **What would change:** if the
+change lands, both S-04's documentation and its in-product cost surface need rewriting before the
+next release, and the honest form may be a warning at sign-in rather than a line in a document.
+
+**Who watches for it:** whoever holds the release. This one arrives from outside and nothing in the
+tree will notice it happening.
+
+## Q-23 What do Canopy's tools, permissions and verification mean in a delegated turn?
+
+**Added 2026-07-30 by the phase S planning.**
+
+All three routes D-51 permits work by driving the vendor's own agent over a protocol rather than by
+calling a completions endpoint, so a delegated turn runs the vendor's tool loop, the vendor's
+permission model and the vendor's context handling. Canopy's own tools, its per-agent trust levels
+and prompts from A4, its audit trail of refused calls, and A6's verification of what an agent
+actually produced were all built on the assumption that Canopy runs the loop.
+
+Three answers are possible and they are not equivalent. Canopy could refuse to delegate any turn
+that needs its own tools, and be honest that a subscription credential buys a weaker agent. It could
+expose its tools to the delegated agent through the protocol, which ACP and the app server both
+partly allow, and re-impose its own gating at that boundary. Or it could accept that a delegated
+turn is governed by the vendor and say so on screen, which is the smallest change and the largest
+honesty problem, because the trust level displayed would not be the trust level in force.
+
+**Decided in the meantime:** nothing, deliberately. S-03 to S-05 may deliver a working conversation
+on a delegated agent, but no task in phase S may claim a trust level or an audit guarantee it does
+not enforce, and no screen may show a permission mode the delegated turn is not actually running
+under. A screen showing `plan` while somebody else's agent edits files is worse than no screen.
+
+**Partly answered by S-04, 2026-07-30, on the Claude Code route.** The first delegated route works
+end to end, so the gap can now be looked at rather than argued about, and one of the three possible
+answers turned out not to be a choice.
+
+Settled, because the protocol settles it: **Canopy's own tools are not offered to a delegated turn.**
+The second option above, exposing them over the protocol and re-imposing Canopy's gating at that
+boundary, is not available in ACP v1. MCP servers are the only channel a client has for handing an
+agent its own tools, Canopy's tools are not an MCP server, and there is no other field. `session/new`
+is therefore sent with an empty `mcpServers` list, and a test holds that no Canopy tool definition
+ever reaches the wire.
+
+Settled, and enforced rather than promised: **Canopy declines every permission request the delegated
+agent makes.** It advertises no filesystem and no terminal capability, so the agent never routes work
+back through Canopy, and when the agent does ask for approval Canopy answers with the protocol's
+`reject_once` option and reports the refusal in the conversation. The reasoning is that approving
+would be Canopy standing in as the user's approver for a call it did not make, cannot describe in its
+own vocabulary and has no trust level for, which is exactly the screen-says-`plan` failure this
+question forbids.
+
+Settled, and this one was load-bearing rather than aesthetic: **a delegated tool call is a notice, not
+a `core.EventToolCall`.** `internal/agent/loop.go` invokes every tool call event it is handed, so
+mapping ACP's `tool_call` update onto that kind would have made Canopy run the vendor's tool a second
+time, through a gate, against a tool definition it does not have.
+
+Still open, and now visible rather than theoretical: **the honest answer for the third question, what
+verification means, is that it does not apply.** Claude Code's own auto-approved tools never reach
+Canopy at all, so declining permission requests does not make a delegated turn gated; it only means
+Canopy grants nothing. A4's audit trail records no refused calls because Canopy refused none of its
+own, and A6 verifies nothing because Canopy ran nothing. That is written down in LIMITATIONS.md in
+those words. What is not settled is whether shipping a route with that property is acceptable at all
+beyond a beta, or whether the answer is the first option, refusing to delegate a turn that would need
+Canopy's tools, at the cost of a subscription credential buying a visibly weaker agent.
+
+Also still open: **what the conversation screen should show for the permission mode during a
+delegated turn.** Today the turn opens with a notice saying Canopy's permissions are not in the path,
+which stops the mode indicator from being a lie by contradicting it in words. A mode indicator that
+knew about delegation would be better than a sentence that argues with it.
+
+**Answered differently by S-03, 2026-07-30, on the GitHub Copilot route, and the difference is the
+protocol rather than the principle.** The second option, exposing Canopy's tools to the delegated
+agent and re-imposing Canopy's gating at that boundary, is unavailable in ACP v1 and is available in
+GitHub's SDK. So on the Copilot route it is what Canopy does, and the three answers come out as:
+
+Canopy's own tools **are** offered, and they are the only tools in the session. The client is created
+in the SDK's `empty` mode, which starts a session with no built-in tools, and the session's tool
+allowlist names Canopy's tools by source and no vendor source at all, so nothing of GitHub's reaches
+the model to be called.
+
+Canopy's permission gate **is** in force, and by construction rather than by cooperation. Canopy's
+tools are declared to the vendor with no implementation behind them, which is the SDK's
+declaration-only form: a call arrives as an event and stays pending until somebody resolves it. That
+somebody is Canopy's own loop, one layer up, after the call has been through the agent's trust level
+and, where the level requires it, past a person. There is no path by which the vendor runs one of
+Canopy's tools, because it was never given a way to run any of them.
+
+A4's audit trail and A6's verification **do** apply, for the same reason: every tool call in a
+Copilot turn was made by Canopy.
+
+The trap S-04 found holds here too and was checked rather than assumed. `internal/agent/loop.go`
+invokes every tool call event it is handed, so the only vendor event this route maps onto
+`core.EventToolCall` is the one that means "waiting for you to run this". The events that mean a tool
+is running or has run produce nothing at all, and a test holds that.
+
+**What this leaves genuinely open, and it is narrower than before.** The question is no longer
+whether a delegated turn can be governed, because one of them is. It is whether a route that cannot
+be governed should ship beside one that can. The Copilot route shows that the ceiling is set by each
+vendor's protocol rather than by Canopy's design, which means the answer will differ per route and
+the product decision is how to say that on screen without three different explanations. It also
+sharpens the first option: refusing to delegate a turn that needs Canopy's tools would now cost
+nothing on Copilot and everything on Claude Code, so it is a per-route policy rather than a phase-wide
+one.
+
+**Confirmed by S-05, 2026-07-30, on the ChatGPT route, which lands beside Claude Code rather than
+beside Copilot.** The Codex app server has no field anywhere for a client's own tools: `thread/start`
+and `turn/start` accept none, and the only tools in the room are the app server's own plus whatever
+MCP servers the user's `~/.codex/config.toml` starts, which Canopy neither chose nor can see. So the
+three answers come out as they do on Claude Code, and two of the three routes now sit at that end.
+
+The trap holds here too and by a wider margin, which is worth recording as a property of the category
+rather than of one protocol. This route has eleven item types, most of them tool-shaped, and the app
+server has already run every one inside its own sandbox before Canopy hears about it. All of them
+become notices. A test sends all eleven plus two invented ones and fails on any tool call event.
+
+One thing is new, and it is a cost rather than a finding. Because Canopy declines every approval, the
+Codex thread is opened read-only, so a delegated ChatGPT turn cannot write files at all. That is the
+honest pairing for a client that refuses everything, and it is the clearest illustration yet of the
+first of the three options: a subscription credential buying a visibly weaker agent, and saying so.
+It is now something a supervisor can sit in front of rather than imagine.
+
+**Who decides:** both supervisors. All three delegated routes now work end to end, and they land two
+against one: Copilot's turn is governed by Canopy, and the Claude Code and ChatGPT turns are not,
+because neither protocol has a door. The comparison this question was waiting for exists.

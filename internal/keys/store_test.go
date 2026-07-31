@@ -2,9 +2,11 @@ package keys
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -561,6 +563,52 @@ func TestRotatingAKeyKeepsTheModelsItsOwnerAdded(t *testing.T) {
 	}
 }
 
+// Every mutating method here reads the whole metadata file, changes one thing in it and writes all
+// of it back, which is only safe because they take the store's lock first. SetModel was the one that
+// did not, so a model selection landing at the same moment as any other write put back a copy of the
+// file from before that write and the other change was gone.
+func TestChangingTheModelDoesNotDiscardAConcurrentChange(t *testing.T) {
+	store, _ := newTestStore(t)
+	ref := core.KeyRef{Name: "claude"}
+	if _, err := store.Put(anthropic("claude"), core.NewSecret(planted)); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	const rounds = 32
+	var wg sync.WaitGroup
+	failures := make(chan error, rounds*2)
+	for i := 0; i < rounds; i++ {
+		id := fmt.Sprintf("model-%02d", i)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			if err := store.AddModel(ref, id, ""); err != nil {
+				failures <- err
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			if err := store.SetModel(ref, id); err != nil {
+				failures <- err
+			}
+		}()
+	}
+	wg.Wait()
+	close(failures)
+	for err := range failures {
+		t.Fatalf("a concurrent write failed: %v", err)
+	}
+
+	models, err := store.Models(ref)
+	if err != nil {
+		t.Fatalf("Models: %v", err)
+	}
+	if len(models) != rounds {
+		t.Errorf("%d of %d added models survived, so selecting a model discarded work done "+
+			"alongside it", len(models), rounds)
+	}
+}
+
 // A keys.json written by the build before this one has no models field at all. It has to load with
 // an empty list and lose nothing else, or an upgrade silently drops credentials.
 func TestAKeysFileFromThePreviousBuildLoadsWithNothingLost(t *testing.T) {
@@ -727,6 +775,73 @@ func TestRenamingMovesTheCredentialAndItsSecret(t *testing.T) {
 	}
 	if _, err := store.Get(core.KeyRef{Name: "kimi"}); err == nil {
 		t.Error("the old name still reads a secret, so the same value is in the backend twice")
+	}
+}
+
+func TestRenamingMovesASignedInGrantWithoutChangingItsIdentity(t *testing.T) {
+	store, _ := newTestStore(t)
+	oldRef := core.KeyRef{Name: "copilot", Provider: core.ProviderOpenAICompatible}
+	wantTokens := bothTokens()
+	if _, err := store.PutSignIn(
+		core.KeyMetadata{Ref: oldRef, BaseURL: "https://api.githubcopilot.com"},
+		SignIn{Kind: KindSignedIn, Account: "walid", Route: "copilot"},
+		wantTokens,
+	); err != nil {
+		t.Fatalf("PutSignIn: %v", err)
+	}
+
+	meta, err := store.Rename(oldRef, "work-copilot")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	newRef := meta.Ref
+	in, err := store.SignIn(newRef)
+	if err != nil {
+		t.Fatalf("SignIn under new name: %v", err)
+	}
+	if in.Kind != KindSignedIn || in.Account != "walid" || in.Route != "copilot" {
+		t.Errorf("sign-in metadata changed during rename: %+v", in)
+	}
+	gotTokens, err := store.Tokens(newRef)
+	if err != nil {
+		t.Fatalf("Tokens under new name: %v", err)
+	}
+	if gotTokens.Access.Reveal() != wantTokens.Access.Reveal() ||
+		gotTokens.Refresh.Reveal() != wantTokens.Refresh.Reveal() {
+		t.Error("the grant changed during rename")
+	}
+	if _, err := store.SignIn(oldRef); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the old signed-in name still resolves: %v", err)
+	}
+}
+
+func TestRenamingADelegatedCredentialDoesNotInventABackendValue(t *testing.T) {
+	store, _ := newTestStore(t)
+	oldRef := core.KeyRef{Name: "claude-code", Provider: core.ProviderAnthropic}
+	if _, err := store.PutSignIn(
+		core.KeyMetadata{Ref: oldRef},
+		SignIn{Kind: KindDelegated, Account: "walid", Route: "claude-code"},
+		Tokens{},
+	); err != nil {
+		t.Fatalf("PutSignIn: %v", err)
+	}
+
+	meta, err := store.Rename(oldRef, "max-plan")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	in, err := store.SignIn(meta.Ref)
+	if err != nil {
+		t.Fatalf("SignIn under new name: %v", err)
+	}
+	if in.Kind != KindDelegated || in.Account != "walid" || in.Route != "claude-code" {
+		t.Errorf("delegated metadata changed during rename: %+v", in)
+	}
+	if _, err := store.backend.Get(meta.Ref.Name); !errors.Is(err, ErrNotFound) {
+		t.Errorf("rename created a backend value for a delegated credential: %v", err)
+	}
+	if _, err := store.SignIn(oldRef); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the old delegated name still resolves: %v", err)
 	}
 }
 

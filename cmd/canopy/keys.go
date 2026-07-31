@@ -24,18 +24,23 @@ const keysUsage = `canopy keys - manage provider credentials
 
 usage:
   canopy keys add <name>     store a credential, read from a prompt or stdin
+  canopy keys signin <name>  sign in with a subscription instead of pasting a key
+  canopy keys signout <name> end a sign-in and delete what it left behind
   canopy keys model <name> <model>   change which model this credential talks to
   canopy keys models <name>  show every model this credential can be pointed at
   canopy keys list           show stored credentials, never their values
   canopy keys rename <old> <new>     change what a credential is called
   canopy keys remove <name>  delete a credential
-  canopy keys test <name>    check that a credential can be read back
+  canopy keys test <name>    say what is actually true of a credential
   canopy keys rate <name>    record what this credential charges, so turns show a cost
 
 flags for add:
   -provider string   anthropic or openai-compatible (default "anthropic")
   -base-url string   endpoint, required for openai-compatible
   -model string      the model this credential talks to, required except for anthropic
+
+flags for signin:
+  -route string      which way in to use, listed by running it without one
 
 subcommands of models:
   canopy keys models <name>                     list what this key can run
@@ -61,6 +66,11 @@ examples:
   pbpaste | canopy keys add claude
   canopy keys rate kimi -in 0.6 -out 2.5
 
+Not every credential is a value you hold. Somebody with a Copilot seat, a Claude
+Code installation or a ChatGPT subscription has nothing to paste, and signs in
+instead: canopy keys signin. Nothing is typed, a code and a page are printed for
+you to visit, and the same credential appears in the interface.
+
 A key is one credential and many models. Canopy ships the lineups it knows, for
 Anthropic and for OpenAI's own endpoint, and anything else is added by hand. The
 list is a convenience and never a gate: keys model takes any id, listed or not,
@@ -80,6 +90,33 @@ presented as a fact. Your own figure is labelled as yours wherever it appears.
 // they were about to put a credential into their shell history.
 var secretFlagNames = []string{"key", "secret", "value", "token", "api-key", "apikey", "password"}
 
+// refuseSecretFlags defines those flags on a command and returns the check that rejects them.
+//
+// Shared rather than written once per command, because the protection is only worth anything on
+// every command somebody might reach for it on. `keys signin` needs it at least as much as `keys
+// add` does: a person who has read that a subscription involves a token is exactly the person who
+// tries `-token`, and the flag being undefined would answer them with "typo" rather than with what
+// they were about to do to their shell history.
+func refuseSecretFlags(flags *flag.FlagSet) func() error {
+	refused := make(map[string]*string, len(secretFlagNames))
+	for _, name := range secretFlagNames {
+		refused[name] = flags.String(name, "", "not supported, see below")
+	}
+	return func() error {
+		for name, value := range refused {
+			if *value != "" {
+				return fmt.Errorf(
+					"-%s is not supported. A credential passed as an argument is written to your "+
+						"shell history and is visible in the process list to anyone else on this "+
+						"machine. Run `canopy keys add <name>` and paste it at the prompt, pipe it "+
+						"in on stdin, or sign in with `canopy keys signin <name>` and paste nothing",
+					name)
+			}
+		}
+		return nil
+	}
+}
+
 func runKeys(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		_, err := fmt.Fprint(out, keysUsage)
@@ -93,6 +130,10 @@ func runKeys(args []string, out io.Writer) error {
 		return err
 	case "add":
 		return runKeysAdd(rest, out)
+	case "signin", "login":
+		return runKeysSignIn(rest, out)
+	case "signout", "logout":
+		return runKeysSignOut(rest, out)
 	case "list", "ls":
 		return runKeysList(rest, out)
 	case "rename", "mv":
@@ -140,10 +181,7 @@ func runKeysAdd(args []string, out io.Writer) error {
 	baseURL := flags.String("base-url", "", "endpoint, required for openai-compatible")
 	model := flags.String("model", "", "the model this credential talks to")
 
-	refused := make(map[string]*string, len(secretFlagNames))
-	for _, name := range secretFlagNames {
-		refused[name] = flags.String(name, "", "not supported, see below")
-	}
+	refused := refuseSecretFlags(flags)
 
 	// Go's flag package stops parsing at the first positional argument, so `keys add kimi
 	// -provider openai-compatible` would treat the flags as extra positionals. Since that is the
@@ -158,14 +196,8 @@ func runKeysAdd(args []string, out io.Writer) error {
 		return err
 	}
 
-	for name, value := range refused {
-		if *value != "" {
-			return fmt.Errorf(
-				"-%s is not supported. A credential passed as an argument is written to your shell "+
-					"history and is visible in the process list to anyone else on this machine. "+
-					"Run `canopy keys add <name>` and paste it at the prompt, or pipe it in on stdin",
-				name)
-		}
+	if err := refused(); err != nil {
+		return err
 	}
 
 	positional := flags.Args()
@@ -375,18 +407,49 @@ func runKeysList(args []string, out io.Writer) error {
 		return err
 	}
 
+	// Who each credential is signed in as, read before the table is drawn so the table knows whether
+	// it needs the column at all. None of this touches the backend: an account and an expiry are
+	// facts S-01 keeps out of the keychain half precisely so a listing can print them without
+	// stopping to unlock anything.
+	signIns := make(map[string]keys.SignIn, len(all))
+	anySignedIn := false
+	for _, meta := range all {
+		in, err := store.SignIn(meta.Ref)
+		if err != nil {
+			continue
+		}
+		signIns[meta.Ref.Name] = in
+		anySignedIn = anySignedIn || in.Kind.IsSignIn()
+	}
+
 	tab := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	w := &errWriter{w: tab}
-	w.printf("NAME\tPROVIDER\tMODEL\tFINGERPRINT\tRATE\tADDED\tLAST USED\n")
+
+	// The account column appears only when a credential has one. A machine with nothing but pasted
+	// keys sees the listing it has always seen, rather than an empty column asking a question about
+	// a feature it does not use.
+	account := func(name string) string {
+		if !anySignedIn {
+			return ""
+		}
+		return "\t" + formatAccount(signIns[name])
+	}
+
+	header := "NAME\tPROVIDER\tMODEL\tFINGERPRINT\tRATE\tADDED\tLAST USED"
+	if anySignedIn {
+		header += "\tSIGNED IN AS"
+	}
+	w.printf("%s\n", header)
 	for _, meta := range all {
-		w.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		w.printf("%s\t%s\t%s\t%s\t%s\t%s\t%s%s\n",
 			meta.Ref.Name,
 			meta.Ref.Provider,
-			formatModel(meta),
+			formatModelFor(meta, signIns[meta.Ref.Name]),
 			meta.Fingerprint,
 			formatRate(meta),
 			meta.CreatedAt.Format("2006-01-02"),
-			formatLastUsed(meta.LastUsedAt))
+			formatLastUsed(meta.LastUsedAt),
+			account(meta.Ref.Name))
 	}
 	if err := tab.Flush(); err != nil {
 		return err
@@ -397,6 +460,30 @@ func runKeysList(args []string, out io.Writer) error {
 
 	_, err = fmt.Fprintf(out, "\nStored in the %s. Values are never displayed.\n", store.BackendName())
 	return err
+}
+
+// formatAccount is the signed-in column: who, and whether the grant is still good.
+//
+// A dash rather than a blank for a pasted credential, so a column that is empty for a row reads as
+// "this one has no account" rather than as a value that failed to print.
+func formatAccount(in keys.SignIn) string {
+	if !in.Kind.IsSignIn() {
+		return "-"
+	}
+	who := in.Account
+	if who == "" {
+		who = "(unnamed)"
+	}
+	switch {
+	case in.Kind == keys.KindDelegated:
+		return who + " (delegated)"
+	case in.ExpiresAt == nil:
+		return who
+	case time.Now().After(*in.ExpiresAt):
+		return who + " (lapsed)"
+	default:
+		return who
+	}
 }
 
 // formatModel says which model a credential talks to, and says loudly when it cannot.
@@ -413,6 +500,19 @@ func formatModel(meta core.KeyMetadata) string {
 	default:
 		return "NOT SET, run `canopy keys model " + meta.Ref.Name + " <model>`"
 	}
+}
+
+// formatModelFor is formatModel for a credential that may not choose its own model.
+//
+// A delegated turn runs inside the vendor's own agent, which picks the model there. Naming Canopy's
+// default in that column would be stating something that has no effect on a single message, and
+// telling somebody to set one would be telling them to fix what is not broken. The credential screen
+// says the same words for the same case.
+func formatModelFor(meta core.KeyMetadata, in keys.SignIn) string {
+	if in.Kind == keys.KindDelegated && meta.Model == "" {
+		return "the vendor chooses"
+	}
+	return formatModel(meta)
 }
 
 func formatLastUsed(at *time.Time) string {
@@ -549,6 +649,14 @@ func runKeysRemove(args []string, out io.Writer) error {
 	return err
 }
 
+// runKeysTest says the strongest true thing available about a credential.
+//
+// It was storage only, for every credential, because every credential was a value somebody pasted
+// and a fingerprint comparison was the whole of what could be checked without spending money. A
+// signed-in credential has no pasted value to fingerprint, so that check has nothing to do on one,
+// and skipping it would leave the command answering "fine" for a credential it had not looked at.
+// What it does instead is give each kind of credential the strongest honest answer available to that
+// kind, and say in each case what was and was not asked of the vendor.
 func runKeysTest(args []string, out io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("a name is required, for example `canopy keys test claude`")
@@ -564,6 +672,15 @@ func runKeysTest(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+
+	in, err := store.SignIn(meta.Ref)
+	if err != nil {
+		return err
+	}
+	if in.Kind.IsSignIn() {
+		return testSignedIn(out, store, meta, in)
+	}
+
 	secret, err := store.Get(core.KeyRef{Name: name})
 	if err != nil {
 		return err
@@ -586,8 +703,14 @@ func runKeysTest(args []string, out io.Writer) error {
 		w.printf("  base url     %s\n", meta.BaseURL)
 	}
 	w.printf("  fingerprint  %s\n", meta.Fingerprint)
-	w.printf("\nThis checks storage only. Whether the provider accepts the credential is not\n")
-	w.printf("checked yet, because no provider client exists until A2.\n")
+	// It used to say the provider was not contacted "because no provider client exists until A2",
+	// which stopped being true eight phases ago and had been a lie about the reason ever since. The
+	// reason is the one below and it has not changed: the only way to ask whether this value is
+	// still accepted is to make a request the account is billed for, and a command somebody runs to
+	// check something should not spend their money to answer.
+	w.printf("\nThis checks storage only. Nothing was sent to %s, so a value that is stored\n",
+		meta.Ref.Provider)
+	w.printf("correctly and is no longer accepted still passes here.\n")
 	return w.err
 }
 

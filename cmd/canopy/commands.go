@@ -43,7 +43,12 @@ func runChat(resume string) error {
 		return err
 	}
 
-	resolver := session.NewKeyResolver(keyStore)
+	resolver := session.NewKeyResolver(keyStore, version)
+	// Where a signed-in credential buys a new token, told to the resolver before any turn starts.
+	// A setter rather than a constructor argument because the routes arrive one task at a time, and
+	// the same function is handed to `canopy ask` so the two surfaces cannot disagree about when a
+	// grant is too old to send.
+	resolver.Renews(signInSources())
 	engine := session.New(resolver)
 	defer engine.Close()
 
@@ -170,9 +175,10 @@ func runChat(resume string) error {
 	// on every run. Leaving this out is what made `canopy` reopen the oldest chat in the history
 	// database while the agent it had just started talked to nobody.
 	last, err := tui.RunAppConfigured(
-		monitor, keyStore, engine, filepath.Base(dir), keyName, tui.AppOptions{
+		monitor, signInAware{keyStore}, engine, filepath.Base(dir), keyName, tui.AppOptions{
 			Review: review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
+			SignIn: signInRoutes,
 		})
 	if err != nil {
 		return err
@@ -402,6 +408,13 @@ func defaultModelFor(store *keys.Store, name string) string {
 	}
 	if meta.Model != "" {
 		return meta.Model
+	}
+	// A delegated credential is Anthropic by provider and chooses nothing: the agent Canopy drives
+	// picks its own model, so filling in this build's Anthropic default would put a model name on
+	// screen that has no effect on a single message. Empty is the same answer `canopy keys list`
+	// gives in that column, and for the same reason.
+	if in, err := store.SignIn(meta.Ref); err == nil && in.Kind == keys.KindDelegated {
+		return ""
 	}
 	if meta.Ref.Provider == core.ProviderAnthropic {
 		return anthropic.DefaultModel

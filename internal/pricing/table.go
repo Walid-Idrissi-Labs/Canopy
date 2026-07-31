@@ -87,6 +87,21 @@ type ModelID struct {
 	// and Canopy also holds one, theirs is the answer to the question actually being asked, which
 	// is "what will this cost me" rather than "what is the list price".
 	UserRate core.KeyRate
+
+	// Delegated marks a turn that ran on somebody else's agent, on a subscription the user already
+	// pays for, and it makes the turn unpriceable rather than free.
+	//
+	// The two are different claims and only one of them is true. The tokens on such a turn are real
+	// and are counted, and the list price of those tokens is a genuine number, but it is a number
+	// about an API bill that nobody is going to receive: a Max or Pro plan is charged monthly and
+	// these tokens are metered against its limits. Printing the list price would be arithmetic
+	// presented as somebody's spend, and printing zero would say the turn was free, which is the
+	// claim Free exists to make and this is not. So there is no figure, and the reason is said.
+	//
+	// It beats UserRate as well as the table, which is the one case where somebody's own figure does
+	// not win. A per-million-token rate cannot describe a plan billed monthly whoever supplied it,
+	// and the reason below says so rather than quietly ignoring what they set.
+	Delegated bool
 }
 
 // NewModelID builds an identifier from what a credential and a request already carry.
@@ -158,6 +173,9 @@ func Lookup(id ModelID) (Rates, bool) {
 
 // lookupWithSource is Lookup, plus where the answer came from.
 func lookupWithSource(id ModelID) (Rates, Source) {
+	if id.Delegated {
+		return Rates{}, SourceNone
+	}
 	if !id.UserRate.IsZero() {
 		cacheRead := id.UserRate.CacheReadPerMTok
 		if cacheRead == 0 {
@@ -275,6 +293,11 @@ func Apply(id ModelID, usage core.Usage) (core.Usage, string) {
 }
 
 func unpricedReason(id ModelID) string {
+	if id.Delegated {
+		return "this turn ran on an agent you signed in to yourself, so its tokens are metered " +
+			"against that plan's limits rather than billed per token. Canopy has no figure to show " +
+			"and will not invent one"
+	}
 	switch id.Provider {
 	case core.ProviderOpenAICompatible:
 		where := id.Host

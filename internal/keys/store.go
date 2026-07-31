@@ -44,6 +44,32 @@ type record struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 	LastUsedAt  *time.Time `json:"lastUsedAt,omitempty"`
 
+	// Kind, Account and ExpiresAt are what a credential somebody signed in to carries in place of a
+	// value they pasted. None of the three is a secret, and that is the point of them being here
+	// rather than in the backend: a list can say who a credential is signed in as and when it stops
+	// working without unlocking a keychain to find out. The tokens themselves are in the backend.
+	// See Kind in signin.go for why the kind sits beside the provider instead of becoming one.
+	//
+	// Absent on a pasted credential rather than spelled out, the same way Models is absent when it
+	// is empty, so a keys.json written before any of this existed reads back as the document it
+	// already was and no record starts making a claim about itself that nobody made.
+	Kind      string     `json:"kind,omitempty"`
+	Account   string     `json:"account,omitempty"`
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+
+	// Route is which way in produced this grant: "copilot", and whatever S-04 and S-05 call theirs.
+	//
+	// Here rather than derived from Provider because Provider cannot answer it. Copilot and Codex are
+	// both openai-compatible, so the moment the second of them lands a switch on Provider sends one
+	// of them to the other's client and to the other's token endpoint. SourceFor at refresh.go:93 was
+	// written as a function rather than a map for exactly this, and this is the field it keys on.
+	//
+	// Optional, and an absent route is not damage. A credential signed in on a build that predates
+	// this field is still a credential, and the place that needs the route says so plainly rather
+	// than guessing. Requiring it would also mean rewriting tests belonging to two tasks currently
+	// in review, which is a worse trade than one legible error.
+	Route string `json:"route,omitempty"`
+
 	// Rate is the user's own price for this credential, per million tokens. Absent until they set
 	// one, which is why every field is omitempty: a rate of zero written to disk and a rate never
 	// set would otherwise be the same document.
@@ -216,35 +242,7 @@ func (s *Store) Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata
 		CacheReadPerMTok: meta.Rate.CacheReadPerMTok,
 	}
 
-	replaced := false
-	for i, existing := range records {
-		if existing.Name == stored.Name {
-			// Keep the original creation time. Rotating a credential is not creating a new one,
-			// and losing the date would hide how long a key has been in use.
-			stored.CreatedAt = existing.CreatedAt
-			stored.LastUsedAt = existing.LastUsedAt
-
-			// The models its owner added survive too, for the same reason the creation date does.
-			// Rotating a credential is not setting up a new one, and a list somebody built by hand
-			// is not something to make them build again because their key expired.
-			stored.Models = existing.Models
-
-			// And keep the rate, unless the caller supplied one. Rotating a key does not change
-			// what the endpoint charges, so silently dropping the price would turn a working cost
-			// figure into "unknown" for no reason the user could see.
-			if meta.Rate.IsZero() {
-				stored.InputPerMTok = existing.InputPerMTok
-				stored.OutputPerMTok = existing.OutputPerMTok
-				stored.CacheReadPerMTok = existing.CacheReadPerMTok
-			}
-			records[i] = stored
-			replaced = true
-			break
-		}
-	}
-	if !replaced {
-		records = append(records, stored)
-	}
+	records, stored = upsert(records, stored, meta.Rate)
 
 	if err := s.save(records); err != nil {
 		return core.KeyMetadata{}, err
@@ -252,7 +250,48 @@ func (s *Store) Put(meta core.KeyMetadata, secret core.Secret) (core.KeyMetadata
 	return stored.toMetadata(), nil
 }
 
+// upsert files a record under its name, carrying over what an existing one of that name owns.
+//
+// One function rather than a copy in each of Put and PutSignIn, because the rule is one rule and
+// the two must not be able to drift apart: replacing what a credential authenticates with is not
+// setting up a new credential, whether the replacement is a pasted value or a fresh sign-in. What
+// survives is what belongs to the credential rather than to the value behind it.
+func upsert(records []record, stored record, rate core.KeyRate) ([]record, record) {
+	for i, existing := range records {
+		if existing.Name != stored.Name {
+			continue
+		}
+
+		// Keep the original creation time. Rotating a credential is not creating a new one, and
+		// losing the date would hide how long a key has been in use.
+		stored.CreatedAt = existing.CreatedAt
+		stored.LastUsedAt = existing.LastUsedAt
+
+		// The models its owner added survive too, for the same reason the creation date does.
+		// Rotating a credential is not setting up a new one, and a list somebody built by hand is
+		// not something to make them build again because their key expired.
+		stored.Models = existing.Models
+
+		// And keep the rate, unless the caller supplied one. Rotating a key does not change what
+		// the endpoint charges, so silently dropping the price would turn a working cost figure
+		// into "unknown" for no reason the user could see.
+		if rate.IsZero() {
+			stored.InputPerMTok = existing.InputPerMTok
+			stored.OutputPerMTok = existing.OutputPerMTok
+			stored.CacheReadPerMTok = existing.CacheReadPerMTok
+		}
+
+		records[i] = stored
+		return records, stored
+	}
+	return append(records, stored), stored
+}
+
 // Get returns a credential's secret value.
+//
+// Only a pasted one. A credential somebody signed in to is refused here rather than served, because
+// what sits behind it is a pair of tokens, and a caller reaching for Get is reaching for something
+// to put in a header. Tokens is the way to those, and it says so.
 func (s *Store) Get(ref core.KeyRef) (core.Secret, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -261,23 +300,50 @@ func (s *Store) Get(ref core.KeyRef) (core.Secret, error) {
 	if err != nil {
 		return core.Secret{}, err
 	}
-	if _, ok := findRecord(records, ref.Name); !ok {
+	found, ok := findRecord(records, ref.Name)
+	if !ok {
 		return core.Secret{}, fmt.Errorf("no key named %q: %w", ref.Name, ErrNotFound)
+	}
+	if in := found.signIn(); in.Kind.IsSignIn() {
+		return core.Secret{}, fmt.Errorf(
+			"key %q is signed in as %s, so there is no pasted value to read", ref.Name, in.Account)
 	}
 
 	value, err := s.backend.Get(ref.Name)
 	if errors.Is(err, ErrNotFound) {
 		// The two halves disagree. Say so precisely, because "not found" would send the user
 		// looking for a key they can see in `canopy keys list`.
-		return core.Secret{}, fmt.Errorf(
-			"key %q is recorded but its secret is missing from the %s backend, "+
-				"so it was removed outside Canopy. Add it again with `canopy keys add %s`",
-			ref.Name, s.backend.Name(), ref.Name)
+		return core.Secret{}, s.halvesDisagree(ref.Name,
+			fmt.Sprintf("Add it again with `canopy keys add %s`", ref.Name))
 	}
 	if err != nil {
 		return core.Secret{}, err
 	}
+
+	if _, isGrant := parseGrant(value); isGrant {
+		// The record says pasted and the backend holds a sign-in's tokens, which is what a change
+		// that stopped between its two steps leaves behind. Refused rather than returned, because
+		// returning it means a request built with a JSON document where the credential belongs,
+		// answered with a 401, and reported as a wrong key: ErrAuthentication is documented as
+		// never retry and never fall back, so the user would be sent to replace a key that is fine.
+		return core.Secret{}, fmt.Errorf(
+			"key %q is recorded as a pasted secret but the %s backend holds a sign-in's tokens "+
+				"under its name, which is what a change that stopped halfway leaves behind. "+
+				"Add it again with `canopy keys add %s`", ref.Name, s.backend.Name(), ref.Name)
+	}
 	return core.NewSecret(value), nil
+}
+
+// halvesDisagree describes metadata the user can see with nothing behind it.
+//
+// One sentence shared by pasted credentials and sign-ins, because it is one situation and the
+// person reading it has one problem. Only the remedy is passed in, and only because it genuinely
+// differs: telling somebody to paste a key they never had would send them looking for a thing that
+// does not exist.
+func (s *Store) halvesDisagree(name, remedy string) error {
+	return fmt.Errorf(
+		"key %q is recorded but its secret is missing from the %s backend, so it was removed "+
+			"outside Canopy. %s", name, s.backend.Name(), remedy)
 }
 
 // Metadata returns the non secret facts about a credential.
@@ -317,6 +383,10 @@ func (s *Store) List() ([]core.KeyMetadata, error) {
 // The secret goes first here too. If metadata removal then fails, the leftover entry is visible
 // and fixable. The reverse would leave a secret in the keychain that nothing knows about, which is
 // a credential nobody will ever think to revoke.
+//
+// A sign-in's tokens go with it and need no line of their own, because both of them live in the one
+// backend entry under the credential's name. That is the main thing bought by keeping them there
+// rather than under names derived from it, and the argument is in signin.go.
 func (s *Store) Remove(ref core.KeyRef) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -349,11 +419,12 @@ func (s *Store) Remove(ref core.KeyRef) error {
 // stops resolving the moment it returns, which is why the callers that hold conversations are
 // expected to follow it: see Engine.RenameCredential.
 //
-// The order is the one Put and Remove already argue for, in both directions. The secret is written
-// under the new name before anything else changes, so a failure there leaves the credential exactly
-// as it was. The metadata moves next, because that is the step that makes the new name real. Only
-// then is the old secret deleted, because a delete that ran first and was followed by a failure
-// would have thrown away a credential to rename it.
+// The order is the one Put and Remove already argue for, in both directions. When Canopy holds a
+// backend value, it is written under the new name before anything else changes, so a failure there
+// leaves the credential exactly as it was. The metadata moves next, because that is the step that
+// makes the new name real. Only then is the old value deleted, because a delete that ran first and
+// was followed by a failure would have thrown away a credential to rename it. A delegated sign-in
+// deliberately has no backend value, so its move is the metadata step alone.
 //
 // Two failures leave something behind and both say so rather than being swallowed. A metadata write
 // that fails takes the freshly written secret with it, so nothing is left under a name the records
@@ -388,20 +459,24 @@ func (s *Store) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
 			"there is already a credential called %q, so pick another name or remove that one first", to)
 	}
 
-	secret, err := s.backend.Get(ref.Name)
-	if errors.Is(err, ErrNotFound) {
-		// The same disagreement Get explains, said here rather than reported as a rename failure: a
-		// record whose secret has gone is not a record that can be moved anywhere useful.
-		return core.KeyMetadata{}, fmt.Errorf(
-			"key %q is recorded but its secret is missing from the %s backend, so there is nothing to "+
-				"rename. Add it again with `canopy keys add %s`", ref.Name, s.backend.Name(), ref.Name)
-	}
-	if err != nil {
-		return core.KeyMetadata{}, err
-	}
+	delegated := found.signIn().Kind == KindDelegated
+	var backendValue string
+	if !delegated {
+		backendValue, err = s.backend.Get(ref.Name)
+		if errors.Is(err, ErrNotFound) {
+			// The same disagreement Get explains, said here rather than reported as a rename failure:
+			// a record whose secret has gone is not a record that can be moved anywhere useful.
+			return core.KeyMetadata{}, fmt.Errorf(
+				"key %q is recorded but its secret is missing from the %s backend, so there is nothing to "+
+					"rename. Add it again with `canopy keys add %s`", ref.Name, s.backend.Name(), ref.Name)
+		}
+		if err != nil {
+			return core.KeyMetadata{}, err
+		}
 
-	if err := s.backend.Set(to, secret); err != nil {
-		return core.KeyMetadata{}, err
+		if err := s.backend.Set(to, backendValue); err != nil {
+			return core.KeyMetadata{}, err
+		}
 	}
 
 	for i := range records {
@@ -411,6 +486,9 @@ func (s *Store) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
 		}
 	}
 	if err := s.save(records); err != nil {
+		if delegated {
+			return core.KeyMetadata{}, err
+		}
 		// Nothing claims the new name, so the secret written under it is unreachable and is taken
 		// back. If that cleanup fails too, both facts matter: the metadata and old secret still name
 		// the credential correctly, but an untracked copy is now live under the proposed name.
@@ -424,12 +502,14 @@ func (s *Store) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
 		return core.KeyMetadata{}, err
 	}
 
-	if err := s.backend.Delete(ref.Name); err != nil {
-		found.Name = to
-		return found.toMetadata(), fmt.Errorf(
-			"%q is now called %q, but its old secret could not be removed from the %s backend: %w. "+
-				"The same value is still readable under %q, so revoke or delete it there",
-			ref.Name, to, s.backend.Name(), err, ref.Name)
+	if !delegated {
+		if err := s.backend.Delete(ref.Name); err != nil {
+			found.Name = to
+			return found.toMetadata(), fmt.Errorf(
+				"%q is now called %q, but its old secret could not be removed from the %s backend: %w. "+
+					"The same value is still readable under %q, so revoke or delete it there",
+				ref.Name, to, s.backend.Name(), err, ref.Name)
+		}
 	}
 
 	found.Name = to
@@ -442,6 +522,9 @@ func (s *Store) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
 // correcting a typo in a model id should not have to go and find their API key again, and a flow
 // that asked them to would get the key pasted from somewhere less careful than where it lives now.
 func (s *Store) SetModel(ref core.KeyRef, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	records, err := s.load()
 	if err != nil {
 		return err

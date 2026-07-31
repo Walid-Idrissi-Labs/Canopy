@@ -655,6 +655,12 @@ including the primary checkout and another agent's worktree. Fan-out and any wor
 several agents may edit concurrently require isolated mode; silently falling back to a shared
 checkout is a refusal, not a convenience.
 
+The assigned workspace also travels into a delegated vendor session. A direct delegated agent is
+started in the direct workspace; an isolated delegated agent is started in its Canopy-owned
+worktree. Falling back to the repository where Canopy itself started is prohibited. This selects a
+working directory; it does not turn the delegated vendor's own tools into Canopy-confined tools or
+change the shell boundary below.
+
 **The shell is not contained in either mode.** It starts in the selected workspace, but its command
 is opaque and runs with the user's operating-system permissions. It can use `..`, an absolute path,
 or another program to reach outside an isolated worktree. Read-only and confined trust therefore do
@@ -1015,7 +1021,7 @@ Three properties keep the delay from becoming its own defect:
    acts has stopped cycling. Dropping the selection in those cases would be worse than having no
    delay at all: the key would have named a mode, said what it does, and then not done it.
 2. **The screen never claims the selection is enforced.** While it settles the box says both, in the
-   order they happen, `cruise → plan`. The mode in effect keeps the colour. A screen that showed the
+   order they happen, `cruise -> plan`. The mode in effect keeps the colour. A screen that showed the
    selection alone would put "plan" over a conversation the permission layer was still letting run
    commands, which is the failure D-41 and the mode indicator exist to prevent.
 3. **What the key offers is what the engine would accept.** The ladder skips modes this agent cannot
@@ -1051,7 +1057,7 @@ Four rules keep the list honest:
    the plural lives in the keys store beside it. The frozen contract does not grow a field for a
    feature that a layer above it can carry.
 
-“What can this provider run” means what Canopy can invoke through the provider transport it ships,
+"What can this provider run" means what Canopy can invoke through the provider transport it ships,
 not every model name the provider publishes. In particular, the current OpenAI-compatible client
 uses Chat Completions. A model documented as requiring Responses is not offered by that catalog
 until Canopy has a Responses transport for it. The free-text rule still accepts unlisted model ids
@@ -1202,6 +1208,72 @@ outranks visitors on the shared key. D-43's other two rules, ambient attention a
 spending a paid model call, are untouched; an approval releases a tool call that was already paid
 for by somebody's explicit send.
 
+## D-51 A subscription is signed in to, never pasted. Decided 2026-07-30.
+
+Canopy has only ever held one kind of credential: a string the user pasted, which the user got from a
+billing account they opened. That covers everybody with an API key and nobody else, and most people
+paying for a model today are the other group. They have a Claude Max plan, a Copilot seat or a
+ChatGPT Pro subscription, and no API key at all.
+
+The decision is that such a person signs in, and that Canopy never holds a pasted subscription
+credential, because there is nothing there to paste. Three routes are permitted, and each is
+permitted for a stated reason rather than by the absence of an objection.
+
+**GitHub Copilot, through the official SDK.** The vendor documents this exact case: you create a
+GitHub OAuth App or GitHub App, users authorise it, and you pass their access token to the SDK, so
+that requests are made on behalf of each authenticated user using their Copilot subscription. The
+SDK reached GA on 2026-06-02, is MIT licensed, and publishes a Go module. This is the only one of
+the three that is unambiguously invited.
+
+**Claude, through the user's own Claude Code, over ACP.** Canopy does not authenticate to Anthropic
+on this route and never sees a subscription token. It drives an installation the user has already
+signed in to. Anthropic contemplates and meters that category in writing: Claude Agent SDK, `claude
+-p` and third-party app usage still draw from the subscription's usage limits.
+
+**OpenAI, through the Codex app server.** OpenAI publishes `codex app-server` under Apache-2.0 as the
+interface for host applications wanting a deep integration, explicitly including authentication, and
+it hosts the ChatGPT sign-in itself. Canopy identifies itself as `canopy` in the handshake that
+becomes the upstream originator header, and never as another client. Impersonating one is the single
+behaviour the terms plausibly reach, and a route chosen because it is defensible would stop being
+defensible the moment it lied about who was calling.
+
+**Canopy will not implement claude.ai OAuth.** Anthropic's legal and compliance page states that they
+do not permit third-party developers to offer Claude.ai login or to route requests through Free, Pro
+or Max plan credentials on behalf of their users, and reserves the right to enforce that without
+prior notice. It is server-enforced as well as written down. Competing tools have done it anyway;
+that is not a precedent, it is a list of people who can be stopped without warning. The difference
+between this and the ACP route is not a technicality. One holds the user's subscription credential
+and the other holds none.
+
+**Gemini consumer sign-in is closed.** It was prohibited by terms before 2026-06-18 and switched off
+on that date. Recorded here so that it is not proposed again.
+
+Two things follow, and both are worth stating separately from the routes themselves.
+
+The first is that every sanctioned route means driving the vendor's own agent, not calling the
+vendor's completions endpoint. All three are a protocol over a process: JSON-RPC to the Copilot SDK,
+ACP to Claude Code, JSON-RPC to the Codex app server. Canopy therefore gains a second kind of
+provider, a delegated agent, which is not what `core.ProviderClient` describes and should not be
+forced into its shape. A delegated turn runs somebody else's tool loop, permission model and context
+handling. What Canopy's own tools, its A4 permission gating and its A6 verification mean during one
+is open, it is Q-23, and this decision does not assume it away.
+
+Workspace selection is not part of that open question. Every delegated process and protocol
+session receives the exact workspace recorded on the agent, including the owned worktree of an
+isolated agent. That is required by D-33 and tested for direct and isolated agents at every trust
+level. It is a start directory and protocol scope, not an operating-system sandbox and not evidence
+that Canopy approved the vendor's own tool calls.
+
+The second is that this decision carries its date, the way D-46 makes the catalog carry its date and
+for the same reason. Every position above is a fact about mid-2026 and several are weeks old.
+Anthropic announced and then paused, on 2026-06-15, a change moving third-party subscription usage
+onto separately purchased credits; paused is not cancelled, and it is Q-22. Google's switch-off was
+2026-06-18. The Copilot SDK went GA on 2026-06-02. The OpenAI route has an open and unanswered report
+of 429 quota errors for third-party OAuth on active Plus plans, which may mean it is quota-segregated
+in practice. An undated statement about what a vendor permits is exactly the confident wrong answer
+D-32 forbids, so anyone reading this more than a few months after it was written should re-check every
+claim in it before relying on one.
+
 ## D-52 The header owns identity; the opening conversation is not a splash. Decided 2026-07-30.
 
 (D-51 is reserved by the subscription-sign-in work in `feat/subscription-sign-in`.)
@@ -1242,11 +1314,12 @@ conversation-level choice never rewrites the credential's recorded default.
 
 ## D-54 A credential rename either moves its stored conversations or restores its old name. Decided 2026-07-30.
 
-A credential name is simultaneously an OS-backend account, a metadata identifier and the foreign
-name stored by conversations. Those systems cannot share one transaction, so `canopy keys rename`
-uses a compensated operation: move the secret and metadata, update all stored conversations in one
-SQLite statement, and report success only after both have landed. If the history statement fails,
-the credential is moved back before the command suggests fixing the cause and repeating. If that
+A credential name is simultaneously a metadata identifier, the foreign name stored by conversations
+and, except for a delegated sign-in that deliberately holds nothing, an OS-backend account. Those
+systems cannot share one transaction, so `canopy keys rename` uses a compensated operation: move the
+backend value where one exists and the metadata, update all stored conversations in one SQLite
+statement, and report success only after both have landed. If the history statement fails, the
+credential is moved back before the command suggests fixing the cause and repeating. If that
 rollback also fails, the error names the split state and explicitly says not to repeat blindly.
 
 Cleanup failures are never secondary enough to hide. If metadata could not be saved and the newly
