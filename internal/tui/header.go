@@ -82,13 +82,6 @@ type Status struct {
 
 	// Mode is the trust level this conversation is running at, empty on screens that have none.
 	Mode string
-
-	// Wordmark asks for the drawn name in the corner.
-	//
-	// False on a conversation that has not started yet, because the opening screen draws the name in
-	// the middle of the screen at four times this size. Two copies of it at once is one too many, and
-	// the one in the corner is the one that is redundant there.
-	Wordmark bool
 }
 
 // title is what the header writes beside the mark: who you are with, or the brand.
@@ -276,11 +269,11 @@ func shortHeader(inner int, s Status) string {
 func tallHeader(inner int, s Status) string {
 	t := theme.Current()
 
-	var drawn []string
-	markWidth := 0
-	if s.Wordmark {
-		drawn, markWidth = brand.Wordmark(brand.WordmarkWidth), brand.WordmarkWidth
-	}
+	// On every screen, without exception. There used to be one: a conversation that had not started
+	// yet suppressed this, because the opening screen drew the name in the middle at four times the
+	// size and two copies at once was one too many. That big name is gone, and the rule this leaves
+	// is the simpler one: the corner carries the name, always, and it is the only place that does.
+	drawn, markWidth := brand.Wordmark(brand.WordmarkWidth), brand.WordmarkWidth
 	if inner < markWidth+headerGap+minimumFactsWidth {
 		// No room for both, and the facts win. A header that is mostly logo is an advertisement.
 		drawn, markWidth = nil, 0

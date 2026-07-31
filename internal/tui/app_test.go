@@ -268,8 +268,10 @@ func TestWithKeysOpensOnChat(t *testing.T) {
 	view := plain(app.View())
 	// The name, and what to do next. The second used to be a line of its own on the welcome block
 	// and is the frame's footer now, which was already saying the same thing one row lower: two
-	// lists of the keys is one list that goes stale the first time the other is edited.
-	if !strings.Contains(view, "Canopy") || !strings.Contains(view, "enter send") {
+	// lists of the keys is one list that goes stale the first time the other is edited. The first is
+	// the header's, in lower case, and the header is the only thing that writes it now that the
+	// opening screen has stopped drawing the name in the middle.
+	if !strings.Contains(view, "canopy") || !strings.Contains(view, "enter send") {
 		t.Errorf("the chat screen should introduce itself:\n%s", view)
 	}
 }
@@ -484,7 +486,7 @@ func TestThereIsNoLaunchScreenAndTheFirstKeystrokeCounts(t *testing.T) {
 	if app.Screen() != "chat" {
 		t.Fatalf("launched on %q, want a conversation straight away", app.Screen())
 	}
-	if !strings.Contains(plain(app.View()), "Canopy") {
+	if !strings.Contains(plain(app.View()), "canopy") {
 		t.Errorf("the opening screen does not show the name:\n%s", plain(app.View()))
 	}
 

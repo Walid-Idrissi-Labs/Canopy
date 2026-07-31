@@ -1202,7 +1202,27 @@ outranks visitors on the shared key. D-43's other two rules, ambient attention a
 spending a paid model call, are untouched; an approval releases a tool call that was already paid
 for by somebody's explicit send.
 
-## D-52 The model picker stays in the conversation. Decided 2026-07-30.
+## D-52 The header owns identity; the opening conversation is not a splash. Decided 2026-07-30.
+
+(D-51 is reserved by the subscription-sign-in work in `feat/subscription-sign-in`.)
+
+The empty conversation no longer draws a second, oversized `canopy` wordmark above the message box.
+The opening screen is already a usable conversation, not a splash screen somebody must visually
+leave before typing. Its message box is centred on itself, notices and command results stack above
+without moving it, and the animated campfire remains in the bottom-right when the terminal has room.
+
+Identity stays in the header corner from the first frame onward. The header shows Canopy when there
+is no named agent and the agent's name when a conversation has one; at short heights it uses the
+written fallback instead of the three-line wordmark. Sending the first message must not cause a
+large centre logo to disappear and a different header identity to appear.
+
+This supersedes M-08's original requirement for a large drawn name centred above the opening message
+box and its note that the header placement remained open. It does not supersede M-07: the smaller
+drawn header wordmark, its measured width, the palette and the campfire remain part of the release
+interface. This is a presentation decision only and changes no session, provider, permission or
+workspace behaviour.
+
+## D-53 The model picker stays in the conversation. Decided 2026-07-30.
 
 The original K-03 picker replaced the whole application frame, following the help screen's pattern.
 That made a fact about the current conversation impossible to choose while reading the conversation.
@@ -1220,7 +1240,7 @@ This supersedes K-03's whole-screen deliverable and its note treating help as th
 precedent. It preserves D-46: the list remains a convenience, free text remains available, and a
 conversation-level choice never rewrites the credential's recorded default.
 
-## D-53 A credential rename either moves its stored conversations or restores its old name. Decided 2026-07-30.
+## D-54 A credential rename either moves its stored conversations or restores its old name. Decided 2026-07-30.
 
 A credential name is simultaneously an OS-backend account, a metadata identifier and the foreign
 name stored by conversations. Those systems cannot share one transaction, so `canopy keys rename`

@@ -104,6 +104,10 @@ Responses API need a transport Canopy does not yet ship.
 
 Now run `canopy` in a git repository. Press `?` for every key binding.
 
+Canopy opens directly into a conversation ready for input: the message box is centred, identity
+stays in the header corner, and the campfire animates at bottom-right when the terminal has room.
+There is no separate centre-logo splash that disappears after the first message.
+
 Homebrew is not available yet and will not be until the first release without a prerelease suffix.
 [INSTALL.md](INSTALL.md) has the rest, [RELEASING.md](RELEASING.md) has what publishing involves.
 

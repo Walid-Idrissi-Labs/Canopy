@@ -3565,19 +3565,21 @@ silhouette and wrong for a scene, and what it was really protecting is checked d
 `scope: internal/tui/chat/model.go, internal/tui/chat/opening.go, internal/tui/app.go, cmd/canopy/`
 
 Deliverable: opening Canopy puts you in a new conversation, composed the way the supervisors asked
-for it: the drawn name centred above the message box, the box itself near the middle of the screen,
-the commands along the bottom, and the mark animated in the bottom right corner. Ending a session
-prints a code, and `canopy pickup <code>` returns to that conversation.
+for it after D-52: the message box itself centred near the middle of the screen, the commands along
+the bottom, the animated mark in the bottom right corner, and identity in the header from the first
+frame rather than repeated as a large central wordmark. Ending a session prints a code, and
+`canopy pickup <code>` returns to that conversation.
 
 Acceptance: a fresh start never lands in somebody's previous conversation. The animation stops
-costing anything the moment the conversation is no longer empty. A printed code resumes the exact
-session it names and says so plainly when it does not match one.
+costing anything the moment the conversation is no longer empty. A notice or an opened command menu
+does not move the message box. Sending the first message does not swap a central logo for a different
+header treatment. A printed code resumes the exact session it names and says so plainly when it does
+not match one.
 
-Still open, and deliberately not done here: the drawn name in the top right of every other screen.
-It was asked for on 2026-07-27 and then superseded for this screen on the same day by "written logo
-at the center", so what remains is whether the other screens carry it. It costs two rows of chrome
-everywhere, on screens somebody is reading rather than arriving at, and that is a decision rather
-than a detail. Left for the supervisors.
+Revised 2026-07-30 by D-52: the earlier large opening wordmark and the note leaving header placement
+open are superseded. The existing header now owns identity on the opening screen as it does after a
+turn: Canopy where no agent is named, the agent name where one is. The short-height written fallback
+remains intentional.
 
 `verify: claude [x] 2026-07-28   codex [ ]`
 
@@ -3590,15 +3592,15 @@ highest ID it finds, so after the first run `session-1` is the oldest chat in th
 launch reopened it while the agent that had just been started talked into a session with no screen
 attached to it. Which conversation to open is passed in now, and nothing named starts a new one.
 
-The empty conversation is composed rather than being a transcript with nothing in it. The middle of
-the space between the drawn name and the message box lands on the middle of the screen, which is the
-requirement stated precisely: centring the block instead is right only while the box and the name
-are the same height, and it stopped being right the moment the box grew to three lines.
+The empty conversation is composed rather than being a transcript with nothing in it. D-52 removed
+the large central name, so the box itself now lands on the middle of the screen. Status rows and
+command output stack above it and menus hang below it; neither changes that anchor while somebody is
+typing.
 
 The mark is dropped rather than clipped when the screen is too short for it, which is the rule the
 brand package already applies to width. That threshold is a real cost and is worth writing down:
 with the taller box it needs about thirty four rows, so an eighty by twenty four terminal gets the
-name and the box and no mark.
+header identity and the box and no mark.
 
 Two things found while wiring it. The animation overlaid the fire a column left of where the mark
 draws it, so starting it slid the campfire sideways under a tent that stayed put; `Frame(0)` is the
@@ -5606,7 +5608,7 @@ wide and combining characters never make a rendered row cross the frame.
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
-notes: revised 2026-07-30 by D-52. The first build used a whole-screen swap because the repository
+notes: revised 2026-07-30 by D-53. The first build used a whole-screen swap because the repository
 has no compositing and help already supplied that pattern. Direct use showed the cost: choosing
 what answers this conversation removed the conversation needed to make the choice. The picker is
 still not a floating overlay; it takes the composer's rows inside the existing chat layout.
@@ -5687,7 +5689,7 @@ is required. No output includes a credential value.
 
 `verify: claude [x] 2026-07-30   codex [ ]`
 
-notes: added with D-53 after review found that the first CLI implementation returned on an old-secret
+notes: added with D-54 after review found that the first CLI implementation returned on an old-secret
 cleanup warning before moving history, and on a history error left the new credential live while
 telling the user to repeat a command whose old name no longer existed. The key store also discarded
 the error from deleting a newly copied secret after metadata persistence failed, hiding an
