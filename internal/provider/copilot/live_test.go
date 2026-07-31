@@ -53,8 +53,13 @@ func liveCredential(t *testing.T) (keys.Tokens, string) {
 func TestLiveATurnRunsOnTheSubscriptionAndStreamsBack(t *testing.T) {
 	tokens, model := liveCredential(t)
 
-	client := New("live", Conversation{Token: tokens.Access, Model: model, StateDir: t.TempDir()})
-	t.Cleanup(func() { _ = client.Close() })
+	clients := NewClients()
+	t.Cleanup(func() { _ = clients.Close() })
+	client, err := clients.Once("live",
+		Conversation{Token: tokens.Access, Model: model, StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -100,8 +105,13 @@ func TestLiveATurnRunsOnTheSubscriptionAndStreamsBack(t *testing.T) {
 func TestLiveTheModelIsGivenNoneOfTheVendorsOwnTools(t *testing.T) {
 	tokens, model := liveCredential(t)
 
-	client := New("live", Conversation{Token: tokens.Access, Model: model, StateDir: t.TempDir()})
-	t.Cleanup(func() { _ = client.Close() })
+	clients := NewClients()
+	t.Cleanup(func() { _ = clients.Close() })
+	client, err := clients.Once("live",
+		Conversation{Token: tokens.Access, Model: model, StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

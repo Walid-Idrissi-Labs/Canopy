@@ -140,14 +140,18 @@ func TestBothWaysOfBuildingAClientAgreeAboutWhichRouteACredentialTakes(t *testin
 		t.Fatalf("storing a pasted credential: %v", err)
 	}
 
-	resolver := session.NewKeyResolver(store)
+	resolver := session.NewKeyResolver(store, version)
+	t.Cleanup(resolver.Close)
+	vendors := session.NewVendors(version)
+	t.Cleanup(vendors.Close)
+
 	for _, name := range []string{"mycopilot", "pasted"} {
 		meta, err := store.Metadata(core.KeyRef{Name: name})
 		if err != nil {
 			t.Fatalf("Metadata(%q): %v", name, err)
 		}
 
-		viaCommand, commandID, commandErr := clientFor(store, meta, "some-model")
+		viaCommand, commandID, commandErr := clientFor(vendors, store, meta, "some-model")
 		viaInterface, interfaceID, interfaceErr := resolver.Resolve(name, "some-model")
 		if (commandErr == nil) != (interfaceErr == nil) {
 			t.Fatalf("%q: the command said %v and the interface said %v", name, commandErr, interfaceErr)
@@ -169,7 +173,6 @@ func TestBothWaysOfBuildingAClientAgreeAboutWhichRouteACredentialTakes(t *testin
 			_ = closer.Close()
 		}
 	}
-	resolver.Close()
 }
 
 // A Copilot turn is billed against a seat and metered per prompt, so a figure derived from token
@@ -185,7 +188,9 @@ func TestATurnOnACopilotSeatIsReportedAsUnpricedRatherThanAsFree(t *testing.T) {
 		t.Fatalf("Metadata: %v", err)
 	}
 
-	client, id, err := clientFor(store, meta, "gpt-5.2-codex")
+	vendors := session.NewVendors(version)
+	t.Cleanup(vendors.Close)
+	client, id, err := clientFor(vendors, store, meta, "gpt-5.2-codex")
 	if err != nil {
 		t.Fatalf("clientFor: %v", err)
 	}

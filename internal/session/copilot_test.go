@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -34,7 +35,7 @@ func storeWithCopilot(t *testing.T) *keys.Store {
 // every message after the first would be answered by an agent with amnesia while the transcript on
 // screen said otherwise.
 func TestOneConversationKeepsOneCopilotClientAcrossItsTurns(t *testing.T) {
-	resolver := NewKeyResolver(storeWithCopilot(t))
+	resolver := NewKeyResolver(storeWithCopilot(t), "test")
 	t.Cleanup(resolver.Close)
 
 	first, _, err := resolver.ResolveFor("conversation-1", "mycopilot", "gpt-5.2-codex")
@@ -63,7 +64,7 @@ func TestOneConversationKeepsOneCopilotClientAcrossItsTurns(t *testing.T) {
 // one question asked once about a transcript. Sharing the conversation's session would put a
 // summarisation request into the middle of somebody's session.
 func TestAnAsideGetsAClientOfItsOwnRatherThanTheConversationsSession(t *testing.T) {
-	resolver := NewKeyResolver(storeWithCopilot(t))
+	resolver := NewKeyResolver(storeWithCopilot(t), "test")
 	t.Cleanup(resolver.Close)
 
 	held, _, err := resolver.ResolveFor("conversation-1", "mycopilot", "m")
@@ -98,7 +99,7 @@ func TestAnAsideGetsAClientOfItsOwnRatherThanTheConversationsSession(t *testing.
 // another.
 func TestSigningInAsSomebodyElseStartsANewConversationWithTheVendor(t *testing.T) {
 	store := storeWithCopilot(t)
-	resolver := NewKeyResolver(store)
+	resolver := NewKeyResolver(store, "test")
 	t.Cleanup(resolver.Close)
 
 	before, _, err := resolver.ResolveFor("conversation-1", "mycopilot", "m")
@@ -128,21 +129,57 @@ func TestSigningInAsSomebodyElseStartsANewConversationWithTheVendor(t *testing.T
 
 // A held conversation is a child process on the machine and a session GitHub believes is open. Both
 // end when Canopy does, and nothing else is going to clean up either.
+//
+// The session behind each one is a fake that records being closed, and that is the whole difference
+// between this and the version of it that shipped. That one asserted the resolver's own map was
+// empty afterwards, which a shutdown that dropped every client without closing it satisfies
+// perfectly: the map is the bookkeeping, and the process and the vendor's session are the thing.
 func TestClosingTheResolverEndsEveryConversationItWasHolding(t *testing.T) {
-	resolver := NewKeyResolver(storeWithCopilot(t))
+	resolver := NewKeyResolver(storeWithCopilot(t), "test")
+	sessions := copilotSessionsAreFakes(resolver)
 
 	for _, id := range []string{"one", "two", "three"} {
-		if _, _, err := resolver.ResolveFor(id, "mycopilot", "m"); err != nil {
+		client, _, err := resolver.ResolveFor(id, "mycopilot", "m")
+		if err != nil {
 			t.Fatalf("ResolveFor(%q): %v", id, err)
 		}
+		// A turn each, so there is a session to leave open rather than only a client to forget.
+		runOneTurn(t, client)
 	}
+	if opened := sessions.opened(); opened != 3 {
+		t.Fatalf("%d sessions were opened for three conversations", opened)
+	}
+
 	resolver.Close()
 
-	if len(resolver.sessions) != 0 {
-		t.Errorf("%d conversations survived the shutdown", len(resolver.sessions))
+	if closed := sessions.closed(); closed != 3 {
+		t.Errorf("%d of the three sessions were closed by the shutdown. Each one left open is a "+
+			"`copilot` process still resident and a session GitHub believes is live", closed)
+	}
+	if held := resolver.vendors.copilots.Live(); held != 0 {
+		t.Errorf("%d conversations survived the shutdown", held)
 	}
 	if _, _, err := resolver.ResolveFor("four", "mycopilot", "m"); err == nil {
 		t.Error("a shut down resolver quietly started a new runtime")
+	}
+}
+
+// runOneTurn drives a client through one complete turn, so that a session exists behind it.
+func runOneTurn(t *testing.T, client core.ProviderClient) {
+	t.Helper()
+
+	stream, err := client.Stream(context.Background(), core.Request{
+		Model:    "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	for stream.Next() {
+		_ = stream.Event()
+	}
+	if err := stream.Close(); err != nil {
+		t.Fatalf("closing the stream: %v", err)
 	}
 }
 
@@ -157,7 +194,7 @@ func TestAPastedCredentialIsStillBuiltFreshEveryTurn(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	resolver := NewKeyResolver(store)
+	resolver := NewKeyResolver(store, "test")
 	t.Cleanup(resolver.Close)
 
 	first, _, err := resolver.ResolveFor("conversation-1", "claude", "claude-opus-5")
@@ -171,7 +208,7 @@ func TestAPastedCredentialIsStillBuiltFreshEveryTurn(t *testing.T) {
 	if first == second {
 		t.Error("a pasted credential is being held open, which is a resource nothing needs")
 	}
-	if len(resolver.sessions) != 0 {
+	if held := resolver.vendors.copilots.Live(); held != 0 {
 		t.Error("a pasted credential was recorded as a conversation to shut down")
 	}
 }
@@ -232,4 +269,135 @@ func TestTheEngineTellsAResolverWhichConversationATurnIsFor(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
+}
+
+// Everything that builds a client on this route ends what it built.
+//
+// The build this fixes claimed exactly that and delivered it for the main conversation alone. An
+// aside, a compaction and `canopy ask` each resolve without a conversation, and each one used to get
+// a client that nothing in the program could reach afterwards: the stream was closed, the session was
+// not, and a `copilot` process stayed resident with a session GitHub believed was open. Driven
+// through the engine rather than through the resolver, because the engine is what actually asks.
+func TestAnAsideAndACompactionEndTheSessionsTheyOpen(t *testing.T) {
+	resolver := NewKeyResolver(storeWithCopilot(t), "test")
+	sessions := copilotSessionsAreFakes(resolver)
+
+	engine := New(resolver)
+	t.Cleanup(engine.Close)
+
+	conversation := engine.Create("mycopilot", "gpt-5.2-codex")
+	for range keepRecentTurns + 2 {
+		turnID, err := engine.Send(conversation.ID, "question")
+		if err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		if turn := waitForTurn(t, engine, conversation.ID, turnID); turn.State != core.TurnComplete {
+			t.Fatalf("a turn on the fake Copilot ended as %s: %s", turn.State, turn.Error)
+		}
+	}
+	if live := resolver.vendors.copilots.Live(); live != 1 {
+		t.Fatalf("%d clients are held for one conversation", live)
+	}
+
+	if _, err := engine.Aside(context.Background(), conversation.ID, "what is this about"); err != nil {
+		t.Fatalf("Aside: %v", err)
+	}
+	if _, err := engine.Compact(context.Background(), conversation.ID); err != nil {
+		t.Fatalf("Compact: %v", err)
+	}
+
+	if opened := sessions.opened(); opened != 3 {
+		t.Fatalf("%d sessions were opened, want one for the conversation and one each for the aside "+
+			"and the compaction", opened)
+	}
+	if closed := sessions.closed(); closed != 2 {
+		t.Errorf("%d of them were closed, want the aside's and the compaction's. Each one that is "+
+			"not is a resident CLI process and a session GitHub believes is open, for the life of "+
+			"the program", closed)
+	}
+	if live := resolver.vendors.copilots.Live(); live != 1 {
+		t.Errorf("%d clients are held after two one-off questions, want only the conversation's", live)
+	}
+
+	engine.Close()
+	if closed := sessions.closed(); closed != 3 {
+		t.Errorf("%d sessions were closed after the engine shut down, want all three", closed)
+	}
+}
+
+// copilotSessions counts the vendor sessions a test opened and closed.
+type copilotSessions struct {
+	mu     sync.Mutex
+	agents []*fakeCopilotAgent
+}
+
+func (s *copilotSessions) opened() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.agents)
+}
+
+func (s *copilotSessions) closed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	shut := 0
+	for _, agent := range s.agents {
+		if agent.shutDown() {
+			shut++
+		}
+	}
+	return shut
+}
+
+// copilotSessionsAreFakes points a resolver's Copilot pool at fake sessions.
+//
+// The pool is what a client cannot be built outside of, so replacing it is how this route is driven
+// on a machine with no Copilot CLI and no seat. Reaching into the resolver rather than adding an
+// option to NewVendors, because a way to swap the vendor from outside the package would be a way for
+// the program to do it too.
+func copilotSessionsAreFakes(resolver *KeyResolver) *copilotSessions {
+	sessions := &copilotSessions{}
+	resolver.vendors.copilots = copilot.NewClients(
+		copilot.WithOpener(func(context.Context, copilot.Conversation) (copilot.Agent, error) {
+			agent := &fakeCopilotAgent{events: make(chan copilot.Event, 16)}
+			sessions.mu.Lock()
+			defer sessions.mu.Unlock()
+			sessions.agents = append(sessions.agents, agent)
+			return agent, nil
+		}))
+	return sessions
+}
+
+// fakeCopilotAgent answers everything with one line, and remembers being closed.
+type fakeCopilotAgent struct {
+	events chan copilot.Event
+
+	mu     sync.Mutex
+	closed bool
+}
+
+func (a *fakeCopilotAgent) Send(_ context.Context, _ string) error {
+	a.events <- copilot.Event{Kind: copilot.EventText, Text: "an answer"}
+	a.events <- copilot.Event{Kind: copilot.EventIdle}
+	return nil
+}
+
+func (a *fakeCopilotAgent) Answer(context.Context, string, string, string) error { return nil }
+func (a *fakeCopilotAgent) Events() <-chan copilot.Event                         { return a.events }
+func (a *fakeCopilotAgent) Abort(context.Context) error                          { return nil }
+
+func (a *fakeCopilotAgent) Close() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.closed {
+		a.closed = true
+		close(a.events)
+	}
+	return nil
+}
+
+func (a *fakeCopilotAgent) shutDown() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.closed
 }

@@ -144,16 +144,18 @@ func (s *stream) Event() core.StreamEvent { return s.current }
 // went wrong, and every layer above reads a non-nil error here as a fault worth showing.
 func (s *stream) Err() error { return s.err }
 
-// Close releases the turn without ending the conversation.
+// Close releases the turn, and ends the conversation only where the conversation was the turn.
 //
-// The session outlives the stream on purpose: this route's whole design is one session per
+// A held session outlives its stream on purpose: this route's design is one session per
 // conversation, and a Close that disconnected would make it one session per turn and lose the
-// history it exists to keep. What ends the conversation is Client.Close.
+// history it exists to keep. A one-shot has no second turn coming, so for it this is the end, which
+// is what makes an aside, a compaction and `canopy ask` stop leaving a process behind. Which of the
+// two this is was decided when the client was made and is not the stream's to know: see
+// Client.release.
 func (s *stream) Close() error {
 	if s.closed {
 		return nil
 	}
 	s.closed = true
-	s.client.release()
-	return nil
+	return s.client.release()
 }

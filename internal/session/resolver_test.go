@@ -26,7 +26,7 @@ import (
 func TestTheEmptyCredentialMessageNamesTheKeyThatOpensTheList(t *testing.T) {
 	store := keys.NewStore(keys.NewMemoryBackend(), filepath.Join(t.TempDir(), "keys.json"))
 
-	_, _, err := NewKeyResolver(store).Resolve("", "claude-opus-5")
+	_, _, err := NewKeyResolver(store, "test").Resolve("", "claude-opus-5")
 	if err == nil {
 		t.Fatal("resolving with nothing stored should refuse and say what to do about it")
 	}
@@ -71,7 +71,7 @@ func signedIn(
 		t.Fatalf("PutSignIn: %v", err)
 	}
 
-	resolver := NewKeyResolver(store)
+	resolver := NewKeyResolver(store, "test")
 	resolver.Renews(func(core.KeyMetadata, keys.SignIn) (keys.TokenSource, bool) {
 		return source, true
 	})

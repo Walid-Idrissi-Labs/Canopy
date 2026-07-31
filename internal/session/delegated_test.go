@@ -56,7 +56,7 @@ func TestADelegatedCredentialResolvesToTheDelegatedRouteRatherThanToTheAnthropic
 		"claude-agent-acp": "/usr/local/bin/claude-agent-acp",
 	}, `{"loggedIn":true,"authMethod":"claude.ai","email":"walid@example.com","subscriptionType":"max"}`)
 
-	client, id, err := NewKeyResolver(storeWithADelegatedCredential(t)).Resolve("claude", "sonnet")
+	client, id, err := NewKeyResolver(storeWithADelegatedCredential(t), "test").Resolve("claude", "sonnet")
 	if err != nil {
 		t.Fatalf("resolving a delegated credential: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestATurnOnADelegatedCredentialIsUnpricedRatherThanFree(t *testing.T) {
 
 	// A model that the dated table does price, so this is the case where a figure was available and
 	// is deliberately not shown.
-	_, id, err := NewKeyResolver(storeWithADelegatedCredential(t)).Resolve("claude", "claude-sonnet-5")
+	_, id, err := NewKeyResolver(storeWithADelegatedCredential(t), "test").Resolve("claude", "claude-sonnet-5")
 	if err != nil {
 		t.Fatalf("resolving a delegated credential: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestATurnOnADelegatedCredentialIsUnpricedRatherThanFree(t *testing.T) {
 func TestAMachineWithoutClaudeCodeSaysSoWhenTheCredentialIsUsedRatherThanFailingLater(t *testing.T) {
 	machineWith(t, map[string]string{}, "")
 
-	_, _, err := NewKeyResolver(storeWithADelegatedCredential(t)).Resolve("claude", "")
+	_, _, err := NewKeyResolver(storeWithADelegatedCredential(t), "test").Resolve("claude", "")
 	if err == nil {
 		t.Fatal("a delegated credential resolved on a machine with no Claude Code")
 	}
@@ -127,7 +127,7 @@ func TestAPastedCredentialStillResolvesTheWayItAlwaysDid(t *testing.T) {
 		t.Fatalf("storing a pasted credential: %v", err)
 	}
 
-	client, id, err := NewKeyResolver(store).Resolve("api", "claude-sonnet-5")
+	client, id, err := NewKeyResolver(store, "test").Resolve("api", "claude-sonnet-5")
 	if err != nil {
 		t.Fatalf("resolving a pasted credential: %v", err)
 	}

@@ -127,6 +127,9 @@ func (e *Engine) Compact(ctx context.Context, sessionID string) (CompactionResul
 	if err != nil {
 		return CompactionResult{}, err
 	}
+	// Load-bearing on a route whose client holds a session, which is more than closing a stream used
+	// to mean. A compaction resolves without a conversation, so what it gets back is a client that
+	// ends when its turn does, and this is what ends it. See copilot.Clients.
 	defer func() { _ = stream.Close() }()
 
 	var summary strings.Builder

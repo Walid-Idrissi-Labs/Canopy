@@ -15,11 +15,10 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/codex"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/copilot"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/openai"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
 
 const askUsage = `canopy ask - send one message to a provider
@@ -86,7 +85,14 @@ func runAsk(args []string, out io.Writer) error {
 		*model = meta.Model
 	}
 
-	client, id, err := clientFor(store, meta, *model)
+	// The one thing in this command that has to be closed, and it is closed here rather than
+	// wherever the client happens to be finished with. A Copilot turn at a terminal opens a session
+	// GitHub believes is live and a CLI process on the machine, and this command used to exit
+	// leaving both: it built the client, streamed the answer, closed the stream and returned.
+	vendors := session.NewVendors(version)
+	defer vendors.Close()
+
+	client, id, err := clientFor(vendors, store, meta, *model)
 	if err != nil {
 		return err
 	}
@@ -283,11 +289,16 @@ func readPrompt(args []string) (string, error) {
 // for one refuses it before the route is ever reached.
 //
 // This is the second place the provider fork lives, which is what constraint 4 already says about
-// this command and the interface. It is worth two answers rather than one only because they answer
-// slightly different questions, and the thing that must not drift, what a credential is worth right
-// now, is keys.Refresher for both.
+// this command and the interface. What is left here is the fork itself and the two pasted-key
+// providers, which hold nothing: no process, no session, no identity. Everything that does hold
+// something is built by session.Vendors, which is the same object the interface builds through, and
+// that is not a tidiness. Two of those things had already drifted by the time anybody looked: this
+// command told the vendors which version of Canopy was calling and the interface did not, and this
+// command dropped the Copilot session it opened while the interface closed its own. The rule the
+// phase keeps rediscovering is that anything which must not differ between the two surfaces has to
+// be one object they both use, which is what keys.Refresher already is for "how old is too old".
 func clientFor(
-	store *keys.Store, meta core.KeyMetadata, model string,
+	vendors *session.Vendors, store *keys.Store, meta core.KeyMetadata, model string,
 ) (core.ProviderClient, pricing.ModelID, error) {
 	in, err := store.SignIn(meta.Ref)
 	if err != nil {
@@ -295,31 +306,7 @@ func clientFor(
 	}
 
 	if in.Kind == keys.KindDelegated {
-		// Delegated, so nothing downstream prints a dollar figure for a turn metered against a plan
-		// that is billed monthly. See pricing.ModelID.Delegated.
-		id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
-
-		// Route before provider, the same fork the resolver makes and for the same reason: both
-		// delegated routes reach a different vendor and one of them is openai-compatible, so a
-		// switch on provider would hand a ChatGPT credential to Claude Code.
-		if in.Route == codex.Route {
-			found, findErr := codex.Discovery{}.Find()
-			if findErr != nil {
-				return nil, pricing.ModelID{}, fmt.Errorf(
-					"key %q delegates to Codex: %w", meta.Ref.Name, findErr)
-			}
-			return codex.New(found, codex.WithVersion(version)), id, nil
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), delegateTimeout)
-		defer cancel()
-
-		found, findErr := acp.Discovery{}.Find(ctx)
-		if findErr != nil {
-			return nil, pricing.ModelID{}, fmt.Errorf(
-				"key %q delegates to Claude Code: %w", meta.Ref.Name, findErr)
-		}
-		return acp.New(found, acp.WithVersion(version)), id, nil
+		return vendors.Delegated(meta, in, model)
 	}
 
 	// Through the refresher rather than straight to the store, so a signed-in credential whose token
@@ -337,20 +324,11 @@ func clientFor(
 	}
 
 	if in.Route == copilot.Route {
-		if model == "" {
-			model = meta.Model
-		}
-		// One conversation, one message, and then the process ends, which is the one case where the
-		// session-per-conversation arrangement costs nothing: there is no second turn to remember.
-		// Named after the credential rather than after the provider so that somebody with two seats
-		// can see which answered.
-		//
-		// Delegated for the same reason the interface marks it so: a Copilot seat is billed monthly
-		// and these tokens are metered against it, so a per-token figure would be arithmetic
-		// presented as somebody's spend. See pricing.ModelID.Delegated.
-		client := copilot.New(meta.Ref.Name, copilot.Conversation{Token: secret, Model: model})
-		id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
-		return client, id, nil
+		// No conversation, which on this route means a client that ends when its one turn does.
+		// That is right here and is not a shortcut: `canopy ask` sends one message and exits, so
+		// there is no second turn for a held session to remember, and a session nothing closes is a
+		// `copilot` process left resident on the machine of somebody who ran a one-line command.
+		return vendors.Copilot("", meta, in, secret, model)
 	}
 
 	client, err := newClient(meta, secret, model)
@@ -360,9 +338,6 @@ func clientFor(
 	return client, pricing.NewModelID(meta.Ref.Provider, meta.BaseURL, model).
 		WithUserRate(meta.Rate), nil
 }
-
-// delegateTimeout bounds looking for the delegated agent before a turn.
-const delegateTimeout = 30 * time.Second
 
 func newClient(meta core.KeyMetadata, secret core.Secret, model string) (core.ProviderClient, error) {
 	switch meta.Ref.Provider {

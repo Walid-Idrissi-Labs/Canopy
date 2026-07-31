@@ -47,7 +47,7 @@ func liveLoop(t *testing.T, dir string, trust core.TrustLevel) (*agent.Loop, str
 	if err != nil {
 		t.Fatalf("opening the key store: %v", err)
 	}
-	client, _, err := session.NewKeyResolver(store).Resolve(keyName, model)
+	client, _, err := session.NewKeyResolver(store, "test").Resolve(keyName, model)
 	if err != nil {
 		t.Fatalf("resolving the credential: %v", err)
 	}

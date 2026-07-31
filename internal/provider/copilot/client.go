@@ -35,6 +35,20 @@ type Client struct {
 	open         Opener
 	conversation Conversation
 
+	// pool is what handed this client out and what will close it if nothing else does.
+	//
+	// A client cannot be made without one: see Clients for why this route stopped having an
+	// exported constructor. It is what a Close reports itself to, so a conversation that ended
+	// early stops being something the shutdown has to end.
+	pool *Clients
+
+	// once says this client was made for a single turn and ends when that turn does.
+	//
+	// An aside, a compaction and `canopy ask` are all of that shape. They have no conversation to
+	// keep, so the session behind them has nobody to end it, and before this each one left a
+	// process resident for the life of the program.
+	once bool
+
 	mu    sync.Mutex
 	agent Agent
 	// sent is how many of the caller's messages the session has already heard.
@@ -46,23 +60,6 @@ type Client struct {
 }
 
 var _ core.ProviderClient = (*Client)(nil)
-
-// New builds a client for one conversation on one credential.
-func New(name string, conversation Conversation, options ...Option) *Client {
-	client := &Client{name: name, open: Open, conversation: conversation}
-	for _, option := range options {
-		option(client)
-	}
-	return client
-}
-
-// Option adjusts a client.
-type Option func(*Client)
-
-// WithOpener replaces how a conversation with the vendor is started.
-func WithOpener(open Opener) Option {
-	return func(c *Client) { c.open = open }
-}
 
 // Name identifies this client for display and for attributing usage.
 func (c *Client) Name() string {
@@ -86,7 +83,27 @@ var ErrHistoryRewritten = errors.New(
 		"been said")
 
 // Stream sends whatever is new and returns the reply as it arrives.
+//
+// A one-shot whose turn never started is closed here rather than left. By the time a send fails the
+// session is usually open, and the caller has an error and no stream, so there is nothing else in
+// the program that could end it.
 func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, error) {
+	stream, err := c.send(ctx, req)
+	if err != nil && c.disposable() {
+		_ = c.Close()
+	}
+	return stream, err
+}
+
+// disposable reports whether this client ends with its turn.
+func (c *Client) disposable() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.once
+}
+
+// send is Stream with the lock held, so that Stream can close on the way out without deadlocking.
+func (c *Client) send(ctx context.Context, req core.Request) (core.Stream, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
 	}
@@ -274,26 +291,59 @@ func answersIn(req core.Request) []core.ToolResult {
 	return last.ToolResults
 }
 
-// release marks the turn finished so the next one may start.
-func (c *Client) release() {
+// release marks the turn finished so the next one may start, and ends a conversation that was only
+// ever going to have one.
+//
+// This is where an aside, a compaction and `canopy ask` stop costing a process. The stream is closed
+// by all three of them on the way out of the turn, and on a one-shot that closing is the end of the
+// conversation rather than only of the turn.
+func (c *Client) release() error {
+	c.mu.Lock()
+	c.busy = false
+	once := c.once
+	c.mu.Unlock()
+
+	if !once {
+		return nil
+	}
+	return c.Close()
+}
+
+// inFlight reports whether a turn is running on this client.
+//
+// Read by the pool before it evicts one. Taking a session away mid-reply to satisfy a bound would
+// lose somebody's answer to a housekeeping rule.
+func (c *Client) inFlight() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.busy = false
+	return c.busy
 }
 
 // Close ends the conversation and the process behind it.
 //
-// This is the other half of holding a session per conversation, and it is why the resolver that
-// hands these out has a Close of its own. A long-lived session is a child process on the machine and
-// a session GitHub believes is open; a program that exits without saying so leaves both to be
-// cleaned up by something else, and one of them is somebody else's server.
+// This is the other half of holding a session per conversation, and it is why the pool that hands
+// these out has a Close of its own. A long-lived session is a child process on the machine and a
+// session GitHub believes is open; a program that exits without saying so leaves both to be cleaned
+// up by something else, and one of them is somebody else's server.
+//
+// Safe to call twice, safe on a conversation that never opened a session, and safe while a turn is
+// in flight: the reader sees the event channel close and ends the turn with whatever had arrived,
+// which is the same path a runtime that stopped talking takes.
+//
+// The pool is told first and with no lock of this client's held, which is what keeps the two locks
+// in one order. The reverse, a pool that closed a client while holding its own lock, is the deadlock
+// this arrangement exists to avoid.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	agent := c.agent
 	c.agent = nil
 	c.closed = true
+	pool := c.pool
 	c.mu.Unlock()
 
+	if pool != nil {
+		pool.forget(c)
+	}
 	if agent == nil {
 		return nil
 	}

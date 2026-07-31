@@ -117,20 +117,34 @@ func replies(text string) func(string, func(Event)) {
 	}
 }
 
-// clientOn builds a client over one fake agent, and reports how many sessions were opened.
+// clientOn builds a held client over one fake agent, and reports how many sessions were opened.
+//
+// Held rather than one-shot, because these tests are about a conversation that survives its turns,
+// which is the shape the interface uses. The one-shot half has tests of its own in clients_test.go.
 func clientOn(t *testing.T, agent *fakeAgent) (*Client, func() int) {
+	t.Helper()
+	clients, opened := poolOn(t, agent)
+	client, err := clients.For("conversation", "mycopilot",
+		Conversation{Token: core.NewSecret("gho_TOKEN")})
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	return client, opened
+}
+
+// poolOn builds a pool whose sessions are one fake agent, and reports how many were opened.
+func poolOn(t *testing.T, agent *fakeAgent) (*Clients, func() int) {
 	t.Helper()
 	opened := 0
 	var mu sync.Mutex
-	client := New("mycopilot", Conversation{Token: core.NewSecret("gho_TOKEN")},
-		WithOpener(func(context.Context, Conversation) (Agent, error) {
-			mu.Lock()
-			defer mu.Unlock()
-			opened++
-			return agent, nil
-		}))
-	t.Cleanup(func() { _ = client.Close() })
-	return client, func() int {
+	clients := NewClients(WithOpener(func(context.Context, Conversation) (Agent, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		opened++
+		return agent, nil
+	}))
+	t.Cleanup(func() { _ = clients.Close() })
+	return clients, func() int {
 		mu.Lock()
 		defer mu.Unlock()
 		return opened
@@ -540,7 +554,11 @@ func TestATurnIsAttributedToTheCredentialThatAnswered(t *testing.T) {
 	if client.Name() != "mycopilot" {
 		t.Errorf("the client is called %q, want the credential's name", client.Name())
 	}
-	if unnamed := New("", Conversation{}); unnamed.Name() != Name {
+	unnamed, err := NewClients().Once("", Conversation{})
+	if err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	if unnamed.Name() != Name {
 		t.Errorf("a client with no credential name is called %q, want %q", unnamed.Name(), Name)
 	}
 }

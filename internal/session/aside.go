@@ -82,6 +82,9 @@ func (e *Engine) Aside(ctx context.Context, sessionID, question string) (string,
 	if err != nil {
 		return "", err
 	}
+	// Load-bearing on a route whose client holds a session, which is more than closing a stream used
+	// to mean. An aside resolves without a conversation, so what it gets back is a client that ends
+	// when its turn does, and this is what ends it. See copilot.Clients.
 	defer func() { _ = stream.Close() }()
 
 	var answer strings.Builder

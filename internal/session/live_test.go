@@ -45,7 +45,7 @@ func liveEngine(t *testing.T) (*session.Engine, string, string) {
 		t.Fatalf("opening the key store: %v", err)
 	}
 
-	engine := session.New(session.NewKeyResolver(store))
+	engine := session.New(session.NewKeyResolver(store, "test"))
 	t.Cleanup(engine.Close)
 	return engine, keyName, model
 }
@@ -183,7 +183,7 @@ func TestLiveHistorySurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStorage: %v", err)
 	}
-	engine := session.New(session.NewKeyResolver(store))
+	engine := session.New(session.NewKeyResolver(store, "test"))
 	if err := engine.WithStorage(storage, func(err error) { t.Errorf("storage: %v", err) }); err != nil {
 		t.Fatalf("WithStorage: %v", err)
 	}

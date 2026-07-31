@@ -60,7 +60,7 @@ func storeWithACodexCredential(t *testing.T) *keys.Store {
 func TestACodexCredentialResolvesToTheAppServerRatherThanToAnOpenAIEndpoint(t *testing.T) {
 	codexMachineWith(t, map[string]string{"codex": "/usr/local/bin/codex"})
 
-	client, id, err := NewKeyResolver(storeWithACodexCredential(t)).Resolve("chatgpt", "")
+	client, id, err := NewKeyResolver(storeWithACodexCredential(t), "test").Resolve("chatgpt", "")
 	if err != nil {
 		t.Fatalf("resolving the ChatGPT credential: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestTheTwoDelegatedRoutesDoNotResolveToEachOthersAgents(t *testing.T) {
 		t.Fatalf("storing the Claude credential: %v", err)
 	}
 
-	resolver := NewKeyResolver(store)
+	resolver := NewKeyResolver(store, "test")
 	for name, want := range map[string]string{"chatgpt": "codex", "claude": "claude-code"} {
 		client, _, err := resolver.Resolve(name, "")
 		if err != nil {
@@ -120,7 +120,7 @@ func TestTheTwoDelegatedRoutesDoNotResolveToEachOthersAgents(t *testing.T) {
 func TestAMachineWithoutCodexSaysSoWhenTheCredentialIsUsed(t *testing.T) {
 	codexMachineWith(t, nil)
 
-	_, _, err := NewKeyResolver(storeWithACodexCredential(t)).Resolve("chatgpt", "")
+	_, _, err := NewKeyResolver(storeWithACodexCredential(t), "test").Resolve("chatgpt", "")
 	if err == nil {
 		t.Fatal("a credential whose agent is not installed resolved to a working client")
 	}

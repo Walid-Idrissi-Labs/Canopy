@@ -48,7 +48,7 @@ func TestLiveToolsReachTheProviderAndBack(t *testing.T) {
 		t.Fatalf("seeding the workspace: %v", err)
 	}
 
-	resolver := session.NewKeyResolver(keyStore)
+	resolver := session.NewKeyResolver(keyStore, version)
 	engine := session.New(resolver)
 	defer engine.Close()
 

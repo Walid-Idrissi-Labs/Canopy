@@ -34,7 +34,7 @@ func storeWith(t *testing.T, names ...string) *keys.Store {
 // The one stored credential is the default whether or not it has ever answered, because there is
 // nothing else it could be.
 func TestTheOnlyCredentialIsTheDefault(t *testing.T) {
-	if got := NewKeyResolver(storeWith(t, "claude")).DefaultKeyName(); got != "claude" {
+	if got := NewKeyResolver(storeWith(t, "claude"), "test").DefaultKeyName(); got != "claude" {
 		t.Errorf("DefaultKeyName = %q, want claude", got)
 	}
 }
@@ -45,7 +45,7 @@ func TestTheOnlyCredentialIsTheDefault(t *testing.T) {
 // there was no way to say "this one, from now on" that survived a restart.
 func TestTheDefaultCredentialIsTheOneLastUsed(t *testing.T) {
 	store := storeWith(t, "glm", "nemotron")
-	resolver := NewKeyResolver(store)
+	resolver := NewKeyResolver(store, "test")
 
 	// A clock of its own, because the two uses below are microseconds apart on a fast machine and
 	// milliseconds apart on a coarse one, and a test that depends on which is a test that fails on
@@ -76,7 +76,7 @@ func TestTheDefaultCredentialIsTheOneLastUsed(t *testing.T) {
 // key every conversation on the machine had been running on.
 func TestUsingTheObviousCredentialRecordsWhichOneItWas(t *testing.T) {
 	store := storeWith(t, "claude")
-	NewKeyResolver(store).MarkUsed("")
+	NewKeyResolver(store, "test").MarkUsed("")
 
 	meta, err := store.Metadata(core.KeyRef{Name: "claude"})
 	if err != nil {
