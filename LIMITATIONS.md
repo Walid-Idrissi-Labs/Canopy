@@ -170,7 +170,9 @@ be rediscovered by getting burned by it.
 - Cost is only ever computed for endpoints where the endpoint itself determines the price: Anthropic
   direct, and local runtimes that are genuinely free. Any OpenAI-compatible gateway, OpenRouter,
   NVIDIA NIM, Together, and the rest, reports "cost unknown" and names itself, until you set a rate
-  on that key yourself with `canopy keys rate` (D-32, A2-09).
+  on that key yourself with `canopy keys rate` (D-32, A2-09). A subscription credential is the one
+  exception to the second half of that: a rate set on one changes nothing, for the reason
+  "Subscription sign-in" gives below.
 
 - A rate of zero is refused when setting a custom price, even for a tier that genuinely bills
   nothing at personal volumes, such as NVIDIA's free NIM tier. There is no explicit "this is really
@@ -231,6 +233,18 @@ the next person to propose it finds the answer from the test suite rather than f
 **There is no Gemini route.** Google's consumer sign-in was prohibited by their terms before
 2026-06-18 and switched off on that date. Recorded so it is not proposed again.
 
+**What in this section rests on somebody else's word rather than on this repository.** The rest of
+the page describes code you can read. These do not, and are marked once here rather than hedged in
+every sentence. Which plan tiers actually work: Canopy asks no vendor whether a plan is Max or Pro,
+Plus or Team, so the tiers named above are what these vendors say their own sign-ins accept and not
+something Canopy checks or could check. What each vendor's terms permit: no terms page was
+re-fetched for this document, so every date below is the date D-51 or the task that built the route
+recorded, carried forward. That GitHub requires a client secret to renew or revoke a grant, and that
+an OAuth app's user tokens do not expire: GitHub's own documented behaviour for their endpoints,
+relied on rather than confirmed against a live registration. The Copilot scopes, which have their
+own paragraph below and are evidence rather than fact. Anything here could have changed after
+2026-07-30 without this file noticing.
+
 ### Canopy's permission gate is in the path on one of the three routes
 
 This is the most important thing on this page for anybody signing in with a subscription, because it
@@ -238,8 +252,16 @@ is the opposite of what the rest of Canopy teaches you to expect. Which answer a
 by that vendor's protocol rather than chosen, and it is not the same answer for all three.
 
 **On the Copilot route Canopy runs the tools and the gate applies in full.** The session is created
-in the SDK's `empty` mode, with an allowlist naming Canopy's own tools and no vendor source at all,
-so `bash`, `powershell`, `edit`, `grep`, `web_fetch` and the rest are never offered to the model.
+in the SDK's `empty` mode, which starts a session with no built-in tools, and the allowlist it is
+given is `custom:*`. That is a source pattern rather than a list of tool names: it admits the source
+Canopy's own tools are registered under, and it names no built-in source and no MCP source, so
+`bash`, `powershell`, `edit`, `grep`, `web_fetch` and the rest are never offered to the model. The
+one other thing `custom:*` admits, by the SDK's own definition of the pattern, is a tool belonging
+to a custom agent. Canopy configures none, `empty` mode restricts custom agents to locally defined
+ones, and the session's working and config directories are a Canopy-owned directory rather than
+your project, so there is no local definition for one to be loaded from. The allowlist is not what
+keeps a custom agent's tool out; the absence of a custom agent is.
+
 Canopy's tools are declared to the vendor with no implementation behind them, so a call comes back
 out to Canopy, through the agent's trust level and, where the level requires it, past a person, and
 only then goes back down as a result. GitHub's agent decides what it wants done and has no way to do
@@ -251,8 +273,11 @@ does not apply.** Concretely:
 
 - **Canopy's own tools are not available, and cannot be.** ACP v1 gives a client no channel for its
   own tools except MCP servers, and Canopy's tools are not an MCP server. The Codex app server has
-  no field for them at all. The tools in the room are the vendor's own, plus whatever MCP servers
-  your own `$CODEX_HOME/config.toml` starts, which Canopy neither chose nor can see.
+  no field for them at all, which is read off the protocol schema that binary generates for itself
+  rather than off a published document. The tools in the room are the vendor's own, plus whatever
+  MCP servers that vendor's own configuration starts: `$CODEX_HOME/config.toml` on the ChatGPT
+  route, Claude Code's own configuration on the Claude route. Canopy chose neither and can see
+  neither.
 - **A tool call the vendor auto-approves never reaches Canopy.** Not gated, not refused, not seen.
   The permission mode shown on Canopy's screen describes what Canopy would do, and on these two
   routes Canopy is not the one doing it. Every delegated turn opens with a notice saying so before
@@ -265,8 +290,11 @@ does not apply.** Concretely:
 - **A4's audit trail and A6's verification see nothing**, because Canopy ran nothing. Each tool the
   delegated agent says it ran is reported as a notice, which is a record rather than a control.
 - **On the ChatGPT route the thread is opened read-only**, which is the honest pairing for a client
-  that refuses every approval, so a delegated Codex turn cannot write files at all. A subscription
-  credential buys a visibly weaker agent there, and saying so is the point.
+  that refuses every approval, so a delegated Codex turn does not write files. Be exact about whose
+  bound that is. Canopy asks for the read-only sandbox when it opens the thread and declines every
+  approval the app server asks it for; the app server's own sandbox is what then enforces it. It is
+  the vendor holding a line Canopy asked for, not Canopy's permission gate under another name. A
+  subscription credential buys a visibly weaker agent there, and saying so is the point.
 
 If you want a turn where Canopy gates the tools, use a credential where Canopy runs them: a pasted
 API key, or the Copilot route. Whether a route that cannot be governed should ship beside one that
@@ -274,8 +302,11 @@ can is Q-23, and it is not settled.
 
 ### What is true of all three routes
 
-- **No cost figure is shown on a subscription turn.** The token counts are real and are reported.
-  The dollar value is not: a monthly plan is metered against its own limits rather than billed per
+- **No cost figure is shown on a subscription turn.** The token counts are real and are reported,
+  with one caveat that belongs to the Claude route: ACP v1 has no usage field, the bridge sends one
+  anyway, and Canopy reads it defensively, so a bridge that stops sending it leaves a turn with no
+  token count rather than a wrong one. The dollar value is not shown at all: a monthly plan is
+  metered against its own limits rather than billed per
   token, so a list price would be a correct number about an invoice nobody receives, and zero would
   say the turn was free. Unpriced is the honest answer. A rate you set on the credential yourself
   does not override that, and this is the one place in Canopy where your own figure does not win,
@@ -294,10 +325,14 @@ can is Q-23, and it is not settled.
   something Canopy sets, sees or can bound. It runs under your account and under its own
   configuration. SECURITY.md says the same thing in threat-model terms.
 
-- **The model is the vendor's to choose unless it offers a say.** A delegated credential stores no
-  model of its own, so the picker says the vendor chooses rather than showing an empty list. A model
-  a request names is asked for only where the vendor offers that exact value, and where something
-  else answers that is said on screen rather than substituted silently.
+- **The model is the vendor's to choose unless it offers a say**, and the three routes differ enough
+  that one sentence will not cover them. On the Claude and ChatGPT routes the credential stores no
+  model and has nowhere to put one, so the sign-in says the vendor chooses rather than showing an
+  empty list; both ask for the model a request names where the vendor offers that exact value, and
+  where something else answers, that is said on screen rather than substituted silently. The Copilot
+  route does take a model, fixed when the session opens, and it is the one route where naming a
+  different model mid-conversation is neither honoured nor reported. The Copilot section below says
+  why.
 
 - **Where Canopy holds a token, renewal is per process.** Two Canopy processes on one machine can
   renew the same credential at the same time. The cost is one wasted renewal, and on a vendor that
@@ -306,8 +341,11 @@ can is Q-23, and it is not settled.
   somebody deletes a file they have never heard of (S-02). This reaches only the Copilot route,
   since it is the one route of the three where Canopy holds a token at all.
 
-- **Nothing here listens on a loopback port.** Where a sign-in needs a callback the vendor's own
-  program hosts it, and where no browser is reachable the flow is a code you type somewhere else.
+- **Canopy never listens on a loopback port, on any route.** The Copilot sign-in is a device flow
+  and needs no callback at all. The ChatGPT sign-in does need one, and OpenAI's own app server hosts
+  it on its own loopback port rather than Canopy opening a listener of its own; where no browser is
+  reachable that flow becomes a code you type somewhere else instead. The Claude route signs nobody
+  in, so the question does not arise there.
 
 ### The Claude route, and what it gives up
 
@@ -340,8 +378,9 @@ where they prohibit the other one (D-51, S-04).
 This is the one route of the three that the vendor documents for exactly this case: you register an
 app, the user authorises it, and their token is handed to GitHub's official SDK so that requests are
 made on their behalf against their own subscription (D-51, S-03). It is also the one route where
-Canopy holds a token: it runs GitHub's device flow, stores the result in your keychain, and
-identifies itself as its own app rather than reusing another editor's client id or version headers.
+Canopy holds a token: it runs GitHub's device flow, stores the result in the OS credential store, or
+in the mode 0600 file the `CANOPY_KEY_BACKEND=file` escape hatch writes, and identifies itself as its
+own app rather than reusing another editor's client id or version headers.
 
 - **Editing history, re-rolling a turn and compacting do not reach the vendor's copy.** GitHub's SDK
   owns the conversation: a session accumulates its own history and there is no call that seeds one,
@@ -355,8 +394,10 @@ identifies itself as its own app rather than reusing another editor's client id 
 
 - **The model and the reasoning effort belong to the session**, set when the conversation starts.
   Naming a different model mid-conversation does not restart it, because restarting would throw the
-  conversation away to honour a flag. **`MaxTokens` is not sent** either; the SDK exposes no
-  per-turn output cap for a Copilot session.
+  conversation away to honour a flag, and this route says nothing on screen when that happens: it is
+  the one route of the three that reports no notices at all, so the turn simply runs on the model the
+  session was opened with. **`MaxTokens` is not sent** either; the SDK exposes no per-turn output cap
+  for a Copilot session.
 
 - **Canopy needs a GitHub app of its own and no release has one compiled in yet.** Register an
   **OAuth app** with the device flow enabled and set `CANOPY_GITHUB_CLIENT_ID` to its client id,
@@ -391,10 +432,11 @@ sign you in and it does the rest: it builds the authorisation URL, hosts the cal
 loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 
 - **Canopy never holds a ChatGPT credential**, and `internal/keys` refuses to put a token behind
-  this credential at all. That also means **Canopy renews nothing on this route**: the app server
-  owns the grant and renews it without being asked, so the five-minute refresh margin that applies
-  to a pasted or Copilot credential has nothing to act on. If the grant lapses beyond renewal,
-  `canopy keys test` says so and signing in again fixes it.
+  this credential at all. That also means **Canopy renews nothing on this route**: the grant belongs
+  to the app server, Canopy never asks it to refresh one, and the five-minute refresh margin that
+  applies to a pasted or Copilot credential has nothing to act on here. Keeping that grant alive is
+  the app server's business rather than Canopy's, and Canopy has no way to make it happen. If the
+  grant lapses beyond renewal, `canopy keys test` says so and signing in again fixes it.
 
 - **This route may draw on a smaller allowance than the ChatGPT app does.** There is an open,
   unanswered report of third-party OAuth sign-ins hitting 429 quota errors on active Plus plans,
