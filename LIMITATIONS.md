@@ -320,6 +320,13 @@ be rediscovered by getting burned by it.
   added. In practice this means rolling back to an older build can leave your history unreadable
   until you upgrade again.
 
+- A CLI credential rename spans the credential backend, its metadata file and SQLite; those systems
+  cannot commit one shared transaction. Canopy compensates by restoring the old credential name if
+  the history update fails, and it reports the exact split state if that restoration also fails.
+  Backend cleanup failures can still leave an extra secret copy under the old or proposed name; the
+  error names that account so it can be deleted or revoked. A Canopy process already running cannot
+  be updated by the CLI and must be restarted after a successful rename.
+
 - Compaction summarises older turns, and the model then works from that summary rather than the
   original text for anything before it. The full, original text stays in storage and stays
   searchable regardless, but the model's working context from that point on is a shortened version

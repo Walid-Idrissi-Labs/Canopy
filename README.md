@@ -80,7 +80,16 @@ canopy keys add claude                       # anthropic, model picked for you
 canopy keys add nim -provider openai-compatible \
   -base-url https://integrate.api.nvidia.com/v1 -model minimaxai/minimax-m2.7
 canopy keys list                             # the MODEL column says NOT SET where one is missing
+canopy keys rename nim minimax               # the value is not asked for again
 ```
+
+A name is the one thing here you are likely to get wrong, because you choose it before the
+credential has been used for anything. Renaming moves the credential and every conversation
+recorded on it, since the name is what each one looks up on its next message. In the interface it
+is `e` on the credential screen. The CLI reports success only after both the credential and stored
+history have moved; if history cannot be updated it restores the old name before asking you to
+retry. Restart any Canopy process that was already running, because another process cannot update
+the conversations it holds in memory.
 
 Anything that is not Anthropic needs a model named explicitly. There is no default anybody could
 guess for somebody else's gateway, and a credential without one cannot answer a single message.

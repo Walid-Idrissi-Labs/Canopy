@@ -5587,32 +5587,35 @@ current key rather than by being the only one that offers it, and by
 TestARefusalDoesNotOfferWhatItJustRefused, which asks for every id a refusal names and fails if any
 of them is then refused.
 
-### K-03 The model picker is a screen
+### K-03 The model picker stays in the conversation
 `status: review | owner: claude | branch: feat/one-key-many-models | depends: K-01`
 `scope: internal/tui/, internal/tui/chat/, internal/config/commands.go, internal/session/ (additive)`
 
-Deliverable: /model, a new reserved builtin, opens a picker drawn the way help is drawn, over the
-whole frame and back with esc: one section per named key with the provider written on the section
-header, that key's models beneath it with display names shown and the conversation's current
-model marked. Enter applies the choice to this conversation, switching key as well when the row
-sits under another section, through one additive engine method, and takes effect from the next
-request. Picking never rewrites the key's recorded default; that stays with the keys screen and
-the CLI.
+Deliverable: /model, a new reserved builtin, replaces the message box with a bounded picker while
+the conversation remains visible, and returns with esc: one section per named key with the provider
+written on the section header, that key's models beneath it with display names shown and the
+conversation's current model marked. Enter applies the choice to this conversation, switching key
+as well when the row sits under another section, through one additive engine method, and takes
+effect from the next request. Picking never rewrites the key's recorded default; that stays with
+the keys screen and the CLI.
 
 Acceptance: open the picker and esc changes nothing; picking under the same key changes what the
 next request is sent on, and the context line says so; picking under a different key switches
 provider and key for the next request; the current model is marked; a key with nothing to offer
 shows its section with the none-set warning rather than disappearing; /model appears in the slash
-menu; with colour off the picker is still readable.
+menu; with colour off the picker is still readable; a long list scrolls inside its height budget;
+wide and combining characters never make a rendered row cross the frame.
 
 `verify: claude [x] 2026-07-29   codex [ ]`
 
-notes: "overlay" in the ask, screen swap in the build: the repository has no compositing, and
-help already set the pattern for a screen that sits over everything and leaves without a trace,
-so the picker follows it rather than inventing z-order for one feature.
+notes: revised 2026-07-30 by D-53. The first build used a whole-screen swap because the repository
+has no compositing and help already supplied that pattern. Direct use showed the cost: choosing
+what answers this conversation removed the conversation needed to make the choice. The picker is
+still not a floating overlay; it takes the composer's rows inside the existing chat layout.
 
-Built as internal/tui/modelpicker.go, keyed before everything else in Update the way help is, so
-every key belongs to it while it is up and anything it does not use leaves with nothing changed.
+Built as internal/tui/modelpicker.go. While open it is keyed before the rest of chat, so every key
+belongs to it and anything it does not use leaves with nothing changed. Its row budget shrinks on a
+short terminal and scrolls on a long list, preserving transcript context rather than consuming it.
 
 The one additive engine method turned out to exist already. Engine.UseCredential does exactly what
 the ask describes: it sets the session's key and model, refuses while a turn is in flight, and the
@@ -5665,10 +5668,37 @@ TestThePickerMarksWhereYouAreAndKeepsEmptySections; /model in the slash menu is
 TestTheModelCommandIsOfferedInTheSlashMenu; and colour-off readability is
 TestThePickerReadsWithNoColour. That the key's own default is untouched is
 TestPickingAModelNeverRewritesTheKeysDefault, and the mid-turn refusal the spec allows is
-TestChangingTheModelMidAnswerIsRefused.
+TestChangingTheModelMidAnswerIsRefused. Cell-aware clipping is held directly by
+TestModelPickerClipKeepsWideTextInsideTheFrame.
+
+### K-04 Renaming a credential moves every place its name is used
+`status: review | owner: claude | branch: tui/inline-picker-and-key-rename | depends: A2-01, A3-01`
+`scope: cmd/canopy/keys.go, internal/keys/, internal/session/, internal/tui/keys/, internal/tui/app.go`
+
+Deliverable: `canopy keys rename <old> <new>` and `e` on the credential screen change a credential's
+name without asking for its secret again. The CLI moves stored conversations with it; the interface
+moves every conversation loaded in its engine and updates the current and next-conversation header.
+
+Acceptance: the secret value and metadata survive under the new name and the old name stops
+resolving; collisions and invalid names change nothing; every affected stored or loaded conversation
+uses the new name before another message can be sent. A failed stored-history update restores the
+old credential name before suggesting a retry. A failed compensation names the exact split state.
+A failure removing either temporary or old backend copies is reported and never prevents the
+history move that keeps sessions usable. A Canopy process the CLI cannot reach is named and restart
+is required. No output includes a credential value.
+
+`verify: claude [x] 2026-07-30   codex [ ]`
+
+notes: added with D-54 after review found that the first CLI implementation returned on an old-secret
+cleanup warning before moving history, and on a history error left the new credential live while
+telling the user to repeat a command whose old name no longer existed. The key store also discarded
+the error from deleting a newly copied secret after metadata persistence failed, hiding an
+untracked credential copy. The operation now compensates where it can and describes the remaining
+state where it cannot; the tests force each of those boundaries rather than inferring them from the
+happy path.
 
 ### PG-K Phase K gate
-`status: todo | depends: K-01, K-02, K-03`
+`status: todo | depends: K-01, K-02, K-03, K-04`
 
 Both supervisors watch: a key added once runs two different models in two conversations side by
 side; "spawn two sonnet agents" is understood with no key named sonnet; and a model from neither

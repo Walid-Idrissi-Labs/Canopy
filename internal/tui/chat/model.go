@@ -345,6 +345,25 @@ type Model struct {
 	// belongs to. See modeSettleMsg.
 	pendingMode    core.Mode
 	modeGeneration int
+
+	// standIn is a block drawn where the message box goes, empty the rest of the time. See
+	// InPlaceOfBox.
+	standIn []string
+}
+
+// InPlaceOfBox returns this screen drawing the given block where its message box goes.
+//
+// A copy rather than a setter, and the reason is worth stating: nothing about the conversation
+// changes while such a block is up, so there is no state here to put back afterwards. The caller
+// draws through the copy for as long as it wants the block and drops it, which makes forgetting to
+// restore the box impossible rather than unlikely.
+//
+// The status row goes with the box. The two are one thing on this screen, a notice sitting on the
+// box's top edge, and leaving a stray row of it above a block that has taken the box's place would
+// be chrome belonging to something that is not there.
+func (m Model) InPlaceOfBox(block []string) Model {
+	m.standIn = block
+	return m
 }
 
 // asideExchange is one btw question and the answer it got.
@@ -1408,6 +1427,25 @@ func (m *Model) UseCredential(keyName, model string) bool {
 	return true
 }
 
+// FollowCredentialRename moves this conversation's note of its credential onto the new name.
+//
+// Not UseCredential, deliberately, and the difference is the whole point. UseCredential asks the
+// engine to change what a conversation runs on, which it may refuse mid answer. This changes nothing
+// about what it runs on: it is the same credential, the same secret and the same endpoint, and only
+// the name has moved. Routing it through the switch would put a rename behind a refusal that has
+// nothing to say about it, and leave the header naming a credential that no longer exists until the
+// turn happened to end.
+//
+// Guarded on the name, because a conversation on a different credential must not be dragged onto
+// this one by a rename it has nothing to do with.
+func (m *Model) FollowCredentialRename(from, to string) {
+	if from == "" || to == "" || m.keyName != from {
+		return
+	}
+	m.keyName = to
+	m.refresh()
+}
+
 // SessionID is the conversation being shown.
 func (m Model) SessionID() string { return m.sessionID }
 
@@ -1631,7 +1669,7 @@ func (m Model) transcriptHeight() int {
 	// The status row is measured rather than assumed to be one line. Several of the slash commands
 	// answer with a listing many lines tall, and budgeting one line for it pushed the box and the
 	// footer off the bottom of the frame the first time somebody ran /commands on a small terminal.
-	h := m.height - m.input.Height() - m.statusHeight()
+	h := m.height - m.floorHeight()
 	h -= len(m.taskPane())
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
@@ -1655,17 +1693,38 @@ func (m Model) transcriptHeight() int {
 	return h
 }
 
+// floorHeight is how many rows the bottom of the screen takes: the message box and the status row
+// above it, or whatever is standing in their place.
+//
+// One function rather than the same sum written at each site, because the arithmetic that decides
+// how much conversation fits and the code that draws the bottom have to agree exactly. When they do
+// not, the transcript is budgeted for a box that is not there and the frame clips a screen's worth
+// of it away.
+func (m Model) floorHeight() int {
+	if len(m.standIn) > 0 {
+		return len(m.standIn)
+	}
+	return m.input.Height() + m.statusHeight()
+}
+
 // pillHeight is how many rows the jump marker costs: two borders and its label.
 const pillHeight = 3
 
 // Body renders the screen.
 func (m Model) Body() string {
 	if m.blank() {
+		// The block takes the box's place here too, which is what keeps the opening screen the
+		// opening screen: the drawn name stays above it and the working directory and the credential
+		// stay along the floor, because those are the facts a choice made here is made against.
+		box, status := strings.Split(m.inputBox(), "\n"), m.statusRow(0)
+		if len(m.standIn) > 0 {
+			box, status = m.standIn, ""
+		}
 		return opening{
 			width:   m.width,
 			height:  m.height,
-			box:     strings.Split(m.inputBox(), "\n"),
-			status:  m.statusRow(0),
+			box:     box,
+			status:  status,
 			context: m.contextLines(),
 			step:    m.markStep,
 			// Below the box here, because the box is in the middle of the screen and below is where
@@ -1719,6 +1778,10 @@ func (m Model) Body() string {
 	var b strings.Builder
 	b.WriteString(strings.Join(rows, "\n"))
 	b.WriteString("\n")
+	if len(m.standIn) > 0 {
+		b.WriteString(strings.Join(m.standIn, "\n"))
+		return b.String()
+	}
 	b.WriteString(m.flameOver(m.statusRow(len(lines) - end)))
 	b.WriteString("\n")
 	b.WriteString(m.inputBox())
@@ -1757,7 +1820,9 @@ func (m Model) flameOver(status string) string {
 // columns — smoke goes behind words, not over them — and not at all while the view is scrolled away
 // from the tail, where the rows above the box are the middle of something being read.
 func (m Model) driftSmoke(rows []string) {
-	if m.blank() || (!m.working && !m.compacting) || m.scroll > 0 {
+	// And not while a block stands where the box does, because the fire this rises from rides the
+	// box's top edge and is not being drawn. Smoke with nothing under it is a rendering fault.
+	if m.blank() || (!m.working && !m.compacting) || m.scroll > 0 || len(m.standIn) > 0 {
 		return
 	}
 	t := theme.Current()
@@ -1959,6 +2024,27 @@ func (m Model) btwPanel() []string {
 // copies would stop being true of the first time somebody adjusted one of them. The label rides the
 // top edge in the space the rule was spending anyway, and is dropped whole on a terminal too narrow
 // for it: a label that wraps the edge breaks the frame it is written on.
+// Block is borderedBlock for a caller outside this package, sized from the terminal width.
+//
+// Exported so that a block standing in for the message box, which is drawn by whoever owns the
+// thing standing there rather than by this screen, wears the same chrome as the panes that sit
+// above the box. Two packages drawing their own version of one frame is two frames that drift apart
+// on the first change to either.
+func Block(label string, content []string, width int) []string {
+	return borderedBlock(label, content, BlockWidth(width))
+}
+
+// BlockWidth is how many columns a block has for its own text at a given terminal width.
+//
+// Asked rather than assumed, because a caller composing content for a block has to clip it to
+// something, and the only honest answer involves how many columns the chrome spends on itself.
+func BlockWidth(width int) int {
+	if inner := width - boxChrome; inner > 6 {
+		return inner
+	}
+	return 6
+}
+
 func borderedBlock(label string, content []string, inner int) []string {
 	t := theme.Current()
 

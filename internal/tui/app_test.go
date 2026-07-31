@@ -48,6 +48,26 @@ func (f *fakeKeyStore) Remove(ref core.KeyRef) error {
 	return nil
 }
 
+func (f *fakeKeyStore) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error) {
+	for _, k := range f.keys {
+		if k.Ref.Name == to {
+			return core.KeyMetadata{}, errors.New("there is already a credential called " + to)
+		}
+	}
+	for i, k := range f.keys {
+		if k.Ref.Name != ref.Name {
+			continue
+		}
+		f.keys[i].Ref.Name = to
+		if models, ok := f.added[ref.Name]; ok {
+			delete(f.added, ref.Name)
+			f.added[to] = models
+		}
+		return f.keys[i], nil
+	}
+	return core.KeyMetadata{}, errors.New("no key named " + ref.Name)
+}
+
 func (f *fakeKeyStore) BackendName() string        { return "test" }
 func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 
@@ -76,6 +96,8 @@ type stubEngine struct {
 	mode    core.Mode
 	steered []string
 	undone  []string
+	// renamed is every credential rename the application asked the engine to follow.
+	renamed [][2]string
 }
 
 func (e *stubEngine) Session(id string) (core.Session, bool) {
@@ -757,6 +779,26 @@ func (e *stubEngine) Asides(string) []session.Aside { return nil }
 
 func (e *stubEngine) Steering(string) []string { return nil }
 
+// RenameCredential records what the application asked for, and moves the sessions the stub is
+// holding so a test can assert that a conversation followed rather than only that the call was made.
+func (e *stubEngine) RenameCredential(from, to string) int {
+	e.renamed = append(e.renamed, [2]string{from, to})
+
+	moved := 0
+	if e.session.KeyName == from {
+		e.session.KeyName = to
+		moved++
+	}
+	for id, s := range e.sessions {
+		if s.KeyName == from {
+			s.KeyName = to
+			e.sessions[id] = s
+			moved++
+		}
+	}
+	return moved
+}
+
 func (s *stubEngine) Tools() (*core.ToolRegistry, bool) { return nil, false }
 
 // twoKeys is a credential on each provider: one the catalog knows a lineup for, and one pointed at
@@ -834,8 +876,12 @@ func TestOpeningTheModelPickerAndLeavingChangesNothing(t *testing.T) {
 	}
 }
 
-// The current model is marked, every credential gets a section with its provider on the header, and
-// a key with nothing to offer says so rather than disappearing.
+// The current model is marked and every credential gets a section with its provider on the header.
+//
+// The list is bounded now that it stands in the message box's place rather than taking the screen,
+// so the second credential is reached by walking to it. That is the trade the block is worth: eight
+// models under one key is an ordinary setup, and a list that grew to fit them would have pushed the
+// conversation it is being read against off the top.
 func TestThePickerMarksWhereYouAreAndKeepsEmptySections(t *testing.T) {
 	app := openPicker(t, twoKeys(), onOpus())
 	view := plain(app.View())
@@ -845,13 +891,86 @@ func TestThePickerMarksWhereYouAreAndKeepsEmptySections(t *testing.T) {
 		"* Claude Opus 5",
 		"claude-opus-5",
 		"Claude Sonnet 5",
-		"nim (openai-compatible)",
-		"api.moonshot.cn",
-		"none set",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the picker is missing %q:\n%s", want, view)
 		}
+	}
+	// And says which way the rest of it is, rather than ending without a word and reading as a list
+	// that stops there.
+	if !strings.Contains(view, "more") {
+		t.Errorf("the picker does not say that the list goes on:\n%s", view)
+	}
+
+	// A key with nothing to offer keeps its section and says so rather than disappearing, which is
+	// the state an unrecognised endpoint is in on the day it is added.
+	next := tea.Model(app)
+	for range 20 {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	view = plain(next.(tui.App).View())
+	for _, want := range []string{"nim (openai-compatible)", "api.moonshot.cn", "none set"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("walking to the second credential does not reach %q:\n%s", want, view)
+		}
+	}
+}
+
+// The picker takes the message box and the keys that belong to it, and nothing else.
+//
+// This is the whole of what it is: a block where the box goes. It was a screen, and opening it took
+// the conversation away, which is choosing a model for a conversation you cannot see. The header,
+// the transcript and the frame stay exactly where they were.
+func TestThePickerLeavesTheConversationOnScreen(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	engine := &stubEngine{session: core.Session{
+		ID: "session-1", KeyName: "claude", Model: "claude-opus-5",
+		Turns: []core.Turn{{
+			ID: "t1", State: core.TurnComplete,
+			Request: core.Message{Role: core.RoleUser, Text: "what does the resolver do"},
+			Text:    "it refuses and lists them",
+		}},
+	}}
+
+	app := launchWith(store, twoKeys(), engine)
+	before := plain(app.(tui.App).View())
+	if !strings.Contains(before, "enter send") {
+		t.Fatalf("the conversation did not open with a message box:\n%s", before)
+	}
+
+	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model")})
+	sent, cmd := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("/model produced no command, so nothing was asked of the application")
+	}
+	opened, _ := sent.(tui.App).Update(cmd())
+	view := plain(opened.(tui.App).View())
+
+	for _, want := range []string{
+		// The header, which says whose conversation this is and what it is running.
+		"canopy",
+		"claude-opus-5",
+		// The conversation itself, both halves of the exchange.
+		"what does the resolver do",
+		"it refuses and lists them",
+		// And the picker, where the box was.
+		"model, for this conversation",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("opening the picker lost %q:\n%s", want, view)
+		}
+	}
+
+	// What goes is the box's own keys, which do nothing while there is nothing to type into.
+	for _, gone := range []string{"enter send", "ctrl+n new", "shift+tab mode"} {
+		if strings.Contains(view, gone) {
+			t.Errorf("the picker left %q in the footer, which cannot be pressed:\n%s", gone, view)
+		}
+	}
+	if !strings.Contains(view, "esc back, unchanged") {
+		t.Errorf("the footer does not say how to leave the picker:\n%s", view)
 	}
 }
 
@@ -1073,16 +1192,17 @@ func TestThePickerTakesAModelItHasNeverHeardOf(t *testing.T) {
 	engine := onOpus()
 	app := openPicker(t, twoKeys(), engine)
 
-	if !strings.Contains(plain(app.View()), "something else, type it") {
-		t.Fatalf("the picker offers no way to type a model:\n%s", plain(app.View()))
-	}
-
 	// Down to the row that takes typing under the first credential. The cursor opens on the model
 	// the conversation is running, which is the second of that credential's eight, so its typing row
-	// is seven below.
+	// is seven below. It is the last row of the section rather than the first, which is why walking
+	// to it can cross the edge of a bounded list: the escape hatch belongs under the models it is an
+	// escape from, and the block says how much more of the list there is.
 	next := tea.Model(app)
 	for range 7 {
 		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	if !strings.Contains(plain(next.(tui.App).View()), "something else, type it") {
+		t.Fatalf("the picker offers no way to type a model:\n%s", plain(next.(tui.App).View()))
 	}
 	opened, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
 
@@ -1152,15 +1272,13 @@ func TestAKeyWithNothingToOfferCanStillBeTypedInto(t *testing.T) {
 	engine := onOpus()
 	app := openPicker(t, twoKeys(), engine)
 
-	view := plain(app.View())
-	if !strings.Contains(view, "none set") {
-		t.Fatalf("the empty section lost its warning:\n%s", view)
-	}
-
 	// The last row in the list belongs to that section, since it is the only row it has.
 	next := tea.Model(app)
 	for range 20 {
 		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	}
+	if view := plain(next.(tui.App).View()); !strings.Contains(view, "none set") {
+		t.Fatalf("the empty section lost its warning:\n%s", view)
 	}
 	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
 	for _, r := range "moonshot-v1-32k" {
@@ -1175,5 +1293,105 @@ func TestAKeyWithNothingToOfferCanStillBeTypedInto(t *testing.T) {
 	// And it leaves the picker on the way, like any other choice taken from it.
 	if screen := applied.(tui.App).Screen(); screen != "chat" {
 		t.Errorf("applying a typed model under an empty key landed on %q", screen)
+	}
+}
+
+// Renaming a credential has to reach the conversations, because a credential's name is what each one
+// writes down and what the resolver looks up on its next message. A rename that stopped at the key
+// store would leave every conversation on it pointing at a name nothing answers to, and the failure
+// would arrive one message later from the far end.
+func TestRenamingACredentialTakesTheConversationWithIt(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	keyStore := &fakeKeyStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "kimi", Provider: core.ProviderOpenAICompatible},
+			BaseURL: "https://api.moonshot.cn/v1", Model: "moonshot-v1-8k"},
+	}}
+	engine := &stubEngine{session: core.Session{
+		ID: "session-1", KeyName: "kimi", Model: "moonshot-v1-8k"}}
+
+	app := tui.NewAppConfigured(store, keyStore, engine, "myproject", "kimi",
+		tui.AppOptions{Session: "session-1"})
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if next.(tui.App).Screen() != "keys" {
+		t.Fatalf("ctrl+k landed on %q", next.(tui.App).Screen())
+	}
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	for range len("kimi") {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	for _, r := range "moonshot" {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if keyStore.keys[0].Ref.Name != "moonshot" {
+		t.Fatalf("the credential was not renamed: %v", keyStore.keys)
+	}
+	if len(engine.renamed) != 1 || engine.renamed[0] != [2]string{"kimi", "moonshot"} {
+		t.Fatalf("the engine was told %v, want one rename from kimi to moonshot", engine.renamed)
+	}
+	if engine.session.KeyName != "moonshot" {
+		t.Errorf("the conversation still names %q, so its next message would fail", engine.session.KeyName)
+	}
+
+	// The header follows too. A rename the screen does not reflect is one somebody has to take on
+	// faith, and here it would be showing a credential that no longer exists.
+	back, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	view := plain(back.(tui.App).View())
+	if !strings.Contains(view, "moonshot") {
+		t.Errorf("the header does not name the renamed credential:\n%s", view)
+	}
+
+	// And so does what a new conversation inherits, or the next ctrl+n would open on a credential
+	// nobody can resolve.
+	fresh, _ := back.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	_ = fresh
+	if engine.created == 0 {
+		t.Fatal("ctrl+n started no conversation")
+	}
+	if engine.session.KeyName != "moonshot" {
+		t.Errorf("a conversation started after the rename opened on %q", engine.session.KeyName)
+	}
+}
+
+// A rename is not a credential switch and must not be routed through one. The engine refuses a
+// switch mid answer, and a rename put behind that refusal would leave the interface naming a
+// credential that no longer exists until the turn happened to finish.
+func TestARenameIsNotRefusedByARunningTurn(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+
+	keyStore := &fakeKeyStore{keys: []core.KeyMetadata{
+		{Ref: core.KeyRef{Name: "kimi", Provider: core.ProviderAnthropic}, Model: "claude-opus-5"},
+	}}
+	engine := &stubEngine{
+		session: core.Session{ID: "session-1", KeyName: "kimi", Model: "claude-opus-5"},
+		useErr:  errors.New("this session is mid answer, so wait for it to finish or stop it first"),
+	}
+
+	app := tui.NewAppConfigured(store, keyStore, engine, "myproject", "kimi",
+		tui.AppOptions{Session: "session-1"})
+	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	for range len("kimi") {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	for _, r := range "moonshot" {
+		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	_, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if engine.session.KeyName != "moonshot" {
+		t.Errorf("a running turn stopped the conversation following the rename, leaving it on %q",
+			engine.session.KeyName)
+	}
+	if engine.using != [2]string{} {
+		t.Errorf("the rename went through the credential switch as %v", engine.using)
 	}
 }

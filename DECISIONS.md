@@ -1222,6 +1222,44 @@ drawn header wordmark, its measured width, the palette and the campfire remain p
 interface. This is a presentation decision only and changes no session, provider, permission or
 workspace behaviour.
 
+## D-53 The model picker stays in the conversation. Decided 2026-07-30.
+
+The original K-03 picker replaced the whole application frame, following the help screen's pattern.
+That made a fact about the current conversation impossible to choose while reading the conversation.
+The picker now takes the message box's place inside chat instead. It is not a floating overlay:
+nothing needs z-order, the transcript keeps its ordinary frame, and the picker is another bounded
+block in the layout. While it is open every key belongs to it, escape returns to the unchanged
+composer, and applying a row affects the next request in this conversation only.
+
+The inline block has a height budget and scrolls rather than pushing the transcript out of view.
+Every fitted row is measured in terminal cells, not rune count, because model labels and endpoints
+may contain wide or combining characters. Text that does not fit is marked with an ellipsis and no
+rendered row may cross the frame.
+
+This supersedes K-03's whole-screen deliverable and its note treating help as the controlling
+precedent. It preserves D-46: the list remains a convenience, free text remains available, and a
+conversation-level choice never rewrites the credential's recorded default.
+
+## D-54 A credential rename either moves its stored conversations or restores its old name. Decided 2026-07-30.
+
+A credential name is simultaneously an OS-backend account, a metadata identifier and the foreign
+name stored by conversations. Those systems cannot share one transaction, so `canopy keys rename`
+uses a compensated operation: move the secret and metadata, update all stored conversations in one
+SQLite statement, and report success only after both have landed. If the history statement fails,
+the credential is moved back before the command suggests fixing the cause and repeating. If that
+rollback also fails, the error names the split state and explicitly says not to repeat blindly.
+
+Cleanup failures are never secondary enough to hide. If metadata could not be saved and the newly
+copied secret could not be deleted, the error says an untracked live copy remains and names its
+backend account. If the main rename landed but deleting the old backend copy failed, stored
+conversations still move to the new name and the command exits with the cleanup warning afterwards.
+
+The interface has different reach: it updates the key store and every conversation loaded by its
+engine immediately. A separate Canopy process already running cannot be reached and must be
+restarted after a CLI rename. This decision does not claim atomicity across processes or storage
+systems; it requires a truthful final state, compensating rollback where possible, and an actionable
+description where it is not.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

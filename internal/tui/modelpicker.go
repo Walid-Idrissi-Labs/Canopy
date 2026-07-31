@@ -1,17 +1,30 @@
 package tui
 
-// The model picker, and why it is a screen rather than an overlay.
+// The model picker, and why it stands where the message box stands.
 //
-// It was asked for as an overlay. This repository has no compositing: nothing draws over anything
-// else, and inventing z-order for one feature would mean every screen afterwards having an opinion
-// about what may sit on top of it. Help already answered the same question the same way, so this
-// follows it: a full frame that arrives on a keystroke, leaves without a trace, and changes nothing
-// on the way out unless enter was pressed.
+// It was a whole screen. Opening it took the conversation away and gave back a frame with a list in
+// it, which is the wrong shape for the question being asked: which model answers next is a fact
+// about the conversation, and choosing it while unable to see the conversation is choosing in the
+// dark. The screen was written that way because this repository has no compositing, nothing draws
+// over anything else, and inventing z-order for one feature would leave every screen afterwards with
+// an opinion about what may sit on top of it.
+//
+// That argument still holds and this is still not an overlay. The chat screen already gives rows
+// away to blocks that are not the conversation: the task pane, the btw panel, another agent's
+// question. The picker is one more of those with one difference, which is that it stands in the
+// message box's place rather than above it, because while it is up there is nothing to type into.
+// Nothing is drawn over anything, the transcript is exactly where it was, and the frame goes on
+// doing the arithmetic.
+//
+// The list is bounded and scrolls, which the full screen version never had to be. That is the cost
+// of the change and it is the right one to pay: eight models under one credential is an ordinary
+// setup, and a block that grew to fit them would push the conversation it exists to be read against
+// off the top of the screen.
 //
 // What it is for is the other half of D-46. A key holds many models; which one this conversation
 // runs on is a fact about the conversation, so choosing here never rewrites the key's recorded
 // default. That stays with the credential screen and the CLI, which is where somebody goes when
-// they mean "from now on" rather than "for this".
+// they mean "from now on" rather than "for this". The block's own label says as much.
 //
 // The list itself is assembled by internal/tui/keys, which owns the question "what can this
 // credential be pointed at". This screen asks it once per key and arranges the answers.
@@ -21,10 +34,21 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
 )
+
+// pickerRows is the most list lines the block draws at once.
+//
+// Ten, which covers a credential's whole lineup and the row underneath that takes a typed model,
+// and stops well short of the block becoming the screen. A smaller terminal gets fewer, because the
+// conversation behind it is the thing this is being read against and a block that leaves none of it
+// visible has defeated its own point. See pickerHeight.
+const pickerRows = 10
 
 // modelRow is one line of the picker: a model, and the credential it would run on.
 //
@@ -74,6 +98,14 @@ type modelPicker struct {
 	draft  string
 
 	problem string
+
+	// top is the first drawn line of the list and visible is how many of them there is room for.
+	//
+	// Held in lines rather than in rows because the headings are drawn lines too, and a window
+	// measured in models would scroll a section's title off while leaving its models under it. The
+	// count comes from the application, which is the only thing that knows how tall the terminal is.
+	top     int
+	visible int
 }
 
 // newModelPicker reads the credentials and works out what each one can be asked for.
@@ -82,7 +114,7 @@ type modelPicker struct {
 // model recorded between one opening and the next has to be here, and a cached list is a list that
 // is wrong exactly when somebody has just changed something.
 func newModelPicker(store keysui.Store, currentKey, currentModel string) modelPicker {
-	picker := modelPicker{currentKey: currentKey, currentModel: currentModel}
+	picker := modelPicker{currentKey: currentKey, currentModel: currentModel, visible: pickerRows}
 
 	stored, err := store.List()
 	if err != nil {
@@ -131,6 +163,7 @@ func newModelPicker(store keysui.Store, currentKey, currentModel string) modelPi
 			break
 		}
 	}
+	picker.reveal()
 	return picker
 }
 
@@ -141,6 +174,38 @@ func offers(rows []modelRow, id string) bool {
 		}
 	}
 	return false
+}
+
+// pickerHeight is how many list lines a terminal of this size can spare.
+//
+// Half the body at most, and never more than pickerRows. The half is the part worth stating: the
+// whole argument for the picker standing in the box's place rather than replacing the screen is that
+// the conversation stays readable behind it, and a block allowed to take four fifths of a short
+// terminal would have taken the screen by another route.
+func pickerHeight(d Dimensions) int {
+	// Three of those rows are not list: the block's two borders, and the line that says which way
+	// the rest of it is. That line is only drawn while there is a rest, and the row is reserved
+	// either way, because a budget that depended on the scroll position would make the conversation
+	// behind the block jump by a line as somebody moved through it.
+	const chrome = 3
+
+	rows := d.BodyHeight()/2 - chrome
+	if rows > pickerRows {
+		rows = pickerRows
+	}
+	if rows < 3 {
+		// Three is the floor: a heading, the row the cursor is on, and one more to show that the list
+		// goes on. Below that the block says nothing a footer hint could not, and the terminal is
+		// already at the size where the frame refuses to draw.
+		rows = 3
+	}
+	return rows
+}
+
+// fit tells the picker how many lines it has, and keeps the cursor visible in the new size.
+func (p *modelPicker) fit(rows int) {
+	p.visible = rows
+	p.reveal()
 }
 
 // move walks the flattened list, which crosses section boundaries without stopping at them.
@@ -157,6 +222,37 @@ func (p *modelPicker) move(by int) {
 	}
 	if p.cursor >= len(p.rows) {
 		p.cursor = len(p.rows) - 1
+	}
+	p.reveal()
+}
+
+// reveal scrolls the window the least distance that puts the cursor back inside it.
+//
+// The least distance rather than re-centring, because a list that jumps under the cursor on every
+// keypress is a list nobody can keep their place in. Walking down moves the window one line at the
+// bottom edge and not at all before it.
+func (p *modelPicker) reveal() {
+	lines, at := p.laid(0)
+
+	visible := p.visible
+	if visible < 1 {
+		visible = 1
+	}
+	if len(lines) <= visible {
+		p.top = 0
+		return
+	}
+	if at < p.top {
+		p.top = at
+	}
+	if at >= p.top+visible {
+		p.top = at - visible + 1
+	}
+	if p.top > len(lines)-visible {
+		p.top = len(lines) - visible
+	}
+	if p.top < 0 {
+		p.top = 0
 	}
 }
 
@@ -215,76 +311,187 @@ func (p *modelPicker) typeKey(msg tea.KeyMsg) (modelRow, bool) {
 	return modelRow{}, false
 }
 
-// Body draws the picker.
+// Block draws the picker as the block that stands where the message box goes.
 //
-// The current model is marked with a glyph and the line above says what the mark means, so the
-// screen reads with no colour at all. That is D-10, and it is why the selection is a character in
-// the margin rather than a highlight: a highlight is an accelerant and never the fact itself.
-func (p modelPicker) Body() string {
+// The current model is marked with a glyph and the cursor is a character in the margin, so the list
+// reads with no colour at all. That is D-10, and it is why neither is a highlight: a highlight is an
+// accelerant and never the fact itself. What the mark means is said in the footer rather than in a
+// line of the block, because a line of the block is a line of somebody's conversation.
+func (p modelPicker) Block(width int) []string {
+	inner := chat.BlockWidth(width)
+
+	// Named for what a choice made here is worth. Which model this conversation runs on and what the
+	// credential defaults to are different facts, and the label is the cheapest place to say which of
+	// the two is being changed.
+	const label = "model, for this conversation"
+
 	if p.problem != "" {
-		return styleCaveat.Render("  the credentials could not be read: " + p.problem)
+		return chat.Block(label, []string{
+			styleCaveat.Render(clip("the credentials could not be read: "+p.problem, inner)),
+		}, width)
 	}
 	if len(p.sections) == 0 {
-		return styleMuted.Render("  No credentials yet, so there is nothing to choose between.\n\n" +
-			"  Press ctrl+k to add one.")
+		return chat.Block(label, []string{
+			styleMuted.Render(clip("no credentials yet, so there is nothing to choose between", inner)),
+			styleMuted.Render(clip("press ctrl+k to add one", inner)),
+		}, width)
 	}
 
-	var b strings.Builder
-	b.WriteString(styleMuted.Render(
-		"  * is what this conversation runs on now, and enter moves it, for this conversation only."))
-	b.WriteString("\n")
+	lines, _ := p.laid(inner)
+
+	visible := p.visible
+	if visible < 1 {
+		visible = 1
+	}
+	start := p.top
+	if start > len(lines)-visible {
+		start = len(lines) - visible
+	}
+	if start < 0 {
+		start = 0
+	}
+	end := start + visible
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	shown := append([]string(nil), lines[start:end]...)
+	// How much list is out of sight, said on the block's own last line rather than left to be
+	// discovered by pressing down. A list that silently continues past its edge is a list people stop
+	// at the first screen of.
+	if above, below := start, len(lines)-end; above > 0 || below > 0 {
+		shown = append(shown, styleMuted.Render(clip(more(above, below), inner)))
+	}
+	return chat.Block(label, shown, width)
+}
+
+// more says which way the list goes on.
+func more(above, below int) string {
+	switch {
+	case above > 0 && below > 0:
+		return "↑ " + itoa(above) + " more   ↓ " + itoa(below) + " more"
+	case above > 0:
+		return "↑ " + itoa(above) + " more"
+	default:
+		return "↓ " + itoa(below) + " more"
+	}
+}
+
+// laid is every line of the list as it will be drawn, and which of them the cursor is on.
+//
+// One function producing both, because the window that scrolls and the lines that are drawn have to
+// be counting the same things. When they were counted separately the headings belonged to one and
+// not the other, and the cursor could sit a section's worth of lines away from where the scroll
+// thought it was.
+//
+// An inner width of zero asks for the structure rather than the drawing, which is what the scrolling
+// wants: it needs to know how many lines there are and where the cursor landed, and nothing about
+// how wide they are.
+func (p modelPicker) laid(inner int) ([]string, int) {
+	var lines []string
+	at := 0
+
+	// The id column starts past the longest name, so the ids read as a column rather than as ragged
+	// text after the names. Bounded, so one very long name cannot push every id off the right hand
+	// edge of the block.
+	names := 0
+	for _, row := range p.rows {
+		if row.id == "" || row.id == row.label {
+			continue
+		}
+		if w := lipgloss.Width(row.label); w > names {
+			names = w
+		}
+	}
+	if limit := inner / 2; names > limit {
+		names = limit
+	}
 
 	row := 0
 	for _, section := range p.sections {
-		b.WriteString("\n")
-		b.WriteString(styleHeader.Render("  " + section.title()))
-		b.WriteString("\n")
+		lines = append(lines, styleHeader.Render(clip(section.title(), inner)))
 
 		if section.offered == 0 {
 			// The same words the credential screen uses for the same state, so the two screens agree
 			// about what an empty list means rather than each inventing its own phrasing. The row
 			// underneath still takes a model, which is what keeps an unknown endpoint usable.
-			b.WriteString(styleCaveat.Render("      none set, press ctrl+k"))
-			b.WriteString("\n")
+			lines = append(lines, styleCaveat.Render(clip("    none set, press ctrl+k", inner)))
 		}
 
 		for _, entry := range section.rows {
 			selected := row == p.cursor
+			if selected {
+				at = len(lines)
+			}
 
 			if entry.typed && selected && p.typing {
-				b.WriteString("    > " + styleSelected.Render("  "+p.draft+"_") + "\n")
+				lines = append(lines, "> "+styleSelected.Render(clip(p.draft+"_", inner-2)))
 				row++
 				continue
 			}
 
-			mark := " "
-			if entry.key == p.currentKey && entry.id == p.currentModel {
-				mark = "*"
-			}
-
-			line := mark + " " + entry.label
+			prefix := "  "
 			if selected {
-				b.WriteString("    > " + styleSelected.Render(line))
-			} else if entry.typed {
-				b.WriteString("      " + styleMuted.Render(line))
-			} else {
-				b.WriteString("      " + line)
+				prefix = "> "
 			}
-			// The id after the name and dimmed, for the entries where the two differ. It has to be
-			// on screen, since it is what goes on the wire and what somebody types into the CLI,
-			// and it must not compete with the name for the eye scanning the column.
-			if entry.id != "" && entry.id != entry.label {
-				b.WriteString("  " + styleMuted.Render(entry.id))
-			}
-			b.WriteString("\n")
+			lines = append(lines, prefix+p.line(entry, selected, names, inner-2))
 			row++
 		}
 	}
+	return lines, at
+}
 
-	b.WriteString("\n")
-	b.WriteString(styleMuted.Render(
-		"  a credential's own default is changed on the credential screen, ctrl+k"))
-	return b.String()
+// line is one model as it is drawn: the mark, the name, and the id in a column after it.
+//
+// The id has to be on screen, since it is what goes on the wire and what somebody types into the
+// CLI, and it must not compete with the name for the eye scanning the column, so it is dimmed. It is
+// the first thing dropped when the block is too narrow to carry both, because a name with no id is
+// still a model somebody can recognise and an id with no name is not.
+func (p modelPicker) line(entry modelRow, selected bool, names, width int) string {
+	body := func(text string) string {
+		switch {
+		case selected:
+			return styleSelected.Render(text)
+		case entry.typed:
+			return styleMuted.Render(text)
+		default:
+			return text
+		}
+	}
+
+	head := p.mark(entry) + " " + entry.label
+	if entry.id == "" || entry.id == entry.label {
+		return body(clip(head, width))
+	}
+
+	padded := head
+	if pad := names - lipgloss.Width(entry.label); pad > 0 {
+		padded += strings.Repeat(" ", pad)
+	}
+	if lipgloss.Width(padded)+2+lipgloss.Width(entry.id) > width {
+		return body(clip(head, width))
+	}
+	return body(padded) + "  " + styleMuted.Render(entry.id)
+}
+
+// mark is the glyph that says a row is what the conversation runs on now.
+func (p modelPicker) mark(row modelRow) string {
+	if row.key == p.currentKey && row.id == p.currentModel {
+		return "*"
+	}
+	return " "
+}
+
+// clip cuts a line to the width it has, with an ellipsis where something was lost.
+//
+// Applied to plain text before any styling, which is the only order that works: measuring a string
+// with escape sequences in it charges the line for colours nobody can see, and cutting one in the
+// middle of an escape sequence leaves the rest of the terminal wearing it.
+func clip(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansi.Truncate(text, width, "…")
 }
 
 // title is the section heading: the credential, and enough about it to tell two apart.
