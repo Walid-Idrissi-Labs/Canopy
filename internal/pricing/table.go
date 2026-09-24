@@ -23,7 +23,7 @@ import (
 //
 // Update this whenever you touch a rate. Leaving it while changing a number is worse than changing
 // nothing, because it launders a guess as a verified figure.
-var AsOf = time.Date(2026, time.June, 24, 0, 0, 0, 0, time.UTC)
+var AsOf = time.Date(2026, time.September, 24, 0, 0, 0, 0, time.UTC)
 
 // MaxAge is how long the table is trusted without comment.
 //
@@ -144,7 +144,12 @@ var localHosts = map[string]bool{
 // Where a published introductory rate is lower than the standard rate, the standard rate is used.
 // Overstating cost is the safer error: it makes a session look more expensive than it was, which
 // nobody acts on badly, whereas understating it hides spend that is really happening.
+//
+// A row that sets CacheRead has a published cache read rate that differs from the usual tenth of the
+// input rate: Opus 5.5 reads cache at a twentieth, Fable 5.1 at a fortieth.
 var anthropicRates = map[string]Rates{
+	"claude-fable-5-1":  {Input: 10, Output: 50, CacheRead: 0.25},
+	"claude-opus-5-5":   {Input: 4, Output: 20, CacheRead: 0.20},
 	"claude-fable-5":    {Input: 10, Output: 50},
 	"claude-opus-5":     {Input: 5, Output: 25},
 	"claude-opus-4-8":   {Input: 5, Output: 25},
@@ -228,7 +233,9 @@ func lookupAnthropic(model string) (Rates, bool) {
 	if !ok {
 		return Rates{}, false
 	}
-	rates.CacheRead = rates.Input * anthropicCacheReadMultiplier
+	if rates.CacheRead == 0 {
+		rates.CacheRead = rates.Input * anthropicCacheReadMultiplier
+	}
 	rates.CacheWrite = rates.Input * anthropicCacheWriteMultiplier
 	return rates, true
 }

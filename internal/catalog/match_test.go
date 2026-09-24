@@ -20,7 +20,7 @@ func TestSpellingIsForgivenBeforeAnythingIsRefused(t *testing.T) {
 		"sonnet 4 6":        "claude-sonnet-4-6",
 		"opus 4 7":          "claude-opus-4-7",
 		"haiku":             "claude-haiku-4-5",
-		"  Opus  ":          "claude-opus-5",
+		"  Opus  ":          "claude-opus-5-5",
 	} {
 		hits := Match(models, spoken)
 		if len(hits) != 1 {

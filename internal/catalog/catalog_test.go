@@ -45,10 +45,10 @@ func TestTheNewestOfEachFamilyComesFirst(t *testing.T) {
 	}
 
 	for family, want := range map[string]string{
-		"opus":   "claude-opus-5",
+		"opus":   "claude-opus-5-5",
 		"sonnet": "claude-sonnet-5",
 		"haiku":  "claude-haiku-4-5",
-		"fable":  "claude-fable-5",
+		"fable":  "claude-fable-5-1",
 	} {
 		if first[family] != want {
 			t.Errorf("the first %s is %q, want %q", family, first[family], want)

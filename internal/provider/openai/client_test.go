@@ -218,8 +218,10 @@ func TestUsageIsRequestedAndCaptured(t *testing.T) {
 	defer func() { _ = stream.Close() }()
 
 	_, final := collect(t, stream)
-	if final.Usage.InputTokens != 11 || final.Usage.OutputTokens != 22 {
-		t.Errorf("usage = %+v", final.Usage)
+	// prompt_tokens counts the cached five as well; InputTokens is the uncached remainder, or the
+	// five would be billed at both the input and the cache rate.
+	if final.Usage.InputTokens != 6 || final.Usage.OutputTokens != 22 {
+		t.Errorf("usage = %+v, want 6 uncached input and 22 output", final.Usage)
 	}
 	if final.Usage.CacheReadTokens != 5 {
 		t.Errorf("cache read tokens = %d, want 5", final.Usage.CacheReadTokens)

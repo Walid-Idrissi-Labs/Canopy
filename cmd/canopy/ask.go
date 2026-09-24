@@ -136,15 +136,19 @@ func pricer(id pricing.ModelID) func(core.Usage) (core.Usage, string) {
 		if reason != "" {
 			return usage, reason
 		}
-		if note := pricing.StalenessNote(time.Now()); note != "" {
-			return usage, note
-		}
 		// Caching is invisible unless it is reported, and an invisible saving is one nobody
-		// notices has stopped happening.
+		// notices has stopped happening. An old price table qualifies the figure rather than
+		// replacing it, since a hidden saving is worse than an approximate one.
+		var notes []string
 		if saving, ok := pricing.Saving(id, usage); ok {
-			return usage, cacheNote(saving)
+			notes = append(notes, cacheNote(saving))
 		}
-		return usage, ""
+		if len(notes) > 0 {
+			if stale := pricing.StalenessNote(time.Now()); stale != "" {
+				notes = append(notes, stale)
+			}
+		}
+		return usage, strings.Join(notes, "; ")
 	}
 }
 

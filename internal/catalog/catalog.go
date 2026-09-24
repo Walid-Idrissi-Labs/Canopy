@@ -26,7 +26,7 @@ import (
 //
 // Update it whenever a model is added or removed below. Leaving it while changing the list is worse
 // than changing nothing, because it launders a guess as a checked fact.
-var AsOf = time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC)
+var AsOf = time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
 
 // MaxAge is how long a lineup is presented without comment.
 //
@@ -88,6 +88,8 @@ func (m Model) Named() bool { return m.Name != "" && m.Name != m.ID }
 // The ids are the same eight the pricing table knows, and a test in internal/pricing fails if the
 // two ever disagree. Two hand kept lists of the same models is one list that goes stale silently.
 var anthropicModels = []Model{
+	{ID: "claude-fable-5-1", Name: "Claude Fable 5.1"},
+	{ID: "claude-opus-5-5", Name: "Claude Opus 5.5"},
 	{ID: "claude-fable-5", Name: "Claude Fable 5"},
 	{ID: "claude-opus-5", Name: "Claude Opus 5"},
 	{ID: "claude-opus-4-8", Name: "Claude Opus 4.8"},
