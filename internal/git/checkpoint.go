@@ -10,6 +10,7 @@ package git
 import (
 	"context"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"os"
 	"path/filepath"
 	"strings"
@@ -268,7 +269,7 @@ func (t *Taker) runEnv(ctx context.Context, env []string, args ...string) (strin
 // `GIT_WORK_TREE` would redirect Canopy's bookkeeping somewhere unexpected, and the failure would be
 // a checkpoint silently taken of the wrong thing.
 func environ() []string {
-	return []string{
+	return gitsafe.Env([]string{
 		"PATH=" + pathEnv(),
 		"HOME=" + homeEnv(),
 		// Git refuses to write a commit without these, and a checkpoint is not authored by the user.
@@ -277,5 +278,5 @@ func environ() []string {
 		"GIT_AUTHOR_EMAIL=canopy@localhost",
 		"GIT_COMMITTER_NAME=Canopy",
 		"GIT_COMMITTER_EMAIL=canopy@localhost",
-	}
+	})
 }

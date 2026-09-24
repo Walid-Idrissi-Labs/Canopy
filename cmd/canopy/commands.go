@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"io"
 	"os"
 	"os/signal"
@@ -309,7 +310,7 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 func isGitRepository(dir string) bool {
 	result, err := execpkg.Run(context.Background(), "git",
 		[]string{"rev-parse", "--is-inside-work-tree"},
-		execpkg.Options{Dir: dir, Timeout: 10 * time.Second})
+		execpkg.Options{Dir: dir, Env: gitsafe.Inherited(), Timeout: 10 * time.Second})
 	return err == nil && result.Succeeded()
 }
 

@@ -528,6 +528,12 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   shell tool, where it appears as a plain command rather than a named, separately governed git
   action (A4-06).
 
+- File tools refuse every path inside a `.git` directory, in any letter case, for reading and writing.
+  Git executes parts of its own configuration (`core.fsmonitor` on every status, hooks on commit), so
+  an edit there would have been a command that runs on Canopy's next git call without a prompt. Every
+  git process Canopy starts itself also runs with fsmonitor, hooks, external diff and textconv
+  switched off. The shell tool can still reach `.git` like any other path when shell is allowed.
+
 - Canopy cannot redact a secret that a child process prints to its own stdout. Redaction only covers
   what Canopy itself formats: the trust screen, service detail, and its own log rendering. Anything
   a spawned command chooses to print is captured into the logs verbatim (D-20). The TUI does escape

@@ -21,6 +21,15 @@ import (
 // broke.
 var ErrOutsideWorkspace = errors.New("that path is outside this agent's workspace")
 
+// ErrGitDirectory is returned for any path inside a .git directory.
+//
+// Git's own directory holds configuration that git executes: core.fsmonitor runs on every status,
+// hooks run on commit. A file tool that could write there would turn an ordinary, auto-approved
+// edit into a shell command that runs the next time anything calls git, with no prompt and no
+// entry in the audit trail. Reading is refused too, since remote URLs in .git/config routinely
+// carry tokens, and the structured git tools already answer every legitimate question.
+var ErrGitDirectory = errors.New("the .git directory is managed by git, not by file tools")
+
 // Workspace is a directory an agent may work inside, and nothing outside.
 type Workspace struct {
 	// root is the resolved, symlink free absolute path of the directory.
@@ -98,7 +107,27 @@ func (w *Workspace) Resolve(path string) (string, error) {
 		// which is the thing they were not allowed to learn.
 		return "", fmt.Errorf("%q: %w", path, ErrOutsideWorkspace)
 	}
+	if insideGitDir(w.root, resolved) || insideGitDir(w.root, candidate) {
+		return "", fmt.Errorf("%q: %w", path, ErrGitDirectory)
+	}
 	return resolved, nil
+}
+
+// insideGitDir reports whether any component of path below root is named .git.
+//
+// Compared without regard to case, because the default macOS filesystem treats .GIT and .git as
+// the same directory and git will read a config written through either spelling.
+func insideGitDir(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if strings.EqualFold(part, ".git") {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveExisting resolves symlinks on the longest existing prefix of a path.
