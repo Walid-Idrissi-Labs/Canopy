@@ -221,7 +221,11 @@ var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 // Model is the chat screen.
 type Model struct {
-	engine    Engine
+	engine Engine
+	// events is the one subscription this model holds for its lifetime. Subscribing again after
+	// every event registered a new subscriber, and a pump goroutine, on each notification while
+	// the old ones were never read again, so a long session grew both without bound.
+	events    <-chan core.Event
 	sessionID string
 
 	input Input
@@ -403,6 +407,9 @@ func New(engine Engine, sessionID, dir, keyName string) Model {
 		keyName:   keyName,
 		clip:      clipboard.Write,
 	}
+	if engine != nil {
+		m.events = engine.Events(0)
+	}
 	m.refresh()
 	m.markRunning = m.markVisible()
 	m.input.LoadHistory(promptsOf(m.session))
@@ -439,7 +446,10 @@ func (m Model) Init() tea.Cmd {
 func (m Model) SubscribeCmd() tea.Cmd { return m.subscribe() }
 
 func (m Model) subscribe() tea.Cmd {
-	events := m.engine.Events(0)
+	events := m.events
+	if events == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		ev, ok := <-events
 		if !ok {
@@ -470,8 +480,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case EventMsg:
 		m.refresh()
-		// Re-subscribing after each event rather than holding the channel open in the model keeps
-		// every read inside the update loop, which is what makes the model safe to copy.
+		// Waiting for the next event on the same subscription. The read still happens inside a
+		// command rather than a goroutine the model owns, which is what keeps the model safe to copy.
 		return m, m.subscribe()
 
 	case tickMsg:
