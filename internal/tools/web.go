@@ -3,12 +3,15 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -164,12 +167,70 @@ func safeHTTPClient() *http.Client {
 			return nil
 		},
 		Transport: &http.Transport{
-			DialContext: (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			// No proxy, deliberately: a proxy would connect on our behalf and the address check below
+			// would see the proxy rather than the destination.
+			Proxy: nil,
+			// Checked on the address actually being connected to, after DNS, on every hop. Checking
+			// the hostname in the URL is not enough: a public name can resolve to 127.0.0.1, or to
+			// the cloud metadata address, and can change its answer between check and connect.
+			DialContext: (&net.Dialer{Timeout: 10 * time.Second, Control: refusePrivate}).DialContext,
 			// Bounded rather than unlimited, so a slow page cannot hold a connection open for the
 			// whole timeout while producing nothing.
 			ResponseHeaderTimeout: 15 * time.Second,
 		},
 	}
+}
+
+// allowPrivateAddresses lets tests fetch from a local server. Never set outside tests.
+var allowPrivateAddresses = false
+
+// errPrivateAddress is what an agent sees when a URL leads somewhere only this machine can reach.
+var errPrivateAddress = errors.New("that address is on this machine or a private network, which fetch_url does not reach")
+
+// refusePrivate rejects a connection to any address that is not publicly routable: loopback, private
+// ranges, link-local (which includes the 169.254.169.254 metadata service), carrier-grade NAT,
+// multicast and unspecified addresses, in both IPv4 and IPv6. A fetch tool that can reach those is a
+// way to read a local admin panel or cloud credentials through a URL on a web page.
+func refusePrivate(_, address string, _ syscall.RawConn) error {
+	if allowPrivateAddresses {
+		return nil
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return errPrivateAddress
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return errPrivateAddress
+	}
+	if !publicAddress(ip) {
+		return errPrivateAddress
+	}
+	return nil
+}
+
+var nonPublic = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("2001:db8::/32"),
+}
+
+func publicAddress(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	for _, p := range nonPublic {
+		if p.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 // toText strips a document down to something worth putting in a context window.
