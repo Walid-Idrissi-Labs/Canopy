@@ -9,6 +9,7 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os"
 	"strings"
 
@@ -33,7 +34,7 @@ func Shell(ctx context.Context, command, dir string, env []string) (string, erro
 		// Added to the environment rather than replacing it. A hook that cannot see PATH is a hook
 		// that cannot find git, and the surprise of an empty environment is worse than the risk of
 		// a full one for a command the user wrote themselves.
-		Env: append(os.Environ(), env...),
+		Env: append(childenv.Inherited(), env...),
 	})
 	if err != nil {
 		return "", err

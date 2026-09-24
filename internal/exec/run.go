@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os/exec"
 	"strings"
 	"sync"
@@ -105,6 +106,10 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 	cmd := exec.Command(name, args...)
 	cmd.Dir = opts.Dir
 	cmd.Env = opts.Env
+	if cmd.Env == nil {
+		// Nil would inherit everything, provider keys exported in the user's shell included.
+		cmd.Env = childenv.Inherited()
+	}
 
 	output := &boundedBuffer{limit: limit}
 	cmd.Stdout = output

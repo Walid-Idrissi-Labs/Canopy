@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"io"
 	"os"
 	"os/exec"
@@ -475,6 +476,10 @@ type process struct {
 func (c *Client) spawn(ctx context.Context) (*process, error) {
 	cmd := exec.Command(c.install.Bridge)
 	cmd.Dir = c.workspace
+	// Claude Code keeps the credentials it signs in with; everything else secret in Canopy's
+	// environment, another vendor's key or a GitHub token, is not its business.
+	cmd.Env = childenv.Inherited("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+		"CLAUDE_CODE_OAUTH_TOKEN")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

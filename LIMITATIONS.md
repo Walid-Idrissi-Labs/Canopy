@@ -528,6 +528,13 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   shell tool, where it appears as a plain command rather than a named, separately governed git
   action (A4-06).
 
+- Processes Canopy starts (shell commands, tests, setup, hooks, MCP servers and vendor agents) do not
+  inherit secrets from Canopy's own environment. Variables that look like credentials, provider keys,
+  `GITHUB_TOKEN`, anything ending in `_API_KEY`, `_TOKEN`, `_SECRET` or `_PASSWORD`, are removed by name;
+  the rest of the shell environment passes through, because build tooling needs it. A vendor agent keeps
+  only its own vendor's variables. The match is by name, so a secret stored under an unremarkable name
+  still passes, and a test suite that needs a token exported in the shell will not see it.
+
 - File tools refuse every path inside a `.git` directory, in any letter case, for reading and writing.
   Git executes parts of its own configuration (`core.fsmonitor` on every status, hooks on commit), so
   an edit there would have been a command that runs on Canopy's next git call without a prompt. Every

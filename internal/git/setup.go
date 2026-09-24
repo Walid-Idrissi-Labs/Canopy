@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"io"
 	"io/fs"
 	"os"
@@ -462,7 +463,7 @@ func copyFile(source, target string, mode fs.FileMode) error {
 // in the worktree, which is the failure here that would be hardest to explain afterwards.
 func setupEnv() []string {
 	var out []string
-	for _, entry := range os.Environ() {
+	for _, entry := range childenv.Inherited() {
 		switch name, _, _ := strings.Cut(entry, "="); name {
 		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY":
 			continue

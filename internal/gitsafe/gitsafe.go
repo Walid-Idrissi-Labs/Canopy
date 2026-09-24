@@ -9,6 +9,7 @@
 package gitsafe
 
 import (
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os"
 	"strconv"
 	"strings"
@@ -49,4 +50,4 @@ func Env(base []string) []string {
 
 // Inherited is Env applied to the current process environment, for git invocations that need the
 // user's identity and credentials but must still not execute repository configuration.
-func Inherited() []string { return Env(os.Environ()) }
+func Inherited() []string { return Env(childenv.Inherited()) }
