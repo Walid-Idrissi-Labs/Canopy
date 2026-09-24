@@ -240,6 +240,7 @@ func chooseRoute(routes []keysui.Route, id string, out io.Writer) (keysui.Route,
 // machine with no browser at all, and a flow that only works where one exists does not work on the
 // machines this program is for.
 func showPrompt(w *errWriter, route keysui.Route, prompt keysui.Prompt) {
+	prompt = prompt.Safe()
 	switch {
 	case prompt.URL != "" || prompt.Code != "":
 		w.printf("\n")

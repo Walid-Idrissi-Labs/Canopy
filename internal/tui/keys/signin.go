@@ -2,6 +2,8 @@ package keys
 
 import (
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -107,6 +109,36 @@ type Prompt struct {
 
 // IsZero reports whether there is nothing to show yet.
 func (p Prompt) IsZero() bool { return p.URL == "" && p.Code == "" && p.Doing == "" }
+
+// Safe is the prompt as it may be shown.
+//
+// A sign-in URL and code come from a vendor process Canopy starts but does not control. Printed as
+// they arrive, a link could carry escape sequences that retitle the terminal or write the clipboard,
+// and a scheme other than https is a page nobody should be sent to for a login. Control characters
+// are dropped from every field and a link that is not https is withheld with a reason.
+func (p Prompt) Safe() Prompt {
+	out := Prompt{URL: printable(p.URL), Code: printable(p.Code), Doing: printable(p.Doing)}
+	if out.URL != "" {
+		u, err := url.Parse(out.URL)
+		if err != nil || u.Scheme != "https" || u.Host == "" {
+			out.URL = ""
+			if out.Doing == "" {
+				out.Doing = "the sign-in route returned a link that is not an https address, so Canopy does not show it"
+			}
+		}
+	}
+	return out
+}
+
+// printable drops every control character, including the C1 range terminals also interpret.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, s)
+}
 
 // Outcome is what a finished sign-in produced.
 //

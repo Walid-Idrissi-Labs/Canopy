@@ -2,6 +2,8 @@ package chat
 
 import (
 	"strings"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"testing"
 )
 
@@ -29,5 +31,31 @@ func TestTerminalSafeDoesNotChangeOrdinaryUnicode(t *testing.T) {
 	const input = "مرحبا — café — 日本語\n\tindented"
 	if got := terminalSafe(input); got != input {
 		t.Errorf("ordinary text changed from %q to %q", input, got)
+	}
+}
+
+// A reply, its thinking and its error are model output, and model output can repeat escape
+// sequences it read in a file or a web page. None of them may reach the terminal as control codes.
+func TestARenderedTurnCarriesNoRawEscapeSequence(t *testing.T) {
+	payloads := []string{
+		"\x1b]52;c;cHduZWQ=\x07",       // OSC 52: write the clipboard
+		"\x1b]0;owned\x07",             // set the window title
+		"\x1b]8;;https://evil/\x1b\\x", // OSC 8 hyperlink
+		"\x1b[2J\x1b[H",                // clear and home
+		"\x1b[201~",                    // end a bracketed paste early
+	}
+	for _, p := range payloads {
+		turn := core.Turn{
+			Request:  core.Message{Text: "q" + p},
+			Thinking: "think" + p,
+			Text:     "answer " + p,
+			Error:    "failed " + p,
+			State:    core.TurnFailed,
+		}
+		for _, line := range renderTurn(turn, 80, "", nil, Detail{}) {
+			if strings.Contains(line, "\x1b]") || strings.Contains(line, "\x1b[2J") || strings.Contains(line, "\x1b[201~") {
+				t.Fatalf("payload %q reached the terminal raw in %q", p, line)
+			}
+		}
 	}
 }

@@ -670,3 +670,22 @@ func TestASignInThatArrivesAfterEscapeIsStoppedRatherThanLeftPolling(t *testing.
 		t.Errorf("a stale start selected %q", chosen)
 	}
 }
+
+// A vendor-supplied sign-in link is printed to a terminal and clicked by a person, so it must be an
+// https address with no control characters in it.
+func TestASignInPromptIsSafeToShow(t *testing.T) {
+	bad := Prompt{URL: "javascript:alert(1)//\x1b]0;LOGIN\x07", Code: "AB\x1b[2JCD"}.Safe()
+	if bad.URL != "" {
+		t.Fatalf("a non-https sign-in link was kept: %q", bad.URL)
+	}
+	if bad.Code != "AB[2JCD" {
+		t.Fatalf("control characters survived in the code: %q", bad.Code)
+	}
+	if bad.Doing == "" {
+		t.Fatal("a withheld link must say why, or the wait looks like a hang")
+	}
+	good := Prompt{URL: "https://github.com/login/device", Code: "ABCD-1234"}.Safe()
+	if good.URL != "https://github.com/login/device" || good.Code != "ABCD-1234" {
+		t.Fatalf("an ordinary prompt was altered: %+v", good)
+	}
+}
