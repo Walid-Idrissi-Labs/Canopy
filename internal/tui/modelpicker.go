@@ -40,6 +40,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 )
 
 // pickerRows is the most list lines the block draws at once.
@@ -319,6 +320,13 @@ func (p *modelPicker) typeKey(msg tea.KeyPressMsg) (modelRow, bool) {
 		p.draft += msg.Text
 	}
 	return modelRow{}, false
+}
+
+// paste types pasted text into the free text field, when it is open.
+func (p *modelPicker) paste(text string) {
+	if p.typing {
+		p.draft += paste.Line(text)
+	}
 }
 
 // Block draws the picker as the block that stands where the message box goes.

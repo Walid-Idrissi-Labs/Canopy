@@ -118,9 +118,9 @@ func TestTheFlameIsNotTheSameColourAsTheMark(t *testing.T) {
 	}
 }
 
-// The bare colours are the awkward case: color.Color cannot be implemented outside
-// lipgloss, so these cannot resolve lazily and are refreshed through a change hook instead. A hook
-// nobody fires is the failure mode, and it looks exactly like the bug that was just fixed.
+// The bare colours are the awkward case: they are taken out of the palette once, so they are
+// refreshed through a change hook. A hook nobody fires is the failure mode, and it looks exactly
+// like the bug that was just fixed.
 func TestTheBareColoursAreRefreshedWhenTheThemeChanges(t *testing.T) {
 	sample := func() [4]string {
 		return [4]string{

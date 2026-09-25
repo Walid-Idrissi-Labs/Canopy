@@ -14,6 +14,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -308,7 +309,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// A pasted key arrives whole, as its own message, in a terminal that brackets pastes, which
 		// is how almost everyone enters a secret. One line: a trailing newline copied with it is not
 		// part of the key.
-		m.paste(strings.TrimSpace(strings.ReplaceAll(msg.Content, "\n", "")))
+		m.paste(paste.Line(msg.Content))
 		return m, nil
 
 	// A sign-in waits on a browser, a device code or another process, which is minutes rather than

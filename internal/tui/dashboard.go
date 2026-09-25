@@ -2,8 +2,9 @@ package tui
 
 import (
 	"fmt"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 	"strings"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"

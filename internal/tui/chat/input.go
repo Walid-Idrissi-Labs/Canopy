@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -174,6 +175,20 @@ func (i *Input) Update(msg tea.KeyPressMsg) bool {
 		i.insert([]rune{' '})
 		return true
 
+	// Option on a Mac keyboard arrives as alt: option+delete removes a word, as it does in every
+	// other text field there, and option+arrows move by word.
+	case "alt+backspace", "ctrl+w":
+		i.deleteWord()
+		return true
+
+	case "alt+left", "ctrl+left", "alt+b":
+		i.cursor = i.wordStart()
+		return true
+
+	case "alt+right", "ctrl+right", "alt+f":
+		i.cursor = i.wordEnd()
+		return true
+
 	case "backspace":
 		if i.cursor > 0 {
 			i.runes = append(i.runes[:i.cursor-1], i.runes[i.cursor:]...)
@@ -182,17 +197,17 @@ func (i *Input) Update(msg tea.KeyPressMsg) bool {
 		}
 		return true
 
-	case "delete":
+	case "delete", "alt+delete":
 		if i.cursor < len(i.runes) {
 			i.runes = append(i.runes[:i.cursor], i.runes[i.cursor+1:]...)
 			i.edited()
 		}
 		return true
 
-	case "up":
+	case "up", "alt+up":
 		return i.older()
 
-	case "down":
+	case "down", "alt+down":
 		return i.newer()
 
 	case "left":
@@ -221,10 +236,6 @@ func (i *Input) Update(msg tea.KeyPressMsg) bool {
 		i.runes = append([]rune(nil), i.runes[i.cursor:]...)
 		i.cursor = 0
 		i.edited()
-		return true
-
-	case "ctrl+w":
-		i.deleteWord()
 		return true
 	}
 
@@ -256,16 +267,36 @@ func (i *Input) deleteWord() {
 		return
 	}
 	i.edited()
-	end := i.cursor
-	for end > 0 && i.runes[end-1] == ' ' {
-		end--
-	}
-	for end > 0 && i.runes[end-1] != ' ' {
-		end--
-	}
+	end := i.wordStart()
 	i.runes = append(i.runes[:end], i.runes[i.cursor:]...)
 	i.cursor = end
 }
+
+// wordStart is where the word before the cursor begins, spaces before the cursor skipped.
+func (i *Input) wordStart() int {
+	at := i.cursor
+	for at > 0 && isSpace(i.runes[at-1]) {
+		at--
+	}
+	for at > 0 && !isSpace(i.runes[at-1]) {
+		at--
+	}
+	return at
+}
+
+// wordEnd is where the word after the cursor ends, spaces after the cursor skipped.
+func (i *Input) wordEnd() int {
+	at := i.cursor
+	for at < len(i.runes) && isSpace(i.runes[at]) {
+		at++
+	}
+	for at < len(i.runes) && !isSpace(i.runes[at]) {
+		at++
+	}
+	return at
+}
+
+func isSpace(r rune) bool { return r == ' ' || r == '\n' }
 
 // cursorBlock is what stands in for a terminal cursor.
 //
@@ -327,13 +358,6 @@ func (i Input) Height() int {
 // their own message rather than as keystrokes, so an enter inside a paste is a newline, not a send.
 func (i *Input) Paste(text string) {
 	// Terminals send a pasted line break as a carriage return, which drawn raw would send the cursor
-	// back over the start of the line; every control but newline and tab is dropped for the same
-	// reason.
-	text = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(text)
-	i.insert([]rune(strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || (r >= 0x20 && r != 0x7f && (r < 0x80 || r > 0x9f)) {
-			return r
-		}
-		return -1
-	}, text)))
+	// back over the start of the line; paste.Lines makes it a newline and drops the other controls.
+	i.insert([]rune(paste.Lines(text)))
 }

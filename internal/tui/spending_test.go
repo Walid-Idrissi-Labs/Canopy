@@ -37,7 +37,7 @@ func keyFor(name string) tea.KeyPressMsg {
 		"enter": keyCode(tea.KeyEnter), "esc": keyCode(tea.KeyEsc), "tab": keyCode(tea.KeyTab), "shift+tab": keyCode(tea.KeyTab, tea.ModShift),
 		"space": keyCode(tea.KeySpace), "up": keyCode(tea.KeyUp), "down": keyCode(tea.KeyDown), "pgup": keyCode(tea.KeyPgUp),
 		"pgdown": keyCode(tea.KeyPgDown), "home": keyCode(tea.KeyHome), "end": keyCode(tea.KeyEnd),
-		"alt+enter": keyCode(tea.KeyEnter), "arrows": keyCode(tea.KeyUp), "backspace": keyCode(tea.KeyBackspace),
+		"alt+enter": keyCode(tea.KeyEnter, tea.ModAlt), "arrows": keyCode(tea.KeyUp), "backspace": keyCode(tea.KeyBackspace),
 		"ctrl+c": keyCode('c', tea.ModCtrl), "ctrl+d": keyCode('d', tea.ModCtrl), "ctrl+g": keyCode('g', tea.ModCtrl),
 		"ctrl+k": keyCode('k', tea.ModCtrl), "ctrl+n": keyCode('n', tea.ModCtrl), "ctrl+r": keyCode('r', tea.ModCtrl),
 		"ctrl+s": keyCode('s', tea.ModCtrl), "ctrl+home": keyCode(tea.KeyHome, tea.ModCtrl), "ctrl+end": keyCode(tea.KeyEnd, tea.ModCtrl),

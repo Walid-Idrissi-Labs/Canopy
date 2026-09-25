@@ -172,8 +172,11 @@ func TestAPasteIsTextInTheMessageBox(t *testing.T) {
 	if len(engine.sent) != 0 {
 		t.Fatal("a paste sent the message")
 	}
-	body := next.Body()
-	if !strings.Contains(plain(body), "line one") || !strings.Contains(plain(body), "line two[2J") || strings.Contains(body, "\r") || strings.Contains(body, "\x1b[2J") {
-		t.Fatalf("the paste was not taken in as text:\n%q", body)
+	// Exactly this: a carriage return dropped rather than made a line break would join the lines.
+	if got := next.InputValue(); got != "line one\nline two[2J" {
+		t.Fatalf("the paste was taken in as %q", got)
+	}
+	if body := next.Body(); strings.Contains(body, "\r") || strings.Contains(body, "\x1b[2J") {
+		t.Fatalf("a control from the paste reached the screen:\n%q", body)
 	}
 }

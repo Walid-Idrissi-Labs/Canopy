@@ -1,10 +1,11 @@
 package keys
 
 import (
-	"charm.land/lipgloss/v2"
 	"fmt"
 	"strings"
 	"time"
+
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"

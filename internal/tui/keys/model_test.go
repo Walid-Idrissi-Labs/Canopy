@@ -913,3 +913,24 @@ func TestACredentialPastedIntoTheRenameFieldIsNeverRendered(t *testing.T) {
 	}
 	assertNoCanary(t, "after the rename was refused", m.Body())
 }
+
+// Almost everyone enters a secret by pasting it. What is stored is the key alone: the newline copied
+// with it, and any control characters, are not part of it.
+func TestAPastedSecretIsStoredClean(t *testing.T) {
+	store := &stubStore{}
+	m := New(store)
+
+	m = key(m, "a")
+	m, _ = m.Update(tea.PasteMsg{Content: "clau\x07de\n"})
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
+	m, _ = m.Update(tea.PasteMsg{Content: " " + canary + "\r\n"})
+	_ = press(m, keyCode(tea.KeyEnter))
+
+	if store.lastPut.Ref.Name != "claude" {
+		t.Errorf("the pasted name was stored as %q", store.lastPut.Ref.Name)
+	}
+	if store.lastSeen.Reveal() != canary {
+		t.Error("the pasted secret was not stored as the key alone")
+	}
+}

@@ -506,3 +506,24 @@ func TestAnOpinionOnAnOldRankingIsHidden(t *testing.T) {
 		t.Fatalf("an opinion about an old ranking is still shown:\n%s", body)
 	}
 }
+
+// A pasted subject is one line: a newline copied with it is not enter, and nothing is committed.
+func TestAPastedSubjectIsOneLine(t *testing.T) {
+	model, source := loaded(t)
+	model = press(model, "enter", "c")
+	if model.Pane() != "commit" {
+		t.Fatalf("c on the file list landed on %q", model.Pane())
+	}
+	model = model.Paste("tighten the \x1b[2Jparser\n")
+	if source.committed != "" {
+		t.Fatalf("a paste committed %q", source.committed)
+	}
+	if !strings.Contains(model.Body(), "tighten the [2Jparser") || strings.Contains(model.Body(), "\x1b[2J") {
+		t.Fatalf("the pasted subject is not shown as one clean line:\n%s", model.Body())
+	}
+	// Outside the commit message a paste does nothing.
+	model, _ = loaded(t)
+	if got := model.Paste("x").Body(); got != model.Body() {
+		t.Fatal("a paste changed the file list")
+	}
+}

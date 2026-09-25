@@ -289,12 +289,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// To the screen in front and nowhere else, like a keystroke. Broadcast, a key pasted into
 		// the credential screen also landed in the conversation's message box, one enter from being
 		// sent to the model.
+		// And like a keystroke, it is a change of mind about quitting or starting over.
+		a.confirmingNew, a.confirmingQuit = false, false
 		var cmd tea.Cmd
 		switch a.screen {
 		case screenChat:
 			a.chat, cmd = a.chat.Update(m)
 		case screenKeys:
 			a.keys, cmd = a.keys.Update(m)
+		case screenModel:
+			a.picker.paste(m.Content)
+		case screenReview:
+			a.review = a.review.Paste(m.Content)
+		case screenAgents:
+			a.agents = a.agents.Paste(m.Content)
 		}
 		return a, cmd
 
@@ -1138,6 +1146,10 @@ func (a App) Screen() string {
 // than the event itself, so a test driving the event path needs the subscription on its own.
 // Exported for that reason and no other.
 func (a App) SubscribeCmd() tea.Cmd { return a.dashboard.Init() }
+
+// SetClipboard replaces what copying from the conversation writes to, as the chat's own does, so a
+// test can catch the text rather than write to the machine's clipboard.
+func (a *App) SetClipboard(write func(string) error) { a.chat.SetClipboard(write) }
 
 // ChatInput exposes what has been typed into the message box. For tests.
 func (a App) ChatInput() string { return a.chat.InputValue() }

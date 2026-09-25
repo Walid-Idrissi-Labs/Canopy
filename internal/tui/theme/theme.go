@@ -267,10 +267,9 @@ func fromEnvironment() Palette {
 
 // listeners are told when the theme changes.
 //
-// Needed because color.Color cannot be implemented outside lipgloss: it has an
-// unexported method, so there is no way to write a colour value that resolves lazily. Anything
-// holding a colour rather than a style therefore has to be told to go and fetch a new one, and a
-// call site that reads a stale colour is exactly the bug this package exists to prevent.
+// Needed because a colour already taken out of the palette, or a line already drawn and cached,
+// does not change when the theme does. Anything holding one has to be told to go and fetch a new
+// one, and a call site that reads a stale colour is exactly the bug this package exists to prevent.
 var listeners []func()
 
 // OnChange registers a callback, and calls it once immediately so the caller starts consistent.
@@ -282,6 +281,10 @@ func OnChange(f func()) {
 // Set replaces the active theme.
 func Set(p Palette) {
 	current = New(p)
+	changed()
+}
+
+func changed() {
 	for _, notify := range listeners {
 		notify()
 	}
@@ -368,6 +371,14 @@ var dark atomic.Bool
 
 func init() { dark.Store(true) }
 
-// SetDark records the terminal's background, as Bubble Tea reports it; adaptive colours drawn after
-// this follow it.
-func SetDark(isDark bool) { dark.Store(isDark) }
+// SetDark records the terminal's background, as Bubble Tea reports it. The first frame is drawn
+// before the terminal answers, on the dark assumption, so a change is a theme change: whatever was
+// drawn and kept in the old colours is thrown away, as it is when the palette changes.
+func SetDark(isDark bool) {
+	if dark.Swap(isDark) != isDark {
+		changed()
+	}
+}
+
+// Dark reports whether adaptive colours are drawing for a dark background.
+func Dark() bool { return dark.Load() }

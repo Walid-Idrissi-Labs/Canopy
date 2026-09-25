@@ -26,6 +26,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -369,6 +370,14 @@ func (m *Model) SetVisible(visible bool) tea.Cmd {
 	}
 	m.refresh()
 	return m.ensureFlame()
+}
+
+// Paste types pasted text into a new agent's name, while one is being named.
+func (m Model) Paste(text string) Model {
+	if m.naming {
+		m.draft += paste.Line(text)
+	}
+	return m
 }
 
 // typeName handles the keys while a new agent is being named.

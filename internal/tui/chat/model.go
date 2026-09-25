@@ -620,8 +620,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.PasteMsg:
 		// Pasted text goes into the message box whole: an enter inside a paste is a line break in
 		// what was pasted, not a request to send half of it.
+		// Like typing, it ends an offer to compact and a complaint about what was typed before.
 		if m.acceptsPaste() {
 			m.input.Paste(msg.Content)
+			m.compactAsked, m.err = false, ""
+			m.refreshMenu()
 		}
 		return m, nil
 	}
@@ -2643,5 +2646,5 @@ func (m Model) toolKind(name string) (core.ToolKind, bool) {
 }
 
 // acceptsPaste reports whether pasted text belongs in the message box now: not while a permission
-// question is waiting, whose keys are answers, nor while the btw panel has the keyboard.
-func (m Model) acceptsPaste() bool { return !m.awaiting && !m.btwOpen }
+// question is waiting, whose keys are answers.
+func (m Model) acceptsPaste() bool { return !m.awaiting }

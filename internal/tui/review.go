@@ -22,6 +22,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 )
 
 // ReviewSource is what the review screen reads. Implemented by verify.Verifier.
@@ -294,6 +295,15 @@ func (m ReviewModel) Update(msg tea.Msg) (ReviewModel, tea.Cmd) {
 		return m.open(), nil
 	}
 	return m, nil
+}
+
+// Paste types pasted text into the commit subject, when it is open.
+func (m ReviewModel) Paste(text string) ReviewModel {
+	if m.pane == paneCommit {
+		m.subject += paste.Line(text)
+		m.failure = ""
+	}
+	return m
 }
 
 // editing handles a keystroke while the commit message is open.
