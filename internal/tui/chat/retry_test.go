@@ -31,7 +31,7 @@ func TestAFailedTurnIsRetriedWithEnter(t *testing.T) {
 	if !strings.Contains(plain(m.Body()), "enter tries it again") {
 		t.Fatalf("no retry offered:\n%s", plain(m.Body()))
 	}
-	m.Update(keyCode(tea.KeyEnter))
+	_, _ = m.Update(keyCode(tea.KeyEnter))
 	if engine.retried != 1 || len(engine.sent) != 0 {
 		t.Fatalf("retried %d, sent %v", engine.retried, engine.sent)
 	}
@@ -49,7 +49,7 @@ func TestARefusedCredentialSaysWhatToFix(t *testing.T) {
 	if strings.Contains(body, "tries it again") || !strings.Contains(body, "the credential claude was refused") {
 		t.Fatalf("%s", body)
 	}
-	m.Update(keyCode(tea.KeyEnter))
+	_, _ = m.Update(keyCode(tea.KeyEnter))
 	if engine.retried != 0 {
 		t.Fatal("an authentication failure was retried")
 	}
