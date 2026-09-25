@@ -504,7 +504,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// one notification or, under load, as none at all for a moment, and this is the beat that
 		// guarantees the screen catches up regardless.
 		m.refresh()
-		if !m.working {
+		if !m.working && !m.compacting {
 			m.ticking = false
 			return m, m.ensureMark()
 		}
@@ -987,10 +987,17 @@ func (m Model) compact() (Model, tea.Cmd) {
 	m.err = ""
 
 	engine, sessionID := m.engine, m.sessionID
-	return m, func() tea.Msg {
+	compact := func() tea.Msg {
 		result, err := engine.Compact(context.Background(), sessionID)
 		return compactedMsg{result: result, err: err}
 	}
+	// The summary call can take a while and the spinner is what says it is still going.
+	if !m.ticking {
+		m.ticking = true
+		m.tickGeneration++
+		return m, tea.Batch(compact, tick(m.tickGeneration))
+	}
+	return m, compact
 }
 
 // compactionOffer is the sentence somebody agrees to before anything is sent.

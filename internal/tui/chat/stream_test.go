@@ -55,3 +55,44 @@ func BenchmarkStreamedReply(b *testing.B) {
 		forgetStreaming(key)
 	}
 }
+
+// Random documents built from awkward pieces, fences inside fences, indented fence markers,
+// continued list items, tables, are checked at every cut: the streamed render must always be the
+// whole render.
+func TestStreamingMatchesWholeRendersOfRandomDocuments(t *testing.T) {
+	pieces := []string{
+		"Plain prose that wraps across the width of the screen more than once.\n\n",
+		"```go\nfunc a() {\n\n~~~ not a close\n\n}\n```\n\n",
+		"~~~\nplain\n\n```\nstill inside\n~~~\n\n",
+		"   ```py\n   indented fence\n\n   ```\n\n",
+		"1. item\n\n   continued after a blank\n\n2. next\n\n",
+		"- a\n  - b\n\n    code after blank\n\n",
+		"| h | i |\n|---|---|\n| 1 | 2 |\n\n",
+		"> quote\n> more\n\n",
+		"# Heading\n\n",
+		"---\n\n",
+		"text right before\n```\nfence with no blank before\n```\n",
+		"```\nunterminated fence\n\nwith blank lines\n",
+	}
+	seed := uint32(7)
+	next := func(n int) int {
+		seed = seed*1664525 + 1013904223
+		return int(seed>>8) % n
+	}
+	for c := 0; c < 60; c++ {
+		var doc strings.Builder
+		for k := 0; k < 3+next(5); k++ {
+			doc.WriteString(pieces[next(len(pieces))])
+		}
+		text := doc.String()
+		key := "random"
+		for cut := 1; cut <= len(text); cut++ {
+			got := strings.Join(streamingMarkdown(key, text[:cut], 60), "\n")
+			want := strings.Join(RenderMarkdown(text[:cut], 60), "\n")
+			if got != want {
+				t.Fatalf("case %d, cut %d differs\n--- text\n%q\n--- streamed\n%s\n--- whole\n%s", c, cut, text[:cut], got, want)
+			}
+		}
+		forgetStreaming(key)
+	}
+}

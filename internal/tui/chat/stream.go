@@ -15,7 +15,7 @@ import (
 type streamRender struct {
 	width  int
 	stable int    // bytes of text covered by lines
-	tail   string // the last bytes of that text, to notice text that was replaced rather than grown
+	prefix string // that text itself, to notice text that was replaced rather than grown
 	lines  []string
 }
 
@@ -27,12 +27,18 @@ var streaming = struct {
 // streamingMarkdown renders text the way RenderMarkdown does, reusing work from earlier calls for
 // the same key while the text only grows.
 func streamingMarkdown(key, text string, width int) []string {
-	boundary := stableBoundary(text)
-
 	streaming.Lock()
 	state := streaming.byTurn[key]
-	if state == nil || state.width != width || state.stable > boundary ||
-		!strings.HasSuffix(text[:state.stable], state.tail) {
+	if state != nil && (state.width != width || state.stable > len(text) || text[:state.stable] != state.prefix) {
+		state = nil
+	}
+	from := 0
+	if state != nil {
+		from = state.stable
+	}
+	boundary := from + stableBoundary(text[from:])
+
+	if state == nil || state.stable > boundary {
 		state = &streamRender{width: width}
 		if len(streaming.byTurn) > 64 {
 			streaming.byTurn = map[string]*streamRender{}
@@ -44,7 +50,7 @@ func streamingMarkdown(key, text string, width int) []string {
 		// split into one more empty line than the whole text does at that point.
 		state.lines = append(state.lines, RenderMarkdown(text[state.stable:boundary-1], width)...)
 		state.stable = boundary
-		state.tail = text[max(0, boundary-32):boundary]
+		state.prefix = text[:boundary]
 	}
 	head := state.lines
 	streaming.Unlock()
@@ -59,30 +65,69 @@ func forgetStreaming(key string) {
 	streaming.Unlock()
 }
 
-// stableBoundary is the offset just past the last blank line that is not inside a code fence and is
-// followed by more text: everything before it is complete blocks that later text cannot change.
+// stableBoundary is the offset just past the last blank line at which the renderer is between
+// blocks and later text cannot reach back: everything before it renders the same whatever follows.
+//
+// It walks the text with the renderer's own block rules, so a fence is a fence exactly when
+// RenderMarkdown thinks so. A blank line counts only when the line after it starts at the margin,
+// because an indented line would continue a list item across the blank.
 func stableBoundary(text string) int {
+	lines := strings.Split(text, "\n")
+	// The last element is the unfinished line (or "" after a final newline); blocks are only
+	// judged on complete lines.
+	complete := lines[:len(lines)-1]
+	offsets := make([]int, len(lines))
+	for i := 1; i < len(lines); i++ {
+		offsets[i] = offsets[i-1] + len(lines[i-1]) + 1
+	}
+
 	boundary := 0
-	inFence := false
-	offset := 0
-	prevBlank := false
-	for offset < len(text) {
-		end := strings.IndexByte(text[offset:], '\n')
-		if end < 0 {
-			break
+	i := 0
+	for i < len(complete) {
+		line := complete[i]
+		var consumed int
+		switch {
+		case isFence(line):
+			_, _, consumed = extractFence(complete[i:])
+			if i+consumed >= len(complete) && !closedFence(complete[i:]) {
+				// An open fence runs to the end of the text so far; nothing after it is stable.
+				return boundary
+			}
+		case strings.TrimSpace(line) == "":
+			if i > 0 && i+1 < len(complete) && startsAtMargin(complete[i+1]) {
+				boundary = offsets[i+1]
+			}
+			consumed = 1
+		case isTableStart(complete[i:]):
+			_, consumed = collectTable(complete[i:])
+		case isRule(line), headingLevel(line) > 0:
+			consumed = 1
+		case isQuoteLine(line):
+			_, consumed = collectWhile(complete[i:], isQuoteLine)
+		case listMarker(line) != nil:
+			_, consumed = collectListItem(complete[i:])
+		default:
+			_, consumed = collectWhile(complete[i:], isParagraphLine)
 		}
-		line := text[offset : offset+end]
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			inFence = !inFence
+		if consumed < 1 {
+			consumed = 1
 		}
-		blank := trimmed == ""
-		next := offset + end + 1
-		if blank && !inFence && !prevBlank && offset > 0 {
-			boundary = next
-		}
-		prevBlank = blank
-		offset = next
+		i += consumed
 	}
 	return boundary
+}
+
+// closedFence reports whether the fence opened at lines[0] is closed within lines.
+func closedFence(lines []string) bool {
+	marker := fenceMarker(lines[0])
+	for _, l := range lines[1:] {
+		if strings.TrimSpace(l) == marker {
+			return true
+		}
+	}
+	return false
+}
+
+func startsAtMargin(line string) bool {
+	return line != "" && line[0] != ' ' && line[0] != '\t'
 }
