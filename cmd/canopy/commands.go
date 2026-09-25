@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/agentdefs"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/skills"
 	"io"
 	"os"
 	"os/signal"
@@ -89,13 +91,7 @@ func runChat(resume string) error {
 
 	project := loadProject(dir)
 	commands := loadCommands(project.Commands)
-	if project.Trusted {
-		instructions, err := config.LoadInstructions(dir, project)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: project instructions are not being sent: %v\n", err)
-		}
-		engine.WithInstructions(instructions.Text)
-	}
+	engine.WithInstructions(projectInstructions(dir, project, os.Stderr))
 
 	if err := attachTools(engine, dir, project); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
@@ -307,6 +303,12 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 
 	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
 	// the ones that can be governed per argument should be reached for before the one that cannot.
+	if projectSkills != nil && !projectSkills.Empty() {
+		if err := registry.Register(skills.Tool(projectSkills)); err != nil {
+			return nil, err
+		}
+	}
+
 	outputs := tools.NewOutputStore()
 	if err := registry.Register(tools.ReadOutputTool(outputs)); err != nil {
 		return nil, err
@@ -639,4 +641,35 @@ func projectTrust(project config.Project) core.TrustLevel {
 		return core.TrustStandard
 	}
 	return level
+}
+
+// projectSkills is the skill set tools are built with; set once the project's trust is known, so a
+// repository's own skills are only offered when it is trusted.
+var projectSkills *skills.Set
+
+// projectAgents are the agent definitions dispatch can start by name.
+var projectAgents *agentdefs.Set
+
+// projectInstructions gathers what the system prompt carries beyond the core prompt: the project's
+// instructions when it is trusted, and the list of skills.
+func projectInstructions(dir string, project config.Project, warn io.Writer) string {
+	projectSkills = skills.Load(dir, project.Trusted)
+	var parts []string
+	if project.Trusted {
+		instructions, err := config.LoadInstructions(dir, project)
+		if err != nil {
+			_, _ = fmt.Fprintf(warn, "warning: project instructions are not being sent: %v\n", err)
+		}
+		if instructions.Text != "" {
+			parts = append(parts, instructions.Text)
+		}
+	}
+	if listing := projectSkills.Listing(); listing != "" {
+		parts = append(parts, listing)
+	}
+	projectAgents = agentdefs.Load(dir, project.Trusted)
+	if listing := projectAgents.Listing(); listing != "" {
+		parts = append(parts, listing)
+	}
+	return strings.Join(parts, "\n\n")
 }

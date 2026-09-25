@@ -623,3 +623,52 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 		t.Fatal("a delivered report stayed pending")
 	}
 }
+
+// An agent started from a definition gets the definition's instructions with its first message, in
+// Canopy's note, since the person chose it.
+func TestADefinitionsInstructionsReachItsAgent(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	if _, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", KeyName: "claude", Model: "claude-opus-5", Dir: t.TempDir(), Trust: core.TrustStandard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := e.Spawn(context.Background(), Dispatch{Count: 1, Profile: "claude", Task: "review it",
+		Instructions: "Report bugs only.", Definition: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := e.Session(created[0].SessionID)
+	waitForTurn(t, e, child.ID, child.Turns[0].ID)
+	child, _ = e.Session(created[0].SessionID)
+	if note := child.Turns[0].Request.Note; !strings.Contains(note, "Report bugs only.") {
+		t.Fatalf("the definition's instructions did not reach the agent: %q", note)
+	}
+}
+
+// A definition limited to reading tools starts agents that cannot write, whatever the profile
+// allows, and the question the person answers says so.
+func TestADefinitionsCeilingLowersTheAgent(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	if _, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", KeyName: "claude", Model: "claude-opus-5", Dir: t.TempDir(), Trust: core.TrustBroad,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := Dispatch{Count: 1, Profile: "claude", Task: "review it", Definition: "reviewer",
+		Ceiling: core.TrustReadOnly}
+	if q := (Confirmation{Dispatch: request}).Question(); !strings.Contains(q, "as reviewer (read-only)") {
+		t.Errorf("the question hides the definition: %q", q)
+	}
+	created, err := e.Spawn(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created[0].Trust != core.TrustReadOnly {
+		t.Fatalf("the reviewer runs at %q", created[0].Trust)
+	}
+}
