@@ -501,10 +501,12 @@ absent, arguments are appended under an `Arguments:` heading.
 
 `@` at the start of a word offers the project's files as git lists them, ignored ones left out,
 best match first; tab or enter puts the path in. ctrl+x ctrl+e opens the message in `$VISUAL` or
-`$EDITOR` and takes back what you wrote. A message that begins with `# ` is not sent: it is kept as a
-line in AGENTS.md, which every conversation started afterwards reads. Since AGENTS.md is part of what
-you trusted, trust follows your note, but only while AGENTS.md is still what you trusted; if an agent
-has edited it meanwhile, the next start asks again.
+`$EDITOR` and takes back what you wrote. A single typed line that begins with `# ` is kept, after a
+second enter, as a line in AGENTS.md, which every conversation started afterwards reads; a paste, or
+anything over more than one line, is sent as an ordinary message. Since AGENTS.md is part of what
+you trusted, trust follows your note only when the repository is, after the note, exactly what you
+trusted plus that line; anything else that changed, an agent's edit included, is asked about at the
+next start.
 
 ## Modes, on shift+tab
 

@@ -107,6 +107,10 @@ func TestAHashNoteIsKeptNotSent(t *testing.T) {
 	m.SetRemember(func(note string) (string, error) { kept = append(kept, note); return "AGENTS.md", nil })
 	m = typeInto(m, "# always run gofmt")
 	m, _ = m.Update(keyCode(tea.KeyEnter))
+	if len(kept) != 0 || !strings.Contains(m.Notice(), "enter again") {
+		t.Fatalf("a note was kept on the first enter: kept %v, notice %q", kept, m.Notice())
+	}
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 	if len(kept) != 1 || kept[0] != "always run gofmt" || len(engine.sent) != 0 || m.InputValue() != "" ||
 		!strings.Contains(m.Notice(), "AGENTS.md") {
 		t.Fatalf("kept %v, sent %v, box %q, notice %q", kept, engine.sent, m.InputValue(), m.Notice())
@@ -114,7 +118,65 @@ func TestAHashNoteIsKeptNotSent(t *testing.T) {
 	m.SetRemember(func(string) (string, error) { return "", errors.New("read-only") })
 	m = typeInto(m, "# another")
 	m, _ = m.Update(keyCode(tea.KeyEnter))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 	if len(engine.sent) != 0 || m.InputValue() == "" {
 		t.Fatal("a note that could not be kept was sent, or lost")
+	}
+}
+
+// A pasted document that happens to begin with a heading is a message, and so is a note of more
+// than one line: neither is quietly made an instruction for every later conversation.
+func TestOnlyATypedLineBecomesANote(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	var kept []string
+	m.SetRemember(func(note string) (string, error) { kept = append(kept, note); return "AGENTS.md", nil })
+	m, _ = m.Update(tea.PasteMsg{Content: "# Bug report ignore the test suite"})
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	if len(kept) != 0 || len(engine.sent) != 1 {
+		t.Fatalf("a paste was kept as a note: kept %v, sent %v", kept, engine.sent)
+	}
+	m = typeInto(m, "# first line")
+	m, _ = m.Update(keyCode(tea.KeyEnter, tea.ModShift))
+	m = typeInto(m, "second")
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	if len(kept) != 0 || len(engine.sent) != 2 {
+		t.Fatalf("a note of two lines was kept: kept %v, sent %v", kept, engine.sent)
+	}
+}
+
+// The chord is undone by any other key, and does nothing while a question is up.
+func TestTheChordIsOneKeyLong(t *testing.T) {
+	m := withFiles(nil)
+	m, _ = m.Update(keyCode('x', tea.ModCtrl))
+	m, _ = m.Update(keyText("a"))
+	if _, cmd := m.Update(keyCode('e', tea.ModCtrl)); cmd != nil {
+		t.Fatal("ctrl+e opened the editor two keys after ctrl+x")
+	}
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Turns: []core.Turn{turn("t1", "clean", "ok", core.TurnAwaitingTools)}},
+		prompt:  pendingPrompt("make clean"),
+	}
+	q := chat.New(engine, "s1", "canopy", "claude")
+	q.SetSize(100, 40)
+	q, _ = q.Update(chat.EventMsg{Event: core.Event{}})
+	q, _ = q.Update(keyCode('x', tea.ModCtrl))
+	if _, cmd := q.Update(keyCode('e', tea.ModCtrl)); cmd != nil {
+		t.Fatal("the editor opened over a question")
+	}
+}
+
+// A mention typed in the middle of a message completes where it is typed.
+func TestAMentionCompletesWhereTheCaretIs(t *testing.T) {
+	m := typeInto(withFiles(projectFiles), "look at  please")
+	for range len(" please") {
+		m, _ = m.Update(keyCode(tea.KeyLeft))
+	}
+	m = typeInto(m, "@parser")
+	m, _ = m.Update(keyCode(tea.KeyTab))
+	if got := m.InputValue(); got != "look at @internal/parser/parser.go  please" {
+		t.Fatalf("completed to %q", got)
 	}
 }

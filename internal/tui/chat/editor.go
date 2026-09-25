@@ -5,7 +5,9 @@ package chat
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -16,20 +18,44 @@ type editedMsg struct {
 	err  error
 }
 
-// editorCommand is the editor to run, as the shell would choose it: VISUAL, then EDITOR, then vi.
-func editorCommand() []string {
+// editorShell is the editor to run on path, through the shell as git runs it, so an EDITOR with
+// arguments or a quoted path works: VISUAL, then EDITOR, then vi.
+func editorShell(path string) *exec.Cmd {
+	editor := "vi"
 	for _, name := range []string{"VISUAL", "EDITOR"} {
-		if fields := strings.Fields(os.Getenv(name)); len(fields) > 0 {
-			return fields
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			editor = value
+			break
 		}
 	}
-	return []string{"vi"}
+	return exec.Command("/bin/sh", "-c", editor+` "$1"`, "canopy-editor", path)
+}
+
+// messagesDir holds the files messages are edited in, only this user's, and emptied of any left
+// behind by a Canopy that did not get to remove its own.
+func messagesDir() (string, error) {
+	dir := filepath.Join(os.TempDir(), "canopy-messages-"+itoa(os.Getuid()))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, entry := range entries {
+			if info, err := entry.Info(); err == nil && time.Since(info.ModTime()) > 24*time.Hour {
+				_ = os.Remove(filepath.Join(dir, entry.Name()))
+			}
+		}
+	}
+	return dir, nil
 }
 
 // openEditor writes the box to a file only this user can read, hands the terminal to the editor on
 // it, and reads it back when the editor exits.
 func openEditor(text string) tea.Cmd {
-	file, err := os.CreateTemp("", "canopy-message-*.md")
+	dir, err := messagesDir()
+	if err != nil {
+		return func() tea.Msg { return editedMsg{err: err} }
+	}
+	file, err := os.CreateTemp(dir, "message-*.md")
 	if err != nil {
 		return func() tea.Msg { return editedMsg{err: err} }
 	}
@@ -42,14 +68,17 @@ func openEditor(text string) tea.Cmd {
 		_ = os.Remove(path)
 		return func() tea.Msg { return editedMsg{err: err} }
 	}
-	argv := append(editorCommand(), path)
-	cmd := exec.Command(argv[0], argv[1:]...)
-	return tea.ExecProcess(cmd, func(runErr error) tea.Msg {
+	return tea.ExecProcess(editorShell(path), editorFinished(path))
+}
+
+// editorFinished reads the edited file back and removes it, whether or not the editor succeeded.
+func editorFinished(path string) func(error) tea.Msg {
+	return func(runErr error) tea.Msg {
 		defer func() { _ = os.Remove(path) }()
 		if runErr != nil {
 			return editedMsg{err: runErr}
 		}
 		data, err := os.ReadFile(path)
 		return editedMsg{text: strings.TrimRight(string(data), "\n"), err: err}
-	})
+	}
 }
