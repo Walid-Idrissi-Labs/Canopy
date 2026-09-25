@@ -443,10 +443,6 @@ func extractFence(lines []string) (lang string, code []string, consumed int) {
 // A line too long to fit is wrapped rather than truncated. Truncating would silently drop source
 // text, which is exactly the kind of quiet loss this project refuses to make elsewhere (see D-08 on
 // bounded log buffers), and a continuation marker costs one glyph a line to avoid it.
-func renderCodeBlock(lang string, code []string, width int) []string {
-	return renderCodeBlockClosed(lang, code, width, true)
-}
-
 // renderCodeBlockClosed is renderCodeBlock knowing whether the block's closing fence has arrived.
 // Only a finished block of reasonable size is given to the full lexer: one still streaming changes
 // on every frame and would be lexed again each time.
