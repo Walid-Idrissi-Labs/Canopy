@@ -19,7 +19,7 @@ import (
 )
 
 // runBench measures Canopy on the built-in tasks: each is laid out fresh, attempted by a headless
-// run of this same binary, and scored by its own check. Every attempt calls a real model and costs
+// run of this same binary in build mode with its approvals given, and scored by its own check. Every attempt calls a real model and costs
 // money, so nothing here runs unless somebody types it.
 func runBench(args []string, out, errOut io.Writer) int {
 	flags := flag.NewFlagSet("bench", flag.ContinueOnError)
@@ -76,7 +76,7 @@ func runBench(args []string, out, errOut io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	attempt := func(ctx context.Context, task bench.Task, dir string) (bench.Usage, error) {
-		runArgs := []string{"run", "-p", task.Prompt, "-mode", "runway", "-yes", "-output", "json",
+		runArgs := []string{"run", "-p", task.Prompt, "-mode", "build", "-yes", "-output", "json",
 			"-timeout", timeout.String()}
 		for flagName, value := range map[string]string{"-key": *keyName, "-model": *model, "-effort": *effort} {
 			if value != "" {
