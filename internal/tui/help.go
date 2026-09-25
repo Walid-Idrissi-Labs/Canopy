@@ -58,6 +58,7 @@ func bindings() []section {
 			{"mouse drag", "select conversation text, copied when you let go"},
 			{"ctrl+home / ctrl+end", "the top, and back to following"},
 			{"alt+enter", "a line break instead of sending"},
+			{"ctrl+p", "every command, mode, theme and file, as you type"},
 			{"@", "a file in this project, which narrows as you type"},
 			{"ctrl+x ctrl+e", "write the message in your editor"},
 			{"# note", "keep a note in AGENTS.md for later conversations"},

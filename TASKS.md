@@ -8085,6 +8085,18 @@ shell passthrough, large paste chips, vim mode.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-V06 Command palette on ctrl+p (part of V-06)
+`status: review | owner: Claude | branch: feat/command-palette (stacked on feat/input-extras)`
+
+ctrl+p opens a palette of every built-in, project command, mode, theme and file, narrowed by prefix,
+substring or letters in order. Enter runs a built-in through the same path as typing it, keeping
+whatever was in the box; a project command is only put in the box, since it sends a prompt; a file
+is mentioned. It takes every key while up, esc closes it, and it does not open over a question.
+Tests cover each action, the ranking, the box left alone, and the question. Mutation-checked. Still
+open from V-06: sessions and agents in the palette, and pickers moved into overlays.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 

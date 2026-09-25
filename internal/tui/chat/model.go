@@ -327,6 +327,9 @@ type Model struct {
 	// chordX is set by ctrl+x, the first half of ctrl+x ctrl+e, which opens the box in $EDITOR.
 	chordX bool
 
+	// palette is the command palette, on ctrl+p.
+	palette palette
+
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
@@ -1104,6 +1107,20 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.notice = ""
 	}
 
+	// The palette takes every key while it is up; ctrl+p opens it when no question is.
+	if m.palette.open {
+		// A question that arrived while the palette was up takes the keyboard back: its keys are
+		// answers, and a "y" meant for it must not land in the palette's query.
+		if !m.awaiting {
+			return m.paletteKey(msg)
+		}
+		m.palette = palette{}
+	}
+	if msg.String() == "ctrl+p" && !m.awaiting {
+		m.openPalette()
+		return m, nil
+	}
+
 	// ctrl+x ctrl+e opens the box in $EDITOR, the chord shells use. The first half only waits for
 	// the second; any other key after it is itself, so ctrl+x never eats a keystroke.
 	if !m.awaiting {
@@ -1834,6 +1851,7 @@ func (m Model) transcriptHeight() int {
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+	h -= m.palette.height()
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
 	// same reason, and so does another agent's question.
@@ -1893,7 +1911,7 @@ func (m Model) Body() string {
 			// agent's question: a fresh conversation is exactly where somebody sits while agents they
 			// started are working, so it is the last screen that should hide one asking for a hand.
 			panel: append(m.visitorPanel(), m.btwPanel()...),
-			menu:  m.menu.lines(m.width, m.menuFilter()),
+			menu:  append(m.menu.lines(m.width, m.menuFilter()), m.palette.lines(m.width)...),
 		}.render()
 	}
 
@@ -1928,6 +1946,7 @@ func (m Model) Body() string {
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
+	rows = append(rows, m.palette.lines(m.width)...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
 	// is about to type into. See jumpPill.
 	rows = append(rows, m.jumpPill(len(lines)-end)...)
@@ -2731,3 +2750,55 @@ func (m Model) toolKind(name string) (core.ToolKind, bool) {
 // acceptsPaste reports whether pasted text belongs in the message box now: not while a permission
 // question is waiting, whose keys are answers.
 func (m Model) acceptsPaste() bool { return !m.awaiting }
+
+// paletteKey handles a key while the palette is up.
+func (m Model) paletteKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+p":
+		m.palette = palette{}
+	case "up":
+		m.palette.move(-1)
+	case "down":
+		m.palette.move(1)
+	case "backspace":
+		if runes := []rune(m.palette.query); len(runes) > 0 {
+			m.palette.query = string(runes[:len(runes)-1])
+			m.palette.refresh()
+		}
+	case "space":
+		m.palette.query += " "
+		m.palette.refresh()
+	case "enter":
+		if m.palette.selected >= len(m.palette.matches) {
+			return m, nil
+		}
+		chosen := m.palette.matches[m.palette.selected]
+		m.palette = palette{}
+		switch chosen.action {
+		case paletteRun:
+			// Through the same path as typing it, so a command run from here is the command.
+			kept := m.input.Value()
+			m.input.SetValue(chosen.text)
+			next, cmd := m.send()
+			if next.input.Empty() {
+				next.input.SetValue(kept)
+			}
+			return next, cmd
+		case paletteFill:
+			m.input.SetValue(chosen.text)
+			m.refreshMenu()
+		case paletteMention:
+			value := m.input.Value()
+			if value != "" && !strings.HasSuffix(value, " ") && !strings.HasSuffix(value, "\n") {
+				value += " "
+			}
+			m.input.SetValue(value + chosen.text)
+		}
+	default:
+		if msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
+			m.palette.query += msg.Text
+			m.palette.refresh()
+		}
+	}
+	return m, nil
+}

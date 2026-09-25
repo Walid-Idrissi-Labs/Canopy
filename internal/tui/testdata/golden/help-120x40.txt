@@ -25,6 +25,7 @@ chat
   mouse drag            select conversation text, copied when you let go
   ctrl+home / ctrl+end  the top, and back to following
   alt+enter             a line break instead of sending
+  ctrl+p                every command, mode, theme and file, as you type
   @                     a file in this project, which narrows as you type
   ctrl+x ctrl+e         write the message in your editor
   # note                keep a note in AGENTS.md for later conversations
@@ -36,5 +37,4 @@ chat
 another agent's question, above the box
   enter                 approve it once, while the box is empty
   backspace             decline it, while the box is empty
-  ctrl+g                open its conversation and full request
   j/k scroll   any other key back
