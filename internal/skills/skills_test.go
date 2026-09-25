@@ -66,3 +66,40 @@ func TestProjectSkillsNeedTrustAndStayInTheirFolder(t *testing.T) {
 		}
 	}
 }
+
+// A SKILL.md replaced by a symlink after loading is refused at read time.
+func TestASkillReplacedByASymlinkIsNotRead(t *testing.T) {
+	isolate(t)
+	project := t.TempDir()
+	dir := writeSkill(t, filepath.Join(project, ".claude", "skills"), "x", "d", "body")
+	set := Load(project, true)
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(dir, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := set.Body("x", ""); err == nil || strings.Contains(body, "SECRET") {
+		t.Fatalf("a symlinked SKILL.md was read: %q %v", body, err)
+	}
+}
+
+func TestAFoldedDescriptionIsRead(t *testing.T) {
+	isolate(t)
+	project := t.TempDir()
+	dir := filepath.Join(project, ".claude", "skills", "f")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "---\nname: f\ndescription: >\n  cut a release\n  and tag it\n---\nbody"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := Load(project, true).Listing(); !strings.Contains(got, "f: cut a release and tag it") {
+		t.Fatalf("listing = %q", got)
+	}
+}

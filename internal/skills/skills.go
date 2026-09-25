@@ -115,11 +115,18 @@ func frontmatter(path string) (string, string, error) {
 		return "", "", errors.New("no frontmatter")
 	}
 	var name, desc string
+	folding := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "---" {
 			break
 		}
+		// A folded or literal block (description: > or |) continues on indented lines.
+		if folding && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			desc = strings.TrimSpace(desc + " " + strings.TrimSpace(line))
+			continue
+		}
+		folding = false
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
 			continue
@@ -129,6 +136,9 @@ func frontmatter(path string) (string, string, error) {
 		case "name":
 			name = value
 		case "description":
+			if strings.HasPrefix(value, ">") || strings.HasPrefix(value, "|") {
+				folding, value = true, ""
+			}
 			desc = value
 		}
 	}
@@ -170,6 +180,9 @@ func (s *Set) Body(name, file string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("there is no skill called %q", name)
 	}
+	// Checked at the moment of reading, for SKILL.md as much as for any other file: something may
+	// have replaced a file with a symlink since the skill was loaded, and this runs in Canopy's own
+	// process, outside any sandbox.
 	target := sk.Path
 	if file != "" {
 		clean := filepath.Clean(file)
@@ -177,16 +190,19 @@ func (s *Set) Body(name, file string) (string, error) {
 			return "", errors.New("a skill file is named relative to the skill's own folder")
 		}
 		target = filepath.Join(sk.Dir, clean)
-		resolved, err := filepath.EvalSymlinks(target)
-		if err != nil {
-			return "", fmt.Errorf("%s: %w", file, err)
-		}
-		base, _ := filepath.EvalSymlinks(sk.Dir)
-		if !strings.HasPrefix(resolved, base+string(filepath.Separator)) {
-			return "", errors.New("that file is outside the skill's folder")
-		}
-		target = resolved
 	}
+	if info, err := os.Lstat(target); err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file in the skill's folder", filepath.Base(target))
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	base, err := filepath.EvalSymlinks(sk.Dir)
+	if err != nil || !strings.HasPrefix(resolved, base+string(filepath.Separator)) {
+		return "", errors.New("that file is outside the skill's folder")
+	}
+	target = resolved
 	info, err := os.Stat(target)
 	if err != nil {
 		return "", err
