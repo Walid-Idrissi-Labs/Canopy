@@ -308,3 +308,18 @@ func TestTheOverallCapSeesTurnsStillRunning(t *testing.T) {
 		t.Fatalf("running spend is %v; only b's turn is still going", running)
 	}
 }
+
+// A new message is refused when finished turns and turns still running together reach the cap
+// across every agent, not only when finished ones do.
+func TestANewMessageCountsTurnsStillRunning(t *testing.T) {
+	e := New(nil)
+	t.Cleanup(e.Close)
+	if err := e.SetOverallBudget(1.00); err != nil {
+		t.Fatal(err)
+	}
+	e.recordSpend("done", core.Usage{CostUSD: 0.50, CostKnown: true})
+	e.budgetGate("running", anthropicID())(core.Usage{OutputTokens: 24000}) // $0.60, still going
+	if err := e.checkBudget("new"); !errors.Is(err, ErrPaused) {
+		t.Fatalf("$0.50 recorded and $0.60 running against $1.00 let a new message through: %v", err)
+	}
+}
