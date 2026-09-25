@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -71,22 +72,10 @@ func toolUse(id, name, input string) []string {
 		fmt.Sprintf(`{"type":"input_json_delta","partial_json":%q}`, input)}
 }
 
-// withoutCacheControl drops cache_control markers, which move to the newest block on every request
-// by design and are not part of what the cache matches on.
-func withoutCacheControl(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		delete(t, "cache_control")
-		for k, x := range t {
-			t[k] = withoutCacheControl(x)
-		}
-	case []any:
-		for i, x := range t {
-			t[i] = withoutCacheControl(x)
-		}
-	}
-	return v
-}
+// cacheControl matches a cache_control marker, which moves to the newest block on every request by
+// design and is not part of what the cache matches on. Nothing else is normalised: the rest of each
+// request is compared byte for byte.
+var cacheControl = regexp.MustCompile(`,?"cache_control":\{[^{}]*\}`)
 
 // The prompt cache pays only when every request begins with the one before it, byte for byte. Over
 // a working conversation, tool calls with signed thinking, a mode switch and a second question,
@@ -143,12 +132,7 @@ func TestEveryRequestExtendsThePreviousOneExactly(t *testing.T) {
 		Messages []json.RawMessage `json:"messages"`
 	}
 	canonical := func(raw json.RawMessage) string {
-		var v any
-		if err := json.Unmarshal(raw, &v); err != nil {
-			t.Fatal(err)
-		}
-		out, _ := json.Marshal(withoutCacheControl(v))
-		return string(out)
+		return cacheControl.ReplaceAllString(string(raw), "")
 	}
 	var previous request
 	for i, body := range bodies {
