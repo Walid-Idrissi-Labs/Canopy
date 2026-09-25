@@ -494,6 +494,9 @@ func (l *Loop) invoke(
 		entry.Outcome = permission.Allow
 	}
 
+	if req.Tainted {
+		ctx = core.WithTainted(ctx)
+	}
 	result, err := tool.Run(ctx, call.Input)
 	if err != nil {
 		// A Go error from a tool means it could not run at all, which is different from it running

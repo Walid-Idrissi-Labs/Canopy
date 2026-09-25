@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -105,5 +106,35 @@ func TestASearchTaintsAndChildrenInheritIt(t *testing.T) {
 	}
 	if !e.tainted(created[0].SessionID) {
 		t.Fatal("an agent started by a tainted conversation is not tainted")
+	}
+}
+
+// The taint is saved with the conversation: after a restart it holds even for a conversation whose
+// own record shows nothing, one tainted only by the agent that started it.
+func TestTaintSurvivesARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	first, _ := asideEngine(t, path)
+	s := first.Create("claude", "claude-opus-5")
+	first.markTainted(s.ID)
+	first.Close()
+
+	second, _ := asideEngine(t, path)
+	t.Cleanup(second.Close)
+	if !second.tainted(s.ID) {
+		t.Fatal("the taint was lost when Canopy restarted")
+	}
+}
+
+// A dispatched agent that read outside content passes the taint to the conversation it reports to,
+// which acts on its report.
+func TestAChildPassesItsTaintToItsParent(t *testing.T) {
+	e := New(fixedResolver{client: &sequenceClient{}, id: anthropicID()})
+	t.Cleanup(e.Close)
+	parent := e.Create("claude", "claude-opus-5")
+	child := e.Create("claude", "claude-opus-5")
+	e.markTainted(child.ID)
+	e.taintParent(child.ID, parent.ID)
+	if !e.tainted(parent.ID) {
+		t.Fatal("the parent of a tainted agent is not tainted")
 	}
 }

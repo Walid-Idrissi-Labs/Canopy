@@ -108,6 +108,16 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		if err != nil {
 			return failure("%v", err), nil
 		}
+		// A conversation that has read outside content may be following instructions from it, so
+		// its commands reach package registries and nothing else, whatever they are (D-57).
+		if mode == egress.ModeOpen && core.TaintedFrom(ctx) {
+			mode = egress.ModeRegistries
+		}
+		// A conversation that has read outside content may be following instructions from it, so
+		// its commands reach package registries and nothing else, whatever they are (D-57).
+		if mode == egress.ModeOpen && core.TaintedFrom(ctx) {
+			mode = egress.ModeRegistries
+		}
 		if mode != egress.ModeOpen && !sandbox.NetworkEnforced() {
 			networkNote = "\n(The network was not limited: this kernel cannot, so " + egress.ModeEnvVar +
 				" has no effect here. Files were still confined.)"

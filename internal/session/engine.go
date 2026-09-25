@@ -451,7 +451,17 @@ func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
 	if err != nil {
 		return err
 	}
+	tainted, err := storage.taintedSessions()
+	if err != nil {
+		return err
+	}
 	e.mu.Lock()
+	for _, sessionID := range tainted {
+		if e.taint == nil {
+			e.taint = map[string]bool{}
+		}
+		e.taint[sessionID] = true
+	}
 	for sessionID, projectID := range projects {
 		e.projects[sessionID] = projectID
 	}
@@ -1523,6 +1533,7 @@ func (e *Engine) noteJoin(sessionID string) {
 	if parent == "" {
 		return
 	}
+	e.taintParent(sessionID, parent)
 	s, ok := e.Session(sessionID)
 	if !ok || len(s.Turns) == 0 {
 		return

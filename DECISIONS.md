@@ -1372,21 +1372,27 @@ no sandbox is available or `CANOPY_SANDBOX=off`, says so in its result. D-33's d
 contracts are unchanged; what changed is that the shell now has an enforced boundary on the two
 platforms Canopy supports, stated per platform rather than implied.
 
-## D-57 Outside content taints a conversation, and a tainted conversation asks before sending data out. Decided 2026-09-25.
+## D-57 Outside content taints a conversation, and a tainted conversation cannot freely send data out. Decided 2026-09-25.
 
 Extends D-33's approval scope; nothing it grants is withdrawn for a conversation that has read
 nothing from outside. A conversation is tainted once it has taken in content Canopy did not produce
 and the person did not type: a page from `fetch_url`, a web search the provider ran, or any MCP
-tool's result. Such content can carry instructions aimed at the model. From then on, for the rest
-of the conversation, across compaction and a restart, and for any agent it dispatches, an action
-that could send data out is asked about whatever the trust level and whatever was approved before:
-network tools, every MCP tool, a git push or a change of remote, and a shell command that reaches
-the network or runs text it does not show (curl, ssh, `gh`, publishing commands, `base64`, `eval`,
-`python -c`, a pipe into `sh` and the like). Everything else keeps its level: reading, editing and
-ordinary commands such as builds and tests are not asked about. The rule is enforced in the
-permission layer, never left to the model. It narrows exfiltration; it does not prevent it: a
-shell command can reach the network in ways no word list names, which is why the sandbox's egress
-control remains the stronger boundary.
+tool's result, counted once the result has come back. Such content can carry instructions aimed at
+the model. The taint is saved with the conversation, so it holds across compaction, a restart and
+a pickup; agents a tainted conversation starts inherit it, and a tainted agent passes it to the
+conversation it reports to.
+
+From then on two things hold, in every mode and past earlier approvals. Every shell command runs
+with its network limited to package registries through the egress proxy (D-60), where the sandbox
+can enforce it, so a script the model writes cannot post what it read anywhere else. And an action
+whose purpose is to send data out is asked about: network tools, every MCP tool, a git push, fetch,
+clone or change of remote, and a shell command whose command word, in any stage of a pipeline, is a
+network program or runs text the line does not show (curl, ssh, `gh`, `nslookup`, `base64`, `eval`,
+a shell reading `-c` or its input, publishing commands). Only command words count, so building a
+package called `mail` or grepping for `curl` is not asked about. Reading, editing, building and
+testing keep their level. Enforced in the permission layer and the sandbox, never left to the
+model. Where the sandbox cannot limit the network, the word list is the only guard, and it narrows
+exfiltration rather than preventing it.
 
 ## D-60 The sandbox's network can be narrowed to package registries. Decided 2026-09-25.
 

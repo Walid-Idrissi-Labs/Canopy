@@ -413,37 +413,94 @@ func exfiltrationCapable(req Request) bool {
 	return false
 }
 
-// networkMarkers are the words of shell commands that reach the network, or that run something
-// whose text is not in the command itself and so could.
-var networkMarkers = []string{
-	"curl", "wget", "nc", "ncat", "netcat", "socat", "telnet", "ssh", "scp", "sftp", "rsync", "ftp",
-	"http://", "https://", "git push", "git remote", "git send-email", "gh", "npm publish",
-	"yarn publish", "pnpm publish", "cargo publish", "twine", "gem push", "docker push", "aws", "gcloud",
-	"az", "kubectl", "base64", "eval", "exec", "xxd", "openssl", "/dev/tcp", "/dev/udp", "sendmail",
-	"mail", "python -c", "python3 -c", "node -e", "perl -e", "ruby -e", "php -r", "| sh", "| bash",
-	"|sh", "|bash", "sh -c", "bash -c",
+// networkCommands are programs whose purpose is to reach another machine, or to run text that is
+// not in the command line itself and so could do anything.
+var networkCommands = map[string]bool{
+	"curl": true, "wget": true, "nc": true, "ncat": true, "netcat": true, "socat": true, "telnet": true,
+	"ssh": true, "scp": true, "sftp": true, "rsync": true, "ftp": true, "tftp": true, "sendmail": true,
+	"mail": true, "mailx": true, "nslookup": true, "dig": true, "host": true, "ping": true,
+	"gh": true, "aws": true, "gcloud": true, "gsutil": true, "az": true, "kubectl": true, "twine": true,
+	"openssl": true, "eval": true, "base64": true, "xxd": true,
 }
 
-// networkish reports whether a shell command carries one of the network markers as a word.
+// networkSubcommands are the network uses of tools that mostly work locally.
+var networkSubcommands = map[string][]string{
+	"git":    {"push", "fetch", "pull", "clone", "remote", "ls-remote", "submodule", "send-email", "archive"},
+	"npm":    {"publish"},
+	"yarn":   {"publish"},
+	"pnpm":   {"publish"},
+	"cargo":  {"publish"},
+	"gem":    {"push"},
+	"docker": {"push", "login"},
+}
+
+// networkish reports whether a shell command runs, as the command of any of its stages, a program
+// that reaches the network. Only command words count, not paths or arguments, so building a package
+// named mail or grepping for curl is not mistaken for sending anything.
 func networkish(command string) bool {
-	lower := strings.ToLower(command)
-	for _, marker := range networkMarkers {
-		for from := 0; ; {
-			i := strings.Index(lower[from:], marker)
-			if i < 0 {
-				break
+	for _, stage := range stages(command) {
+		words := strings.Fields(stage)
+		// Leading assignments and wrappers that run the command after them.
+		for len(words) > 0 && (strings.Contains(words[0], "=") || wrapper[words[0]]) {
+			words = words[1:]
+			// A wrapper's own options and numbers, as in timeout 10 or nice -n 5.
+			for len(words) > 0 && (strings.HasPrefix(words[0], "-") || strings.Trim(words[0], "0123456789.smh") == "") {
+				words = words[1:]
 			}
-			i += from
-			end := i + len(marker)
-			if (i == 0 || !wordChar(lower[i-1])) && (end == len(lower) || !wordChar(lower[end]) || !wordChar(marker[len(marker)-1])) {
+		}
+		if len(words) == 0 {
+			continue
+		}
+		name := words[0]
+		if i := strings.LastIndexByte(name, '/'); i >= 0 {
+			name = name[i+1:]
+		}
+		if networkCommands[name] {
+			return true
+		}
+		// A shell given its commands as a string or on its input runs text the command line does
+		// not show; one given a script file is the script's own business.
+		if name == "sh" || name == "bash" || name == "zsh" {
+			if len(words) == 1 || words[1] == "-c" || words[1] == "-s" {
 				return true
 			}
-			from = i + 1
+		}
+		if subs, ok := networkSubcommands[name]; ok {
+			if sub := subcommand(words[1:]); sub != "" {
+				for _, s := range subs {
+					if sub == s {
+						return true
+					}
+				}
+			}
 		}
 	}
 	return false
 }
 
-func wordChar(b byte) bool {
-	return b == '_' || b == '-' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z'
+// subcommand is the first word that is not an option, skipping the values of the options that take
+// one, as in git -C dir push.
+func subcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch w := args[i]; {
+		case w == "-C" || w == "-c" || w == "--git-dir" || w == "--work-tree" || w == "--namespace":
+			i++
+		case strings.HasPrefix(w, "-"):
+		default:
+			return w
+		}
+	}
+	return ""
+}
+
+// wrapper are commands that run the command after them.
+var wrapper = map[string]bool{"sudo": true, "env": true, "nohup": true, "time": true, "command": true,
+	"exec": true, "xargs": true, "nice": true, "timeout": true, "stdbuf": true}
+
+// stages splits a shell command into the commands it runs: at pipes, sequences, conditionals,
+// newlines, subshells and command substitutions.
+func stages(command string) []string {
+	replacer := strings.NewReplacer("||", "\n", "&&", "\n", "|", "\n", ";", "\n", "&", "\n",
+		"$(", "\n", "`", "\n", "(", "\n", ")", "\n", "{", "\n", "}", "\n")
+	return strings.Split(replacer.Replace(command), "\n")
 }

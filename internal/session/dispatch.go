@@ -861,9 +861,7 @@ func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
 		created = append(created, started)
 		// What the parent read from outside may be in the task it wrote for the child.
 		if request.Parent != "" && e.tainted(request.Parent) {
-			e.mu.Lock()
-			e.markTaintedLocked(started.SessionID)
-			e.mu.Unlock()
+			e.markTainted(started.SessionID)
 		}
 		if request.Parent != "" {
 			e.mu.Lock()
