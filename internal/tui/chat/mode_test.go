@@ -102,18 +102,12 @@ func TestPlanModeIsReadOnlyAndNotAnInstruction(t *testing.T) {
 // thrashing against a boundary nobody mentioned.
 func TestTheRestrictiveModesTellTheModelWhatTheyAre(t *testing.T) {
 	for _, name := range []string{
-		core.ModePlan, core.ModeConfined, core.ModeRunway, core.ModeCruise,
+		core.ModePlan, core.ModeConfined, core.ModeBuild, core.ModeRunway, core.ModeCruise,
 	} {
 		mode, _ := core.ModeByName(name)
 		if strings.TrimSpace(mode.Prompt) == "" {
 			t.Errorf("%s has no prompt, so the model finds out by being refused", name)
 		}
-	}
-	// Build is the exception and deliberately so. It is the ordinary way to work, and describing it
-	// would spend context telling the model that nothing unusual is going on.
-	build, _ := core.ModeByName(core.ModeBuild)
-	if build.Prompt != "" {
-		t.Error("build carries a prompt, which spends context saying nothing is unusual")
 	}
 }
 

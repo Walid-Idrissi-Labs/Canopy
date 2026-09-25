@@ -25,7 +25,8 @@ type Mode struct {
 	// what an agent may do and the mode is also how what it did is treated afterwards.
 	Trust TrustLevel
 
-	// Prompt is what the model is told it is doing, sent as the system prompt.
+	// Prompt is what the model is told about this mode, sent as a note on the user message where
+	// the conversation entered it. Never the system prompt: see SystemPrompt for why.
 	Prompt string
 
 	// KeepsGreen says a turn is only accepted if the workspace still verifies afterwards, and is
@@ -58,12 +59,11 @@ func Modes() []Mode {
 			Prompt: `You are planning. Work out what should be done and say so, and do not do it.
 
 You can read files and search the codebase. You cannot write, you cannot run commands, and you
-cannot start other agents: all three are refused by the permission layer rather than by your own
-restraint, so do not spend turns trying.
+cannot start other agents: the tools for those stay listed so the conversation can change mode
+without starting over, but in this mode the permission layer refuses them, so do not call them.
 
 If you are asked to start agents, say plainly that this mode cannot and that shift+tab switches to
-build, which can. The tool for it is not offered to you here, so saying you will do it and then not
-doing it is the one answer that leaves somebody waiting for something that is never going to happen.
+build, which can.
 
 Say specifically which files you would change or create, which commands you would run written out as
 you would run them, and anything you are unsure about along with what you would do if it turned out
@@ -75,8 +75,8 @@ differently. Then stop and wait to be told to go ahead.`,
 			Trust:       TrustConfined,
 			Prompt: `You may read and edit files through the structured workspace tools.
 
-You cannot run shell commands. Command tools are not offered and are refused by the permission
-layer, so do not spend turns trying them. Network calls still require the person's approval.
+You cannot run shell commands. Command tools stay listed but the permission layer refuses them in
+this mode, so do not call them. Network calls still require the person's approval.
 Structured file and path-scoped Git operations remain bounded to the workspace Canopy assigned.
 
 This is capability confinement, not an operating-system sandbox. Work through the available file
@@ -86,8 +86,8 @@ tools, and say plainly when the task requires a command this mode cannot use.`,
 			Name:        ModeBuild,
 			Description: "edit freely, ask before running anything",
 			Trust:       TrustStandard,
-			// No prompt. This is the ordinary way to work and describing it to the model would spend
-			// context saying that nothing unusual is going on.
+			Prompt: `You are in build mode. Edit files freely. Each shell command is shown to the person
+and runs only if they approve it, so prefer the structured tools where one fits.`,
 		},
 		{
 			Name:        ModeRunway,

@@ -65,17 +65,34 @@ func TestDefaultsAreApplied(t *testing.T) {
 	}
 }
 
-// Thinking is on by default on current models, so only the explicit opt out needs sending. A
-// request that says nothing should say nothing.
-func TestThinkingIsOnlySentWhenDisabled(t *testing.T) {
+// Adaptive thinking is stated for every model that takes it, because Opus 4.7 and 4.8 do not think
+// unless asked and the others return nothing readable unless the display is set; models without it
+// get no thinking field, since budget-style configuration is rejected by the ones that have it.
+func TestThinkingIsAdaptiveWhereTheModelTakesIt(t *testing.T) {
 	client := testClient()
 
 	on, err := client.buildParams(userRequest("hi"))
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
 	}
-	if body, _ := json.Marshal(on); strings.Contains(string(body), "thinking") {
-		t.Errorf("a request that did not disable thinking should not mention it:\n%s", body)
+	body, _ := json.Marshal(on)
+	for _, want := range []string{`"type":"adaptive"`, `"display":"summarized"`, `"prefix_mismatch_behavior":"drop_block"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("an Opus 5 request lacks %s:\n%s", want, body)
+		}
+	}
+	if strings.Contains(string(body), "budget_tokens") {
+		t.Errorf("budget_tokens is rejected by current models:\n%s", body)
+	}
+
+	old := userRequest("hi")
+	old.Model = "claude-haiku-4-5"
+	haiku, err := client.buildParams(old)
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
+	}
+	if body, _ := json.Marshal(haiku); strings.Contains(string(body), "thinking") {
+		t.Errorf("a model without adaptive thinking was sent a thinking field:\n%s", body)
 	}
 
 	req := userRequest("hi")
@@ -84,7 +101,7 @@ func TestThinkingIsOnlySentWhenDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
 	}
-	body, _ := json.Marshal(off)
+	body, _ = json.Marshal(off)
 	if !strings.Contains(string(body), "disabled") {
 		t.Errorf("disabling thinking should be explicit in the request:\n%s", body)
 	}
@@ -393,60 +410,47 @@ func cacheBreakpoints(t *testing.T, params sdk.MessageNewParams) (tools, system,
 	return tools, system, messages
 }
 
-// Tool schemas for a coding agent run to thousands of tokens and are identical on every turn, so
-// this is the cheapest saving available and the easiest one to forget.
-func TestToolsAndSystemAreCached(t *testing.T) {
+// The system prompt's breakpoint caches the tools before it too, so the tools need none of their
+// own; a request without a system prompt puts it on the last tool instead.
+func TestToolsAndSystemAreCachedByOneBreakpoint(t *testing.T) {
 	client := New(core.NewSecret(canary))
+	tools := []core.ToolDefinition{
+		{Name: "read", Description: "read a file", InputSchema: []byte(`{"type":"object"}`)},
+		{Name: "write", Description: "write a file", InputSchema: []byte(`{"type":"object"}`)},
+	}
 	params, err := client.buildParams(core.Request{
-		Model:    "claude-opus-5",
-		System:   "you are a coding agent",
+		Model: "claude-opus-5", System: "you are a coding agent", Tools: tools,
 		Messages: []core.Message{{Role: core.RoleUser, Text: "hi"}},
-		Tools: []core.ToolDefinition{
-			{Name: "read", Description: "read a file", InputSchema: []byte(`{"type":"object"}`)},
-			{Name: "write", Description: "write a file", InputSchema: []byte(`{"type":"object"}`)},
-		},
 	})
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
 	}
+	toolMarks, system, _ := cacheBreakpoints(t, params)
+	if system != 1 || toolMarks != 0 {
+		t.Errorf("%d system and %d tool breakpoints, want 1 and 0", system, toolMarks)
+	}
 
-	tools, system, _ := cacheBreakpoints(t, params)
-	if tools != 1 {
-		t.Errorf("%d tool breakpoints, want exactly 1 on the last tool", tools)
+	bare, err := client.buildParams(core.Request{
+		Model: "claude-opus-5", Tools: tools,
+		Messages: []core.Message{{Role: core.RoleUser, Text: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("buildParams: %v", err)
 	}
-	if system != 1 {
-		t.Errorf("%d system breakpoints, want 1", system)
-	}
-	// The breakpoint belongs on the last tool, since a breakpoint caches everything before it and
-	// one on the first tool would leave the rest uncached.
-	if last := params.Tools[len(params.Tools)-1].OfTool; last == nil || last.CacheControl.Type == "" {
-		t.Error("the breakpoint should be on the last tool, so it covers all of them")
+	if last := bare.Tools[len(bare.Tools)-1].OfTool; last == nil || last.CacheControl.Type == "" {
+		t.Error("with no system prompt the last tool must carry the breakpoint")
 	}
 }
 
-// A breakpoint on the newest message would write an entry that the next turn immediately
-// invalidates by appending to it, paying the write premium for a read that never happens.
-func TestConversationPrefixIsCachedButNotTheNewestTurn(t *testing.T) {
-	client := New(core.NewSecret(canary))
-
-	short, err := client.buildParams(core.Request{
-		Model:    "claude-opus-5",
-		Messages: []core.Message{{Role: core.RoleUser, Text: "hi"}},
-	})
-	if err != nil {
-		t.Fatalf("buildParams: %v", err)
-	}
-	if _, _, messages := cacheBreakpoints(t, short); messages != 0 {
-		t.Errorf("%d message breakpoints on a first turn, want 0: there is no prefix worth caching "+
-			"and the breakpoint would only cost a write", messages)
-	}
-
-	long, err := client.buildParams(core.Request{
+// The conversation is cached at its newest block through automatic placement. Caching is a prefix
+// match, so what this request writes at its end is exactly what the next request, which repeats
+// all of it and appends, reads back. A breakpoint one message back billed every new tool result
+// twice: once as fresh input and once as a write on the following step.
+func TestTheWholeConversationIsCachedAtItsNewestBlock(t *testing.T) {
+	params, err := New(core.NewSecret(canary)).buildParams(core.Request{
 		Model: "claude-opus-5",
 		Messages: []core.Message{
 			{Role: core.RoleUser, Text: "first"},
-			{Role: core.RoleAssistant, Text: "answer"},
-			{Role: core.RoleUser, Text: "second"},
 			{Role: core.RoleAssistant, Text: "answer"},
 			{Role: core.RoleUser, Text: "newest"},
 		},
@@ -454,17 +458,12 @@ func TestConversationPrefixIsCachedButNotTheNewestTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildParams: %v", err)
 	}
-	_, _, messages := cacheBreakpoints(t, long)
-	if messages != 1 {
-		t.Fatalf("%d message breakpoints, want exactly 1", messages)
+	if params.CacheControl.Type == "" {
+		t.Fatal("automatic caching is off, so the conversation so far is re-billed every step")
 	}
-
-	newest := long.Messages[len(long.Messages)-1]
-	for _, block := range newest.Content {
-		if control := block.GetCacheControl(); control != nil && control.Type != "" {
-			t.Error("the newest message must not carry a breakpoint, since the next turn appends " +
-				"to it and invalidates whatever was written")
-		}
+	if _, _, messages := cacheBreakpoints(t, params); messages != 0 {
+		t.Errorf("%d explicit message breakpoints alongside automatic placement; that spends a slot "+
+			"on a position the next request cannot read", messages)
 	}
 }
 

@@ -125,13 +125,22 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 		// Do not describe structurally denied tools to the model. Enforcement still happens for
 		// every call in the loop, but a read-only agent should not spend context repeatedly asking
 		// for tools its own profile says can never run.
-		tools = tools.Filter(func(tool core.Tool) bool {
-			decision := permission.Decide(permission.Request{
-				Tool: tool.Name(),
-				Kind: tool.Kind(),
-			}, trust, nil)
-			return decision.Outcome != permission.Deny
-		})
+		//
+		// Measured against the agent's configured ceiling rather than its current mode. The ceiling
+		// does not change during a conversation and the mode does; a tool list that followed the mode
+		// would change the front of every request on each switch, discarding the provider's cache and,
+		// on current models, every reasoning block before it. A mode below the ceiling is enforced per
+		// call and stated in a note instead.
+		ceiling := e.configuredTrustLocked(sessionID)
+		if ceiling.Valid() {
+			tools = tools.Filter(func(tool core.Tool) bool {
+				decision := permission.Decide(permission.Request{
+					Tool: tool.Name(),
+					Kind: tool.Kind(),
+				}, ceiling, nil)
+				return decision.Outcome != permission.Deny
+			})
+		}
 
 		// A dispatched agent shares the engine's registry when it is not isolated, and that registry
 		// is where the dispatch tools were attached for the orchestrating conversation. Removed here

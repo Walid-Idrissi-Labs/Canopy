@@ -653,11 +653,12 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - Compaction summarises older turns, and the model then works from that summary rather than the
   original text for anything before it. The full, original text stays in storage and stays
   searchable regardless, but the model's working context from that point on is a shortened version
-  of what was actually said (D-28). Today compaction only happens when you ask for it, with ctrl+r
-  or /compact, and both ask before they spend: the first press offers and names what goes, on which
-  key and within what bound, and the second goes ahead. The meter warns near the limit, but nothing
-  compacts by itself, and a conversation that outgrows the window fails its next turn until you
-  compact by hand. The automatic half of D-28 is planned as E-02 and does not exist yet.
+  of what was actually said (D-28). Compaction also happens by itself: a conversation past 80 percent
+  of its window, and never later than 160 thousand tokens, is compacted at the next turn boundary,
+  and a turn refused because the conversation no longer fits compacts it and asks you to send the
+  message again. Each compaction is announced in the transcript. The four most recent turns stay
+  verbatim; on Claude models their reasoning blocks are dropped by the API when they no longer match
+  the shortened conversation, which costs those turns' reasoning and nothing else.
 
 ## Interface
 
