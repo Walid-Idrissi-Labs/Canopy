@@ -39,6 +39,8 @@ type Request struct {
 	Instructions bool
 	// VendorFiles are vendor agent settings found in the repository, by relative path.
 	VendorFiles []string
+	// InstructionFiles are AGENTS.md and the like, which are sent to the model.
+	InstructionFiles []string
 
 	fingerprint string
 }
@@ -84,6 +86,16 @@ func Describe(dir string, project config.Project) Request {
 	}{project.Setup, project.Tests, project.Hooks, project.MCP, project.Instructions, project.Copy,
 		project.Commands})
 	h.Write(canonical)
+	for _, rel := range config.InstructionFiles(dir) {
+		data, err := os.ReadFile(filepath.Join(dir, rel))
+		if err != nil {
+			continue
+		}
+		req.Instructions = true
+		req.InstructionFiles = append(req.InstructionFiles, rel)
+		_, _ = fmt.Fprintf(h, "\x00%s\x00", rel)
+		h.Write(data)
+	}
 	for _, rel := range vendorSettings {
 		data, err := os.ReadFile(filepath.Join(dir, rel))
 		if err != nil {
@@ -116,6 +128,9 @@ func (r Request) Text() string {
 	}
 	if r.Instructions {
 		fmt.Fprintf(&b, "  instructions or prompt commands that are sent to the model\n")
+	}
+	for _, f := range r.InstructionFiles {
+		fmt.Fprintf(&b, "  instruction file sent to the model with every request: %s\n", f)
 	}
 	if len(r.VendorFiles) > 0 {
 		fmt.Fprintf(&b, "Vendor agent settings are also present and are read by a delegated agent started here:\n")
@@ -321,7 +336,10 @@ func (r Request) printable() Request {
 	}
 	out := r
 	out.Setup = clean(r.Setup)
-	out.Tests, out.Hooks, out.MCP, out.VendorFiles = nil, nil, nil, nil
+	out.Tests, out.Hooks, out.MCP, out.VendorFiles, out.InstructionFiles = nil, nil, nil, nil, nil
+	for _, x := range r.InstructionFiles {
+		out.InstructionFiles = append(out.InstructionFiles, clean(x))
+	}
 	for _, x := range r.Tests {
 		out.Tests = append(out.Tests, clean(x))
 	}

@@ -594,3 +594,23 @@ func turnIn(t *testing.T, e *Engine, sessionID, turnID string) core.Turn {
 	t.Fatalf("turn %s is not in the conversation", turnID)
 	return core.Turn{}
 }
+
+// Project instructions ride in the system prompt after the core prompt, the same for every turn.
+func TestProjectInstructionsReachTheModel(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("ok")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	e.WithInstructions("<instructions source=\"AGENTS.md\">\nuse tabs\n</instructions>")
+	created := e.Create("claude", "claude-opus-5")
+	turnID, err := e.Send(created.ID, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, e, created.ID, turnID)
+	client.mu.Lock()
+	system := client.system
+	client.mu.Unlock()
+	if !strings.HasPrefix(system, core.SystemPrompt) || !strings.Contains(system, "use tabs") {
+		t.Fatalf("instructions did not follow the core prompt:\n%s", system)
+	}
+}

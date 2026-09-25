@@ -143,7 +143,7 @@ func (e *Engine) summarise(
 	// sent tool calls with no tools defined.
 	request := core.Request{
 		Model:     session.Model,
-		System:    core.SystemPrompt,
+		System:    e.systemPrompt(),
 		Messages:  history,
 		MaxTokens: summaryMaxTokens,
 	}

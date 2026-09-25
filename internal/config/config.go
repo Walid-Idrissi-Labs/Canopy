@@ -76,6 +76,10 @@ type Project struct {
 	// Trust is the default trust level for agents here: read-only, confined, standard or broad.
 	// Empty means Canopy's own default rather than the most permissive one.
 	Trust string `json:"trust"`
+
+	// Trusted is set once the person has agreed to this configuration, or when it asks for nothing
+	// that needs agreement. Never read from the file: a repository cannot declare itself trusted.
+	Trusted bool `json:"-"`
 }
 
 // Load reads the configuration from a repository root.

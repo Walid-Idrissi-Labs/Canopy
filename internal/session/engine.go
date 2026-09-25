@@ -91,6 +91,10 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// instructions are the project's, added to the system prompt of every conversation this engine
+	// runs. Set once at startup, so the prompt stays the same for a conversation's whole life.
+	instructions string
+
 	// autoCompactOff disables compaction past the context budget; see autoCompact.
 	autoCompactOff bool
 
@@ -873,7 +877,7 @@ func (e *Engine) run(
 	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
 	// call, because a system prompt that changed mid conversation would rewrite what the model
 	// believes it was told earlier.
-	request := core.Request{Model: model, Messages: history, System: core.SystemPrompt}
+	request := core.Request{Model: model, Messages: history, System: e.systemPrompt()}
 
 	outcome, err := loop.Run(ctx, request,
 		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
@@ -1390,4 +1394,30 @@ func tooLong(stop core.StopReason, err error) bool {
 	}
 	var provider *core.ProviderError
 	return errors.As(err, &provider) && provider.Kind == core.ErrContextLength
+}
+
+// WithInstructions sets the project instructions every conversation is sent. Called once, before
+// the first turn: changing them later would change the front of every conversation's requests.
+func (e *Engine) WithInstructions(text string) {
+	e.mu.Lock()
+	e.instructions = text
+	e.mu.Unlock()
+}
+
+// Instructions are the project instructions in force.
+func (e *Engine) Instructions() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.instructions
+}
+
+// systemPrompt is the core prompt followed by the project's instructions.
+func (e *Engine) systemPrompt() string {
+	e.mu.Lock()
+	instructions := e.instructions
+	e.mu.Unlock()
+	if instructions == "" {
+		return core.SystemPrompt
+	}
+	return core.SystemPrompt + "\n\n" + core.InstructionsPreamble + "\n\n" + instructions
 }

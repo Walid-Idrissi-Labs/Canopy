@@ -89,6 +89,13 @@ func runChat(resume string) error {
 
 	project := loadProject(dir)
 	commands := loadCommands(project.Commands)
+	if project.Trusted {
+		instructions, err := config.LoadInstructions(dir, project)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: project instructions are not being sent: %v\n", err)
+		}
+		engine.WithInstructions(instructions.Text)
+	}
 
 	if err := attachTools(engine, dir, project); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
