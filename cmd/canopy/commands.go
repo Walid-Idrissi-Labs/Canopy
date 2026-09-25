@@ -281,9 +281,14 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
-	attachLanguageServers(workspace)
+	navigation := attachLanguageServers(workspace)
 
 	registry := core.NewToolRegistry()
+	for _, tool := range navigation {
+		if err := registry.Register(tool); err != nil {
+			return nil, err
+		}
+	}
 	for _, tool := range tools.FileTools(workspace) {
 		if err := registry.Register(tool); err != nil {
 			return nil, err

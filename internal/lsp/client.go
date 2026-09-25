@@ -103,22 +103,9 @@ func Start(ctx context.Context, argv []string, root string, env []string) (*Clie
 func (c *Client) Check(ctx context.Context, path, languageID, content string, wait time.Duration) ([]Diagnostic, error) {
 	uri := fileURI(path)
 	c.mu.Lock()
-	version := c.versions[uri] + 1
-	c.versions[uri] = version
 	before := c.arrived[uri]
 	c.mu.Unlock()
-
-	var err error
-	if version == 1 {
-		err = c.notify("textDocument/didOpen", map[string]any{"textDocument": map[string]any{
-			"uri": uri, "languageId": languageID, "version": version, "text": content}})
-	} else {
-		err = c.notify("textDocument/didChange", map[string]any{
-			"textDocument":   map[string]any{"uri": uri, "version": version},
-			"contentChanges": []any{map[string]any{"text": content}},
-		})
-	}
-	if err != nil {
+	if err := c.Sync(path, languageID, content); err != nil {
 		return nil, err
 	}
 
@@ -154,6 +141,84 @@ func (c *Client) current(uri string) []Diagnostic {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]Diagnostic(nil), c.diags[uri]...)
+}
+
+// Location is a place in a file a server pointed to.
+type Location struct {
+	Path         string
+	Line, Column int
+}
+
+// Sync makes sure the server has a file's current content, opening it the first time.
+func (c *Client) Sync(path, languageID, content string) error {
+	uri := fileURI(path)
+	c.mu.Lock()
+	version := c.versions[uri] + 1
+	c.versions[uri] = version
+	c.mu.Unlock()
+	if version == 1 {
+		return c.notify("textDocument/didOpen", map[string]any{"textDocument": map[string]any{
+			"uri": uri, "languageId": languageID, "version": version, "text": content}})
+	}
+	return c.notify("textDocument/didChange", map[string]any{
+		"textDocument":   map[string]any{"uri": uri, "version": version},
+		"contentChanges": []any{map[string]any{"text": content}},
+	})
+}
+
+// Locations asks where a symbol at a position is defined (textDocument/definition) or used
+// (textDocument/references). line and column count from one.
+func (c *Client) Locations(ctx context.Context, method, path string, line, column int) ([]Location, error) {
+	params := map[string]any{
+		"textDocument": map[string]any{"uri": fileURI(path)},
+		"position":     map[string]any{"line": line - 1, "character": column - 1},
+	}
+	if method == "textDocument/references" {
+		params["context"] = map[string]any{"includeDeclaration": false}
+	}
+	raw, err := c.call(ctx, method, params)
+	if err != nil {
+		return nil, err
+	}
+	// A single location, a list of them, or a list of links, depending on the server.
+	type position struct{ Line, Character int }
+	type span struct {
+		Start position `json:"start"`
+	}
+	var many []struct {
+		URI            string `json:"uri"`
+		Range          span   `json:"range"`
+		TargetURI      string `json:"targetUri"`
+		TargetSelRange span   `json:"targetSelectionRange"`
+	}
+	if json.Unmarshal(raw, &many) != nil {
+		var one struct {
+			URI   string `json:"uri"`
+			Range span   `json:"range"`
+		}
+		if json.Unmarshal(raw, &one) != nil || one.URI == "" {
+			return nil, nil
+		}
+		many = append(many, struct {
+			URI            string `json:"uri"`
+			Range          span   `json:"range"`
+			TargetURI      string `json:"targetUri"`
+			TargetSelRange span   `json:"targetSelectionRange"`
+		}{URI: one.URI, Range: one.Range})
+	}
+	var out []Location
+	for _, l := range many {
+		uri, start := l.URI, l.Range.Start
+		if l.TargetURI != "" {
+			uri, start = l.TargetURI, l.TargetSelRange.Start
+		}
+		u, err := url.Parse(uri)
+		if err != nil || u.Scheme != "file" {
+			continue
+		}
+		out = append(out, Location{Path: filepath.FromSlash(u.Path), Line: start.Line + 1, Column: start.Character + 1})
+	}
+	return out, nil
 }
 
 // Close shuts the server down, politely and then not.

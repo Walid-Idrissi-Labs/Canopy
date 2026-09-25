@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/lsp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 )
@@ -26,12 +27,13 @@ func enableLanguageServers(project config.Project) {
 }
 
 // attachLanguageServers gives a workspace a diagnoser, one manager per workspace root, so each
-// agent's worktree has servers of its own that see its files.
-func attachLanguageServers(w *tools.Workspace) {
+// agent's worktree has servers of its own that see its files, and returns the navigation tools
+// that ask the same servers. Nothing when they are off.
+func attachLanguageServers(w *tools.Workspace) []core.Tool {
 	languageServers.Lock()
 	defer languageServers.Unlock()
 	if !languageServers.enabled {
-		return
+		return nil
 	}
 	if languageServers.managers == nil {
 		languageServers.managers = map[string]*lsp.Manager{}
@@ -42,6 +44,7 @@ func attachLanguageServers(w *tools.Workspace) {
 		languageServers.managers[w.Root()] = m
 	}
 	w.SetDiagnoser(m)
+	return tools.NavigationTools(w, m)
 }
 
 // closeLanguageServers stops every server started.

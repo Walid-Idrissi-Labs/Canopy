@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -150,6 +151,93 @@ func (m *Manager) clientFor(ctx context.Context, ext string) (server, *Client) {
 		return srv, c
 	}
 	return server{}, nil
+}
+
+// Find answers where a symbol on a line of a file is defined, or where it is used, as lines for a
+// tool result. kind is "definition" or "references". Places inside the workspace are shown with
+// their line of code; places outside it, a standard library for instance, by path only.
+func (m *Manager) Find(ctx context.Context, kind, path, content string, line int, symbol string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(path))
+	srv, client := m.clientFor(ctx, ext)
+	if client == nil {
+		return "", fmt.Errorf("no language server for %s files is running or installed", ext)
+	}
+	lines := strings.Split(content, "\n")
+	if line < 1 || line > len(lines) {
+		return "", fmt.Errorf("line %d is outside the file, which has %d lines", line, len(lines))
+	}
+	column := wordIndex(lines[line-1], symbol)
+	if column < 0 {
+		return "", fmt.Errorf("%q is not on line %d", symbol, line)
+	}
+	if err := client.Sync(path, srv.languageID(ext), content); err != nil {
+		return "", err
+	}
+	method := "textDocument/definition"
+	if kind == "references" {
+		method = "textDocument/references"
+	}
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	found, err := client.Locations(ctx, method, path, line, column+1)
+	if err != nil {
+		return "", fmt.Errorf("%s did not answer: %w", srv.name, err)
+	}
+	if len(found) == 0 {
+		return fmt.Sprintf("%s found no %s for %s.", srv.name, kind, symbol), nil
+	}
+	var b strings.Builder
+	for i, l := range found {
+		if i == 40 {
+			fmt.Fprintf(&b, "... and %d more\n", len(found)-i)
+			break
+		}
+		rel, err := filepath.Rel(m.root, l.Path)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			fmt.Fprintf(&b, "%s:%d:%d\n", l.Path, l.Line, l.Column)
+			continue
+		}
+		fmt.Fprintf(&b, "%s:%d:%d  %s\n", filepath.ToSlash(rel), l.Line, l.Column, lineOf(l.Path, l.Line))
+	}
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// wordIndex is where symbol first stands as a whole word in line, or -1.
+func wordIndex(line, symbol string) int {
+	for from := 0; symbol != ""; {
+		i := strings.Index(line[from:], symbol)
+		if i < 0 {
+			return -1
+		}
+		i += from
+		end := i + len(symbol)
+		if (i == 0 || !wordByte(line[i-1])) && (end == len(line) || !wordByte(line[end])) {
+			return i
+		}
+		from = i + 1
+	}
+	return -1
+}
+
+func wordByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// lineOf is one line of a file, trimmed, for showing a place in context.
+func lineOf(path string, n int) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	if n < 1 || n > len(lines) {
+		return ""
+	}
+	text := strings.TrimSpace(lines[n-1])
+	if len(text) > 160 {
+		text = text[:157] + "..."
+	}
+	return text
 }
 
 // Close stops every server started.
