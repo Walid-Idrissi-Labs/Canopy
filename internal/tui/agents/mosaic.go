@@ -352,8 +352,29 @@ func (m Model) paneBottom(status session.AgentStatus, border lipgloss.Style, inn
 	if status.State == core.AgentWorking {
 		fire = emberLit()
 	}
-	rule := strings.Repeat("─", inner-brand.EmberWidth-2)
-	return border.Render("╰"+rule) + " " + fire + " " + border.Render("╯")
+	// What the agent has cost so far and how much of it came from the cache, riding the border,
+	// so eight panes are eight receipts without a screen of their own.
+	receipt := ""
+	if r := receiptFor(status.Usage); r != "" && lipgloss.Width(r)+4 <= inner-brand.EmberWidth-2 {
+		receipt = " " + theme.Current().Muted.Render(r) + " "
+	}
+	rule := strings.Repeat("─", inner-brand.EmberWidth-2-lipgloss.Width(receipt)-1)
+	return border.Render("╰─") + receipt + border.Render(rule) + " " + fire + " " + border.Render("╯")
+}
+
+// receiptFor is an agent's spend in a few characters: cost where the price is known, then the share
+// of what it read that came from the provider's cache.
+func receiptFor(u core.Usage) string {
+	read := u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens
+	if read == 0 {
+		return ""
+	}
+	parts := []string{}
+	if u.CostKnown {
+		parts = append(parts, fmt.Sprintf("$%.2f", u.CostUSD))
+	}
+	parts = append(parts, fmt.Sprintf("%d%% cached", u.CacheReadTokens*100/read))
+	return strings.Join(parts, " · ")
 }
 
 // paneBody is what a pane shows: the agent's conversation, drawn by the same renderer the chat
