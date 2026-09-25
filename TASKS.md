@@ -8017,6 +8017,18 @@ mutation testing, fixes, re-review, then into the integration branch that lands 
 - Z-R14 `repo_map`. PR #80.
 - Z-R15 Golden screen snapshots. PR #82.
 - Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+### Z-V07 Desktop notifications, the window title and tab progress (part of V-07)
+`status: review | owner: Claude | branch: feat/notifications`
+
+`CANOPY_NOTIFY=1` posts a desktop notification when an agent starts needing a person (who, and the
+command it asks to run) and when a turn finishes while the terminal is not in front, which focus
+reporting tells. The sequence suits the terminal: OSC 9 by default, kitty's OSC 99, OSC 777 for foot
+and urxvt, wrapped for tmux passthrough; its text has every control character removed and field
+separators replaced, so a name or command a model wrote cannot end it early. The window title says
+how many are working and waiting. OSC 9;4 progress is drawn only on Ghostty, WezTerm, Windows
+Terminal and ConEmu, since an older iTerm2 shows any OSC 9 as a notification. Tests cover each
+sequence, the escaping, the title, where progress is drawn, and the app announcing who waits once
+and a finish only while blurred; off unless asked for. Mutation-checked.
 ### Z-V10 First run: keys import, canopy init, canopy doctor (V-10)
 `status: review | owner: Claude | branch: feat/doctor-and-first-run`
 
@@ -8080,6 +8092,42 @@ path is confined to the worktree and asked for its path; spec building confines 
 not unconfined or remote ones; the trust prompt names an unconfined server. Mutation-checked.
 
 `verify: claude [x] 2026-09-26   codex [ ]`
+### Z-V04 Find in the conversation, and copy the last reply (part of V-04)
+`status: review | owner: Claude | branch: feat/transcript-search`
+
+ctrl+f opens a find bar that takes every key: matches are found case-insensitively across the
+rendered transcript, the view scrolls to the newest and marks it with the selection highlight, enter
+and up walk to older ones, down to newer, esc closes and leaves the view there; it does not open on
+an empty conversation. ctrl+y copies the last fenced code block of the latest reply, or the reply.
+Tests cover the walk, the count, no match, the empty case and both copies. Mutation-checked. Still
+open from V-04: collapsible tool cards beyond ctrl+o, side-by-side diffs, virtualised rendering.
+### Z-V05 Input: @ mentions, $EDITOR, # notes (part of V-05)
+`status: review | owner: Claude | branch: feat/input-extras`
+
+`@` at a word start opens the command list's file mode over `git ls-files --cached --others
+--exclude-standard` (cached ten seconds, capped at 20,000), ranked name match, path match, letters in
+order, shorter first; tab and enter complete. ctrl+x ctrl+e hands the box to $VISUAL/$EDITOR through
+tea.ExecProcess and reads the file back; ctrl+x alone never eats the next key. `# note` appends to
+AGENTS.md (refused through a link), re-granting trust only where AGENTS.md still matches what was
+trusted. Tests: ranking, completion by tab and enter, no menu inside a word or without a source, the
+chord, notes kept not sent and a failed note kept in the box, trust kept for your own note and not
+for an unreviewed edit, the link refused, git's file list with ignored files left out.
+Mutation-checked. Still open from V-05: ctrl+r history search (ctrl+r is compaction, Q-21), `!`
+shell passthrough, large paste chips, vim mode.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-V06 Command palette on ctrl+p (part of V-06)
+`status: review | owner: Claude | branch: feat/command-palette (stacked on feat/input-extras)`
+
+ctrl+p opens a palette of every built-in, project command, mode, theme and file, narrowed by prefix,
+substring or letters in order. Enter runs a built-in through the same path as typing it, keeping
+whatever was in the box; a project command is only put in the box, since it sends a prompt; a file
+is mentioned. It takes every key while up, esc closes it, and it does not open over a question.
+Tests cover each action, the ranking, the box left alone, and the question. Mutation-checked. Still
+open from V-06: sessions and agents in the palette, and pickers moved into overlays.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
 
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
