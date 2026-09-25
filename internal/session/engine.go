@@ -1559,8 +1559,16 @@ func (e *Engine) PendingJoins(sessionID string) int {
 	return len(e.joinNotes[sessionID])
 }
 
+// UndoPlan is what an undo would change, and the state of the workspace it was worked out from.
+type UndoPlan struct {
+	Changes []string
+	// State identifies the workspace's content when the plan was made; two plans with the same
+	// state were made from the same files.
+	State string
+}
+
 // UndoPreview lists what Undo would change for a turn, without changing anything.
-func (e *Engine) UndoPreview(ctx context.Context, sessionID, turnID string) ([]string, error) {
+func (e *Engine) UndoPreview(ctx context.Context, sessionID, turnID string) (UndoPlan, error) {
 	e.mu.Lock()
 	taker := e.checkpoints
 	session, ok := e.sessions[sessionID]
@@ -1575,13 +1583,14 @@ func (e *Engine) UndoPreview(ctx context.Context, sessionID, turnID string) ([]s
 	e.mu.Unlock()
 	switch {
 	case !ok:
-		return nil, fmt.Errorf("no session %q", sessionID)
+		return UndoPlan{}, fmt.Errorf("no session %q", sessionID)
 	case taker == nil:
-		return nil, errors.New("this directory is not a git repository, so nothing was checkpointed")
+		return UndoPlan{}, errors.New("this directory is not a git repository, so nothing was checkpointed")
 	case commit == "":
-		return nil, fmt.Errorf("turn %s has no checkpoint, so there is nothing to restore", turnID)
+		return UndoPlan{}, fmt.Errorf("turn %s has no checkpoint, so there is nothing to restore", turnID)
 	}
-	return taker.Preview(ctx, git.Checkpoint{Commit: commit})
+	changes, state, err := taker.Preview(ctx, git.Checkpoint{Commit: commit})
+	return UndoPlan{Changes: changes, State: state}, err
 }
 
 // SetWebSearch offers the provider's own web search to every conversation, where the provider has

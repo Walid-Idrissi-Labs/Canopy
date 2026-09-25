@@ -3,7 +3,6 @@ package chat
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -440,17 +439,21 @@ func (m *Model) undoLastTurn() tea.Cmd {
 		return func() tea.Msg {
 			// Taken again first: anything edited between the preview and the confirmation would be
 			// undone without having been listed, so a different list is shown and asked about anew.
-			changes, err := engine.UndoPreview(context.Background(), sessionID, turnID)
-			if err == nil && !slices.Equal(changes, shown) {
-				return undoPreviewMsg{turnID: turnID, changes: changes, moved: true}
+			plan, err := engine.UndoPreview(context.Background(), sessionID, turnID)
+			switch {
+			case err != nil:
+				// Unable to see what it would do now, so it does nothing.
+				return undoneMsg{err: fmt.Errorf("nothing was undone: %w", err)}
+			case plan.State != shown:
+				return undoPreviewMsg{turnID: turnID, changes: plan.Changes, state: plan.State, moved: true}
 			}
 			return undoneMsg{err: engine.Undo(context.Background(), sessionID, turnID)}
 		}
 	}
 	m.notice = "working out what undo would change"
 	return func() tea.Msg {
-		changes, err := engine.UndoPreview(context.Background(), sessionID, turnID)
-		return undoPreviewMsg{turnID: turnID, changes: changes, err: err}
+		plan, err := engine.UndoPreview(context.Background(), sessionID, turnID)
+		return undoPreviewMsg{turnID: turnID, changes: plan.Changes, state: plan.State, err: err}
 	}
 }
 
@@ -462,6 +465,8 @@ type undoPreviewMsg struct {
 	turnID  string
 	changes []string
 	err     error
+	// state identifies the workspace the preview was made from.
+	state string
 	// moved is set when a confirmation found the workspace changed since the preview it confirmed.
 	moved bool
 }

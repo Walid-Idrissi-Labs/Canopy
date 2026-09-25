@@ -66,7 +66,7 @@ type Engine interface {
 	// things to want, and doing both would throw away the record of what was tried along with the
 	// attempt, which is the half worth keeping when something did not work.
 	Undo(ctx context.Context, sessionID, turnID string) error
-	UndoPreview(ctx context.Context, sessionID, turnID string) ([]string, error)
+	UndoPreview(ctx context.Context, sessionID, turnID string) (session.UndoPlan, error)
 
 	// Inventory is what the next request will carry, part by part, for /context.
 	Inventory(sessionID string) core.Inventory
@@ -328,7 +328,7 @@ type Model struct {
 	// turn within a minute performs it.
 	undoArmed   string
 	undoArmedAt time.Time
-	undoShown   []string
+	undoShown   string
 
 	// ticking says the spinner's timer is scheduled; tickGeneration retires stale timers.
 	ticking        bool
@@ -577,7 +577,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.notice = "the workspace changed since that preview, so nothing was undone; " + m.notice
 		}
 		if len(msg.changes) > 0 {
-			m.undoArmed, m.undoArmedAt, m.undoShown = msg.turnID, time.Now(), msg.changes
+			m.undoArmed, m.undoArmedAt, m.undoShown = msg.turnID, time.Now(), msg.state
 		}
 		return m, nil
 

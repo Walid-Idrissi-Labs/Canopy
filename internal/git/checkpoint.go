@@ -260,9 +260,13 @@ func environ(dir string) []string {
 // that differ from it, marked M, A or D as git reports them, and files that would be removed because
 // they did not exist at the checkpoint and are not ignored. The removals include anything a person
 // created since, which is exactly what they need to see before agreeing.
-func (t *Taker) Preview(ctx context.Context, checkpoint Checkpoint) ([]string, error) {
+//
+// It also returns the tree the working tree was snapshotted as, which changes whenever any file
+// does: comparing two of them says whether anything moved in between, which the list cannot, since
+// a file edited again is listed the same way.
+func (t *Taker) Preview(ctx context.Context, checkpoint Checkpoint) ([]string, string, error) {
 	if checkpoint.Commit == "" {
-		return nil, fmt.Errorf("that checkpoint has no commit to compare with")
+		return nil, "", fmt.Errorf("that checkpoint has no commit to compare with")
 	}
 	// Compared tree to tree, the working tree snapshotted exactly as a checkpoint would take it, so
 	// untracked files that were already there when the checkpoint was taken are not listed as going.
@@ -272,11 +276,11 @@ func (t *Taker) Preview(ctx context.Context, checkpoint Checkpoint) ([]string, e
 	}
 	now, err := t.snapshot(ctx, head, fmt.Sprintf("preview-%d", time.Now().UnixNano()))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	changed, err := t.run(ctx, "diff-tree", "-r", "-z", "--no-renames", "--name-status", checkpoint.Commit, now)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var out []string
 	fields := strings.Split(changed, "\x00")
@@ -292,7 +296,7 @@ func (t *Taker) Preview(ctx context.Context, checkpoint Checkpoint) ([]string, e
 			out = append(out, "restore "+path)
 		}
 	}
-	return out, nil
+	return out, now, nil
 }
 
 // snapshot writes the working tree, untracked files included, as a tree object through a temporary

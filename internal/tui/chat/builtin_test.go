@@ -1,6 +1,7 @@
 package chat_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -547,6 +548,7 @@ func TestUndoAsksAgainWhenTheWorkspaceMovedSinceThePreview(t *testing.T) {
 	next, _ = next.Update(cmd())
 
 	engine.undoChanges = []string{"restore main.go", "remove notes.txt"}
+	engine.undoState = "moved"
 	next, cmd = run(next, "/undo")
 	next, _ = next.Update(cmd())
 	if len(engine.undone) != 0 {
@@ -559,5 +561,31 @@ func TestUndoAsksAgainWhenTheWorkspaceMovedSinceThePreview(t *testing.T) {
 	_, _ = next.Update(cmd())
 	if len(engine.undone) != 1 {
 		t.Fatal("confirming the new list did not restore")
+	}
+}
+
+// The same list is not the same workspace: a file already listed and edited again is caught by the
+// snapshot, and a confirmation that cannot take the preview again undoes nothing.
+func TestUndoComparesTheWorkspaceNotTheList(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "first"}, State: core.TurnComplete},
+	}}, undoChanges: []string{"restore main.go"}, undoState: "a"}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+	next, cmd := run(m, "/undo")
+	next, _ = next.Update(cmd())
+	engine.undoState = "b" // main.go edited again: same list, different content
+	next, cmd = run(next, "/undo")
+	next, _ = next.Update(cmd())
+	if len(engine.undone) != 0 || !strings.Contains(plain(next.Body()), "changed since that preview") {
+		t.Fatalf("an edit to a listed file went unnoticed: undone %v\n%s", engine.undone, plain(next.Body()))
+	}
+	// Armed again with the new list. Only the preview fails now: the restore itself would succeed,
+	// so nothing undone means the confirmation refused to go ahead blind.
+	engine.previewErr = errors.New("git is not answering")
+	next, cmd = run(next, "/undo")
+	_, _ = next.Update(cmd())
+	if len(engine.undone) != 0 {
+		t.Fatal("undone although the preview could not be taken again")
 	}
 }
