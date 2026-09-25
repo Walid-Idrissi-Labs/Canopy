@@ -539,3 +539,15 @@ func TestAnAgentNeedsAName(t *testing.T) {
 		t.Errorf("nothing says why:\n%s", m.Body())
 	}
 }
+
+// An agent's summary says how much of what it read came from the cache.
+func TestTheSummarySaysTheCacheShare(t *testing.T) {
+	s := status("idle-one", core.AgentIdle, "nothing yet")
+	s.Usage = core.Usage{InputTokens: 250, CacheReadTokens: 750}
+	e := engine(s)
+	e.sessions[s.Agent.SessionID] = core.Session{}
+	m := mosaic(e, 120, 30)
+	if view := plain(m.Body()); !strings.Contains(view, "1000 tokens  75% cached") {
+		t.Fatalf("the summary lacks the cache share:\n%s", view)
+	}
+}

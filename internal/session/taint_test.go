@@ -187,3 +187,38 @@ func TestAForkOfATaintedConversationIsTainted(t *testing.T) {
 		t.Fatal("the fork of a tainted conversation is not tainted")
 	}
 }
+
+// A network tool's result taints the conversation and the taint is saved as it arrives, so it holds
+// after a restart even when that tool is not registered again, as with an MCP server not started.
+func TestAToolResultsTaintSurvivesARestartWithoutTheTool(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &sequenceClient{replies: [][]core.StreamEvent{
+		calls("c1", "fetch_url", `{"url":"https://example.test"}`), reply("read it"),
+	}}
+	first := New(fixedResolver{client: client, id: anthropicID()})
+	if err := first.WithStorage(storage, func(err error) { t.Errorf("storage: %v", err) }); err != nil {
+		t.Fatal(err)
+	}
+	registry := core.NewToolRegistry()
+	registry.MustRegister(&kindTool{name: "fetch_url", kind: core.ToolNetwork})
+	first.WithTools(registry, core.TrustStandard, agent.ApproverFunc(
+		func(context.Context, permission.Request, permission.Decision) bool { return true }))
+	s := first.Create("claude", "claude-opus-5")
+	id, err := first.Send(s.ID, "read the page")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, first, s.ID, id)
+	first.Close()
+
+	// No tools at all this time: nothing in the record can be recognised as outside content.
+	second, _ := asideEngine(t, path)
+	t.Cleanup(second.Close)
+	if !second.tainted(s.ID) {
+		t.Fatal("a fetched page's taint was lost when the tool was not there after a restart")
+	}
+}
