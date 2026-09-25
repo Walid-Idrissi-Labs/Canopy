@@ -138,13 +138,14 @@ be rediscovered by getting burned by it.
   npm's) are shared with your own builds, and a command can alter a file in them that a later build
   uses; the sandbox narrows what can be planted, it does not verify caches. Network is open by
   default. `CANOPY_SANDBOX_NETWORK=registries` sends a command's traffic through a proxy that reaches
-  package registries and GitHub, plus hosts in `CANOPY_SANDBOX_ALLOW`, and nothing else; a program
-  that ignores the proxy variables reaches nothing. GitHub is on the list because dependencies are
-  fetched from it, which also means a command can reach GitHub's API. On macOS commands can still
-  reach the loopback address, so a test's own servers work; on Linux Landlock limits connections by
-  port, not address, so in that mode a test that starts a local server on another port cannot reach
-  it, and a kernel older than 6.7 cannot limit the network at all. `CANOPY_SANDBOX_NETWORK=off`
-  allows no connections. Commands that
+  package registries, GitHub and Google's storage, plus hosts in `CANOPY_SANDBOX_ALLOW`, on ports
+  80 and 443. Those are general-purpose hosts too, a repository or a bucket anybody can own, so this
+  narrows where data can go rather than stopping it. On macOS a command can still reach anything on
+  the loopback address, a test's own servers and any other local service; on Linux Landlock limits
+  connections by port, not address, so a program that ignores the proxy variables can reach any
+  address on the proxy's port, a test that starts a local server on another port cannot reach it,
+  and a kernel older than 6.7 cannot limit the network at all. `CANOPY_SANDBOX_NETWORK=off` allows
+  no connections. Commands that
   install into your home break inside it: `pip install --user`, `gem install`, global npm installs,
   version managers (nvm, pyenv, rbenv), Homebrew, and anything writing `~/.local/bin` or most of
   `~/.config`. Test commands, setup, hooks, MCP servers and delegated vendor agents still run

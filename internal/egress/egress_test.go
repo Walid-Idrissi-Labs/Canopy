@@ -122,3 +122,48 @@ func TestModes(t *testing.T) {
 		t.Error("an unknown mode was accepted")
 	}
 }
+
+// An allowed host is reached on the web ports only; its other services are not a registry.
+func TestOnlyWebPortsAreTunnelled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	p := proxyTo(t, server, "allowed.test")
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", p.Port()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = fmt.Fprintf(conn, "CONNECT allowed.test:22 HTTP/1.1\r\nHost: allowed.test:22\r\n\r\n")
+	status, _ := bufio.NewReader(conn).ReadString('\n')
+	if !strings.Contains(status, "403") {
+		t.Fatalf("a CONNECT to port 22 of an allowed host: %q", status)
+	}
+}
+
+// Closing the proxy ends its open tunnels rather than leaving them to their peers.
+func TestClosingTheProxyEndsItsTunnels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	p := proxyTo(t, server, "allowed.test")
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", p.Port()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = fmt.Fprintf(conn, "CONNECT allowed.test:443 HTTP/1.1\r\nHost: allowed.test:443\r\n\r\n")
+	r := bufio.NewReader(conn)
+	if status, _ := r.ReadString('\n'); !strings.Contains(status, "200") {
+		t.Fatalf("CONNECT: %q", status)
+	}
+	closed := make(chan struct{})
+	go func() { p.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close waited on an open tunnel")
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadAll(r); err != nil {
+		t.Fatalf("the tunnel was not ended: %v", err)
+	}
+}
