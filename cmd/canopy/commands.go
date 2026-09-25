@@ -307,7 +307,11 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 
 	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
 	// the ones that can be governed per argument should be reached for before the one that cannot.
-	if err := registry.Register(tools.ShellTool(workspace)); err != nil {
+	outputs := tools.NewOutputStore()
+	if err := registry.Register(tools.ReadOutputTool(outputs)); err != nil {
+		return nil, err
+	}
+	if err := registry.Register(tools.ShellToolWithOutputs(workspace, outputs)); err != nil {
 		return nil, err
 	}
 	return registry, nil
