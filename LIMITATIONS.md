@@ -819,3 +819,12 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   money and says so; the step and token bounds still apply.
 - `/context` estimates tokens from bytes, about four to a token; the provider's own count, shown
   for the last turn, is the one that was billed.
+- Language servers run only in a trusted repository, and inside the same sandbox as an agent's shell
+  commands, with their own caches writable: they read files the agent writes. Where there is no
+  sandbox there are no language servers, unless the sandbox was switched off with
+  `CANOPY_SANDBOX=off`. rust-analyzer is started with build scripts and procedural macros off, so
+  it does not run the project's code; its analysis is less complete for it. `CANOPY_LSP=off` turns
+  them off. Only servers already on PATH are used, one per language per worktree, stopped after ten
+  idle minutes; one that fails to answer twice in a row, such as one still indexing a large
+  project, is left alone for the rest of the session. Only errors and warnings for the file just
+  written are shown, up to twenty.

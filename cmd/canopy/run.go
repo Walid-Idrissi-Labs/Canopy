@@ -103,6 +103,8 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	// withheld and the warning says how to trust it.
 	project := gateProject(dir, loadProjectRaw(dir, errOut), stdin, errOut, false)
 	engine.WithInstructions(projectInstructions(dir, project, errOut))
+	enableLanguageServers(project)
+	defer closeLanguageServers()
 	engine.SetWebSearch(webSearchWanted())
 
 	// Checked before anything is spent: -verify with nothing to verify against would exit 0 on
