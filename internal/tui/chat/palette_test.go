@@ -1,6 +1,7 @@
 package chat_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -92,5 +93,44 @@ func TestThePaletteClosesOnEscapeAndWaitsForAQuestion(t *testing.T) {
 	m, _ = m.Update(keyCode('p', tea.ModCtrl))
 	if strings.Contains(plain(m.Body()), "enter runs, esc closes") {
 		t.Fatal("the palette opened over a question")
+	}
+}
+
+// A question that arrives while the palette is up takes the keyboard back.
+func TestAQuestionClosesThePalette(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{turn("t1", "go", "", core.TurnStreaming)}}}
+	m := palette(t, engine)
+	engine.session.Turns[0].State = core.TurnAwaitingTools
+	engine.prompt = pendingPrompt("make clean")
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	m, _ = m.Update(keyText("x"))
+	if strings.Contains(plain(m.Body()), "enter runs, esc closes") {
+		t.Fatal("the palette kept the keyboard from a question")
+	}
+}
+
+// A file mention is added after what is typed, with a space between; a long list scrolls with the
+// selection.
+func TestThePaletteMentionsAfterTheDraftAndScrolls(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 40)
+	var files []string
+	for i := 0; i < 20; i++ {
+		files = append(files, fmt.Sprintf("pkg/file%02d.go", i))
+	}
+	m.SetFiles(func() []string { return files })
+	m = typePalette(m, "see")
+	m, _ = m.Update(keyCode('p', tea.ModCtrl))
+	m = typePalette(m, "file")
+	for range 12 {
+		m, _ = m.Update(keyCode(tea.KeyDown))
+	}
+	if !strings.Contains(plain(m.Body()), "> @pkg/file12.go") {
+		t.Fatalf("the list did not scroll with the selection:\n%s", plain(m.Body()))
+	}
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	if m.InputValue() != "see @pkg/file12.go " {
+		t.Fatalf("box %q", m.InputValue())
 	}
 }

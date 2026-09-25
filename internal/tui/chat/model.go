@@ -1109,7 +1109,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	// The palette takes every key while it is up; ctrl+p opens it when no question is.
 	if m.palette.open {
-		return m.paletteKey(msg)
+		// A question that arrived while the palette was up takes the keyboard back: its keys are
+		// answers, and a "y" meant for it must not land in the palette's query.
+		if !m.awaiting {
+			return m.paletteKey(msg)
+		}
+		m.palette = palette{}
 	}
 	if msg.String() == "ctrl+p" && !m.awaiting {
 		m.openPalette()
