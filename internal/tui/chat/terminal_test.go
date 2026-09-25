@@ -104,3 +104,18 @@ func TestAnInterruptedTurnKeepsItsPartialReply(t *testing.T) {
 		t.Fatalf("the partial reply is missing, misplaced or doubled:\n%s", joined)
 	}
 }
+
+// When the running text does not begin with the recorded steps' text, the ordered view steps aside
+// rather than drawing the reply twice.
+func TestStepsThatDoNotMatchTheTextAreNotDrawnTwice(t *testing.T) {
+	turn := core.Turn{
+		ID: "t1", State: core.TurnComplete,
+		Request: core.Message{Role: core.RoleUser, Text: "q"},
+		Text:    "Rewritten reply.",
+		Steps:   []core.Message{{Role: core.RoleAssistant, Text: "Original reply."}},
+	}
+	joined := strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n")
+	if strings.Contains(joined, "Original reply.") || strings.Count(joined, "Rewritten reply.") != 1 {
+		t.Fatalf("mismatched steps were drawn:\n%s", joined)
+	}
+}
