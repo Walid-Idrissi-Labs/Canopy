@@ -12,8 +12,10 @@ package tui
 // membership to invalidate, because there is no membership.
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -77,6 +79,87 @@ type ReviewModel struct {
 	// message somebody has to find the placeholder inside of.
 	draft   core.CommitDraft
 	subject string
+
+	// judge asks a model for its opinion of the ranked attempts, and session is the conversation
+	// whose model it borrows. opinion is the last answer, shown under the ranking as an opinion.
+	judge   Judge
+	session string
+	opinion string
+	judging bool
+	// judgedRanking is the ranking the opinion was given about; a changed ranking hides it.
+	judgedRanking string
+}
+
+// rankingKey identifies a ranking's state: who is in it, how their tests stand and how much each
+// changed. An opinion about one state is not shown under another.
+func rankingKey(source ReviewSource) string {
+	if source == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range source.Rank().All() {
+		fmt.Fprintf(&b, "%s:%d:%s:%s;", p.Agent, p.Rank, p.Tests, p.Diff.Summary())
+	}
+	return b.String()
+}
+
+// Judge asks a model for an opinion of several agents' attempts; see session.Engine.Judge.
+type Judge func(ctx context.Context, sessionID string, candidates []core.JudgeCandidate) (string, error)
+
+// SetJudge lets the ranking ask for a reviewer's opinion.
+func (m *ReviewModel) SetJudge(judge Judge) { m.judge = judge }
+
+// judgedMsg carries the opinion back.
+type judgedMsg struct {
+	text string
+	err  error
+}
+
+// judged takes the opinion in.
+func (m ReviewModel) judged(msg judgedMsg) ReviewModel {
+	m.judging = false
+	if msg.err != nil {
+		m.failure = "the reviewer could not answer: " + msg.err.Error()
+		return m
+	}
+	// Model text steered by diffs the agents under review wrote: shown as text, never as controls.
+	m.opinion, m.failure = chat.TerminalSafe(msg.text), ""
+	m.judgedRanking = rankingKey(m.source)
+	return m
+}
+
+// askJudge gathers every ranked attempt's diff and asks for an opinion off the update loop.
+func (m ReviewModel) askJudge() (ReviewModel, tea.Cmd) {
+	if m.judge == nil || m.source == nil {
+		m.notice = "no model is available to review the attempts"
+		return m, nil
+	}
+	var candidates []core.JudgeCandidate
+	for _, placement := range m.source.Rank().All() {
+		var diff strings.Builder
+		changes, _ := m.source.Changes(placement.Agent)
+		for _, change := range changes {
+			patch, err := m.source.Patch(placement.Agent, change.Path)
+			if err == nil {
+				diff.WriteString(patch)
+				diff.WriteString("\n")
+			}
+		}
+		candidates = append(candidates, core.JudgeCandidate{Agent: placement.Agent,
+			Tests: string(placement.Tests), Diff: diff.String()})
+	}
+	if len(candidates) == 0 {
+		m.notice = "there are no attempts to review"
+		return m, nil
+	}
+	m.judging, m.notice, m.failure = true, "asking a reviewer to read the attempts", ""
+	judge, sessionID := m.judge, m.session
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		text, err := judge(ctx, sessionID, candidates)
+		return judgedMsg{text: text, err: err}
+	}
 }
 
 // NewReview builds the review screen. A nil source is allowed and renders an explanation, because
@@ -197,6 +280,13 @@ func (m ReviewModel) Update(msg tea.Msg) (ReviewModel, tea.Cmd) {
 				return m, nil
 			}
 			m.pane, m.draft, m.subject, m.notice, m.failure = paneCommit, draft, "", "", ""
+		}
+		return m, nil
+
+	case "o":
+		// A second opinion on the ranking, asked for rather than automatic, since it spends money.
+		if m.pane == paneRanking && !m.judging {
+			return m.askJudge()
 		}
 		return m, nil
 
@@ -353,7 +443,8 @@ func (m ReviewModel) open() ReviewModel {
 			m.failure = err.Error()
 			return m
 		}
-		m.file, m.patch, m.offset, m.pane = file.Path, strings.Split(patch, "\n"), 0, panePatch
+		// An agent wrote this diff and may have put terminal controls in it; they are shown, not run.
+		m.file, m.patch, m.offset, m.pane = chat.TerminalSafe(file.Path), strings.Split(chat.TerminalSafe(patch), "\n"), 0, panePatch
 		return m
 	}
 	return m
@@ -554,7 +645,39 @@ func (m ReviewModel) rankingLines() []string {
 				testStatus(placement.Tests).render(), name, styleMuted.Render(placement.Diff.Summary())),
 			"      "+styleReason.Render(truncate(placement.Reason, m.width-6)))
 	}
+	if m.opinion != "" && m.judgedRanking != rankingKey(m.source) {
+		lines = append(lines, "", styleMuted.Render("the ranking changed since the reviewer's opinion; o asks again"))
+	} else if m.opinion != "" {
+		// Beside the evidence and never in its place: a model reading diffs can be wrong in ways a
+		// test run cannot, and the heading says which of the two this is.
+		lines = append(lines, "", styleHeader.Render("a reviewer's opinion, not verification"))
+		for _, line := range wrapLines(m.opinion, max(20, m.width-2)) {
+			lines = append(lines, "  "+line)
+		}
+	} else if !m.judging {
+		lines = append(lines, "", styleMuted.Render("o asks a model for its opinion of these attempts"))
+	}
 	return lines
+}
+
+// wrapLines breaks text into lines of at most width runes, on spaces.
+func wrapLines(text string, width int) []string {
+	var out []string
+	for _, paragraph := range strings.Split(text, "\n") {
+		line := ""
+		for _, word := range strings.Fields(paragraph) {
+			if line != "" && len([]rune(line))+1+len([]rune(word)) > width {
+				out = append(out, line)
+				line = ""
+			}
+			if line != "" {
+				line += " "
+			}
+			line += word
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 func (m ReviewModel) fileLines() []string {
@@ -565,9 +688,9 @@ func (m ReviewModel) fileLines() []string {
 	lines := []string{styleHeader.Render(fmt.Sprintf("%d changed", len(m.files)))}
 	for i, file := range m.files {
 		marker := "  "
-		name := file.Path
+		name := chat.TerminalSafe(file.Path)
 		if i == m.cursor {
-			marker, name = "> ", styleSelected.Render(file.Path)
+			marker, name = "> ", styleSelected.Render(chat.TerminalSafe(file.Path))
 		}
 		if file.Old != "" {
 			name += styleMuted.Render(" was " + file.Old)

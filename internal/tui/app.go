@@ -1,16 +1,18 @@
 package tui
 
 import (
-	tea "charm.land/bubbletea/v2"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
+
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	keysui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/keys"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 // Engine is everything the application needs from the session engine.
@@ -23,6 +25,9 @@ import (
 type Engine interface {
 	chat.Engine
 	agentsui.Engine
+
+	// Judge asks a model for an opinion of several agents' attempts, for the review screen.
+	Judge(ctx context.Context, sessionID string, candidates []core.JudgeCandidate) (string, error)
 
 	// Create starts a fresh conversation and returns it. The old one is left alone: it keeps its
 	// history, keeps running any turn that is in flight, and is still in the session list.
@@ -226,6 +231,7 @@ func NewAppConfigured(
 	app.chat.SetCommands(options.Commands)
 	app.chat.SetAgent(options.Agent)
 	app.review.SetCostOutcomes(options.Costs)
+	app.review.SetJudge(engine.Judge)
 	// What a new agent inherits. Without it every agent created from that screen was built with an
 	// empty credential and an empty working directory, which fails on its first message.
 	app.agents.SetDefaults(keyName, model, dir)
@@ -314,6 +320,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat, cmd = a.chat.Update(shiftMouse(m, -a.dim.HeaderHeight()))
 			return a, cmd
 		}
+		return a, nil
+
+	case judgedMsg:
+		a.review = a.review.judged(m)
 		return a, nil
 
 	case tea.WindowSizeMsg:
@@ -431,6 +441,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		case screenReview:
 			var cmd tea.Cmd
+			a.review.session = a.chat.SessionID()
 			a.review, cmd = a.review.Update(key)
 			return a, cmd
 		case screenKeys:

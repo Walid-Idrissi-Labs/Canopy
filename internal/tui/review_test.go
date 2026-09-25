@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -459,5 +460,49 @@ func TestLeavingTheCommitScreenThrowsAwayTheDraft(t *testing.T) {
 	}
 	if source.committed != "" {
 		t.Errorf("something was committed on the way out: %q", source.committed)
+	}
+}
+
+// o on the ranking asks a reviewer for an opinion of every attempt, diffs and test results included,
+// and shows the answer under a heading that says it is an opinion, not verification.
+func TestTheRankingCanAskForAnOpinion(t *testing.T) {
+	model, _ := loaded(t)
+	var got []core.JudgeCandidate
+	var sessionSeen string
+	model.SetJudge(func(_ context.Context, sessionID string, candidates []core.JudgeCandidate) (string, error) {
+		got, sessionSeen = candidates, sessionID
+		return "small could be special-casing the check", nil
+	})
+	model.session = "conversation-1"
+	model = press(model, "tab")
+	next, cmd := model.Update(keyText("o"))
+	if cmd == nil {
+		t.Fatal("o on the ranking did nothing")
+	}
+	next = next.judged(cmd().(judgedMsg))
+	if len(got) != 2 || sessionSeen != "conversation-1" || !strings.Contains(got[0].Diff, "+\treturn true") ||
+		got[0].Tests != string(core.TestPassing) {
+		t.Fatalf("the reviewer was sent %+v for %q", got, sessionSeen)
+	}
+	body := stripANSI(next.Body())
+	if !strings.Contains(body, "a reviewer's opinion, not verification") || !strings.Contains(body, "special-casing the check") {
+		t.Fatalf("the opinion is not shown as one:\n%s", body)
+	}
+}
+
+// An opinion about one ranking is not shown under another: new results hide it until asked again.
+func TestAnOpinionOnAnOldRankingIsHidden(t *testing.T) {
+	model, source := loaded(t)
+	model.SetJudge(func(context.Context, string, []core.JudgeCandidate) (string, error) { return "alpha is fine", nil })
+	model = press(model, "tab")
+	next, cmd := model.Update(keyText("o"))
+	next = next.judged(cmd().(judgedMsg))
+	if !strings.Contains(stripANSI(next.Body()), "alpha is fine") {
+		t.Fatal("the opinion was not shown")
+	}
+	source.ranking.Ranked[0].Tests = core.TestFailing
+	body := stripANSI(next.Body())
+	if strings.Contains(body, "alpha is fine") || !strings.Contains(body, "ranking changed since") {
+		t.Fatalf("an opinion about an old ranking is still shown:\n%s", body)
 	}
 }

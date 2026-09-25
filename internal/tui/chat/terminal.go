@@ -31,3 +31,7 @@ func terminalSafe(s string) string {
 	}
 	return out.String()
 }
+
+// TerminalSafe is terminalSafe for the other screens that show untrusted text: diffs, file names
+// and a model's opinion of them.
+func TerminalSafe(s string) string { return terminalSafe(s) }
