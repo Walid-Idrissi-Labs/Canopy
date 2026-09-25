@@ -89,6 +89,7 @@ func runChat(resume string) error {
 
 	project := loadProject(dir)
 	commands := loadCommands(project.Commands)
+	engine.SetWebSearch(webSearchWanted())
 	if project.Trusted {
 		instructions, err := config.LoadInstructions(dir, project)
 		if err != nil {
@@ -640,3 +641,9 @@ func projectTrust(project config.Project) core.TrustLevel {
 	}
 	return level
 }
+
+// webSearchWanted reports whether the provider's own web search is offered: only when
+// CANOPY_WEB_SEARCH=on. A server-side search is run by the provider, not by Canopy, so no approval
+// prompt sees it, and the query can carry what the model read; it is something to switch on
+// knowingly. Only providers that have one use it, and each search is billed by them.
+func webSearchWanted() bool { return strings.EqualFold(os.Getenv("CANOPY_WEB_SEARCH"), "on") }

@@ -217,6 +217,10 @@ type Request struct {
 	// Effort controls thinking depth and how much work happens before answering.
 	Effort Effort
 
+	// WebSearch offers the provider's own web search, where it has one. Server side: the provider
+	// runs the searches and the results arrive inside its reply.
+	WebSearch bool
+
 	// DisableThinking turns thinking off. Some providers reject this above a certain effort, which
 	// the provider reports as a validation error rather than silently ignoring.
 	DisableThinking bool

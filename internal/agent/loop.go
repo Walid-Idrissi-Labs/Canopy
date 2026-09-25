@@ -215,7 +215,11 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			reply.calls = nil
 			reply.native = nil
 		}
-		if reply.text != "" || len(reply.calls) > 0 {
+		// A reply that holds only provider-side work, a search and its results before a pause, is
+		// still part of the conversation: dropping it would have the continuation run and bill the
+		// same searches again. Any other reply with nothing to show, one cut off while still
+		// thinking above all, is not kept.
+		if reply.text != "" || len(reply.calls) > 0 || (reply.native != nil && reply.stop == core.StopPauseTurn) {
 			outcome.Messages = append(outcome.Messages, core.Message{
 				Role:      core.RoleAssistant,
 				Text:      reply.text,
@@ -293,6 +297,12 @@ func (l *Loop) step(ctx context.Context, req core.Request, obs Observer) (reply,
 			obs.Text(event.Text)
 		case core.EventThinking:
 			obs.Thinking(event.Text)
+		case core.EventNotice:
+			// Said about the turn rather than in it: a search the provider ran, or a route's own
+			// statement of whose permissions apply. Optional for an observer to hear.
+			if n, ok := obs.(interface{ Notice(string) }); ok {
+				n.Notice(event.Text)
+			}
 		case core.EventToolCall:
 			out.calls = append(out.calls, *event.ToolCall)
 			obs.ToolRequested(*event.ToolCall)

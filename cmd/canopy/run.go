@@ -96,6 +96,7 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	// No one is there to answer a trust prompt, so an untrusted repository's configuration is
 	// withheld and the warning says how to trust it.
 	project := gateProject(dir, loadProjectRaw(dir, errOut), stdin, errOut, false)
+	engine.SetWebSearch(webSearchWanted())
 	if project.Trusted {
 		instructions, err := config.LoadInstructions(dir, project)
 		if err != nil {
