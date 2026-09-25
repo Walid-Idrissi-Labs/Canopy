@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -553,5 +555,44 @@ func TestAnUnsignedThinkingBlockIsNeverReplayed(t *testing.T) {
 	if n == nil || !strings.Contains(string(n.Data), `"signature":"sig"`) ||
 		!strings.Contains(string(n.Data), "12345678901234567890") {
 		t.Fatalf("a signed reply was not replayed exactly: %v", n)
+	}
+}
+
+// A search is reported with its query as soon as its block ends, so a reply that fails afterwards
+// still leaves the search it was billed for in the audit trail.
+func TestASearchIsReportedBeforeTheReplyEnds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, e := range []string{
+			`{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"go 1.26 release\"}"}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
+		} {
+			var head struct{ Type string }
+			_ = json.Unmarshal([]byte(e), &head)
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", head.Type, e)
+		}
+	}))
+	defer server.Close()
+	client := New(core.NewSecret("k"), WithBaseURL(server.URL))
+	stream, err := client.Stream(context.Background(), core.Request{Model: "claude-opus-5", WebSearch: true,
+		Messages: []core.Message{{Role: core.RoleUser, Text: "look it up"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	var notices []string
+	for stream.Next() {
+		if e := stream.Event(); e.Kind == core.EventNotice {
+			notices = append(notices, e.Text)
+		}
+	}
+	if !strings.Contains(strings.Join(notices, "|"), WebSearchNotice+"go 1.26 release") {
+		t.Fatalf("the search was not reported before the reply failed: %q (err %v)", notices, stream.Err())
+	}
+	if n := strings.Count(strings.Join(notices, "|"), WebSearchNotice); n != 1 {
+		t.Fatalf("the search was reported %d times", n)
 	}
 }
