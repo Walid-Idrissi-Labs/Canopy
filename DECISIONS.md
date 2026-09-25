@@ -1378,11 +1378,12 @@ Supersedes D-27. The condition D-27 named was agent quality on real repositories
 lever on it turned out to be hearing about a type error in the step that made it rather than
 several steps later from a failing build. The subsystem it feared is kept small: one client for
 every server, a server per language per worktree started only when a file of that language is
-written, diagnostics for the file just written added to the edit's result, and two read tools,
-`find_definition` and `find_references`. A language server runs the repository's own toolchain,
-so it starts only in a trusted repository, inside the same sandbox as the agent's shell commands,
-and not at all where there is no sandbox; rust-analyzer starts with build scripts and procedural
-macros off. `CANOPY_LSP=off` turns them off.
+written or looked up, diagnostics for the file just written added to the edit's result, and two
+read tools, `find_definition` and `find_references`. A language server runs the repository's own
+toolchain, so it starts only in a trusted repository, inside the same sandbox as the agent's shell
+commands, and not at all where there is no sandbox, unless the sandbox was switched off with
+`CANOPY_SANDBOX=off`, in which case it runs unconfined like everything else; rust-analyzer starts
+with build scripts and procedural macros off. `CANOPY_LSP=off` turns them off.
 
 ## D-59 Web search, skills and agent definitions are in. Decided 2026-09-25.
 
