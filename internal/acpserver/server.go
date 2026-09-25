@@ -173,22 +173,47 @@ func (h *Hub) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		close(c.done)
 		c.streams.Wait()
 	}()
-	reader := bufio.NewReader(in)
+	// Lines are read on their own goroutine, so the server can stop when ctx does even while a read
+	// is blocked: closing an inherited stdin does not interrupt a read already waiting on it.
+	type read struct {
+		line []byte
+		err  error
+	}
+	lines := make(chan read)
+	go func() {
+		reader := bufio.NewReader(in)
+		for {
+			line, err := reader.ReadBytes('\n')
+			select {
+			case lines <- read{line, err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	for {
-		line, err := reader.ReadBytes('\n')
-		if len(strings.TrimSpace(string(line))) > 0 {
+		var next read
+		select {
+		case next = <-lines:
+		case <-ctx.Done():
+			return nil
+		}
+		if len(strings.TrimSpace(string(next.line))) > 0 {
 			var m message
-			if json.Unmarshal(line, &m) != nil {
+			if json.Unmarshal(next.line, &m) != nil {
 				c.reply(json.RawMessage("null"), nil, &rpcError{Code: -32700, Message: "not a JSON-RPC message"})
 			} else {
 				c.handle(ctx, m)
 			}
 		}
-		if err != nil {
-			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+		if next.err != nil {
+			if errors.Is(next.err, io.EOF) || ctx.Err() != nil {
 				return nil
 			}
-			return err
+			return next.err
 		}
 	}
 }
@@ -535,6 +560,8 @@ func (c *conn) ask(ctx context.Context, req permission.Request, decision permiss
 		attached, still := h.attached, h.owners[req.SessionID] == c
 		h.mu.Unlock()
 		if !still {
+			// Withdrawn, so a client still showing it does not take a later answer as the one used.
+			c.send(message{JSONRPC: "2.0", Method: "$/cancel_request"}, map[string]any{"requestId": id})
 			return false, false
 		}
 		select {

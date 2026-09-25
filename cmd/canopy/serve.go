@@ -37,7 +37,8 @@ func runServe(args []string, errOut io.Writer) int {
 		_, _ = fmt.Fprintln(errOut, err)
 		return exitFailed
 	}
-	defer func() { _ = os.Remove(path) }()
+	// Closing the listener removes the socket; removing it again after the lock is released could
+	// take away the socket of a server started since.
 	host.hub.Waiting = func(sessionID string) {
 		code := session.Code(sessionID)
 		_, _ = fmt.Fprintf(errOut, "%s conversation %s is waiting on you: canopy attach %s\n",

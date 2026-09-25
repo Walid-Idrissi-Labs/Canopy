@@ -41,7 +41,10 @@ func runAttach(args []string, stdin io.Reader, out, errOut io.Writer) int {
 			break
 		}
 		parent := filepath.Dir(at)
-		if parent == at {
+		// Up to the repository's top and no further, so a repository nested in another is not
+		// served by the outer one's server.
+		_, isTop := os.Lstat(filepath.Join(at, ".git"))
+		if parent == at || isTop == nil {
 			_, _ = fmt.Fprintln(errOut, "canopy serve is not running for this project; start it with canopy serve")
 			return exitFailed
 		}
@@ -229,6 +232,21 @@ func attachTo(rw io.ReadWriter, dir, target string, stdin io.Reader, out, errOut
 			_, _ = fmt.Fprintln(errOut, "\ncanopy serve closed the connection")
 			return exitFailed
 		case m := <-client.incoming:
+			if withdrawn, ok := withdrawnQuestion(m); ok {
+				for i, q := range questions {
+					var id json.Number
+					_ = json.Unmarshal(q["id"], &id)
+					if id.String() == withdrawn {
+						questions = append(questions[:i], questions[i+1:]...)
+						_, _ = fmt.Fprint(out, "\n(that question is now with another client, which answers it)\n")
+						if i == 0 && len(questions) > 0 {
+							askServed(questions[0], out)
+						}
+						break
+					}
+				}
+				continue
+			}
 			if isQuestion(m) {
 				questions = append(questions, m)
 				if len(questions) == 1 {
@@ -287,6 +305,22 @@ func attachTo(rw io.ReadWriter, dir, target string, stdin io.Reader, out, errOut
 			}
 		}
 	}
+}
+
+// withdrawnQuestion reports the id of a question the server has taken back.
+func withdrawnQuestion(m map[string]json.RawMessage) (string, bool) {
+	var method string
+	_ = json.Unmarshal(m["method"], &method)
+	if method != "$/cancel_request" {
+		return "", false
+	}
+	var params struct {
+		RequestID json.Number `json:"requestId"`
+	}
+	if json.Unmarshal(m["params"], &params) != nil {
+		return "", false
+	}
+	return params.RequestID.String(), true
 }
 
 func isQuestion(m map[string]json.RawMessage) bool {

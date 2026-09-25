@@ -679,11 +679,22 @@ func TestAQuestionFollowsItsConversationToANewClient(t *testing.T) {
 		answer <- hub.Approve(context.Background(), permission.Request{SessionID: "s1", Tool: "shell"},
 			permission.Decision{})
 	}()
-	if m := first.next(); m["method"] != "session/request_permission" {
-		t.Fatalf("asked %v", m)
+	asked := first.next()
+	if asked["method"] != "session/request_permission" {
+		t.Fatalf("asked %v", asked)
 	}
 	second := connect(t, hub)
 	second.send(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "session/load", "params": map[string]any{"sessionId": "s1"}})
+	// The first client is told the question is no longer its to answer.
+	for {
+		m := first.next()
+		if m["method"] == "$/cancel_request" {
+			if m["params"].(map[string]any)["requestId"] != asked["id"] {
+				t.Fatalf("withdrew %v, but the question was %v", m["params"], asked["id"])
+			}
+			break
+		}
+	}
 	for {
 		m := second.next()
 		if m["method"] == "session/request_permission" {
@@ -800,5 +811,30 @@ func TestALineThatIsNotJSONIsAnError(t *testing.T) {
 	m := c.next()
 	if id, present := m["id"]; !present || id != nil || m["error"].(map[string]any)["code"] != float64(-32700) {
 		t.Fatalf("reply %v", m)
+	}
+}
+
+// blockingReader is a stdin nobody writes to and that closing does not wake.
+type blockingReader struct{ never chan struct{} }
+
+func (b blockingReader) Read([]byte) (int, error) {
+	<-b.never
+	return 0, io.EOF
+}
+
+// A signal stops canopy acp even while its stdin is open and silent.
+func TestStoppingDoesNotWaitForARead(t *testing.T) {
+	hub := NewHub(newFakeEngine())
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = hub.Serve(ctx, blockingReader{never: make(chan struct{})}, io.Discard)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the server waited for a read that was never going to come")
 	}
 }

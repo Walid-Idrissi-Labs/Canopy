@@ -346,3 +346,89 @@ func TestTheLockKeepsASecondServerOut(t *testing.T) {
 	}
 	_ = listener.Close()
 }
+
+// A question shown to one attach and then taken by another client is withdrawn from the first,
+// which says so rather than taking the next line typed as its answer.
+func TestAttachLetsGoOfAQuestionTakenElsewhere(t *testing.T) {
+	engine := &servedEngine{events: make(chan core.Event, 8)}
+	engine.hub = acpserver.NewHub(engine)
+	client, server := net.Pipe()
+	go func() { _ = engine.hub.Serve(context.Background(), server, server) }()
+	stdinR, stdinW := io.Pipe()
+	defer func() { _ = stdinW.Close() }()
+	var out, errOut syncBuffer
+	go func() { attachTo(client, t.TempDir(), "new", stdinR, &out, &errOut, make(chan os.Signal)) }()
+	out.waitFor(t, "conversation 7.")
+	_, _ = io.WriteString(stdinW, "go\n")
+	out.waitFor(t, "Allow? [y/N]")
+
+	other, otherServer := net.Pipe()
+	go func() { _ = engine.hub.Serve(context.Background(), otherServer, otherServer) }()
+	go func() { _, _ = io.Copy(io.Discard, other) }()
+	_, _ = other.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"session/load","params":{"sessionId":"session-7"}}` + "\n"))
+	out.waitFor(t, "that question is now with another client")
+}
+
+// attach looks for a server up to the repository's top and no further: a repository nested in
+// another is not served by the outer one's server.
+func TestAttachStopsAtTheRepositoryTop(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "cs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	t.Setenv("XDG_RUNTIME_DIR", base)
+	outer := t.TempDir()
+	inner := filepath.Join(outer, "vendor", "inner")
+	for _, dir := range []string{filepath.Join(outer, ".git"), filepath.Join(inner, ".git")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path, err := serveSocket(outer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := listenServe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+	t.Chdir(inner)
+	var out, errOut syncBuffer
+	if code := runAttach(nil, strings.NewReader(""), &out, &errOut); code == exitOK {
+		t.Fatal("attach inside a nested repository reached the outer repository's server")
+	}
+	if !strings.Contains(errOut.String(), "not running") {
+		t.Fatalf("errOut %q", errOut.String())
+	}
+}
+
+// The directory holding the sockets is checked as itself: a link to a private directory is not one.
+func TestALinkedSocketDirectoryIsRefused(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "cs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	private := filepath.Join(base, "elsewhere")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(private, filepath.Join(base, fmt.Sprintf("canopy-%d", os.Getuid()))); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", base)
+	if _, err := serveSocket("/some/project"); err == nil {
+		t.Fatal("a link in place of the socket directory was used")
+	}
+}
