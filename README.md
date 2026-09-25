@@ -357,7 +357,10 @@ canopy run -p "..." -effort low -verify -escalate 2
 `canopy run` is the full agent without the interface, for scripts and CI. With `-verify` the
 project's own tests decide the exit code (3 when they fail). `-escalate N` retries a red result up to
 N times, one effort level higher each time, with the failing output: run cheap, and pay for more
-thinking only when the evidence says it was needed.
+thinking only when the evidence says it was needed. `-budget 0.50` stops the run once it has spent
+fifty cents, retries included; in the interface, `/budget 2` caps one agent and `/budget all 10`
+caps every agent together. A cap is checked between steps, so the request in flight finishes and the
+next one is not made.
 
 ## Reusable prompt commands
 

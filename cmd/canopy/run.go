@@ -48,6 +48,7 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	timeout := flags.Duration("timeout", 30*time.Minute, "stop after this long")
 	effortName := flags.String("effort", "", "low, medium, high, xhigh or max; the provider's default when omitted")
 	verify := flags.Bool("verify", false, "run the project's tests after the turn; exit 3 when they fail")
+	budget := flags.Float64("budget", 0, "stop once the run has spent this many dollars, retries included")
 	escalate := flags.Int("escalate", 0, "with -verify, retry up to this many times at a higher effort when the tests fail")
 	if err := flags.Parse(args); err != nil {
 		return exitUsage
@@ -152,6 +153,14 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	}
 	if *maxSteps > 0 {
 		engine.SetMaxSteps(*maxSteps)
+	}
+	if *budget < 0 {
+		_, _ = fmt.Fprintln(errOut, "-budget is an amount in dollars")
+		return exitUsage
+	}
+	if *budget > 0 {
+		// Across every agent, so agents the run starts are held to it as well.
+		_ = engine.SetOverallBudget(*budget)
 	}
 	effort := core.Effort(*effortName)
 	if !effort.Valid() {

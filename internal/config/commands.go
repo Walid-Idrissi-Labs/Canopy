@@ -91,6 +91,7 @@ func Builtins() []Builtin {
 		{"compact", "summarise what has been said, to buy back context"},
 		{"context", "how full this conversation is, before it has to be compacted"},
 		{"cost", "tokens and money spent, and which of the two is a guess"},
+		{"budget", "cap what this agent may spend: /budget 2, or /budget all 10 across every agent"},
 		{"trail", "every tool call this agent made, and what was allowed or refused"},
 		{"tasks", "what the agent says it is working through"},
 		{"fork", "branch the conversation here, keeping everything said so far"},

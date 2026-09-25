@@ -135,6 +135,10 @@ type Loop struct {
 	// MaxTokens bounds the whole turn. Zero means no token bound, which is only appropriate when
 	// something above is enforcing one.
 	MaxTokens int
+	// Gate is asked before every model call after the first, with what the turn has used so far,
+	// and a reason stops the turn there. It is how a spending cap holds inside a long turn: the
+	// request in flight finishes, and the next one is not made.
+	Gate func(used core.Usage) string
 }
 
 // TrustNow is how much this agent may do at this moment.
@@ -192,6 +196,14 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			outcome.LimitHit = fmt.Sprintf(
 				"stopped after %d tokens, which is this turn's budget", outcome.Usage.TotalTokens())
 			return outcome, nil
+		}
+
+		if l.Gate != nil && step > 1 {
+			if reason := l.Gate(outcome.Usage); reason != "" {
+				outcome.Stop = core.StopError
+				outcome.LimitHit = reason
+				return outcome, nil
+			}
 		}
 
 		req.Messages = outcome.Messages

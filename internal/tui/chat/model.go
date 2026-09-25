@@ -71,6 +71,12 @@ type Engine interface {
 	// Inventory is what the next request will carry, part by part, for /context.
 	Inventory(sessionID string) core.Inventory
 
+	// Budget and SetBudget are this agent's spending cap; the overall pair caps every agent.
+	Budget(sessionID string) session.Budget
+	SetBudget(sessionID string, limit float64) error
+	OverallBudget() session.Budget
+	SetOverallBudget(limit float64) error
+
 	// Mode is what this conversation's agent is doing, and SetMode changes it. This pair is what a
 	// mode is made of: the permission layer decides against the mode's level and the tool list the
 	// model is shown is filtered by it, so an agent that is planning cannot edit a file by ignoring
