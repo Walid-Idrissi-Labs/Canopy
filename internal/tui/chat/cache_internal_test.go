@@ -141,6 +141,10 @@ func TestLearningTheBackgroundEmptiesTheRenderCaches(t *testing.T) {
 	}
 
 	// Highlighted code is cached apart, by its own key, which has to say which background it is for.
+	// Emptied first, so a run of this test after another finds neither entry already there.
+	chromaCache.Lock()
+	chromaCache.entries, chromaCache.order = map[uint64][]string{}, nil
+	chromaCache.Unlock()
 	code := []string{"func main() {}"}
 	cachedChromaBlock("go", code, 40)
 	theme.SetDark(true)
