@@ -91,6 +91,10 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// agentNotes are standing instructions from an agent definition, waiting for that agent's first
+	// message.
+	agentNotes map[string]string
+
 	// maxSteps bounds the model calls in one turn; zero means the loop's default.
 	maxSteps int
 
@@ -787,7 +791,14 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 
 	// The mode travels as a note on the message where it took effect, never as a change to the
 	// system prompt. See core.SystemPrompt.
-	s.Turns[len(s.Turns)-1].Request.Note = pendingModeNote(*s, e.modeLocked(sessionID))
+	note := pendingModeNote(*s, e.modeLocked(sessionID))
+	// An agent started from a definition gets its standing instructions with its first message, in
+	// Canopy's own channel, since the person chose the definition.
+	if standing := e.agentNotes[sessionID]; standing != "" {
+		note = strings.TrimSpace(standing + "\n\n" + note)
+		delete(e.agentNotes, sessionID)
+	}
+	s.Turns[len(s.Turns)-1].Request.Note = note
 	s.Turns[len(s.Turns)-1].Request.Reports = e.joinNotes[sessionID]
 	delete(e.joinNotes, sessionID)
 
@@ -1394,7 +1405,7 @@ func pendingModeNote(s core.Session, mode core.Mode) string {
 	}
 	for i := len(s.Turns) - 2; i >= first; i-- {
 		if note := s.Turns[i].Request.Note; note != "" {
-			if note == mode.Prompt {
+			if strings.HasSuffix(note, mode.Prompt) {
 				return ""
 			}
 			break

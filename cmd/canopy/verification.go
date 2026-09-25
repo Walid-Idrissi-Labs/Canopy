@@ -560,7 +560,7 @@ func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.To
 		})
 	}
 
-	for _, tool := range session.DispatchTools(source, current, confirm) {
+	for _, tool := range session.DispatchTools(source, current, confirm, projectAgents) {
 		if err := registry.Register(tool); err != nil {
 			return err
 		}

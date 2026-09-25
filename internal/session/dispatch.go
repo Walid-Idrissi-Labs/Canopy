@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/agentdefs"
 	"sort"
 	"strings"
 	"time"
@@ -110,6 +111,12 @@ type Dispatch struct {
 
 	// Parent is the conversation that asked for the agents. Their results go back to it.
 	Parent string
+
+	// Instructions are standing instructions from an agent definition, given to each agent as
+	// Canopy's note on its first message. Empty when no definition was named.
+	Instructions string
+	// Definition names the agent definition used, for the confirmation.
+	Definition string
 }
 
 // Estimate is what a dispatch is expected to cost.
@@ -197,10 +204,17 @@ const (
 // current names the profile the orchestrating conversation itself runs on, and may return "". It is
 // what makes "use 3 agents for this" work without a profile being named: the deterministic default
 // is the credential already in use, which is also the one the person watching would guess.
-func DispatchTools(dispatcher Dispatcher, current func() string, confirm func(Confirmation) bool) []core.Tool {
+//
+// definitions, when given, are the agent definitions spawn_agents may start by name.
+func DispatchTools(dispatcher Dispatcher, current func() string, confirm func(Confirmation) bool,
+	definitions ...*agentdefs.Set) []core.Tool {
+	var defs *agentdefs.Set
+	if len(definitions) > 0 {
+		defs = definitions[0]
+	}
 	return []core.Tool{
 		&profilesTool{dispatcher: dispatcher, current: current},
-		&spawnTool{dispatcher: dispatcher, current: current, confirm: confirm},
+		&spawnTool{dispatcher: dispatcher, current: current, confirm: confirm, definitions: defs},
 	}
 }
 
@@ -270,9 +284,10 @@ func (t *profilesTool) Run(context.Context, json.RawMessage) (core.ToolResult, e
 }
 
 type spawnTool struct {
-	dispatcher Dispatcher
-	current    func() string
-	confirm    func(Confirmation) bool
+	dispatcher  Dispatcher
+	current     func() string
+	confirm     func(Confirmation) bool
+	definitions *agentdefs.Set
 }
 
 func (t *spawnTool) Name() string { return spawnToolName }
@@ -320,6 +335,10 @@ func (t *spawnTool) Schema() json.RawMessage {
 			"isolated": {
 				"type": "boolean",
 				"description": "Give each agent its own worktree and branch. Default true for more than one agent, since several agents editing one checkout overwrite each other."
+			},
+			"agent": {
+				"type": "string",
+				"description": "The name of an agent definition to start, when the user names one, for example \"the reviewer agent\". Its instructions and model are used."
 			}
 		},
 		"required": ["count", "task"]
@@ -333,6 +352,7 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		Model    string  `json:"model"`
 		Task     string  `json:"task"`
 		Isolated *bool   `json:"isolated"`
+		Agent    string  `json:"agent"`
 		Budget   float64 `json:"-"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
@@ -347,6 +367,16 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	}
 	if args.Isolated != nil {
 		request.Isolated = *args.Isolated
+	}
+	if name := strings.TrimSpace(args.Agent); name != "" {
+		def, ok := t.definitions.Get(name)
+		if !ok {
+			return core.ToolResult{Content: fmt.Sprintf("there is no agent definition called %q", name), IsError: true}, nil
+		}
+		request.Definition, request.Instructions = def.Name, def.Body
+		if strings.TrimSpace(args.Model) == "" && def.Model != "" {
+			args.Model = def.Model
+		}
 	}
 
 	// Whether a profile was named is remembered before resolve fills the empty case in, because the
@@ -824,6 +854,14 @@ func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
 			e.mu.Unlock()
 		}
 
+		if request.Instructions != "" {
+			e.mu.Lock()
+			if e.agentNotes == nil {
+				e.agentNotes = map[string]string{}
+			}
+			e.agentNotes[started.SessionID] = request.Instructions
+			e.mu.Unlock()
+		}
 		if _, err := e.Send(started.SessionID, request.Task); err != nil {
 			return created, fmt.Errorf("%s was created but could not be given the task: %w", started.Name, err)
 		}

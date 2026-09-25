@@ -314,6 +314,14 @@ hundred skills cost a hundred lines. Your own skills are read from `skills/` in 
 directory, `~/.claude/skills` and `~/.agents/skills`; a repository's from `.canopy/skills`,
 `.claude/skills` and `.agents/skills`, once the repository is trusted.
 
+## Agent definitions
+
+An agent can be defined once and dispatched by name: a markdown file with `name`, `description` and
+optionally `model` in its frontmatter, and its standing instructions as the body. "Use the reviewer
+agent on this branch" starts it with those instructions and that model. Definitions are read from
+`agents/` in the Canopy config directory and `~/.claude/agents`, and, once a repository is trusted,
+from its `.canopy/agents` and `.claude/agents`, so definitions written for Claude Code work here.
+
 ## A repository has to be trusted before it runs anything
 
 canopy.json can name a setup command, test commands, hooks and MCP servers, and carry instructions

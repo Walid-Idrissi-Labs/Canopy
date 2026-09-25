@@ -97,7 +97,8 @@ func Describe(dir string, project config.Project) Request {
 		h.Write(data)
 	}
 	// Project skills are instructions too, loaded into the model when a task matches them.
-	for _, pattern := range []string{".claude/skills/*/SKILL.md", ".agents/skills/*/SKILL.md", ".canopy/skills/*/SKILL.md"} {
+	for _, pattern := range []string{".claude/skills/*/SKILL.md", ".agents/skills/*/SKILL.md", ".canopy/skills/*/SKILL.md",
+		".claude/agents/*.md", ".canopy/agents/*.md"} {
 		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
 		sort.Strings(matches)
 		for _, path := range matches {
