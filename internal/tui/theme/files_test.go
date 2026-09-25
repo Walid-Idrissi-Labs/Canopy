@@ -1,6 +1,7 @@
 package theme
 
 import (
+	"errors"
 	"fmt"
 	"image/color"
 	"math"
@@ -249,6 +250,10 @@ func TestNoColourIsMadeOutsideTheTheme(t *testing.T) {
 	}
 	for _, root := range []string{filepath.Join("..", ".."), filepath.Join("..", "..", "..", "cmd")} {
 		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			// Another package's test can remove its own scratch directory mid-walk.
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}

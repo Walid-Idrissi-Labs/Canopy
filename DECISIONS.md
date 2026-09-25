@@ -1514,7 +1514,10 @@ program the repository names and often ships. Both now run in the sandbox the pr
 in, with the network as `CANOPY_SANDBOX_NETWORK` sets it. The worktree's sandbox is made once the
 worktree exists, since its path is not known before. A local server that cannot work inside it can
 be marked `"unconfined": true` in canopy.json; that is part of what a person trusts, and the trust
-prompt names it as running outside the sandbox. A server that cannot be confined is not started.
+prompt names it as running outside the sandbox. A server whose sandbox cannot be made is not
+started; where there is no sandbox at all, it runs as every other command then does, and a warning
+says so. The caches npx and uvx install servers into are writable in the sandbox, as the other
+toolchain caches are.
 
 ## Appendix: where the settled scope comes from
 

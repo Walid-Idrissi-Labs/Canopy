@@ -885,6 +885,7 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
   running after that is left to finish on its own.
 - Local MCP servers run in the sandbox (D-65), which lets them write only in the workspace, the
-  temporary area and the toolchain caches. A server that needs more, one run through a container
+  temporary area and the toolchain caches, npx's and uv's included, which sandboxed code can
+  therefore also write to. A server that needs more, one run through a container
   runtime for instance, fails to start until canopy.json marks it `"unconfined": true`. Remote servers
   start nothing and are unaffected.

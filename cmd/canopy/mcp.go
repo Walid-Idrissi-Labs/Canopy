@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools/mcp"
@@ -107,6 +108,12 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 		// sandbox like everything else the project starts, unless the project says otherwise.
 		if server.URL == "" && !server.Unconfined {
 			spec.Sandbox, spec.SandboxEnv = tools.Confinement(dir)
+			// Said rather than done quietly: where there is no sandbox to run it in, it runs as it
+			// did before, like every other command here, and the person should know.
+			if spec.Sandbox == nil && !sandbox.Disabled() {
+				fmt.Fprintf(os.Stderr, "warning: the MCP server %q runs outside the sandbox, which is "+
+					"not available here\n", server.Name)
+			}
 		}
 		specs = append(specs, spec)
 	}
