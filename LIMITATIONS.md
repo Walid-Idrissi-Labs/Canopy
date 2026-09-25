@@ -884,3 +884,6 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   all. A tool name in a hook's `tools` that Canopy does not have is warned about at start and never
   matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
   running after that is left to finish on its own.
+- Answering always to the question before agents are started (D-66) lets that conversation start
+  agents, at whatever each costs, without asking again until it is closed; the cost estimate is not
+  shown again for the later ones.

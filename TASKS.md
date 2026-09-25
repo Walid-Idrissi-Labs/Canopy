@@ -4610,7 +4610,7 @@ The keys are named on the question's own panel, since the footer goes quiet whil
 key that is safe and unmentioned is a key nobody risks.
 
 ### U-02 The always that grants nothing
-`status: todo | owner: none | branch: none | depends: A5-08`
+`status: review | owner: Claude | branch: fix/dispatch-scope-and-retry | depends: A5-08`
 `scope: cmd/canopy/verification.go, internal/session/dispatch.go, internal/permission/`
 
 Deliverable: the `spawn_agents` confirmation gets a real scope. Today it is built with an empty
