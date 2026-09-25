@@ -78,6 +78,8 @@ func bindings() []section {
 			{"[ / ]", "page, when there are more agents than panes"},
 			{"tab", "next agent, or into the mosaic from the list"},
 			{"n", "new agent"},
+			{"s", "stop the selected agent's turn"},
+			{"x", "remove the selected agent, asked twice; history is kept"},
 			{"y", "create it, on the direct mode confirmation"},
 			{"w", "worktree monitor"},
 			{"r", "review"},

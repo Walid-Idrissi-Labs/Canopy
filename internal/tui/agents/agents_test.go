@@ -23,6 +23,8 @@ type fakeEngine struct {
 	answered []answeredCall
 	// staleAnswer makes Answer report that a pane's request disappeared before the key arrived.
 	staleAnswer bool
+	cancelled   []string
+	removed     []string
 }
 
 // answeredCall is one reply the view sent through Answer, and on whose behalf.
@@ -59,6 +61,27 @@ func (e *fakeEngine) AgentStatuses() []session.AgentStatus { return e.statuses }
 func (e *fakeEngine) Session(id string) (core.Session, bool) {
 	s, ok := e.sessions[id]
 	return s, ok
+}
+
+func (e *fakeEngine) Cancel(id string) {
+	e.cancelled = append(e.cancelled, id)
+	for i := range e.statuses {
+		if e.statuses[i].Agent.SessionID == id {
+			e.statuses[i].State = core.AgentIdle
+		}
+	}
+}
+
+func (e *fakeEngine) RemoveAgent(name string) error {
+	e.removed = append(e.removed, name)
+	kept := e.statuses[:0]
+	for _, s := range e.statuses {
+		if s.Agent.Name != name {
+			kept = append(kept, s)
+		}
+	}
+	e.statuses = kept
+	return nil
 }
 
 func (e *fakeEngine) AddAgent(_ context.Context, agent session.Agent) (session.Agent, error) {
@@ -549,5 +572,34 @@ func TestTheSummarySaysTheCacheShare(t *testing.T) {
 	m := mosaic(e, 120, 30)
 	if view := plain(m.Body()); !strings.Contains(view, "1000 tokens  75% cached") {
 		t.Fatalf("the summary lacks the cache share:\n%s", view)
+	}
+}
+
+// A runaway agent is stopped from where it is seen, and a stopped one removed after asking twice;
+// one still working is never removed.
+func TestAnAgentIsStoppedAndRemovedFromTheList(t *testing.T) {
+	e := engine(status("worker", core.AgentWorking, "refactoring"))
+	e.statuses[0].Agent.SessionID = "s-worker"
+	m := model(e)
+	m = key(m, "x")
+	if len(e.removed) != 0 || !strings.Contains(m.Notice(), "stop it with s") {
+		t.Fatalf("a working agent was offered for removal: removed %v, notice %q", e.removed, m.Notice())
+	}
+	m = key(m, "s")
+	if len(e.cancelled) != 1 || e.cancelled[0] != "s-worker" {
+		t.Fatalf("stop cancelled %v", e.cancelled)
+	}
+	m = key(m, "x")
+	if len(e.removed) != 0 || !strings.Contains(m.Notice(), "x again removes worker") {
+		t.Fatalf("one x removed, or did not ask: %v %q", e.removed, m.Notice())
+	}
+	m = key(m, "j")
+	m = key(m, "x")
+	if len(e.removed) != 0 {
+		t.Fatal("an x after another key removed without asking again")
+	}
+	m = key(m, "x")
+	if len(e.removed) != 1 || e.removed[0] != "worker" {
+		t.Fatalf("removed %v", e.removed)
 	}
 }

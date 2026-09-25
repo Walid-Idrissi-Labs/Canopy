@@ -268,3 +268,28 @@ func TestQueuedSteeringStaysOnScreenUntilDelivered(t *testing.T) {
 		t.Errorf("the pane outlived the queue:\n%s", plain(next.Body()))
 	}
 }
+
+// Queued guidance can be taken back before it is delivered, and comes back into the box.
+func TestSteeringCanBeTakenBack(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{{
+		ID: "turn-1", Request: core.Message{Text: "build it"}, Text: "on it", State: core.TurnStreaming,
+	}}}}
+	m := boxed(engine)
+	m.SetSize(140, 30)
+	next, _ := run(m, "/steer use the existing parser")
+	if !strings.Contains(plain(next.Body()), "/steer undo takes it back") {
+		t.Fatalf("the pane does not say how to take it back:\n%s", plain(next.Body()))
+	}
+	next, _ = run(next, "/steer undo")
+	if len(engine.queuedSteering) != 0 || next.InputValue() != "/steer use the existing parser" {
+		t.Fatalf("queue %v, box %q", engine.queuedSteering, next.InputValue())
+	}
+	if strings.Contains(plain(next.Body()), "delivered when this turn finishes") {
+		t.Fatal("taken-back guidance is still shown as waiting")
+	}
+	next, _ = next.Update(keyCode('u', tea.ModCtrl))
+	next, _ = run(next, "/steer undo")
+	if !strings.Contains(next.Notice(), "no guidance waiting") {
+		t.Fatalf("notice %q", next.Notice())
+	}
+}

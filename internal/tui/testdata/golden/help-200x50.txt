@@ -45,6 +45,6 @@ agents                                                                          
   [ / ]                 page, when there are more agents than panes                  r                     reload the list
   tab                   next agent, or into the mosaic from the list                 esc / tab             back to where you were
   n                     new agent                                                    q                     quit
-  y                     create it, on the direct mode confirmation
-  w                     worktree monitor
+  s                     stop the selected agent's turn
+  x                     remove the selected agent, asked twice; history is kept
   j/k scroll   any other key back

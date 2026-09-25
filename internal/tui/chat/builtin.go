@@ -188,6 +188,18 @@ func (m *Model) describeOrSetMode(name string) {
 // tool calls in and has just read the wrong file is told at the next place where being told is
 // possible, rather than being made to start again and rebuild the reasoning that got it there.
 func (m *Model) steer(guidance string) {
+	// Taken back before delivery, and put in the box, since it is still something somebody wrote.
+	if strings.TrimSpace(guidance) == "undo" {
+		taken := m.engine.ClearSteering(m.sessionID)
+		if len(taken) == 0 {
+			m.notice = "there is no guidance waiting to take back"
+			return
+		}
+		m.input.SetValue("/steer " + strings.Join(taken, " "))
+		m.notice = "took back what was waiting; it is in the box to change or send again"
+		m.refresh()
+		return
+	}
 	if guidance == "" {
 		m.err = "what should it do differently? For example `/steer use the existing parser`"
 		return
