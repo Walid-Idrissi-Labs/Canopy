@@ -134,8 +134,9 @@ type streamOpts struct {
 }
 
 type chatMessage struct {
-	Role       string         `json:"role"`
-	Content    string         `json:"content,omitempty"`
+	Role string `json:"role"`
+	// Content is text, or a list of parts when the message carries pictures.
+	Content    any            `json:"content,omitempty"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
@@ -203,11 +204,25 @@ func (c *Client) buildRequest(req core.Request) chatRequest {
 		if msg.Note != "" {
 			text = core.ReminderText(msg.Note) + "\n\n" + text
 		}
-		if text == "" && len(msg.ToolCalls) == 0 {
+		if text == "" && len(msg.ToolCalls) == 0 && len(msg.Images) == 0 {
 			continue
 		}
 
-		wire := chatMessage{Role: string(msg.Role), Content: text}
+		wire := chatMessage{Role: string(msg.Role)}
+		switch {
+		case len(msg.Images) > 0:
+			var parts []any
+			for _, image := range msg.Images {
+				parts = append(parts, map[string]any{"type": "image_url",
+					"image_url": map[string]string{"url": image.DataURL()}})
+			}
+			if text != "" {
+				parts = append(parts, map[string]string{"type": "text", "text": text})
+			}
+			wire.Content = parts
+		case text != "":
+			wire.Content = text
+		}
 		for _, call := range msg.ToolCalls {
 			wire.ToolCalls = append(wire.ToolCalls, chatToolCall{
 				ID:   call.ID,

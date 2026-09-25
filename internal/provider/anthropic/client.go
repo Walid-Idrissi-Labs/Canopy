@@ -10,6 +10,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -188,6 +189,11 @@ func (c *Client) buildMessages(messages []core.Message) ([]sdk.MessageParam, err
 		}
 		for _, report := range msg.Reports {
 			blocks = append(blocks, sdk.NewTextBlock(core.ReportText(report)))
+		}
+		// Pictures ahead of the words about them, which is the order the API's guidance gives.
+		for _, image := range msg.Images {
+			blocks = append(blocks, sdk.NewImageBlockBase64(image.MediaType,
+				base64.StdEncoding.EncodeToString(image.Data)))
 		}
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))

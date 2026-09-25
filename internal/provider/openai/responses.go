@@ -112,13 +112,19 @@ func (c *Client) buildResponsesRequest(ctx context.Context, req core.Request) re
 		if msg.Note != "" {
 			text = core.ReminderText(msg.Note) + "\n\n" + text
 		}
-		if text != "" {
+		if text != "" || len(msg.Images) > 0 {
 			kind := "input_text"
 			if msg.Role == core.RoleAssistant {
 				kind = "output_text"
 			}
-			out.Input = append(out.Input, map[string]any{"role": string(msg.Role),
-				"content": []any{map[string]any{"type": kind, "text": text}}})
+			var content []any
+			for _, image := range msg.Images {
+				content = append(content, map[string]any{"type": "input_image", "image_url": image.DataURL()})
+			}
+			if text != "" {
+				content = append(content, map[string]any{"type": kind, "text": text})
+			}
+			out.Input = append(out.Input, map[string]any{"role": string(msg.Role), "content": content})
 		}
 		for _, call := range msg.ToolCalls {
 			out.Input = append(out.Input, map[string]any{"type": "function_call", "call_id": call.ID,

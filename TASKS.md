@@ -8039,6 +8039,22 @@ through theme styles and a rewrite needs its own golden review.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-X09 Pictures in a message (X-09)
+`status: review | owner: Claude | branch: feat/image-input`
+
+core.Message carries Images; the Anthropic adapter sends base64 image blocks ahead of the text, chat
+completions an image_url part with a data URL, the Responses API an input_image. The delegated
+routes refuse a request with pictures (core.ErrNoImages) instead of dropping them. internal/images
+finds picture paths in a message the way a terminal types a dropped file (escaped spaces, quotes,
+~), reads at most 20 MB of a regular file, refuses a canvas over 100 megapixels from its header,
+scales PNG, JPEG and GIF with a box filter so the long side is at most 1280, keeps JPEG as JPEG and
+the rest as PNG (JPEG when a PNG stays over 3 MB), and passes a small WebP through. The chat loads
+them through an injected loader (the interface imports no file reading) and sends with
+Engine.SendWithImages; the transcript says "with a picture". Tests cover each of those, the engine
+keeping a picture with its message across turns, and a broken picture stopping the message.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 

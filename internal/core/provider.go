@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -124,6 +125,9 @@ type Message struct {
 	// Canopy's instructions: an agent's report repeats whatever it read, so adapters send each one
 	// framed as data with its markup neutralised. See ReportText.
 	Reports []string `json:",omitempty"`
+
+	// Images are pictures a person attached to a user message, a screenshot of the bug for one.
+	Images []Image `json:",omitempty"`
 
 	// ToolCalls are tool invocations the assistant requested.
 	ToolCalls []ToolCall
@@ -532,3 +536,28 @@ func (m Message) WithoutReasoning() Message {
 	out.Native = &Native{Provider: m.Native.Provider, Data: data}
 	return out
 }
+
+// Image is a picture attached to a message: its media type, image/png, image/jpeg, image/gif or
+// image/webp, and its bytes, already sized for a model to read.
+type Image struct {
+	MediaType string
+	Data      []byte
+}
+
+// DataURL is the image as a data: URL, the form the OpenAI family takes.
+func (i Image) DataURL() string {
+	return "data:" + i.MediaType + ";base64," + base64.StdEncoding.EncodeToString(i.Data)
+}
+
+// HasImages reports whether any message in the request carries a picture.
+func (r Request) HasImages() bool {
+	for _, m := range r.Messages {
+		if len(m.Images) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrNoImages is what a route that cannot pass pictures on says, rather than dropping them.
+const ErrNoImages = "this route cannot take pictures yet, so none were sent; use an API key for a conversation that needs them"

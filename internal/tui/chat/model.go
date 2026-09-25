@@ -316,6 +316,9 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
+	// loadPictures finds and loads the pictures a message names; see SetPictures.
+	loadPictures func(prompt string) ([]core.Image, error)
+
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
@@ -1307,7 +1310,18 @@ func (m Model) send() (Model, tea.Cmd) {
 	// seconds into it. Pressing shift+tab and then enter is somebody who has chosen.
 	m.applyPendingMode()
 
-	if _, err := m.engine.Send(m.sessionID, prompt); err != nil {
+	// A picture named in the message, a screenshot dropped on the terminal for one, goes with it.
+	attached, err := m.pictures(prompt)
+	if err != nil {
+		m.err = err.Error()
+		return m, nil
+	}
+	if len(attached) > 0 {
+		_, err = m.engine.(imageSender).SendWithImages(m.sessionID, prompt, attached)
+	} else {
+		_, err = m.engine.Send(m.sessionID, prompt)
+	}
+	if err != nil {
 		// The message stays in the box. Clearing it on a failure would mean somebody has to retype
 		// what they just wrote because a provider was busy.
 		m.err = err.Error()
@@ -1325,6 +1339,9 @@ func (m Model) send() (Model, tea.Cmd) {
 	m.scroll = 0
 	m.err = ""
 	m.notice = ""
+	if len(attached) > 0 {
+		m.notice = "sent with " + pictureCount(len(attached))
+	}
 	m.refresh()
 	return m, nil
 }
@@ -2648,3 +2665,29 @@ func (m Model) toolKind(name string) (core.ToolKind, bool) {
 // acceptsPaste reports whether pasted text belongs in the message box now: not while a permission
 // question is waiting, whose keys are answers.
 func (m Model) acceptsPaste() bool { return !m.awaiting }
+
+// imageSender is an engine that can attach pictures to a message.
+type imageSender interface {
+	SendWithImages(sessionID, prompt string, images []core.Image) (string, error)
+}
+
+// SetPictures gives the box a way to find and load the pictures a message names. Nil sends every
+// message as words alone.
+func (m *Model) SetPictures(load func(prompt string) ([]core.Image, error)) { m.loadPictures = load }
+
+// pictures loads the pictures a message names, when the engine can send them. A picture that cannot
+// be read stops the message, so nobody sends "look at this" with nothing attached.
+func (m Model) pictures(prompt string) ([]core.Image, error) {
+	if _, ok := m.engine.(imageSender); !ok || m.loadPictures == nil {
+		return nil, nil
+	}
+	return m.loadPictures(prompt)
+}
+
+// pictureCount says how many pictures, in the singular for one.
+func pictureCount(n int) string {
+	if n == 1 {
+		return "a picture"
+	}
+	return itoa(n) + " pictures"
+}

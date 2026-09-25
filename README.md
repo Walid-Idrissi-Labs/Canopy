@@ -469,6 +469,15 @@ project definition with the same name wins only for that project. `$ARGUMENTS` i
 in one pass; there is no template evaluation or shell interpolation. When the placeholder is
 absent, arguments are appended under an `Arguments:` heading.
 
+## Pictures
+
+Name a picture in a message, or drop a screenshot on the terminal, which types its path, and it is
+sent with the message: PNG, JPEG and GIF are scaled so the long side is at most 1280 pixels, and a
+small WebP goes as it is. Up to five a message. A picture that cannot be read stops the message
+rather than sending the words without it, and the transcript says a message carried one. Anthropic
+and OpenAI-compatible keys take pictures; the subscription routes refuse them with a message rather
+than dropping them.
+
 ## Modes, on shift+tab
 
 Five postures, and each one is a trust level the permission layer enforces rather than a paragraph

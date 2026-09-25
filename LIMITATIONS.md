@@ -870,3 +870,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
   service manager. A question waiting for a client is announced on the server's error output only,
   with no desktop notification.
+- Pictures (X-09) are sent only on Anthropic and OpenAI-compatible keys; the subscription routes
+  refuse a message that carries one. They are kept with the conversation in the history database, so
+  every later turn sends them again, which costs what they cost the first time unless the provider's
+  cache holds them. A WebP larger than 3 MB is refused, since Canopy cannot scale one. An
+  OpenAI-compatible endpoint whose model takes no pictures answers with its own error.

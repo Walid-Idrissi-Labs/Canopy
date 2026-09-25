@@ -170,6 +170,9 @@ type AppOptions struct {
 	// "session-1" is the oldest chat in the database. Every launch opened it, while the agent that
 	// had just been created sat in a conversation nobody could see.
 	Session string
+
+	// Pictures finds and loads the pictures a message names.
+	Pictures func(prompt string) ([]core.Image, error)
 }
 
 // NewApp builds the application.
@@ -229,6 +232,7 @@ func NewAppConfigured(
 		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
+	app.chat.SetPictures(options.Pictures)
 	app.chat.SetAgent(options.Agent)
 	app.review.SetCostOutcomes(options.Costs)
 	app.review.SetJudge(engine.Judge)
