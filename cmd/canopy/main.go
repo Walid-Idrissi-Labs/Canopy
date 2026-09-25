@@ -21,7 +21,6 @@ usage:
   canopy pickup CODE   reopen the conversation named by a code Canopy printed
   canopy keys          manage provider credentials
   canopy run -p "..."  run a prompt through the full agent, without the interface (text, json, stream-json)
-  canopy run -p "..."  run a prompt through the full agent, without the interface (text, json, stream-json)
   canopy ask           send one message to a provider and stream the reply
   canopy search        find a message across every saved conversation
   canopy report        run this repository's checks and print a markdown summary

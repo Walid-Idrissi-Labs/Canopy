@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,8 +24,9 @@ import (
 // Exit codes for a headless run, so a script can tell what happened without reading prose.
 const (
 	exitOK        = 0
-	exitFailed    = 1 // the turn failed, was refused, or was cut off
-	exitUsage     = 2 // the command line or configuration is wrong
+	exitFailed    = 1   // the turn failed, was refused, or was cut off
+	exitUsage     = 2   // the command line or configuration is wrong
+	exitTimeout   = 124 // what timeout(1) uses
 	exitCancelled = 130
 )
 
@@ -79,6 +81,8 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	resolver.Renews(signInSources())
 	engine := session.New(resolver)
 	defer engine.Close()
+	// One prompt and done: a summary compacted at the end would be paid for and never read.
+	engine.SetAutoCompact(false)
 	if err := attachHistory(engine); err != nil {
 		_, _ = fmt.Fprintf(errOut, "warning: history is not being saved: %v\n", err)
 	}
@@ -152,6 +156,9 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	turn := follow(ctx, engine, events, main.SessionID, turnID, *format, out)
 	if ctx.Err() != nil && !turn.State.Terminal() {
 		engine.Cancel(main.SessionID)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return exitTimeout
+		}
 		return exitCancelled
 	}
 	return reportRun(turn, main.SessionID, *format, out, errOut)
