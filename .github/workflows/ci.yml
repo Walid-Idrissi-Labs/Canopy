@@ -41,6 +41,8 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+        env:
+          CANOPY_REQUIRE_SANDBOX: "1"
 
   lint:
     name: lint

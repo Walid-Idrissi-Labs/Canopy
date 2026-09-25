@@ -24,7 +24,7 @@ func run(t *testing.T, p Policy, script string) (string, error) {
 	t.Helper()
 	name, args, err := p.Wrap("/bin/sh", []string{"-c", script})
 	if err != nil {
-		t.Skipf("no sandbox here: %v", err)
+		t.Fatalf("wrapping: %v", err)
 	}
 	out, err := exec.Command(name, args...).CombinedOutput()
 	return string(out), err
@@ -32,9 +32,7 @@ func run(t *testing.T, p Policy, script string) (string, error) {
 
 // Writes land only beneath the writable directories.
 func TestWritesAreConfined(t *testing.T) {
-	if err := Available(); err != nil {
-		t.Skip(err)
-	}
+	requireSandbox(t)
 	allowed, other := t.TempDir(), t.TempDir()
 	p := Policy{Writable: clean([]string{allowed, "/dev"}), Network: NetworkOpen}
 	if out, err := run(t, p, "echo ok > "+filepath.Join(allowed, "a")); err != nil {
@@ -61,5 +59,17 @@ func TestTheDefaultPolicy(t *testing.T) {
 	if !strings.Contains(strings.Join(p.DenyRead, "\n"), filepath.Join(resolvedHome, ".ssh")) &&
 		!strings.Contains(strings.Join(p.DenyRead, "\n"), filepath.Join(home, ".ssh")) {
 		t.Errorf("~/.ssh is readable: %v", p.DenyRead)
+	}
+}
+
+// requireSandbox skips where there is no sandbox, except in CI, where CANOPY_REQUIRE_SANDBOX makes
+// a missing sandbox a failure so the platform path is known to have run.
+func requireSandbox(t *testing.T) {
+	t.Helper()
+	if err := Available(); err != nil {
+		if os.Getenv("CANOPY_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("CI requires a sandbox and there is none: %v", err)
+		}
+		t.Skip(err)
 	}
 }
