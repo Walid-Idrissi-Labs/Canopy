@@ -22,6 +22,10 @@ func landRepo(t *testing.T) string {
 		}
 	}
 	git("init", "-q", "-b", "main")
+	// In the repository, not only on these commands: landing makes its own merge commit, and a CI
+	// machine has no identity of its own for git to fall back on.
+	git("config", "user.email", "a@b")
+	git("config", "user.name", "a")
 	config := `{"tests":[{"name":"has-ok","command":{"argv":["test","-f","ok.txt"]},"required":true}]}`
 	if err := os.WriteFile(filepath.Join(dir, "canopy.json"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)
