@@ -1,6 +1,6 @@
 {
   "name": "solarized",
-  "about": "Solarized, light or dark to match the terminal; on light, four accents a hair deeper, to be read on it",
+  "about": "Solarized, light or dark to match the terminal; on light, four accents a hair deeper to be read on it, and the border a step stronger on both",
   "background": {"light": "#fdf6e3", "dark": "#002b36"},
   "text": {"light": "#586e75", "dark": "#93a1a1"},
   "muted": {"light": "#657b83", "dark": "#839496"},
@@ -9,7 +9,7 @@
   "danger": {"light": "#dc322f", "dark": "#dc322f"},
   "warning": {"light": "#b38700", "dark": "#b58900"},
   "info": {"light": "#299d94", "dark": "#2aa198"},
-  "border": {"light": "#eee8d5", "dark": "#073642"},
+  "border": {"light": "#e2dcca", "dark": "#0e3c48"},
   "highlight": {"light": "#eee8d5", "dark": "#073642"},
   "flame": {"light": "#cb4b16", "dark": "#cb4b16"},
   "flameCore": {"light": "#b58900", "dark": "#b58900"},

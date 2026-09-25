@@ -1,6 +1,6 @@
 {
   "name": "dracula",
-  "about": "Dracula on a dark terminal, Alucard on a light one",
+  "about": "Dracula on a dark terminal, Alucard on a light one; the quiet grey chosen by Canopy, since Dracula's comment colour is too faint for text",
   "background": {"light": "#fffbeb", "dark": "#282a36"},
   "text": {"light": "#1f1f1f", "dark": "#f8f8f2"},
   "muted": {"light": "#635d97", "dark": "#a7abbe"},
@@ -17,7 +17,7 @@
   "smokeFaint": {"light": "#9f9bc0", "dark": "#4d5578"},
   "codeKeyword": {"light": "#a3144d", "dark": "#ff79c6"},
   "codeString": {"light": "#846e15", "dark": "#f1fa8c"},
-  "codeComment": {"light": "#635d97", "dark": "#8a96c4"},
+  "codeComment": {"light": "#635d97", "dark": "#6272a4"},
   "codeNumber": {"light": "#644ac9", "dark": "#bd93f9"},
   "codeFunction": {"light": "#14710a", "dark": "#50fa7b"},
   "codeType": {"light": "#036a96", "dark": "#8be9fd"}

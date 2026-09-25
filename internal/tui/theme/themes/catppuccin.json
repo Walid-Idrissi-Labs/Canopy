@@ -20,5 +20,5 @@
   "codeComment": {"light": "#7c7f93", "dark": "#9399b2"},
   "codeNumber": {"light": "#fe640b", "dark": "#fab387"},
   "codeFunction": {"light": "#1e66f5", "dark": "#89b4fa"},
-  "codeType": {"light": "#179299", "dark": "#94e2d5"}
+  "codeType": {"light": "#bf7a18", "dark": "#f9e2af"}
 }

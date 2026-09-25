@@ -1,6 +1,6 @@
 {
   "name": "nord",
-  "about": "Nord's Polar Night on a dark terminal; its Snow Storm, with the colours deepened to be read, on a light one",
+  "about": "Nord's Polar Night on a dark terminal; on a light one its Snow Storm, with the accents and the border deepened to be read, and the quiet greys chosen by Canopy",
   "background": {"light": "#eceff4", "dark": "#2e3440"},
   "text": {"light": "#2e3440", "dark": "#eceff4"},
   "muted": {"light": "#4c566a", "dark": "#b4bccb"},
@@ -9,7 +9,7 @@
   "danger": {"light": "#a3333e", "dark": "#bf616a"},
   "warning": {"light": "#8a6a1f", "dark": "#ebcb8b"},
   "info": {"light": "#3b6ea5", "dark": "#81a1c1"},
-  "border": {"light": "#d8dee9", "dark": "#4c566a"},
+  "border": {"light": "#d2d7e2", "dark": "#4c566a"},
   "highlight": {"light": "#e5e9f0", "dark": "#3b4252"},
   "flame": {"light": "#a8552f", "dark": "#d08770"},
   "flameCore": {"light": "#8a6a1f", "dark": "#ebcb8b"},

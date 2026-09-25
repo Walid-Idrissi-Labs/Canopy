@@ -503,11 +503,14 @@ the wait entirely. The key is not the emergency stop, and never was: `esc` ends 
 `/theme` lists the palettes and `/theme nord` switches to one; `CANOPY_THEME=nord` starts in it.
 Canopy's own palette ships with catppuccin, dracula, gruvbox, nord, solarized and tokyonight, each in
 a light and a dark form that follow the terminal's background, and `mono`, which is what `NO_COLOR`
-gives. Every palette is checked for contrast against the background it was made for, and nothing
-outside the theme package is allowed to pick a colour, so a theme changes all of the interface.
+gives. Every shipped palette is checked for contrast against the background it was made for (text
+4.5:1, outcomes and quiet text 3:1, code 2.5:1, borders just visible), which deepened a few of the
+upstream colours, as each theme's own description says. Nothing outside the theme package is allowed
+to pick a colour, so a theme changes all of the interface.
 
 A theme of your own is a JSON file in `canopy/themes` under your config directory
-(`~/Library/Application Support` on macOS, `~/.config` on Linux), one colour per role, each either
+(`~/Library/Application Support` on macOS, `~/.config` on Linux, or `CANOPY_THEMES_DIR`), one colour
+per role, each either
 `"#rrggbb"` or `{"light": "#rrggbb", "dark": "#rrggbb"}`. The shipped ones in
 `internal/tui/theme/themes` are complete examples. A file that does not load is named, with the
 reason, by a bare `/theme`.

@@ -230,9 +230,11 @@ func TestTheThemeCommandChangesThePaletteAndListsTheChoices(t *testing.T) {
 // load is named there with the reason.
 func TestABareThemeCommandReadsThemeFilesAgain(t *testing.T) {
 	defer theme.Set(theme.Default)
+	// Registered before the variable is set, so it runs after it is restored and reads the files the
+	// rest of the tests expect.
+	t.Cleanup(theme.Reload)
 	dir := t.TempDir()
 	t.Setenv(theme.ThemesDirEnv, dir)
-	defer theme.Reload()
 	m := chat.New(&fakeEngine{session: core.Session{ID: "s1"}}, "s1", "canopy", "claude")
 	m.SetSize(200, 28)
 
@@ -249,10 +251,11 @@ func TestABareThemeCommandReadsThemeFilesAgain(t *testing.T) {
 	}
 	next, _ := run(m, "/theme")
 	view := plain(next.Body())
-	if !strings.Contains(view, "mine") || !strings.Contains(view, "broken.json") {
+	if !strings.Contains(view, "mine") || !strings.Contains(view, "broken.json") ||
+		!strings.Contains(view, "Canopy's own") {
 		t.Fatalf("the new theme file, or the broken one, is not mentioned:\n%s", view)
 	}
-	next, _ = run(next, "/theme mine")
+	_, _ = run(next, "/theme mine")
 	if got := theme.Current().Palette.Name; got != "mine" {
 		t.Fatalf("the palette is %q after asking for a theme written since the start", got)
 	}

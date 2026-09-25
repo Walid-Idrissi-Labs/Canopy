@@ -8024,11 +8024,16 @@ Themes beyond canopy and mono are JSON files: catppuccin, dracula, gruvbox, nord
 tokyonight ship embedded, each light and dark, and a person's own load from `canopy/themes` in the
 config directory. A file is checked colour by colour (every role present, each `#rrggbb`, no unknown
 keys, a plain name); one that fails, or takes a name already used, is skipped and named by a bare
-`/theme`, which also reads the files again. Tests: every shipped theme loads; each way a file can be
-wrong is refused and the missing colour named; a person's theme loads beside the shipped ones and
-cannot replace one; every palette clears WCAG contrast against the background it was made for (text
-4.5, outcomes and quiet text 3, comments 2.5), which moved seven light-variant colours a shade deeper;
-no file outside the theme package makes a colour, checked by planting one. Still open from V-02: the
+`/theme`, which also reads the files again and shows the current palette's description. A pipe, a
+device or a file over 64 KB is refused without being read, the reading happens outside the lock, and
+a file's name is quoted where it is shown. Tests: every shipped theme loads; each way a file can be
+wrong is refused and the missing colour named (a key twice, a key in other case, a stray half, a bad
+dark half, trailing data; a byte order mark is accepted); a person's theme loads beside the shipped
+ones in file-name order and cannot replace one, canopy and mono included; a pipe and /dev/zero do
+not hang the load; every palette clears WCAG contrast against the background it was made for (text
+4.5, outcomes and quiet text 3, code 2.5, borders 1.2), which moved a few upstream colours, each said
+in the theme's description; nothing in internal or cmd outside the theme package makes a colour,
+checked by planting four kinds of one. Still open from V-02: the
 component set (Card, Badge, StatusPill, KeyHint and the rest), since the screens already draw these
 through theme styles and a rewrite needs its own golden review.
 
