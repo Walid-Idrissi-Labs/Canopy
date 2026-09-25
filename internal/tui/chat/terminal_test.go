@@ -82,3 +82,25 @@ func TestAFinishedTurnIsDrawnInTheOrderItHappened(t *testing.T) {
 		t.Fatalf("the turn is not in the order it happened:\n%s", joined)
 	}
 }
+
+// A turn stopped part way through keeps what streamed after its last recorded step: the partial
+// answer is drawn after the steps rather than lost.
+func TestAnInterruptedTurnKeepsItsPartialReply(t *testing.T) {
+	call := core.ToolCall{ID: "c1", Name: "read_file", Input: []byte(`{"path":"main.go"}`)}
+	turn := core.Turn{
+		ID: "t1", State: core.TurnInterrupted,
+		Request:     core.Message{Role: core.RoleUser, Text: "read it"},
+		Text:        "Looking first.The answer was half",
+		ToolCalls:   []core.ToolCall{call},
+		ToolResults: []core.ToolResult{{CallID: "c1", Content: "package main"}},
+		Steps: []core.Message{
+			{Role: core.RoleAssistant, Text: "Looking first.", ToolCalls: []core.ToolCall{call}},
+			{Role: core.RoleUser, ToolResults: []core.ToolResult{{CallID: "c1", Content: "package main"}}},
+		},
+	}
+	joined := strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n")
+	read, partial := strings.Index(joined, "main.go"), strings.Index(joined, "The answer was half")
+	if partial < 0 || read < 0 || partial < read || strings.Count(joined, "Looking first.") != 1 {
+		t.Fatalf("the partial reply is missing, misplaced or doubled:\n%s", joined)
+	}
+}

@@ -158,7 +158,16 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 	// A finished turn with its steps recorded is drawn in the order it happened: what the model
 	// said, the tools it called and what they returned, then what it said next. Drawing the whole
 	// reply above every tool call put a conclusion written after reading a file above the read.
-	if len(turn.Steps) > 0 && terminal(turn.State) {
+	// A turn stopped part way through also has what streamed after its last recorded step, which
+	// only the running text holds; it is drawn after the steps, or the ordered view is skipped when
+	// the two do not line up.
+	var recorded strings.Builder
+	for _, step := range turn.Steps {
+		if step.Role == core.RoleAssistant {
+			recorded.WriteString(step.Text)
+		}
+	}
+	if len(turn.Steps) > 0 && terminal(turn.State) && strings.HasPrefix(turn.Text, recorded.String()) {
 		for _, step := range turn.Steps {
 			if step.Role != core.RoleAssistant {
 				continue
@@ -171,6 +180,10 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 				lines = append(lines, renderToolCall(
 					call, resultFor(turn, call), turn.State, width, kinds, detail)...)
 			}
+		}
+		if rest := terminalSafe(strings.TrimPrefix(turn.Text, recorded.String())); strings.TrimSpace(rest) != "" {
+			lines = append(lines, "")
+			lines = append(lines, RenderMarkdown(rest, width)...)
 		}
 		lines = append(lines, statusLines(turn, spinner, width)...)
 		return lines
