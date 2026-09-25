@@ -1,7 +1,10 @@
 package chat
 
 import (
+	"fmt"
+	"hash/fnv"
 	"strings"
+	"sync"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -100,4 +103,45 @@ func tokenStyle(tt chroma.TokenType, t theme.Theme) *lipgloss.Style {
 	default:
 		return nil
 	}
+}
+
+// maxChromaLines is the largest block the full lexer is used for; longer ones keep the quick
+// keyword highlighter, which costs a fraction as much.
+const maxChromaLines = 400
+
+var chromaCache = struct {
+	sync.Mutex
+	entries map[uint64][]string
+	order   []uint64
+}{entries: map[uint64][]string{}}
+
+// cachedChromaBlock is chromaBlock remembered by language, source, width and theme, since the same
+// finished block is drawn on every frame a conversation is on screen.
+func cachedChromaBlock(lang string, code []string, width int) ([]string, bool) {
+	h := fnv.New64a()
+	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%s\x00", lang, width, theme.Current().Palette.Name)
+	for _, line := range code {
+		_, _ = h.Write([]byte(line))
+		_, _ = h.Write([]byte{0})
+	}
+	key := h.Sum64()
+	chromaCache.Lock()
+	if lines, ok := chromaCache.entries[key]; ok {
+		chromaCache.Unlock()
+		return lines, true
+	}
+	chromaCache.Unlock()
+	lines, ok := chromaBlock(lang, code, width)
+	if !ok {
+		return nil, false
+	}
+	chromaCache.Lock()
+	chromaCache.entries[key] = lines
+	chromaCache.order = append(chromaCache.order, key)
+	for len(chromaCache.order) > 512 {
+		delete(chromaCache.entries, chromaCache.order[0])
+		chromaCache.order = chromaCache.order[1:]
+	}
+	chromaCache.Unlock()
+	return lines, true
 }

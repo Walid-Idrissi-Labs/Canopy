@@ -3,6 +3,7 @@ module github.com/Walid-Idrissi-Labs/Canopy
 go 1.26
 
 require (
+	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/anthropics/anthropic-sdk-go v1.61.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
@@ -16,7 +17,6 @@ require (
 )
 
 require (
-	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
