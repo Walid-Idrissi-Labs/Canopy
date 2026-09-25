@@ -59,6 +59,11 @@ type Spec struct {
 	Env     []string
 	Dir     string
 	Timeout time.Duration
+
+	// URL, instead of a command, reaches a server over the Streamable HTTP transport, with Headers
+	// sent on every request. Nothing is started.
+	URL     string
+	Headers map[string]string
 }
 
 // Session is a live connection to one server.
@@ -69,7 +74,7 @@ type Session struct {
 	// child owns the reap, which is what makes stopping the server's own children safe. See D-37.
 	child *execpkg.Child
 
-	rpc   *client
+	rpc   rpc
 	tools []core.Tool
 
 	// serverInfo and negotiated are what the server said it was, for display and for diagnosing a
@@ -123,6 +128,9 @@ type descriptor struct {
 func Connect(ctx context.Context, spec Spec) (*Session, error) {
 	if spec.Name == "" {
 		return nil, fmt.Errorf("an MCP server needs a name")
+	}
+	if spec.URL != "" {
+		return connectHTTP(ctx, spec)
 	}
 	if spec.Command == "" {
 		return nil, fmt.Errorf("the MCP server %q has no command", spec.Name)
@@ -347,6 +355,10 @@ func (s *Session) Close() {
 		// End of file on stdin, which is the protocol's own way of saying goodbye and the only signal
 		// a well behaved server should need.
 		s.rpc.close()
+		if s.child == nil {
+			// A remote server: nothing was started, so nothing is stopped.
+			return
+		}
 		time.Sleep(politeExit)
 
 		// SIGTERM to the group, and SIGKILL to it after the grace period. A server that has already
@@ -356,6 +368,25 @@ func (s *Session) Close() {
 
 		_ = s.child.Wait()
 	})
+}
+
+// connectHTTP reaches a remote server: the same handshake and tool list, with no process to start.
+func connectHTTP(ctx context.Context, spec Spec) (*Session, error) {
+	startCtx, cancel := context.WithTimeout(ctx, startTimeout)
+	defer cancel()
+	session := &Session{spec: spec, rpc: newHTTPClient(spec.URL, spec.Headers), stderr: &boundedBuffer{limit: maxStderrBytes}}
+	if err := session.handshake(startCtx); err != nil {
+		session.Close()
+		return nil, fmt.Errorf("could not reach %q at %s: %w", spec.Name, spec.URL, err)
+	}
+	descriptors, incomplete, err := session.list(startCtx)
+	if err != nil {
+		session.Close()
+		return nil, fmt.Errorf("could not list the tools on %q: %w", spec.Name, err)
+	}
+	session.incomplete = incomplete
+	session.tools = adapt(session, descriptors)
+	return session, nil
 }
 
 // explain adds whatever the server printed before dying.

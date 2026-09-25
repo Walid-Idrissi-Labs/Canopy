@@ -338,6 +338,22 @@ covers that exact configuration: change a hook, add an MCP server or add vendor 
 `.claude/settings.json`, and Canopy asks again. A repository's `"trust"` field may lower its agents to
 read-only or confined; it can never raise them above standard.
 
+An MCP server is a local program started over stdio, or a remote one reached over HTTP:
+
+```json
+{"mcp": [
+  {"name": "files", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]},
+  {"name": "issues", "url": "https://mcp.example.com/mcp",
+   "headers": {"Authorization": "Bearer ${ISSUES_TOKEN}"}}
+]}
+```
+
+A remote server's url must be https, or http to this machine, and a redirect is never followed. A
+header names its token as `${NAME}`, read from the environment Canopy starts in, so the committed
+file never holds it; the trust prompt shows which variables go to which url, a server whose variable
+is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
+cloud's) is never sent to a server a repository names.
+
 ## Landing an agent's work
 
 ```sh

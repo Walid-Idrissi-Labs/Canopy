@@ -71,6 +71,16 @@ func Describe(dir string, project config.Project) Request {
 		req.Hooks = append(req.Hooks, "on "+h.On+": "+h.Run)
 	}
 	for _, m := range project.MCP {
+		if m.URL != "" {
+			line := m.Name + ": " + m.URL
+			// What it sends as well as where: a header built from an environment variable carries that
+			// variable's value to this url, and the person approving must see which.
+			if vars := m.HeaderVariables(); len(vars) > 0 {
+				line += ", sending $" + strings.Join(vars, ", $")
+			}
+			req.MCP = append(req.MCP, line)
+			continue
+		}
 		req.MCP = append(req.MCP, m.Name+": "+strings.Join(append([]string{m.Command}, m.Args...), " "))
 	}
 
