@@ -825,3 +825,6 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   idle minutes; one that fails to answer twice in a row, such as one still indexing a large
   project, is left alone for the rest of the session. Only errors and warnings for the file just
   written are shown, up to twenty.
+- At most half the machine's CPUs worth of test runs execute at once, across every agent; the rest
+  wait, shown as queued. `CANOPY_MAX_TESTS` changes the number. Agents' own shell commands are not
+  limited this way.
