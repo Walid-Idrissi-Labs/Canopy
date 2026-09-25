@@ -2,12 +2,14 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/lsp"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 )
 
@@ -41,6 +43,7 @@ func attachLanguageServers(w *tools.Workspace) []core.Tool {
 	m, ok := languageServers.managers[w.Root()]
 	if !ok {
 		m = lsp.NewManager(w.Root())
+		m.SetWrap(func(argv []string) ([]string, error) { return confineServer(w, argv) })
 		languageServers.managers[w.Root()] = m
 	}
 	w.SetDiagnoser(m)
@@ -56,4 +59,25 @@ func closeLanguageServers() {
 	for _, m := range managers {
 		m.Close()
 	}
+}
+
+// confineServer runs a language server inside the workspace's sandbox, with its own cache writable:
+// it reads files the sandboxed agent writes, and a server that ran unconfined would carry what the
+// agent wrote out of the sandbox. Where there is no sandbox there is no server, unless the sandbox
+// was switched off on purpose with CANOPY_SANDBOX=off.
+func confineServer(w *tools.Workspace, argv []string) ([]string, error) {
+	if sandbox.Disabled() {
+		return argv, nil
+	}
+	policy := w.SandboxPolicy()
+	if cache, err := os.UserCacheDir(); err == nil {
+		for _, dir := range []string{"gopls", "typescript", "clangd", "pyright", "basedpyright", "rust-analyzer"} {
+			policy.Writable = append(policy.Writable, filepath.Join(cache, dir))
+		}
+	}
+	name, args, err := policy.Wrap(argv[0], argv[1:])
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{name}, args...), nil
 }

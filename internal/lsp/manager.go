@@ -20,6 +20,8 @@ type server struct {
 	argv       []string
 	languageID func(ext string) string
 	exts       []string
+	// options are sent at initialize: settings that stop a server running the project's own code.
+	options any
 }
 
 // known are the servers looked for on PATH, first found wins for an extension.
@@ -31,7 +33,11 @@ var known = []server{
 		exts: []string{".py"}, languageID: fixed("python")},
 	{name: "pyright-langserver", argv: []string{"pyright-langserver", "--stdio"},
 		exts: []string{".py"}, languageID: fixed("python")},
-	{name: "rust-analyzer", argv: []string{"rust-analyzer"}, exts: []string{".rs"}, languageID: fixed("rust")},
+	// Build scripts and procedural macros are the project's own code, run by the server; off, so an
+	// agent cannot have the server run something by writing it.
+	{name: "rust-analyzer", argv: []string{"rust-analyzer"}, exts: []string{".rs"}, languageID: fixed("rust"),
+		options: map[string]any{"cargo": map[string]any{"buildScripts": map[string]any{"enable": false}},
+			"procMacro": map[string]any{"enable": false}}},
 	{name: "clangd", argv: []string{"clangd"}, exts: []string{".c", ".h", ".cc", ".cpp", ".hpp"},
 		languageID: func(ext string) string {
 			if ext == ".c" || ext == ".h" {
@@ -61,17 +67,60 @@ type Manager struct {
 	wait    time.Duration
 	look    func(string) (string, error)
 	servers []server
+	// wrap turns a server's command into one confined by the sandbox, or refuses; nil runs it as is.
+	wrap func(argv []string) ([]string, error)
+	// idle is how long a server may go unused before it is stopped; started again when needed.
+	idle time.Duration
 
 	mu       sync.Mutex
 	clients  map[string]*Client
+	lastUsed map[string]time.Time
 	failed   map[string]bool
 	timeouts map[string]int
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // NewManager serves the workspace at root. Nothing starts until a file is checked.
 func NewManager(root string) *Manager {
-	return &Manager{root: root, wait: 8 * time.Second, look: exec.LookPath, servers: known,
-		clients: map[string]*Client{}, failed: map[string]bool{}, timeouts: map[string]int{}}
+	m := &Manager{root: root, wait: 8 * time.Second, look: exec.LookPath, servers: known,
+		idle: 10 * time.Minute, clients: map[string]*Client{}, lastUsed: map[string]time.Time{},
+		failed: map[string]bool{}, timeouts: map[string]int{}, stop: make(chan struct{})}
+	go m.reap()
+	return m
+}
+
+// SetWrap confines every server this manager starts; see Manager.wrap.
+func (m *Manager) SetWrap(wrap func(argv []string) ([]string, error)) { m.wrap = wrap }
+
+// reap stops servers nobody has used for a while: a worktree that was removed, or a language
+// touched once, would otherwise keep a server running until Canopy exits.
+func (m *Manager) reap() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.stop:
+			return
+		case <-ticker.C:
+			m.reapIdle(time.Now())
+		}
+	}
+}
+
+func (m *Manager) reapIdle(now time.Time) {
+	m.mu.Lock()
+	var stale []*Client
+	for name, c := range m.clients {
+		if now.Sub(m.lastUsed[name]) >= m.idle {
+			stale = append(stale, c)
+			delete(m.clients, name)
+		}
+	}
+	m.mu.Unlock()
+	for _, c := range stale {
+		c.Close()
+	}
 }
 
 // maxShown bounds what one check adds to a tool result.
@@ -136,18 +185,28 @@ func (m *Manager) clientFor(ctx context.Context, ext string) (server, *Client) {
 			continue
 		}
 		if c, ok := m.clients[srv.name]; ok {
+			m.lastUsed[srv.name] = time.Now()
 			return srv, c
 		}
-		if _, err := m.look(srv.argv[0]); err != nil {
+		path, err := m.look(srv.argv[0])
+		if err != nil {
 			continue
 		}
+		argv := append([]string{path}, srv.argv[1:]...)
+		if m.wrap != nil {
+			if argv, err = m.wrap(argv); err != nil {
+				m.failed[srv.name] = true
+				continue
+			}
+		}
 		// Secrets are kept from a server as from any other child: it runs the repository's toolchain.
-		c, err := Start(ctx, srv.argv, m.root, childenv.Inherited())
+		c, err := Start(ctx, argv, m.root, childenv.Inherited(), srv.options)
 		if err != nil {
 			m.failed[srv.name] = true
 			continue
 		}
 		m.clients[srv.name] = c
+		m.lastUsed[srv.name] = time.Now()
 		return srv, c
 	}
 	return server{}, nil
@@ -170,15 +229,15 @@ func (m *Manager) Find(ctx context.Context, kind, path, content string, line int
 	if column < 0 {
 		return "", fmt.Errorf("%q is not on line %d", symbol, line)
 	}
-	if err := client.Sync(path, srv.languageID(ext), content); err != nil {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := client.Sync(ctx, path, srv.languageID(ext), content); err != nil {
 		return "", err
 	}
 	method := "textDocument/definition"
 	if kind == "references" {
 		method = "textDocument/references"
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
 	found, err := client.Locations(ctx, method, path, line, column+1)
 	if err != nil {
 		return "", fmt.Errorf("%s did not answer: %w", srv.name, err)
@@ -197,7 +256,7 @@ func (m *Manager) Find(ctx context.Context, kind, path, content string, line int
 			fmt.Fprintf(&b, "%s:%d:%d\n", l.Path, l.Line, l.Column)
 			continue
 		}
-		fmt.Fprintf(&b, "%s:%d:%d  %s\n", filepath.ToSlash(rel), l.Line, l.Column, lineOf(l.Path, l.Line))
+		fmt.Fprintf(&b, "%s:%d:%d  %s\n", filepath.ToSlash(rel), l.Line, l.Column, lineOf(m.root, l.Path, l.Line))
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -223,9 +282,17 @@ func wordByte(b byte) bool {
 	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
 }
 
-// lineOf is one line of a file, trimmed, for showing a place in context.
-func lineOf(path string, n int) string {
-	data, err := os.ReadFile(path)
+// lineOf is one line of a file inside root, trimmed, for showing a place in context. A path that
+// resolves outside root, through a symlink for instance, shows nothing.
+func lineOf(root, path string, n int) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	if rel, err := filepath.Rel(root, resolved); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return ""
 	}
@@ -242,6 +309,7 @@ func lineOf(path string, n int) string {
 
 // Close stops every server started.
 func (m *Manager) Close() {
+	m.stopOnce.Do(func() { close(m.stop) })
 	m.mu.Lock()
 	clients := m.clients
 	m.clients = map[string]*Client{}

@@ -38,10 +38,15 @@ const (
 
 // Client is one running language server.
 type Client struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	root   string
-	writeM sync.Mutex
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	root  string
+	// out feeds the one goroutine that writes to the server, so nothing else ever blocks on a
+	// server that has stopped reading: a sender gives up at its deadline, and the reader answers
+	// the server's own requests without waiting.
+	out chan []byte
+	// syncM keeps a file's version numbers in the order they are sent.
+	syncM sync.Mutex
 
 	mu       sync.Mutex
 	nextID   int
@@ -54,7 +59,7 @@ type Client struct {
 }
 
 // Start runs a server in root and completes the handshake.
-func Start(ctx context.Context, argv []string, root string, env []string) (*Client, error) {
+func Start(ctx context.Context, argv []string, root string, env []string, options any) (*Client, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("no server command")
 	}
@@ -72,10 +77,12 @@ func Start(ctx context.Context, argv []string, root string, env []string) (*Clie
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	c := &Client{cmd: cmd, stdin: stdin, root: root, pending: map[int]chan json.RawMessage{},
-		diags: map[string][]Diagnostic{}, arrived: map[string]int{}, versions: map[string]int{},
+	c := &Client{cmd: cmd, stdin: stdin, root: root, out: make(chan []byte, 256),
+		pending: map[int]chan json.RawMessage{}, diags: map[string][]Diagnostic{},
+		arrived: map[string]int{}, versions: map[string]int{},
 		changed: make(chan struct{}), done: make(chan struct{})}
 	go c.read(bufio.NewReader(stdout))
+	go c.write()
 
 	params := map[string]any{
 		"processId": nil,
@@ -85,13 +92,16 @@ func Start(ctx context.Context, argv []string, root string, env []string) (*Clie
 		},
 		"workspaceFolders": []any{map[string]any{"uri": fileURI(root), "name": filepath.Base(root)}},
 	}
+	if options != nil {
+		params["initializationOptions"] = options
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if _, err := c.call(ctx, "initialize", params); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("initializing %s: %w", argv[0], err)
 	}
-	if err := c.notify("initialized", map[string]any{}); err != nil {
+	if err := c.notify(ctx, "initialized", map[string]any{}); err != nil {
 		c.Close()
 		return nil, err
 	}
@@ -105,7 +115,10 @@ func (c *Client) Check(ctx context.Context, path, languageID, content string, wa
 	c.mu.Lock()
 	before := c.arrived[uri]
 	c.mu.Unlock()
-	if err := c.Sync(path, languageID, content); err != nil {
+	sendCtx, cancel := context.WithTimeout(ctx, wait)
+	err := c.Sync(sendCtx, path, languageID, content)
+	cancel()
+	if err != nil {
 		return nil, err
 	}
 
@@ -150,17 +163,21 @@ type Location struct {
 }
 
 // Sync makes sure the server has a file's current content, opening it the first time.
-func (c *Client) Sync(path, languageID, content string) error {
+func (c *Client) Sync(ctx context.Context, path, languageID, content string) error {
 	uri := fileURI(path)
+	// Held across numbering and sending, so two edits of one file reach the server in the order of
+	// their versions and the server never keeps the older text.
+	c.syncM.Lock()
+	defer c.syncM.Unlock()
 	c.mu.Lock()
 	version := c.versions[uri] + 1
 	c.versions[uri] = version
 	c.mu.Unlock()
 	if version == 1 {
-		return c.notify("textDocument/didOpen", map[string]any{"textDocument": map[string]any{
+		return c.notify(ctx, "textDocument/didOpen", map[string]any{"textDocument": map[string]any{
 			"uri": uri, "languageId": languageID, "version": version, "text": content}})
 	}
-	return c.notify("textDocument/didChange", map[string]any{
+	return c.notify(ctx, "textDocument/didChange", map[string]any{
 		"textDocument":   map[string]any{"uri": uri, "version": version},
 		"contentChanges": []any{map[string]any{"text": content}},
 	})
@@ -226,7 +243,7 @@ func (c *Client) Close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_, _ = c.call(ctx, "shutdown", nil)
-	_ = c.notify("exit", nil)
+	_ = c.notify(ctx, "exit", nil)
 	_ = c.stdin.Close()
 	select {
 	case <-c.done:
@@ -256,7 +273,12 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	reply := make(chan json.RawMessage, 1)
 	c.pending[id] = reply
 	c.mu.Unlock()
-	if err := c.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+	}()
+	if err := c.send(ctx, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return nil, err
 	}
 	select {
@@ -269,19 +291,46 @@ func (c *Client) call(ctx context.Context, method string, params any) (json.RawM
 	}
 }
 
-func (c *Client) notify(method string, params any) error {
-	return c.send(map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
+func (c *Client) notify(ctx context.Context, method string, params any) error {
+	return c.send(ctx, map[string]any{"jsonrpc": "2.0", "method": method, "params": params})
 }
 
-func (c *Client) send(v any) error {
+// send queues one message for the writer, giving up at ctx's deadline rather than waiting on a
+// server that does not read.
+func (c *Client) send(ctx context.Context, v any) error {
 	body, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	c.writeM.Lock()
-	defer c.writeM.Unlock()
-	_, err = fmt.Fprintf(c.stdin, "Content-Length: %d\r\n\r\n%s", len(body), body)
-	return err
+	frame := append([]byte(fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))), body...)
+	// Room in the queue is taken first, so a send with an expired context still goes when it can.
+	select {
+	case c.out <- frame:
+		return nil
+	default:
+	}
+	select {
+	case c.out <- frame:
+		return nil
+	case <-c.done:
+		return errors.New("the language server stopped")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// write is the only writer to the server. A write that fails means the server is gone.
+func (c *Client) write() {
+	for {
+		select {
+		case frame := <-c.out:
+			if _, err := c.stdin.Write(frame); err != nil {
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
 }
 
 // read takes every message the server sends: replies to calls, published diagnostics, and requests
@@ -301,7 +350,15 @@ func (c *Client) read(r *bufio.Reader) {
 		case m.Method == "textDocument/publishDiagnostics":
 			c.published(m.Params)
 		case m.Method != "" && len(m.ID) > 0:
-			_ = c.send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": nil})
+			// Answered without blocking the reader: if the queue is full, from a goroutine of its own.
+			answer := map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": nil}
+			if err := c.send(expired, answer); err != nil {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					_ = c.send(ctx, answer)
+				}()
+			}
 		case m.Method == "" && len(m.ID) > 0:
 			id, err := strconv.Atoi(string(m.ID))
 			if err != nil {
@@ -355,6 +412,13 @@ func (c *Client) published(raw json.RawMessage) {
 	close(c.changed)
 	c.changed = make(chan struct{})
 }
+
+// expired is a context already done, for a send that must not wait at all.
+var expired = func() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}()
 
 func readFrame(r *bufio.Reader) ([]byte, error) {
 	length := -1

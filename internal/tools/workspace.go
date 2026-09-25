@@ -10,9 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ErrOutsideWorkspace is returned for a path that resolves outside the agent's directory.
@@ -39,6 +43,9 @@ type Workspace struct {
 	// swapped underneath between the check and the use would change what "inside" means, which is
 	// the classic shape of this bug.
 	root string
+
+	policyOnce sync.Once
+	policy     sandbox.Policy
 
 	// diagnoser, when set, checks each file the edit and write tools change and its report is
 	// added to their result.
@@ -211,4 +218,32 @@ func (w *Workspace) Relative(path string) string {
 		return path
 	}
 	return rel
+}
+
+// SandboxPolicy is the confinement for commands run in this workspace, worked out once: the
+// workspace, the git directory it shares with its repository when it is a worktree, temporary
+// directories and toolchain caches, with the git directories themselves kept unwritable.
+func (w *Workspace) SandboxPolicy() sandbox.Policy {
+	w.policyOnce.Do(func() {
+		gitPath := func(flag string) string {
+			cmd := osexec.Command("git", "rev-parse", "--path-format=absolute", flag)
+			cmd.Dir = w.Root()
+			cmd.Env = gitsafe.InheritedFor(w.Root())
+			out, err := cmd.Output()
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(out))
+		}
+		gitDir, common := gitPath("--git-dir"), gitPath("--git-common-dir")
+		var extra []string
+		if common != "" {
+			extra = append(extra, common)
+		}
+		// The workspace's own .git is named whether or not it exists yet, so a repository the agent
+		// creates is covered from its first command.
+		w.policy = sandbox.ForWorkspace(w.Root(), extra...).
+			WithGitDirs(gitDir, common, filepath.Join(w.Root(), ".git"))
+	})
+	return w.policy
 }
