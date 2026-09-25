@@ -288,13 +288,19 @@ func TestThePreviewListsOnlyWhatTheUndoChanges(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := taker.Preview(ctx, checkpoint)
+	got, state, err := taker.Preview(ctx, checkpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "bring back gone.txt\nremove has space.go\nrestore tracked.go"
 	if strings.Join(got, "\n") != want {
 		t.Fatalf("preview =\n%s\nwant\n%s", strings.Join(got, "\n"), want)
+	}
+	// Editing a listed file again leaves the list alone and changes the state.
+	write(t, dir, "tracked.go", "package main // ruined again\n")
+	again, state2, err := taker.Preview(ctx, checkpoint)
+	if err != nil || strings.Join(again, "\n") != want || state2 == state || state == "" {
+		t.Fatalf("a second edit: %v %q %q %v", again, state, state2, err)
 	}
 	if status := git(t, dir, "status", "--porcelain"); strings.Contains(status, "A ") {
 		t.Fatalf("previewing staged something: %q", status)

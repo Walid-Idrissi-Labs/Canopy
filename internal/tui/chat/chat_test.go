@@ -22,6 +22,7 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // screen rather than about conversations.
 type fakeEngine struct {
 	undoChanges     []string
+	undoState       string
 	budget, overall session.Budget
 	tools           *core.ToolRegistry
 	inventory       core.Inventory
@@ -222,14 +223,14 @@ func (e *fakeEngine) Undo(_ context.Context, _, turnID string) error {
 	return nil
 }
 
-func (e *fakeEngine) UndoPreview(_ context.Context, _, _ string) ([]string, error) {
+func (e *fakeEngine) UndoPreview(_ context.Context, _, _ string) (session.UndoPlan, error) {
 	if e.undoErr != nil {
-		return nil, e.undoErr
+		return session.UndoPlan{}, e.undoErr
 	}
 	if e.undoChanges != nil {
-		return e.undoChanges, nil
+		return session.UndoPlan{Changes: e.undoChanges, State: e.undoState}, nil
 	}
-	return []string{"M main.go"}, nil
+	return session.UndoPlan{Changes: []string{"M main.go"}, State: e.undoState}, nil
 }
 
 func model(engine chat.Engine) chat.Model {
