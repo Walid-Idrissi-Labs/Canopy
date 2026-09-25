@@ -54,8 +54,18 @@ func TestUndoRestoresTheWorkspaceAndKeepsTheConversation(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("/undo did nothing at all")
 	}
-	// Done off the update loop, like compaction, because restoring a checkpoint runs git over a
-	// whole worktree and the frame somebody is looking at must not block on it.
+	// Done off the update loop, like compaction, because working out and restoring a checkpoint
+	// runs git over a whole worktree and the frame somebody is looking at must not block on it.
+	next, _ = next.Update(cmd())
+
+	// The first /undo only shows what would change; nothing is restored on one command.
+	if len(engine.undone) != 0 {
+		t.Fatal("the first /undo restored the workspace without showing what it would change")
+	}
+	if !strings.Contains(plain(next.Body()), "main.go") {
+		t.Fatalf("the preview does not list what would change:\n%s", plain(next.Body()))
+	}
+	next, cmd = run(next, "/undo")
 	next, _ = next.Update(cmd())
 
 	if len(engine.undone) != 1 || engine.undone[0] != "turn-2" {
