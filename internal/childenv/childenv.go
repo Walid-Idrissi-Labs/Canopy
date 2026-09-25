@@ -50,15 +50,31 @@ func Secret(name string) bool {
 	return false
 }
 
-// WellKnown reports whether a variable is one of the general credentials: a code host's, a cloud's
-// or a model provider's. Unlike a project's own token, such a key opens far more than any one server
-// needs, and a repository must never be able to direct it anywhere.
+// general are credentials that open far more than any one server needs: clouds, CI, registries,
+// chat and payment services, and the URLs that carry passwords.
+var general = map[string]bool{
+	"AWS_ACCESS_KEY_ID": true, "AZURE_CLIENT_SECRET": true, "ARM_CLIENT_SECRET": true,
+	"CLOUDFLARE_API_TOKEN": true, "CLOUDFLARE_API_KEY": true, "DIGITALOCEAN_ACCESS_TOKEN": true,
+	"HEROKU_API_KEY": true, "VAULT_TOKEN": true, "DOCKER_PASSWORD": true, "DOCKERHUB_TOKEN": true,
+	"SLACK_BOT_TOKEN": true, "SLACK_TOKEN": true, "STRIPE_SECRET_KEY": true, "STRIPE_API_KEY": true,
+	"SENTRY_AUTH_TOKEN": true, "CARGO_REGISTRY_TOKEN": true, "TWINE_PASSWORD": true,
+	"CI_JOB_TOKEN": true, "DATABASE_URL": true, "REDIS_URL": true, "MONGODB_URI": true,
+	"GOOGLE_APPLICATION_CREDENTIALS": true, "FIREBASE_TOKEN": true, "VERCEL_TOKEN": true,
+	"NETLIFY_AUTH_TOKEN": true, "PULUMI_ACCESS_TOKEN": true, "TF_TOKEN_APP_TERRAFORM_IO": true,
+}
+
+// generalPrefixes are families of cloud and platform credentials.
+var generalPrefixes = []string{"AWS_", "AZURE_", "ARM_", "GOOGLE_", "GCLOUD_", "CLOUDSDK_", "DIGITALOCEAN_"}
+
+// WellKnown reports whether a variable is one of the general credentials: a code host's, a cloud's,
+// a CI system's, a registry's or a model provider's. Unlike a project's own token, such a key opens
+// far more than any one server needs, and a repository must never be able to direct it anywhere.
 func WellKnown(name string) bool {
 	upper := strings.ToUpper(name)
-	if exact[upper] {
+	if exact[upper] || general[upper] {
 		return true
 	}
-	for _, p := range prefixes {
+	for _, p := range append(append([]string(nil), prefixes...), generalPrefixes...) {
 		if strings.HasPrefix(upper, p) {
 			return true
 		}
