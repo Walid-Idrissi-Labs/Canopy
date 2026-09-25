@@ -569,6 +569,9 @@ func statusLines(turn core.Turn, spinner string, width int) []string {
 			// between "this did not work" and "this worked and was not kept".
 			return one(t.Warning.Render("[" + firstLine(turn.RolledBack) + "]"))
 		}
+		if footer := turnFooter(turn); footer != "" {
+			return one(t.Muted.Render(truncate(footer, width)))
+		}
 		return nil
 
 	case core.TurnInterrupted:
@@ -617,3 +620,43 @@ func firstLine(s string) string {
 // What an empty conversation shows used to live here, as a welcome block that flowed from the top
 // of the transcript with the message box pinned to the floor below it. It is a composed screen now
 // and lives in opening.go, because where the box sits is the whole point of it.
+
+// turnFooter is the quiet line under a finished turn: which model answered, how long it took, what
+// it read and wrote, how much of that came from the provider's cache, and what it cost. Where the
+// tokens go is the thing a person running several agents most needs to see and least often does.
+func turnFooter(turn core.Turn) string {
+	u := turn.Usage
+	input := u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens
+	if input == 0 && u.OutputTokens == 0 {
+		return ""
+	}
+	parts := []string{}
+	if turn.Model != "" {
+		parts = append(parts, turn.Model)
+	}
+	if !turn.StartedAt.IsZero() && turn.EndedAt.After(turn.StartedAt) {
+		parts = append(parts, formatDuration(turn.EndedAt.Sub(turn.StartedAt)))
+	}
+	io := fmt.Sprintf("%s in, %s out", compactCount(input), compactCount(u.OutputTokens))
+	if input > 0 && u.CacheReadTokens > 0 {
+		io += fmt.Sprintf(", %d%% cached", u.CacheReadTokens*100/input)
+	}
+	parts = append(parts, io)
+	if u.CostKnown {
+		parts = append(parts, fmt.Sprintf("$%.4f", u.CostUSD))
+	}
+	return "  " + strings.Join(parts, " · ")
+}
+
+func compactCount(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 10_000:
+		return fmt.Sprintf("%dk", n/1000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
