@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"strconv"
 	"strings"
 	"sync"
@@ -1091,6 +1092,17 @@ func (o *turnObserver) Text(chunk string) {
 }
 
 func (o *turnObserver) Notice(text string) {
+	// A search the provider ran is recorded in the audit trail like any tool call, marked as run by
+	// the provider, since no approval prompt saw it.
+	if query, ok := strings.CutPrefix(text, anthropic.WebSearchNotice); ok {
+		o.engine.mu.Lock()
+		trail := o.engine.trail
+		o.engine.mu.Unlock()
+		if trail != nil {
+			trail.Record(permission.Entry{At: time.Now(), AgentID: o.sessionID, SessionID: o.sessionID,
+				Tool: "web_search", Arguments: query, Result: "run by the provider"})
+		}
+	}
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
 		if n := len(t.Notices); n == 0 || t.Notices[n-1] != text {
 			t.Notices = append(t.Notices, text)

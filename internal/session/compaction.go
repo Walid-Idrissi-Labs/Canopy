@@ -149,6 +149,7 @@ func (e *Engine) summarise(
 		System:    e.systemPrompt(),
 		Messages:  history,
 		MaxTokens: summaryMaxTokens,
+		WebSearch: e.webSearchOn(),
 	}
 	if tools != nil {
 		request.Tools = tools.Definitions()

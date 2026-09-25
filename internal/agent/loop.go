@@ -215,7 +215,10 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			reply.calls = nil
 			reply.native = nil
 		}
-		if reply.text != "" || len(reply.calls) > 0 {
+		// A reply that holds only provider-side work, a search and its results before a pause, is
+		// still part of the conversation: dropping it would have the continuation run and bill the
+		// same searches again.
+		if reply.text != "" || len(reply.calls) > 0 || reply.native != nil {
 			outcome.Messages = append(outcome.Messages, core.Message{
 				Role:      core.RoleAssistant,
 				Text:      reply.text,

@@ -509,11 +509,14 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 
 ## Tools and permissions
 
-- Web search is Anthropic's server-side search tool, offered on every request to an Anthropic key
-  unless `CANOPY_WEB_SEARCH=off`, at most eight searches a request, billed by Anthropic per search.
-  It runs on Anthropic's side, so Canopy's permission prompt does not see each search; the transcript
-  says when one happens. OpenAI-compatible and delegated routes have no search, only `fetch_url` for a
-  page whose address is already known (Q-11 stays open for them).
+- Web search is Anthropic's server-side search tool, offered to Anthropic keys only when
+  `CANOPY_WEB_SEARCH=on`, at most eight searches a request, billed by Anthropic per search. It runs
+  on Anthropic's side, so no approval prompt sees a search and the query can carry what the model
+  has read; each one is shown in the transcript and recorded in the audit trail afterwards. Once on,
+  it is offered in every mode of the conversation, plan and confined included, because the tools a
+  conversation is sent cannot change between turns without discarding its cache. OpenAI-compatible
+  and delegated routes have no search, only `fetch_url` for a page whose address is already known
+  (Q-11 stays open for them).
 
 - There are five modes on `shift+tab`, and each is a trust level the permission layer enforces
   rather than an instruction the model is asked to follow (M-09, D-41). Plan reads and thinks;

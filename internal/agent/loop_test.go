@@ -940,3 +940,23 @@ func TestACallCutOffByTheLengthCapIsNotRecorded(t *testing.T) {
 		}
 	}
 }
+
+// A paused reply holding only provider-side work is kept, so the continuation does not run it again.
+func TestAPausedReplyWithOnlyProviderWorkIsKept(t *testing.T) {
+	native := &core.Native{Provider: "p", Data: []byte(`{"role":"assistant","content":[{"type":"server_tool_use"}]}`)}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		{{Kind: core.EventDone, StopReason: core.StopPauseTurn, Native: native}},
+		{{Kind: core.EventText, Text: "done"}, {Kind: core.EventDone, StopReason: core.StopEndTurn}},
+	}}
+	loop := &Loop{Client: client, Tools: core.NewToolRegistry(), Trust: core.TrustStandard}
+	outcome, err := loop.Run(context.Background(), core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "search"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := client.seen[1].Messages
+	if len(second) < 2 || second[len(second)-1].Native != native {
+		t.Fatalf("the continuation did not carry the paused reply: %+v", second)
+	}
+	_ = outcome
+}

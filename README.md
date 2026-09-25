@@ -42,8 +42,8 @@ things follow from taking that seriously:
   sounded most confident. Fanning out is not new. Using test evidence to settle it appears to be.
 
 What Canopy does not have yet: a sandbox, a language server, or agents that spawn agents. Web search
-is Anthropic's own server-side search, offered on Anthropic keys (`CANOPY_WEB_SEARCH=off` turns it
-off); other providers have `fetch_url` only.
+is Anthropic's own server-side search, offered on Anthropic keys when `CANOPY_WEB_SEARCH=on`; other
+providers have `fetch_url` only.
 Those are stated plainly rather than deferred quietly, and
 [LIMITATIONS.md](LIMITATIONS.md) is the honest list.
 

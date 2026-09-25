@@ -508,3 +508,7 @@ func webSearchTool(model string) sdk.ToolUnionParam {
 	}
 	return sdk.ToolUnionParam{OfWebSearchTool20250305: &sdk.WebSearchTool20250305Param{MaxUses: sdk.Int(8)}}
 }
+
+// WebSearchNotice begins the notice a completed server-side search is reported with; the query
+// follows it.
+const WebSearchNotice = "searched the web for: "

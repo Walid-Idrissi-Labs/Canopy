@@ -75,7 +75,7 @@ func (s *stream) queueDeltas(event sdk.MessageStreamEventUnion) {
 	// inside the reply rather than as a tool call Canopy made.
 	if start, ok := event.AsAny().(sdk.ContentBlockStartEvent); ok {
 		if use, ok := start.ContentBlock.AsAny().(sdk.ServerToolUseBlock); ok && use.Name == "web_search" {
-			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice, Text: "searching the web"})
+			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice, Text: "searching the web..."})
 		}
 		return
 	}
@@ -133,6 +133,18 @@ func (s *stream) finish() {
 		})
 	}
 
+	// Each search the provider ran is reported with its query once the reply is complete, so it
+	// reaches the audit trail as well as the screen.
+	for _, block := range s.message.Content {
+		if use, ok := block.AsAny().(sdk.ServerToolUseBlock); ok && use.Name == "web_search" {
+			var input struct {
+				Query string `json:"query"`
+			}
+			_ = json.Unmarshal([]byte(use.JSON.Input.Raw()), &input)
+			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice,
+				Text: WebSearchNotice + input.Query})
+		}
+	}
 	s.native = s.nativeMessage()
 	s.finishWith(mapStopReason(s.message.StopReason), nil)
 }
