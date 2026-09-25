@@ -79,6 +79,9 @@ type Environment struct {
 	// as the scratch worktree canopy land prepares does, setup runs install scripts the agent may
 	// have edited.
 	Sandbox *sandbox.Policy
+	// SandboxEnv is added to the setup's environment with the sandbox: the network proxy's variables,
+	// when the sandbox limits the network to it.
+	SandboxEnv []string
 }
 
 // CopyRequest is one allow list entry, measured, ready to be asked about.
@@ -232,7 +235,7 @@ func (r *Repo) Prepare(
 	// frequently contains a pipe or a conditional.
 	result, err := exec.Run(ctx, "/bin/sh", []string{"-c", env.Setup}, exec.Options{
 		Dir:     workspace.Path,
-		Env:     setupEnv(),
+		Env:     append(setupEnv(), proxyVars(env.SandboxEnv)...),
 		Timeout: timeout,
 		Sandbox: env.Sandbox,
 	})
@@ -480,6 +483,19 @@ func setupEnv() []string {
 		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY":
 			continue
 		default:
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// proxyVars keeps only the proxy settings from a sandbox's environment, since the rest of it is the
+// inherited environment setupEnv has already given, less what setup must not see.
+func proxyVars(env []string) []string {
+	var out []string
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasSuffix(strings.ToUpper(name), "_PROXY") {
 			out = append(out, entry)
 		}
 	}

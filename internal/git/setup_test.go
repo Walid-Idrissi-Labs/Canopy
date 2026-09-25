@@ -388,3 +388,22 @@ func TestASandboxedSetupStaysInTheWorktree(t *testing.T) {
 		t.Fatal("a sandboxed setup wrote outside its worktree")
 	}
 }
+
+// A sandboxed setup gets the sandbox's proxy settings, or an install could not reach its registry.
+func TestASandboxedSetupSeesTheProxy(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	r, _, workspace := prepared(t)
+	root, _ := filepath.EvalSymlinks(workspace.Path)
+	result, err := r.Prepare(context.Background(), workspace, Environment{
+		Setup:      `test "$HTTPS_PROXY" = http://127.0.0.1:9 && touch saw-proxy`,
+		Sandbox:    &sandbox.Policy{Writable: []string{root}, Devices: []string{"/dev/null"}, Network: sandbox.NetworkOpen},
+		SandboxEnv: []string{"PATH=/nonexistent", "HTTPS_PROXY=http://127.0.0.1:9"}}, yesToEverything())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.Path, "saw-proxy")); err != nil {
+		t.Fatalf("the setup did not see the proxy: %s", result.Output)
+	}
+}

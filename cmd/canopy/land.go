@@ -125,10 +125,10 @@ func runLand(args []string, stdin io.Reader, out io.Writer) error {
 		}
 		// The scratch worktree holds the agent's merged changes, so its setup, often an install
 		// that runs the project's own scripts, runs in the sandbox.
-		confined, _ := tools.Confinement(scratch)
+		confined, confinedEnv := tools.Confinement(scratch)
 		prepared, err := repo.Prepare(ctx, core.WorkspaceSnapshot{Path: scratch, Ownership: core.OwnershipManaged},
 			gitpkg.Environment{Setup: project.Setup, SetupTimeout: project.SetupDuration(), Copy: project.Copy,
-				Sandbox: confined},
+				Sandbox: confined, SandboxEnv: confinedEnv},
 			// Only files git ignores, from the person's own checkout into a worktree about to be
 			// deleted; overwriting a committed file is never confirmed here.
 			gitpkg.Confirm{Ignored: func(gitpkg.CopyRequest) bool { return true }})
