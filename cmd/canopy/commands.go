@@ -87,6 +87,9 @@ func runChat(resume string) error {
 		}
 	}
 
+	if err := gitsafe.CheckVersion(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 	project := loadProject(dir)
 	commands := loadCommands(project.Commands)
 

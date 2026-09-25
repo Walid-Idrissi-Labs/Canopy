@@ -9,8 +9,10 @@
 package gitsafe
 
 import (
+	"fmt"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -18,11 +20,15 @@ import (
 // overrides are applied as command line configuration through the environment, which git gives
 // the highest precedence below an explicit -c. The hooks path points at the null device: git looks
 // for hooks there, finds none, and runs none.
+//
+// attr.tree points attribute lookup at the empty tree, so a .gitattributes in the worktree cannot
+// attach a clean or smudge filter that .git/config defines; git status runs clean filters while it
+// compares file contents, which is every two seconds here. It needs git 2.42; see CheckVersion.
 var overrides = [][2]string{
 	{"core.fsmonitor", "false"},
 	{"core.hooksPath", os.DevNull},
 	{"protocol.ext.allow", "never"},
-	{"core.sshCommand", "ssh"},
+	{"attr.tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904"},
 }
 
 // Env returns base with git's configuration hardened. Any GIT_CONFIG_COUNT style variables already
@@ -51,3 +57,26 @@ func Env(base []string) []string {
 // Inherited is Env applied to the current process environment, for git invocations that need the
 // user's identity and credentials but must still not execute repository configuration.
 func Inherited() []string { return Env(childenv.Inherited()) }
+
+// CheckVersion reports a problem when the installed git is too old for these overrides to hold.
+// Configuration through the environment arrived in git 2.31 and attr.tree in 2.42; an older git
+// ignores them without complaint, which would leave every protection here silently off.
+func CheckVersion() error {
+	out, err := exec.Command("git", "version").Output()
+	if err != nil {
+		return fmt.Errorf("git could not be run: %w", err)
+	}
+	var major, minor int
+	fields := strings.Fields(string(out))
+	if len(fields) < 3 {
+		return fmt.Errorf("could not read the git version from %q", strings.TrimSpace(string(out)))
+	}
+	if _, err := fmt.Sscanf(fields[2], "%d.%d", &major, &minor); err != nil {
+		return fmt.Errorf("could not read the git version from %q", strings.TrimSpace(string(out)))
+	}
+	if major < 2 || (major == 2 && minor < 42) {
+		return fmt.Errorf("git %d.%d is older than 2.42, so a repository's own git configuration "+
+			"(filters, fsmonitor, hooks) can run commands when Canopy calls git; upgrade git", major, minor)
+	}
+	return nil
+}

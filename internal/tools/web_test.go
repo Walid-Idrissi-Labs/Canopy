@@ -3,8 +3,8 @@ package tools
 import (
 	"context"
 	"net/http"
-	"net/netip"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 

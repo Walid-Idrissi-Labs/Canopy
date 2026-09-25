@@ -539,7 +539,13 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   Git executes parts of its own configuration (`core.fsmonitor` on every status, hooks on commit), so
   an edit there would have been a command that runs on Canopy's next git call without a prompt. Every
   git process Canopy starts itself also runs with fsmonitor, hooks, external diff and textconv
-  switched off. The shell tool can still reach `.git` like any other path when shell is allowed.
+  switched off, and a repository's attributes cannot attach clean or smudge filters to those calls.
+  That needs git 2.42 or newer, and Canopy warns at startup when the installed git is older. The
+  commit and push you confirm yourself from the review screen also run with the repository's hooks
+  off, which includes your own pre-commit checks; signing (`commit.gpgSign`, `gpg.program`) and a
+  remote's `receivepack` still come from git configuration, so a hostile repository's config can run
+  a program at that moment. The shell tool can still reach `.git` like any other path when shell is
+  allowed.
 
 - Canopy cannot redact a secret that a child process prints to its own stdout. Redaction only covers
   what Canopy itself formats: the trust screen, service detail, and its own log rendering. Anything

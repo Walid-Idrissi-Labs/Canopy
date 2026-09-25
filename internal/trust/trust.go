@@ -18,7 +18,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -58,7 +60,8 @@ var vendorSettings = []string{
 
 // Describe builds the request for a directory and its loaded configuration.
 func Describe(dir string, project config.Project) Request {
-	req := Request{Dir: dir, Setup: project.Setup, Instructions: strings.TrimSpace(project.Instructions) != ""}
+	req := Request{Dir: dir, Setup: project.Setup,
+		Instructions: strings.TrimSpace(project.Instructions) != "" || len(project.Commands) > 0}
 	for _, t := range project.Tests {
 		req.Tests = append(req.Tests, t.Name+": "+describeCommand(t.Command))
 	}
@@ -77,7 +80,9 @@ func Describe(dir string, project config.Project) Request {
 		MCP          []config.MCPServer
 		Instructions string
 		Copy         []string
-	}{project.Setup, project.Tests, project.Hooks, project.MCP, project.Instructions, project.Copy})
+		Commands     []config.Command
+	}{project.Setup, project.Tests, project.Hooks, project.MCP, project.Instructions, project.Copy,
+		project.Commands})
 	h.Write(canonical)
 	for _, rel := range vendorSettings {
 		data, err := os.ReadFile(filepath.Join(dir, rel))
@@ -94,6 +99,7 @@ func Describe(dir string, project config.Project) Request {
 
 // Text is the request as a person reads it before deciding.
 func (r Request) Text() string {
+	r = r.printable()
 	var b strings.Builder
 	fmt.Fprintf(&b, "This repository's configuration asks Canopy to run or send:\n")
 	if r.Setup != "" {
@@ -109,7 +115,7 @@ func (r Request) Text() string {
 		fmt.Fprintf(&b, "  MCP server (started when Canopy opens): %s\n", m)
 	}
 	if r.Instructions {
-		fmt.Fprintf(&b, "  instructions that are sent to the model with every request\n")
+		fmt.Fprintf(&b, "  instructions or prompt commands that are sent to the model\n")
 	}
 	if len(r.VendorFiles) > 0 {
 		fmt.Fprintf(&b, "Vendor agent settings are also present and are read by a delegated agent started here:\n")
@@ -225,6 +231,11 @@ func (s *Store) write(dir string, rec *record) error {
 }
 
 func key(dir string) string {
+	// A repository and every worktree cut from it share one answer: an agent's worktree carries the
+	// same committed configuration, and asking again for each would make delegation unusable there.
+	if root := repositoryRoot(dir); root != "" {
+		dir = root
+	}
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = resolved
 	}
@@ -243,6 +254,7 @@ func Withhold(project config.Project) config.Project {
 	project.MCP = nil
 	project.Instructions = ""
 	project.Copy = nil
+	project.Commands = nil
 	return project
 }
 
@@ -281,4 +293,49 @@ func DelegationAllowed(dir string) error {
 	}
 	return fmt.Errorf("%w (%s); review it with `canopy trust` in %s",
 		ErrVendorSettingsUntrusted, strings.Join(req.VendorFiles, ", "), dir)
+}
+
+// printable strips control characters from everything the prompt shows, so a hook written with a
+// carriage return or an erase-line sequence cannot hide the real command behind a harmless one.
+func (r Request) printable() Request {
+	clean := func(s string) string {
+		return strings.Map(func(c rune) rune {
+			if c < 0x20 || c == 0x7f || (c >= 0x80 && c <= 0x9f) {
+				return '?'
+			}
+			return c
+		}, s)
+	}
+	out := r
+	out.Setup = clean(r.Setup)
+	out.Tests, out.Hooks, out.MCP, out.VendorFiles = nil, nil, nil, nil
+	for _, x := range r.Tests {
+		out.Tests = append(out.Tests, clean(x))
+	}
+	for _, x := range r.Hooks {
+		out.Hooks = append(out.Hooks, clean(x))
+	}
+	for _, x := range r.MCP {
+		out.MCP = append(out.MCP, clean(x))
+	}
+	for _, x := range r.VendorFiles {
+		out.VendorFiles = append(out.VendorFiles, clean(x))
+	}
+	return out
+}
+
+// repositoryRoot is the main working tree of the repository dir belongs to, or "" outside one.
+func repositoryRoot(dir string) string {
+	cmd := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd.Dir = dir
+	cmd.Env = gitsafe.Inherited()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	common := strings.TrimSpace(string(out))
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return common
 }
