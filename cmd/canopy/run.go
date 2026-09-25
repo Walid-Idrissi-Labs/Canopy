@@ -109,6 +109,18 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 		engine.WithInstructions(instructions.Text)
 	}
 
+	// Checked before anything is spent: -verify with nothing to verify against would exit 0 on
+	// a run nobody checked, and a script reading that status would take it for green.
+	if *escalate > 0 && !*verify {
+		_, _ = fmt.Fprintln(errOut, "-escalate retries when the tests fail, so it needs -verify")
+		return exitUsage
+	}
+	if *verify && len(testsFor(project)) == 0 {
+		_, _ = fmt.Fprintln(errOut, "-verify needs the project's tests, and none are configured or the "+
+			"repository is not trusted; run canopy trust, or add tests to canopy.json")
+		return exitUsage
+	}
+
 	registry, err := toolsFor(dir)
 	if err != nil {
 		_, _ = fmt.Fprintf(errOut, "warning: tools are not available: %v\n", err)
@@ -301,8 +313,7 @@ func loadProjectRaw(dir string, errOut io.Writer) config.Project {
 func verifyWorkspace(ctx context.Context, dir string, project config.Project, errOut io.Writer) (string, bool) {
 	tests := testsFor(project)
 	if len(tests) == 0 {
-		_, _ = fmt.Fprintln(errOut, "warning: -verify was asked for but no tests are configured, or the repository is not trusted")
-		return "", true
+		return "no tests are configured", false
 	}
 	var failures []string
 	for i, test := range tests {
@@ -324,9 +335,11 @@ func nextEffort(e core.Effort) core.Effort {
 	switch e {
 	case core.EffortLow:
 		return core.EffortMedium
-	case core.EffortMedium, core.EffortDefault:
+	case core.EffortMedium:
 		return core.EffortHigh
-	case core.EffortHigh:
+	case core.EffortHigh, core.EffortDefault:
+		// The default is already high on current models, so stepping from it to high would
+		// retry at the same depth and pay again for the same answer.
 		return core.EffortXHigh
 	default:
 		return core.EffortMax

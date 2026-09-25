@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -158,5 +159,37 @@ func TestARedRunIsEscalatedUntilItPasses(t *testing.T) {
 	}
 	if !strings.Contains(errOut.String(), "trying again at medium effort") {
 		t.Fatalf("the retry did not raise the effort:\n%s", errOut.String())
+	}
+}
+
+// -verify with nothing to verify is refused before any money is spent: exiting 0 on a run nobody
+// checked would read as green to the script that asked. So is -escalate without -verify.
+func TestVerifyingWithNoTestsIsRefused(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
+	defer srv.Close()
+	work := headlessHome(t, srv)
+	// Configured but not trusted, so headless withholds it.
+	config := `{"tests":[{"name":"never","command":{"argv":["false"]},"required":true}]}`
+	if err := os.WriteFile(filepath.Join(work, "canopy.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-p", "x", "-key", "fake", "-verify"},
+		{"-p", "x", "-key", "fake", "-escalate", "2"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := runHeadless(args, strings.NewReader(""), &out, &errOut); code != exitUsage {
+			t.Errorf("%v exited %d:\n%s", args, code, errOut.String())
+		}
+	}
+	if n := requests.Load(); n != 0 {
+		t.Fatalf("%d requests were made before refusing", n)
+	}
+}
+
+func TestEscalationRaisesTheDefaultEffort(t *testing.T) {
+	if got := nextEffort(core.EffortDefault); got != core.EffortXHigh {
+		t.Fatalf("the default steps to %s, which is where current models already sit", got)
 	}
 }
