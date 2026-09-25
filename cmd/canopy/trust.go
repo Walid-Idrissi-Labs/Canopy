@@ -25,7 +25,7 @@ func gateProject(dir string, project config.Project, in io.Reader, out io.Writer
 	}
 	store, err := trust.Open()
 	if err != nil {
-		fmt.Fprintf(out, "warning: repository trust cannot be read (%v); its commands will not run\n", err)
+		_, _ = fmt.Fprintf(out, "warning: repository trust cannot be read (%v); its commands will not run\n", err)
 		return trust.Withhold(project)
 	}
 	if store.Trusted(req) {
@@ -33,21 +33,21 @@ func gateProject(dir string, project config.Project, in io.Reader, out io.Writer
 	}
 
 	if store.Changed(req) {
-		fmt.Fprintln(out, "This repository's configuration has changed since you trusted it.")
+		_, _ = fmt.Fprintln(out, "This repository's configuration has changed since you trusted it.")
 	}
-	fmt.Fprint(out, req.Text())
+	_, _ = fmt.Fprint(out, req.Text())
 	if !interactive {
-		fmt.Fprintln(out, "warning: not trusted, so none of it runs. Run `canopy trust` here to review and accept it.")
+		_, _ = fmt.Fprintln(out, "warning: not trusted, so none of it runs. Run `canopy trust` here to review and accept it.")
 		return trust.Withhold(project)
 	}
-	fmt.Fprint(out, "Trust this and let Canopy run it? [y/N] ")
+	_, _ = fmt.Fprint(out, "Trust this and let Canopy run it? [y/N] ")
 	answer, _ := bufio.NewReader(in).ReadString('\n')
 	if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-		fmt.Fprintln(out, "Not trusted. Canopy opens without running any of it; `canopy trust` changes that.")
+		_, _ = fmt.Fprintln(out, "Not trusted. Canopy opens without running any of it; `canopy trust` changes that.")
 		return trust.Withhold(project)
 	}
 	if err := store.Grant(req); err != nil {
-		fmt.Fprintf(out, "warning: could not record the answer (%v); it applies to this run only\n", err)
+		_, _ = fmt.Fprintf(out, "warning: could not record the answer (%v); it applies to this run only\n", err)
 	}
 	return project
 }
@@ -74,12 +74,12 @@ func runTrust(args []string, out io.Writer) error {
 		}
 		req := trust.Describe(dir, project)
 		if req.Empty() {
-			fmt.Fprintln(out, "This repository's configuration asks Canopy to run nothing, so there is nothing to trust.")
+			_, _ = fmt.Fprintln(out, "This repository's configuration asks Canopy to run nothing, so there is nothing to trust.")
 			return nil
 		}
 		if store.Trusted(req) {
-			fmt.Fprint(out, req.Text())
-			fmt.Fprintln(out, "Already trusted, exactly as shown.")
+			_, _ = fmt.Fprint(out, req.Text())
+			_, _ = fmt.Fprintln(out, "Already trusted, exactly as shown.")
 			return nil
 		}
 		gateProject(dir, project, os.Stdin, out, isTerminal(os.Stdin))
@@ -92,7 +92,7 @@ func runTrust(args []string, out io.Writer) error {
 			return err
 		}
 		for _, d := range dirs {
-			fmt.Fprintln(out, d)
+			_, _ = fmt.Fprintln(out, d)
 		}
 		return nil
 	default:

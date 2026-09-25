@@ -85,7 +85,7 @@ func Describe(dir string, project config.Project) Request {
 			continue
 		}
 		req.VendorFiles = append(req.VendorFiles, rel)
-		fmt.Fprintf(h, "\x00%s\x00", rel)
+		_, _ = fmt.Fprintf(h, "\x00%s\x00", rel)
 		h.Write(data)
 	}
 	req.fingerprint = hex.EncodeToString(h.Sum(nil))
