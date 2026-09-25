@@ -1,0 +1,20 @@
+package store
+
+import (
+	"errors"
+	"io/fs"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestAMissingFileIsRecognisable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "absent.json")
+	_, err := Load(path)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("Load(%q) = %v; callers cannot tell the file is missing", path, err)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("the error lost the path: %v", err)
+	}
+}

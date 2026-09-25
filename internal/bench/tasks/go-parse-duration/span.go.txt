@@ -1,0 +1,22 @@
+package span
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// ParseSpan reads spans such as "2h", "45m" or "1h30m" and returns the total in minutes.
+func ParseSpan(s string) (int, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty span")
+	}
+	if h, ok := strings.CutSuffix(s, "h"); ok {
+		n, err := strconv.Atoi(h)
+		return n * 60, err
+	}
+	if m, ok := strings.CutSuffix(s, "m"); ok {
+		return strconv.Atoi(m)
+	}
+	return 0, fmt.Errorf("span %q has no unit", s)
+}

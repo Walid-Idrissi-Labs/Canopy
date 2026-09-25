@@ -1,0 +1,14 @@
+package sum
+
+import "testing"
+
+func TestTotal(t *testing.T) {
+	for _, c := range []struct {
+		in   []int
+		want int
+	}{{nil, 0}, {[]int{4}, 4}, {[]int{1, 2, 3}, 6}} {
+		if got := Total(c.in); got != c.want {
+			t.Errorf("Total(%v) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
