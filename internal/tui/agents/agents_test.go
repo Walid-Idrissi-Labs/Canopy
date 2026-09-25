@@ -598,7 +598,7 @@ func TestAnAgentIsStoppedAndRemovedFromTheList(t *testing.T) {
 	if len(e.removed) != 0 {
 		t.Fatal("an x after another key removed without asking again")
 	}
-	m = key(m, "x")
+	_ = key(m, "x")
 	if len(e.removed) != 1 || e.removed[0] != "worker" {
 		t.Fatalf("removed %v", e.removed)
 	}

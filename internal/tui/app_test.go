@@ -792,7 +792,7 @@ func (e *stubEngine) Aside(_ context.Context, _, question string) (string, error
 func (e *stubEngine) Asides(string) []session.Aside { return nil }
 
 func (e *stubEngine) Steering(string) []string      { return nil }
-func (e *stubEngine) RemoveAgent(string) error     { return nil }
+func (e *stubEngine) RemoveAgent(string) error      { return nil }
 func (e *stubEngine) ClearSteering(string) []string { return nil }
 
 // RenameCredential records what the application asked for, and moves the sessions the stub is

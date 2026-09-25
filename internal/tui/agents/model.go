@@ -148,8 +148,8 @@ type Model struct {
 
 	// removing names the agent a first x asked about removing; a second x on it removes it.
 	removing string
-	draft            string
-	err              string
+	draft    string
+	err      string
 	// notice is a one-keystroke outcome from the grid, such as a request disappearing before an
 	// answer arrived. The application draws it in the footer, where it cannot disturb pane geometry.
 	notice string
