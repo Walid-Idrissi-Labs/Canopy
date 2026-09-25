@@ -58,6 +58,7 @@ const (
 type ReviewModel struct {
 	source ReviewSource
 	costs  CostOutcomeSource
+	cache  *reviewCache
 
 	pane    reviewPane
 	cursor  int
@@ -81,7 +82,7 @@ type ReviewModel struct {
 // NewReview builds the review screen. A nil source is allowed and renders an explanation, because
 // Canopy runs in directories that are not repositories and the screen still has to say something.
 func NewReview(source ReviewSource) ReviewModel {
-	return ReviewModel{source: source, width: 80, height: 20}
+	return ReviewModel{source: source, width: 80, height: 20, cache: &reviewCache{}}
 }
 
 func (m *ReviewModel) SetSize(width, height int) {
@@ -305,7 +306,7 @@ func (m ReviewModel) rows() int {
 		ranking := m.source.Rank()
 		return len(ranking.Ranked) + len(ranking.Unranked)
 	case paneOverlap:
-		overlaps, err := m.source.Overlaps()
+		overlaps, err := m.cached().Overlaps(m.source)
 		if err != nil {
 			return 0
 		}
@@ -404,7 +405,7 @@ func (m ReviewModel) Body() string {
 		if m.costs == nil {
 			lines = []string{styleMuted.Render("cost outcome history is not available")}
 		} else {
-			history, err := m.costs.CostOutcomes()
+			history, err := m.cached().CostOutcomes(m.costs)
 			if err != nil {
 				lines = []string{styleCaveat.Render(err.Error())}
 			} else {
@@ -436,7 +437,7 @@ func (m ReviewModel) Body() string {
 // in one file usually merge cleanly, and running a real three way merge per pair on every render to
 // find out would cost more than it saves.
 func (m ReviewModel) overlapLines() []string {
-	overlaps, err := m.source.Overlaps()
+	overlaps, err := m.cached().Overlaps(m.source)
 	if err != nil {
 		return []string{styleCaveat.Render(err.Error())}
 	}
@@ -668,4 +669,12 @@ func (m ReviewModel) Footer() string {
 	default:
 		return Keys(m.width, "j/k", "move", "enter", "changes", "tab", "ranking", "esc", "agents")
 	}
+}
+
+// cached returns the model's short-lived cache, creating one for a model built without NewReview.
+func (m ReviewModel) cached() *reviewCache {
+	if m.cache == nil {
+		return &reviewCache{}
+	}
+	return m.cache
 }

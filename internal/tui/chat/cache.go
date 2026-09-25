@@ -61,8 +61,12 @@ const cacheLimit = 2000
 // cachedTurn renders a turn, reusing the last render when the turn cannot have changed.
 func cachedTurn(sessionID string, turn core.Turn, width int, spinner string, kinds KindOf, detail Detail) []string {
 	if !terminal(turn.State) || turn.ID == "" || sessionID == "" {
+		if turn.ID != "" && sessionID != "" {
+			detail.streamKey = sessionID + "|" + turn.ID
+		}
 		return renderTurn(turn, width, spinner, kinds, detail)
 	}
+	forgetStreaming(sessionID + "|" + turn.ID)
 
 	// Resolve the callback once. Besides making its answers part of the key, this guarantees the
 	// render uses the exact classifications that produced that key if a registry is being replaced
