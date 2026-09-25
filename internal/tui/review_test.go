@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -64,18 +64,18 @@ func (f *fakeReview) Patch(agent, path string) (string, error) {
 
 func press(m ReviewModel, keys ...string) ReviewModel {
 	for _, key := range keys {
-		var msg tea.KeyMsg
+		var msg tea.KeyPressMsg
 		switch key {
 		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
+			msg = keyCode(tea.KeyEnter)
 		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
+			msg = keyCode(tea.KeyEsc)
 		case "tab":
-			msg = tea.KeyMsg{Type: tea.KeyTab}
+			msg = keyCode(tea.KeyTab)
 		case " ":
-			msg = tea.KeyMsg{Type: tea.KeySpace}
+			msg = keyCode(tea.KeySpace)
 		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+			msg = keyText(key)
 		}
 		m, _ = m.Update(msg)
 	}
@@ -188,7 +188,7 @@ func TestOpeningAnAgentShowsItsFilesAndThenItsDiff(t *testing.T) {
 	if model.Pane() != "patch" {
 		t.Fatalf("enter on a file landed on %q", model.Pane())
 	}
-	body := model.Body()
+	body := stripANSI(model.Body())
 	if !strings.Contains(body, "return true") {
 		t.Errorf("the patch is missing its content:\n%s", body)
 	}
@@ -396,7 +396,7 @@ func TestCommittingNeedsASubjectAndAnExplicitKey(t *testing.T) {
 		t.Fatalf("enter committed %q", source.committed)
 	}
 
-	saving, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	saving, _ := model.Update(keyCode('s', tea.ModCtrl))
 	if source.committed != "" {
 		t.Error("an empty subject was committed")
 	}
@@ -411,12 +411,12 @@ func TestAWrittenSubjectIsWhatGetsCommitted(t *testing.T) {
 
 	for _, r := range "stop refreshing an expired token" {
 		if r == ' ' {
-			model, _ = model.Update(tea.KeyMsg{Type: tea.KeySpace})
+			model, _ = model.Update(keyCode(tea.KeySpace))
 			continue
 		}
-		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model, _ = model.Update(keyText(string([]rune{r})))
 	}
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, _ = model.Update(keyCode('s', tea.ModCtrl))
 
 	if !strings.HasPrefix(source.committed, "feat(auth): stop refreshing an expired token") {
 		t.Errorf("the message committed was %q", source.committed)
@@ -475,7 +475,7 @@ func TestTheRankingCanAskForAnOpinion(t *testing.T) {
 	})
 	model.session = "conversation-1"
 	model = press(model, "tab")
-	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	next, cmd := model.Update(keyText("o"))
 	if cmd == nil {
 		t.Fatal("o on the ranking did nothing")
 	}
@@ -495,7 +495,7 @@ func TestAnOpinionOnAnOldRankingIsHidden(t *testing.T) {
 	model, source := loaded(t)
 	model.SetJudge(func(context.Context, string, []core.JudgeCandidate) (string, error) { return "alpha is fine", nil })
 	model = press(model, "tab")
-	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	next, cmd := model.Update(keyText("o"))
 	next = next.judged(cmd().(judgedMsg))
 	if !strings.Contains(stripANSI(next.Body()), "alpha is fine") {
 		t.Fatal("the opinion was not shown")
@@ -504,5 +504,21 @@ func TestAnOpinionOnAnOldRankingIsHidden(t *testing.T) {
 	body := stripANSI(next.Body())
 	if strings.Contains(body, "alpha is fine") || !strings.Contains(body, "ranking changed since") {
 		t.Fatalf("an opinion about an old ranking is still shown:\n%s", body)
+	}
+}
+
+// A pasted subject is one line: a newline copied with it is not enter, and nothing is committed.
+func TestAPastedSubjectIsOneLine(t *testing.T) {
+	model, source := loaded(t)
+	model = press(model, "enter", "c")
+	if model.Pane() != "commit" {
+		t.Fatalf("c on the file list landed on %q", model.Pane())
+	}
+	model = model.Paste("tighten the \x1b[2Jparser\n")
+	if source.committed != "" {
+		t.Fatalf("a paste committed %q", source.committed)
+	}
+	if !strings.Contains(model.Body(), "tighten the [2Jparser") || strings.Contains(model.Body(), "\x1b[2J") {
+		t.Fatalf("the pasted subject is not shown as one clean line:\n%s", model.Body())
 	}
 }

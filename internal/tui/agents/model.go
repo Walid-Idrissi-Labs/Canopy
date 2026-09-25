@@ -21,11 +21,12 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -190,7 +191,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, flameTick(m.generation)
 	}
 
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		m.refresh()
 		// Work may have started since the last look, and the ticker only exists while there is
@@ -371,15 +372,23 @@ func (m *Model) SetVisible(visible bool) tea.Cmd {
 	return m.ensureFlame()
 }
 
+// Paste types pasted text into a new agent's name, while one is being named.
+func (m Model) Paste(text string) Model {
+	if m.naming {
+		m.draft += paste.Line(text)
+	}
+	return m
+}
+
 // typeName handles the keys while a new agent is being named.
-func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
-	switch key.Type {
-	case tea.KeyEsc:
+func (m Model) typeName(key tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch {
+	case key.Code == tea.KeyEsc:
 		m.naming = false
 		m.draft = ""
 		return m, nil
 
-	case tea.KeyEnter:
+	case key.Code == tea.KeyEnter:
 		// Guarded as well as constructed properly, because a screen that cannot create agents should
 		// say so rather than take the program down. This is what the nil engine did before the
 		// application was made to supply one.
@@ -399,25 +408,21 @@ func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
 		m.err = ""
 		return m, nil
 
-	case tea.KeyBackspace:
+	case key.Code == tea.KeyBackspace:
 		if runes := []rune(m.draft); len(runes) > 0 {
 			m.draft = string(runes[:len(runes)-1])
 		}
 		return m, nil
 
-	case tea.KeyRunes:
-		m.draft += string(key.Runes)
-		return m, nil
-
-	case tea.KeySpace:
-		m.draft += " "
+	case key.Text != "" && key.Mod&(tea.ModCtrl|tea.ModAlt) == 0:
+		m.draft += key.Text
 		return m, nil
 	}
 	return m, nil
 }
 
 // confirmDirect owns the second, deliberately separate step of agent creation.
-func (m Model) confirmDirect(key tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) confirmDirect(key tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch key.String() {
 	case "esc":
 		m.confirmingDirect = false

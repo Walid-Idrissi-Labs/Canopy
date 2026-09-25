@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
@@ -52,7 +52,7 @@ func TestASubagentsQuestionAppearsWithItsNameAndScope(t *testing.T) {
 		}
 	}
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(keyCode('g', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatal("ctrl+g did not ask the application to open the request")
 	}
@@ -70,7 +70,7 @@ func TestTypingAndSendingAnswersNobodyElsesQuestion(t *testing.T) {
 	m = typeText(m, "y")
 	m = typeText(m, "a")
 	m = typeText(m, "carry on with the refactor")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if len(engine.answered) != 0 {
 		t.Errorf("typing answered somebody else's question: %+v", engine.answered)
@@ -90,7 +90,7 @@ func TestFocusingOpensTheFullRequestBeforeYesCanApprove(t *testing.T) {
 	const command = "deploy --region eu-west-1 --account production --confirm irreversible"
 	engine, m := visited(waitingOn("worker-2", "s2", command))
 
-	unchanged, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	unchanged, cmd := m.Update(keyCode('g', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatal("ctrl+g did not produce a switch")
 	}
@@ -98,7 +98,7 @@ func TestFocusingOpensTheFullRequestBeforeYesCanApprove(t *testing.T) {
 
 	// The compact panel never owns y, even after the focus keystroke. Until the application applies
 	// the switch, it remains ordinary text in this conversation.
-	unchanged, _ = unchanged.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	unchanged, _ = unchanged.Update(keyText(string([]rune{'y'})))
 	if len(engine.answered) != 0 {
 		t.Fatalf("the summary panel approved a request: %+v", engine.answered)
 	}
@@ -112,7 +112,7 @@ func TestFocusingOpensTheFullRequestBeforeYesCanApprove(t *testing.T) {
 		t.Fatalf("the asking conversation did not show the canonical command in full:\n%s", view)
 	}
 
-	unchanged, _ = unchanged.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	unchanged, _ = unchanged.Update(keyText(string([]rune{'y'})))
 	if len(engine.answered) != 1 {
 		t.Fatalf("%d questions were answered", len(engine.answered))
 	}
@@ -127,7 +127,7 @@ func TestFocusingOpensTheFullRequestBeforeYesCanApprove(t *testing.T) {
 func TestTheCompactPanelNeverAcceptsAnApprovalAnswer(t *testing.T) {
 	for _, key := range []rune{'y', 'a', 'n'} {
 		engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+		m, _ = m.Update(keyText(string([]rune{key})))
 		if len(engine.answered) != 0 {
 			t.Errorf("%c answered a compact visitor prompt: %+v", key, engine.answered)
 		}
@@ -153,14 +153,14 @@ func TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances(t *testing.T) {
 		t.Errorf("the second agent is not counted:\n%s", view)
 	}
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(keyCode('g', tea.ModCtrl))
 	first := cmd().(chat.SwitchMsg)
 	if first.SessionID != "s2" {
 		t.Fatalf("the focus target was %q, want the oldest question", first.SessionID)
 	}
 	engine.prompt = pendingPrompt("npm test")
 	m.SetSession(first.SessionID, first.AgentName)
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = m.Update(keyText(string([]rune{'y'})))
 
 	if engine.answered[0].session != "s2" {
 		t.Errorf("the first answer went to %q", engine.answered[0].session)
@@ -172,16 +172,16 @@ func TestTwoWaitingShowTheOldestAndACountAndAnsweringAdvances(t *testing.T) {
 
 	// Returning to the original conversation does not focus whoever moved up. It remains ordinary
 	// conversation input until a fresh ctrl+g opens that agent's own prompt.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = m.Update(keyText(string([]rune{'y'})))
 	if len(engine.answered) != 1 {
 		t.Fatalf("the focus was inherited by the next question: %+v", engine.answered)
 	}
 
-	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd = m.Update(keyCode('g', tea.ModCtrl))
 	second := cmd().(chat.SwitchMsg)
 	engine.prompt = pendingPrompt("rm -rf build")
 	m.SetSession(second.SessionID, second.AgentName)
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = m.Update(keyText(string([]rune{'y'})))
 	if len(engine.answered) != 2 || engine.answered[1].session != "s3" {
 		t.Errorf("the second answer went to %+v", engine.answered)
 	}
@@ -214,7 +214,7 @@ func TestYourOwnQuestionComesFirstAndTheOthersAreStillCounted(t *testing.T) {
 
 	// And the own prompt still answers exactly as it did before any of this existed: y approves it,
 	// and the visitor is untouched.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = m.Update(keyText(string([]rune{'y'})))
 	if len(engine.answers) != 1 || !engine.answers[0][0] {
 		t.Errorf("the own prompt did not take the y: %+v", engine.answers)
 	}
@@ -242,7 +242,7 @@ func TestTheQuestionPanelDoesNotOverflowTheFrame(t *testing.T) {
 	)
 	m.SetSize(80, 24)
 
-	focused, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	focused, _ := m.Update(keyCode('g', tea.ModCtrl))
 	for _, body := range []string{m.Body(), focused.Body()} {
 		lines := strings.Split(body, "\n")
 		if len(lines) > 24 {
@@ -262,7 +262,7 @@ func TestTheQuestionPanelDoesNotOverflowTheFrame(t *testing.T) {
 func TestAQueuedSwitchCannotRouteLaterTypingToAVisitor(t *testing.T) {
 	engine, m := visited(waitingOn("worker-2", "s2", "rm -rf build"))
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(keyCode('g', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatal("ctrl+g did not produce a switch message")
 	}
@@ -271,13 +271,13 @@ func TestAQueuedSwitchCannotRouteLaterTypingToAVisitor(t *testing.T) {
 	engine.prompt = pendingPrompt("make test")
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = m.Update(keyText(string([]rune{'y'})))
 	if len(engine.answered) != 1 || engine.answered[0].session != "s1" {
 		t.Fatalf("the own prompt did not take the y: %+v", engine.answered)
 	}
 
 	m = typeText(m, "yes please carry on")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	for _, answer := range engine.answered {
 		if answer.session == "s2" {
@@ -309,7 +309,7 @@ func TestTheFocusKeyDoesNothingWhileYourOwnQuestionIsUp(t *testing.T) {
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	m, _ = m.Update(keyCode('g', tea.ModCtrl))
 
 	// It went to the own prompt, which refuses on any key that is not y or a. That is today's
 	// behaviour and the point here is the other half: no focus was armed behind it.
@@ -335,7 +335,7 @@ func TestAQueuedSwitchDoesNotRetargetTheNextWaitingAgent(t *testing.T) {
 		waitingOn("worker-2", "s3", "rm -rf build"),
 	)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(keyCode('g', tea.ModCtrl))
 
 	// Answered somewhere else entirely, and one ordinary event later the panel knows.
 	engine.waiting = engine.waiting[1:]
@@ -351,7 +351,7 @@ func TestAQueuedSwitchDoesNotRetargetTheNextWaitingAgent(t *testing.T) {
 		t.Errorf("the next waiter is not on screen:\n%s", view)
 	}
 
-	_, nextCmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, nextCmd := m.Update(keyCode('g', tea.ModCtrl))
 	next := nextCmd().(chat.SwitchMsg)
 	if next.SessionID != "s3" {
 		t.Errorf("a fresh focus targeted %q, want the question now shown", next.SessionID)
@@ -366,11 +366,11 @@ func TestReturningAfterAnAnswerReadsTheCurrentQueue(t *testing.T) {
 		waitingOn("worker-2", "s3", "rm -rf build"),
 	)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlG})
+	_, cmd := m.Update(keyCode('g', tea.ModCtrl))
 	target := cmd().(chat.SwitchMsg)
 	engine.prompt = pendingPrompt("npm test")
 	m.SetSession(target.SessionID, target.AgentName)
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = m.Update(keyText(string([]rune{'y'})))
 	m.SetSession("s1", "")
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 

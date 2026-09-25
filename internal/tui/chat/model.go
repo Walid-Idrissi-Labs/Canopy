@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
@@ -614,8 +614,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case tea.PasteMsg:
+		// Pasted text goes into the message box whole: an enter inside a paste is a line break in
+		// what was pasted, not a request to send half of it.
+		// Like typing, it ends an offer to compact and a complaint about what was typed before.
+		if m.acceptsPaste() {
+			m.input.Paste(msg.Content)
+			m.compactAsked, m.err = false, ""
+			m.refreshMenu()
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -636,23 +647,28 @@ const wheelStep = 3
 // which is the whole reason this exists — and it is also what takes the terminal's own
 // drag-to-select away, which the drag handling below gives back. See select.go.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	switch msg.Action {
-	case tea.MouseActionPress:
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
+	mouse := msg.Mouse()
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		switch mouse.Button {
+		case tea.MouseWheelUp:
 			m.scrollBy(wheelStep)
-		case tea.MouseButtonWheelDown:
+		case tea.MouseWheelDown:
 			m.scrollBy(-wheelStep)
-		case tea.MouseButtonLeft:
-			m.beginSelection(msg.X, msg.Y)
 		}
 		return m, nil
 
-	case tea.MouseActionMotion:
-		m.extendSelection(msg.X, msg.Y)
+	case tea.MouseClickMsg:
+		if mouse.Button == tea.MouseLeft {
+			m.beginSelection(mouse.X, mouse.Y)
+		}
 		return m, nil
 
-	case tea.MouseActionRelease:
+	case tea.MouseMotionMsg:
+		m.extendSelection(mouse.X, mouse.Y)
+		return m, nil
+
+	case tea.MouseReleaseMsg:
 		if m.sel.dragging {
 			return m.finishSelection()
 		}
@@ -736,7 +752,7 @@ func NavigationKeys() []string {
 // never do is remember: the widest approval still takes the deliberate key.
 //
 // Everything except the navigation set, which the caller has already dealt with. See navigation.
-func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) answerPrompt(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter", "y":
 		m.engine.Answer(m.sessionID, true, false)
@@ -1057,7 +1073,7 @@ func roughTokens(n int) string {
 	}
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// An offer to spend money lasts exactly one keystroke. Anything other than the same key again is
 	// a change of mind, and an offer that outlived it would eventually be taken up by a keystroke
 	// somebody meant for something else entirely, which is the failure the confirmation exists to
@@ -2628,3 +2644,7 @@ func (m Model) toolKind(name string) (core.ToolKind, bool) {
 	}
 	return tool.Kind(), true
 }
+
+// acceptsPaste reports whether pasted text belongs in the message box now: not while a permission
+// question is waiting, whose keys are answers.
+func (m Model) acceptsPaste() bool { return !m.awaiting }

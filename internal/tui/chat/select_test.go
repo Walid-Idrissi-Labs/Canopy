@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -50,8 +50,15 @@ func rowAndCol(t *testing.T, m chat.Model, want string) (row, col int) {
 	return 0, 0
 }
 
-func mouse(m chat.Model, action tea.MouseAction, button tea.MouseButton, x, y int) chat.Model {
-	next, _ := m.Update(tea.MouseMsg{Action: action, Button: button, X: x, Y: y})
+func mouse(m chat.Model, action string, button tea.MouseButton, x, y int) chat.Model {
+	var msg tea.Msg = tea.MouseClickMsg{Button: button, X: x, Y: y}
+	switch action {
+	case "motion":
+		msg = tea.MouseMotionMsg{Button: button, X: x, Y: y}
+	case "release":
+		msg = tea.MouseReleaseMsg{Button: button, X: x, Y: y}
+	}
+	next, _ := m.Update(msg)
 	return next
 }
 
@@ -60,11 +67,9 @@ func TestDraggingOverTheConversationCopiesIt(t *testing.T) {
 	m, copied := selectable(t)
 
 	row, col := rowAndCol(t, m, "parser lives")
-	m = mouse(m, tea.MouseActionPress, tea.MouseButtonLeft, col, row)
-	m = mouse(m, tea.MouseActionMotion, tea.MouseButtonLeft, col+11, row)
-	next, cmd := m.Update(tea.MouseMsg{
-		Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: col + 11, Y: row,
-	})
+	m = mouse(m, "press", tea.MouseLeft, col, row)
+	m = mouse(m, "motion", tea.MouseLeft, col+11, row)
+	next, cmd := m.Update(tea.MouseReleaseMsg{Button: tea.MouseLeft, X: col + 11, Y: row})
 
 	if len(*copied) != 1 || (*copied)[0] != "parser lives" {
 		t.Fatalf("clipboard = %q, want [\"parser lives\"]", *copied)
@@ -89,10 +94,10 @@ func TestASelectionAcrossLinesCopiesWholeLines(t *testing.T) {
 
 	fromRow, fromCol := rowAndCol(t, m, "where is the parser")
 	toRow, _ := rowAndCol(t, m, "The parser lives")
-	m = mouse(m, tea.MouseActionPress, tea.MouseButtonLeft, fromCol, fromRow)
-	m = mouse(m, tea.MouseActionMotion, tea.MouseButtonLeft, 79, toRow)
+	m = mouse(m, "press", tea.MouseLeft, fromCol, fromRow)
+	m = mouse(m, "motion", tea.MouseLeft, 79, toRow)
 	// The release is what copies; the model after it is not read again in this test.
-	_ = mouse(m, tea.MouseActionRelease, tea.MouseButtonLeft, 79, toRow)
+	_ = mouse(m, "release", tea.MouseLeft, 79, toRow)
 
 	if len(*copied) != 1 {
 		t.Fatalf("clipboard = %q, want one entry", *copied)
@@ -115,9 +120,9 @@ func TestTheInterfaceIsNotSelectable(t *testing.T) {
 	m, copied := selectable(t)
 
 	boxRow, _ := rowAndCol(t, m, "╭─")
-	m = mouse(m, tea.MouseActionPress, tea.MouseButtonLeft, 4, boxRow)
-	m = mouse(m, tea.MouseActionMotion, tea.MouseButtonLeft, 20, boxRow)
-	m = mouse(m, tea.MouseActionRelease, tea.MouseButtonLeft, 20, boxRow)
+	m = mouse(m, "press", tea.MouseLeft, 4, boxRow)
+	m = mouse(m, "motion", tea.MouseLeft, 20, boxRow)
+	m = mouse(m, "release", tea.MouseLeft, 20, boxRow)
 
 	if len(*copied) != 0 {
 		t.Errorf("dragging over the box copied %q", *copied)
@@ -133,9 +138,9 @@ func TestABareClickCopiesNothing(t *testing.T) {
 	m, copied := selectable(t)
 
 	row, col := rowAndCol(t, m, "parser")
-	m = mouse(m, tea.MouseActionPress, tea.MouseButtonLeft, col, row)
+	m = mouse(m, "press", tea.MouseLeft, col, row)
 	// The release decides whether anything is copied; the model after it is not read again.
-	_ = mouse(m, tea.MouseActionRelease, tea.MouseButtonLeft, col, row)
+	_ = mouse(m, "release", tea.MouseLeft, col, row)
 
 	if len(*copied) != 0 {
 		t.Errorf("a bare click copied %q", *copied)
@@ -149,10 +154,29 @@ func TestHighlightingChangesNoText(t *testing.T) {
 	before := plain(m.Body())
 
 	row, col := rowAndCol(t, m, "parser lives")
-	m = mouse(m, tea.MouseActionPress, tea.MouseButtonLeft, col, row)
-	m = mouse(m, tea.MouseActionMotion, tea.MouseButtonLeft, col+11, row)
+	m = mouse(m, "press", tea.MouseLeft, col, row)
+	m = mouse(m, "motion", tea.MouseLeft, col+11, row)
 
 	if after := plain(m.Body()); after != before {
 		t.Errorf("selecting changed the text on screen:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// A paste goes into the message box whole: a terminal's carriage returns become line breaks, other
+// controls are dropped, and nothing is sent.
+func TestAPasteIsTextInTheMessageBox(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	next, _ := m.Update(tea.PasteMsg{Content: "line one\rline two\x1b[2J"})
+	if len(engine.sent) != 0 {
+		t.Fatal("a paste sent the message")
+	}
+	// Exactly this: a carriage return dropped rather than made a line break would join the lines.
+	if got := next.InputValue(); got != "line one\nline two[2J" {
+		t.Fatalf("the paste was taken in as %q", got)
+	}
+	if body := next.Body(); strings.Contains(body, "\r") || strings.Contains(body, "\x1b[2J") {
+		t.Fatalf("a control from the paste reached the screen:\n%q", body)
 	}
 }

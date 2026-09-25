@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -19,16 +19,16 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 )
 
-func stroke(s string) tea.KeyMsg {
+func stroke(s string) tea.KeyPressMsg {
 	switch s {
 	case "ctrl+c":
-		return tea.KeyMsg{Type: tea.KeyCtrlC}
+		return keyCode('c', tea.ModCtrl)
 	case "ctrl+d":
-		return tea.KeyMsg{Type: tea.KeyCtrlD}
+		return keyCode('d', tea.ModCtrl)
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return keyCode(tea.KeyEsc)
 	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+		return keyText(s)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestCtrlCAsksBeforeQuittingAConversation(t *testing.T) {
 	if quits(cmd) {
 		t.Fatal("one press of ctrl+c quit the program")
 	}
-	if !strings.Contains(plain(app.View()), "ctrl+c again") {
+	if !strings.Contains(plain(app.View().Content), "ctrl+c again") {
 		t.Error("the first press does not say a second one will quit")
 	}
 
@@ -79,7 +79,7 @@ func TestAnotherKeyCancelsTheQuitConfirmation(t *testing.T) {
 	if quits(cmd) {
 		t.Error("ctrl+c quit on its first press after the confirmation had been abandoned")
 	}
-	if !strings.Contains(plain(next.(tui.App).View()), "ctrl+c again") {
+	if !strings.Contains(plain(next.(tui.App).View().Content), "ctrl+c again") {
 		t.Error("the confirmation did not restart cleanly")
 	}
 }
@@ -115,7 +115,7 @@ func TestQuittingAppliesAModeTheKeyStoppedOn(t *testing.T) {
 	engine := &stubEngine{session: core.Session{ID: "session-1"}}
 	app := launchWith(store, withOneKey(), engine).(tui.App)
 
-	next, _ := app.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	next, _ := app.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := engine.Mode("session-1").Name; got != core.ModeBuild {
 		t.Fatalf("the keystroke itself changed the mode to %q", got)
 	}
@@ -143,7 +143,7 @@ func TestLeavingChatThenQuittingCannotLoseTheSelectedMode(t *testing.T) {
 	engine := &stubEngine{session: core.Session{ID: "session-1"}}
 	app := launchWith(store, withOneKey(), engine).(tui.App)
 
-	next, _ := app.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	next, _ := app.Update(keyCode(tea.KeyTab, tea.ModShift))
 	next, _ = next.(tui.App).Update(stroke("ctrl+d"))
 	if got := next.(tui.App).Screen(); got != "agents" {
 		t.Fatalf("ctrl+d landed on %q, want agents", got)
@@ -183,7 +183,7 @@ func TestSlashNavigationSettlesTheSelectedMode(t *testing.T) {
 			engine := &stubEngine{session: core.Session{ID: "session-1"}}
 			app := launchWith(store, withOneKey(), engine).(tui.App)
 
-			next, _ := app.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+			next, _ := app.Update(keyCode(tea.KeyTab, tea.ModShift))
 			next, _ = next.(tui.App).Update(chat.ActionMsg{Action: tt.action})
 
 			if got := next.(tui.App).Screen(); got != tt.screen {

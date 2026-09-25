@@ -3,8 +3,9 @@ package chat
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -168,17 +169,27 @@ func (i *Input) edited() { i.release() }
 //
 // Returning "not consumed" is what lets the model above decide what an unhandled key means, rather
 // than the input silently swallowing every keystroke that reaches it.
-func (i *Input) Update(msg tea.KeyMsg) bool {
-	switch msg.Type {
-	case tea.KeyRunes:
-		i.insert(msg.Runes)
-		return true
-
-	case tea.KeySpace:
+func (i *Input) Update(msg tea.KeyPressMsg) bool {
+	switch msg.String() {
+	case "space":
 		i.insert([]rune{' '})
 		return true
 
-	case tea.KeyBackspace:
+	// Option on a Mac keyboard arrives as alt: option+delete removes a word, as it does in every
+	// other text field there, and option+arrows move by word.
+	case "alt+backspace", "ctrl+w":
+		i.deleteWord()
+		return true
+
+	case "alt+left", "ctrl+left", "alt+b":
+		i.cursor = i.wordStart()
+		return true
+
+	case "alt+right", "ctrl+right", "alt+f":
+		i.cursor = i.wordEnd()
+		return true
+
+	case "backspace":
 		if i.cursor > 0 {
 			i.runes = append(i.runes[:i.cursor-1], i.runes[i.cursor:]...)
 			i.cursor--
@@ -186,55 +197,57 @@ func (i *Input) Update(msg tea.KeyMsg) bool {
 		}
 		return true
 
-	case tea.KeyDelete:
+	case "delete", "alt+delete":
 		if i.cursor < len(i.runes) {
 			i.runes = append(i.runes[:i.cursor], i.runes[i.cursor+1:]...)
 			i.edited()
 		}
 		return true
 
-	case tea.KeyUp:
+	case "up", "alt+up":
 		return i.older()
 
-	case tea.KeyDown:
+	case "down", "alt+down":
 		return i.newer()
 
-	case tea.KeyLeft:
+	case "left":
 		if i.cursor > 0 {
 			i.cursor--
 		}
 		return true
 
-	case tea.KeyRight:
+	case "right":
 		if i.cursor < len(i.runes) {
 			i.cursor++
 		}
 		return true
 
-	case tea.KeyHome, tea.KeyCtrlA:
+	case "home", "ctrl+a":
 		i.cursor = 0
 		return true
 
-	case tea.KeyEnd, tea.KeyCtrlE:
+	case "end", "ctrl+e":
 		i.cursor = len(i.runes)
 		return true
 
-	case tea.KeyCtrlU:
+	case "ctrl+u":
 		// Everything before the cursor, which is the shell habit and the one people reach for when
 		// they have changed their mind about a whole message.
 		i.runes = append([]rune(nil), i.runes[i.cursor:]...)
 		i.cursor = 0
 		i.edited()
 		return true
+	}
 
-	case tea.KeyCtrlW:
-		i.deleteWord()
+	// Printable text, a character or several at once from an input method.
+	if msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
+		i.insert([]rune(msg.Text))
 		return true
 	}
 
 	// A literal newline, for a message with a blank line in it. Enter sends, so there has to be
 	// some way to type one, and every comparable tool uses this pair.
-	if msg.String() == "alt+enter" || msg.String() == "ctrl+j" {
+	if msg.String() == "alt+enter" || msg.String() == "ctrl+j" || msg.String() == "shift+enter" {
 		i.insert([]rune{'\n'})
 		return true
 	}
@@ -254,16 +267,36 @@ func (i *Input) deleteWord() {
 		return
 	}
 	i.edited()
-	end := i.cursor
-	for end > 0 && i.runes[end-1] == ' ' {
-		end--
-	}
-	for end > 0 && i.runes[end-1] != ' ' {
-		end--
-	}
+	end := i.wordStart()
 	i.runes = append(i.runes[:end], i.runes[i.cursor:]...)
 	i.cursor = end
 }
+
+// wordStart is where the word before the cursor begins, spaces before the cursor skipped.
+func (i *Input) wordStart() int {
+	at := i.cursor
+	for at > 0 && isSpace(i.runes[at-1]) {
+		at--
+	}
+	for at > 0 && !isSpace(i.runes[at-1]) {
+		at--
+	}
+	return at
+}
+
+// wordEnd is where the word after the cursor ends, spaces after the cursor skipped.
+func (i *Input) wordEnd() int {
+	at := i.cursor
+	for at < len(i.runes) && isSpace(i.runes[at]) {
+		at++
+	}
+	for at < len(i.runes) && !isSpace(i.runes[at]) {
+		at++
+	}
+	return at
+}
+
+func isSpace(r rune) bool { return r == ' ' || r == '\n' }
 
 // cursorBlock is what stands in for a terminal cursor.
 //
@@ -319,4 +352,12 @@ func (i Input) Lines() []string {
 func (i Input) Height() int {
 	const border = 2
 	return len(i.Lines()) + border
+}
+
+// Paste inserts pasted text as typed, all at once. A terminal that brackets its pastes sends them as
+// their own message rather than as keystrokes, so an enter inside a paste is a newline, not a send.
+func (i *Input) Paste(text string) {
+	// Terminals send a pasted line break as a carriage return, which drawn raw would send the cursor
+	// back over the start of the line; paste.Lines makes it a newline and drops the other controls.
+	i.insert([]rune(paste.Lines(text)))
 }

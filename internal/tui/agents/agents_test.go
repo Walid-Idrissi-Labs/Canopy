@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -122,7 +122,7 @@ func plain(s string) string {
 }
 
 func key(m agents.Model, s string) agents.Model {
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+	m, _ = m.Update(keyText(s))
 	return m
 }
 
@@ -371,7 +371,7 @@ func TestOpeningAnAgentAsksRatherThanActs(t *testing.T) {
 	))
 	m = key(m, "j")
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(keyCode(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatal("enter on an agent should ask to open it")
 	}
@@ -402,9 +402,9 @@ func TestCreatingAnAgent(t *testing.T) {
 	}
 
 	for _, r := range "parser" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 
 	if len(e.added) != 0 {
 		t.Fatal("enter on the name created a direct agent before showing its workspace warning")
@@ -445,9 +445,9 @@ func TestAFailedCreationKeepsTheName(t *testing.T) {
 
 	m = key(m, "n")
 	for _, r := range "main" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 	m = key(m, "y")
 
 	if !m.Naming() {
@@ -469,7 +469,7 @@ func TestEscFromDirectConfirmationReturnsToTheName(t *testing.T) {
 
 	m = key(m, "n")
 	for _, r := range "parser" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
 	m = key(m, "enter")
 	m = key(m, "esc")
@@ -492,7 +492,7 @@ func TestNamingTakesTheKeyboard(t *testing.T) {
 
 	m = key(m, "n")
 	for _, r := range "v2w" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
 
 	if m.Mode() != agents.ModeList {
@@ -502,7 +502,7 @@ func TestNamingTakesTheKeyboard(t *testing.T) {
 		t.Errorf("the keystrokes did not reach the name:\n%s", plain(m.Body()))
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = m.Update(keyCode(tea.KeyEsc))
 	if m.Naming() {
 		t.Error("esc should cancel naming")
 	}
@@ -514,12 +514,12 @@ func TestNamingTakesTheKeyboard(t *testing.T) {
 func TestCreatingAnAgentWithoutAnEngineSaysSoRatherThanCrashing(t *testing.T) {
 	var m agents.Model
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m, _ = m.Update(keyText("n"))
 	if !m.Naming() {
 		t.Fatal("n did not open the name field")
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("worker")})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyText("worker"))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 
 	if !strings.Contains(m.Body(), "no engine") {
 		t.Errorf("the failure is not on screen:\n%s", m.Body())
@@ -529,8 +529,8 @@ func TestCreatingAnAgentWithoutAnEngineSaysSoRatherThanCrashing(t *testing.T) {
 func TestAnAgentNeedsAName(t *testing.T) {
 	m := agents.New(&fakeEngine{})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyText("n"))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 
 	if !m.Naming() {
 		t.Error("an empty name was accepted and the field closed")

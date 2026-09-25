@@ -17,11 +17,12 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 )
 
 // ReviewSource is what the review screen reads. Implemented by verify.Verifier.
@@ -199,7 +200,7 @@ func (m *ReviewModel) SetCostOutcomes(source CostOutcomeSource) { m.costs = sour
 func (m ReviewModel) Agent() string { return m.agent }
 
 func (m ReviewModel) Update(msg tea.Msg) (ReviewModel, tea.Cmd) {
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
@@ -245,7 +246,7 @@ func (m ReviewModel) Update(msg tea.Msg) (ReviewModel, tea.Cmd) {
 		m.move(-1)
 		return m, nil
 
-	case "pgdown", " ":
+	case "pgdown", " ", "space":
 		if m.pane == panePatch {
 			m.offset += m.bodyHeight()
 			m.clampOffset()
@@ -296,12 +297,21 @@ func (m ReviewModel) Update(msg tea.Msg) (ReviewModel, tea.Cmd) {
 	return m, nil
 }
 
+// Paste types pasted text into the commit subject, when it is open.
+func (m ReviewModel) Paste(text string) ReviewModel {
+	if m.pane == paneCommit {
+		m.subject += paste.Line(text)
+		m.failure = ""
+	}
+	return m
+}
+
 // editing handles a keystroke while the commit message is open.
 //
 // Enter does not commit. It is the key people press to end a line, and wiring an irreversible
 // action to it is how somebody commits a half written subject. Committing is ctrl+s, which nothing
 // else on this screen uses and nobody presses by accident.
-func (m ReviewModel) editing(key tea.KeyMsg) ReviewModel {
+func (m ReviewModel) editing(key tea.KeyPressMsg) ReviewModel {
 	switch key.String() {
 	case "esc":
 		m.pane, m.subject, m.notice = paneFiles, "", ""
@@ -336,8 +346,8 @@ func (m ReviewModel) editing(key tea.KeyMsg) ReviewModel {
 		return m
 	}
 
-	if key.Type == tea.KeyRunes {
-		m.subject += string(key.Runes)
+	if key.Text != "" && key.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
+		m.subject += key.Text
 		m.failure = ""
 	}
 	return m

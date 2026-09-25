@@ -11,10 +11,12 @@
 package theme
 
 import (
+	"image/color"
 	"os"
 	"strings"
+	"sync/atomic"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Palette is the set of colours a theme defines.
@@ -24,17 +26,17 @@ import (
 type Palette struct {
 	Name string
 
-	Text   lipgloss.TerminalColor
-	Muted  lipgloss.TerminalColor
-	Accent lipgloss.TerminalColor
+	Text   color.Color
+	Muted  color.Color
+	Accent color.Color
 
-	Success lipgloss.TerminalColor
-	Danger  lipgloss.TerminalColor
-	Warning lipgloss.TerminalColor
-	Info    lipgloss.TerminalColor
+	Success color.Color
+	Danger  color.Color
+	Warning color.Color
+	Info    color.Color
 
-	Border    lipgloss.TerminalColor
-	Highlight lipgloss.TerminalColor
+	Border    color.Color
+	Highlight color.Color
 
 	// Flame is the campfire in the mark, and the one colour here named for a thing rather than for a
 	// meaning. It gets that exemption because the thing is a drawing and there is no meaning to name
@@ -44,31 +46,31 @@ type Palette struct {
 	// default palette. Reusing Success would mean a theme could not warm the fire without warming
 	// every passing test with it, and would make the mark change colour the day somebody decides
 	// green is the wrong colour for a tick.
-	Flame lipgloss.TerminalColor
+	Flame color.Color
 
 	// FlameCore is the heart of the fire, a step brighter than Flame. Its own entry for the same
 	// reason Flame is: it is a colour for a drawing, and borrowing a meaning for it would tie the
 	// middle of a campfire to whatever that meaning does next.
-	FlameCore lipgloss.TerminalColor
+	FlameCore color.Color
 
 	// Smoke is the wisp above the flame, and it gets the same exemption for the same reason.
-	Smoke lipgloss.TerminalColor
+	Smoke color.Color
 
 	// SmokeFaint is smoke about to disappear: the highest wisp above the fire, a step dimmer than
 	// Smoke, which is what makes it read as fading out rather than as a stack of grey marks.
-	SmokeFaint lipgloss.TerminalColor
+	SmokeFaint color.Color
 
 	// The four categories a hand written lexer can tell apart without a full parser. Named for what
 	// a reader is looking at, not for the hue, so a colour blind palette or a light theme can pick
 	// values that suit it without any call site changing.
-	CodeKeyword lipgloss.TerminalColor
-	CodeString  lipgloss.TerminalColor
-	CodeComment lipgloss.TerminalColor
-	CodeNumber  lipgloss.TerminalColor
+	CodeKeyword color.Color
+	CodeString  color.Color
+	CodeComment color.Color
+	CodeNumber  color.Color
 	// CodeFunction and CodeType colour function names and type names; a zero value falls back to
 	// the text colour.
-	CodeFunction lipgloss.TerminalColor
-	CodeType     lipgloss.TerminalColor
+	CodeFunction color.Color
+	CodeType     color.Color
 }
 
 // Theme is a palette plus the styles derived from it.
@@ -150,46 +152,46 @@ const (
 // They are tuned to sit beside the brand colours rather than chosen freely.
 var Default = Palette{
 	Name:      "canopy",
-	Text:      lipgloss.AdaptiveColor{Light: "#1f2328", Dark: "#e6edf3"},
-	Muted:     lipgloss.AdaptiveColor{Light: brandAccentLight, Dark: brandAccent},
-	Accent:    lipgloss.AdaptiveColor{Light: brandPrimaryLight, Dark: brandPrimary},
-	Success:   lipgloss.AdaptiveColor{Light: brandSecondaryLight, Dark: brandSecondary},
-	Danger:    lipgloss.AdaptiveColor{Light: "#c4342b", Dark: "#ef5f5f"},
-	Warning:   lipgloss.AdaptiveColor{Light: "#9a6700", Dark: "#e0a33a"},
-	Info:      lipgloss.AdaptiveColor{Light: brandPrimaryLight, Dark: brandPrimary},
-	Border:    lipgloss.AdaptiveColor{Light: "#d6d6d6", Dark: "#3a3a3a"},
-	Highlight: lipgloss.AdaptiveColor{Light: "#f2f4f5", Dark: "#16242b"},
+	Text:      Adaptive{Light: "#1f2328", Dark: "#e6edf3"},
+	Muted:     Adaptive{Light: brandAccentLight, Dark: brandAccent},
+	Accent:    Adaptive{Light: brandPrimaryLight, Dark: brandPrimary},
+	Success:   Adaptive{Light: brandSecondaryLight, Dark: brandSecondary},
+	Danger:    Adaptive{Light: "#c4342b", Dark: "#ef5f5f"},
+	Warning:   Adaptive{Light: "#9a6700", Dark: "#e0a33a"},
+	Info:      Adaptive{Light: brandPrimaryLight, Dark: brandPrimary},
+	Border:    Adaptive{Light: "#d6d6d6", Dark: "#3a3a3a"},
+	Highlight: Adaptive{Light: "#f2f4f5", Dark: "#16242b"},
 
 	// The campfire takes the secondary brand colour, which is the one place in the interface it is
 	// used for something that is not an outcome. It is also what makes the mark carry two of the
 	// three brand colours at once rather than one, which is the difference between a logo in a
 	// colour and a logo with a palette.
-	Flame: lipgloss.AdaptiveColor{Light: brandSecondaryLight, Dark: brandSecondary},
+	Flame: Adaptive{Light: brandSecondaryLight, Dark: brandSecondary},
 
 	// The heart of the fire is the same green pushed a step towards white on a dark terminal and a
 	// step towards ink on a light one: the same hue at a brighter weight, not a new colour, which is
 	// what keeps the fire reading as one thing with depth rather than as two things stacked.
-	FlameCore: lipgloss.AdaptiveColor{Light: "#8a9b02", Dark: "#d8ef3a"},
+	FlameCore: Adaptive{Light: "#8a9b02", Dark: "#d8ef3a"},
 
 	// And the smoke takes the accent grey, which is the third of the three and the only colour smoke
 	// could sensibly be. Between them the mark carries all three brand colours: the tent in the
 	// primary, the fire in the secondary, the smoke in the accent.
-	Smoke: lipgloss.AdaptiveColor{Light: brandAccentLight, Dark: brandAccent},
+	Smoke: Adaptive{Light: brandAccentLight, Dark: brandAccent},
 
 	// The highest wisp is the same grey on its way to the background, which is where smoke goes.
-	SmokeFaint: lipgloss.AdaptiveColor{Light: "#9c9c9c", Dark: "#6e6e6e"},
+	SmokeFaint: Adaptive{Light: "#9c9c9c", Dark: "#6e6e6e"},
 
 	// Syntax highlighting keeps to the same family, so a code block does not look like it was
 	// pasted in from another program. Keyword takes the primary, string takes the secondary, and
 	// comment takes the grey, which is what a comment should be anyway.
-	CodeKeyword: lipgloss.AdaptiveColor{Light: brandPrimaryLight, Dark: brandPrimary},
-	CodeString:  lipgloss.AdaptiveColor{Light: brandSecondaryLight, Dark: brandSecondary},
-	CodeComment: lipgloss.AdaptiveColor{Light: brandAccentLight, Dark: brandAccent},
-	CodeNumber:  lipgloss.AdaptiveColor{Light: "#7a4fbf", Dark: "#b48ce8"},
+	CodeKeyword: Adaptive{Light: brandPrimaryLight, Dark: brandPrimary},
+	CodeString:  Adaptive{Light: brandSecondaryLight, Dark: brandSecondary},
+	CodeComment: Adaptive{Light: brandAccentLight, Dark: brandAccent},
+	CodeNumber:  Adaptive{Light: "#7a4fbf", Dark: "#b48ce8"},
 	// A warm gold for function names and a teal for types, the two colours a reader's eye uses to
 	// find the shape of code before reading it.
-	CodeFunction: lipgloss.AdaptiveColor{Light: "#8a5a00", Dark: "#e8c27a"},
-	CodeType:     lipgloss.AdaptiveColor{Light: "#0f7b6c", Dark: "#5cc9b8"},
+	CodeFunction: Adaptive{Light: "#8a5a00", Dark: "#e8c27a"},
+	CodeType:     Adaptive{Light: "#0f7b6c", Dark: "#5cc9b8"},
 }
 
 // New builds the styles for a palette.
@@ -265,10 +267,9 @@ func fromEnvironment() Palette {
 
 // listeners are told when the theme changes.
 //
-// Needed because lipgloss.TerminalColor cannot be implemented outside lipgloss: it has an
-// unexported method, so there is no way to write a colour value that resolves lazily. Anything
-// holding a colour rather than a style therefore has to be told to go and fetch a new one, and a
-// call site that reads a stale colour is exactly the bug this package exists to prevent.
+// Needed because a colour already taken out of the palette, or a line already drawn and cached,
+// does not change when the theme does. Anything holding one has to be told to go and fetch a new
+// one, and a call site that reads a stale colour is exactly the bug this package exists to prevent.
 var listeners []func()
 
 // OnChange registers a callback, and calls it once immediately so the caller starts consistent.
@@ -280,6 +281,10 @@ func OnChange(f func()) {
 // Set replaces the active theme.
 func Set(p Palette) {
 	current = New(p)
+	changed()
+}
+
+func changed() {
 	for _, notify := range listeners {
 		notify()
 	}
@@ -296,24 +301,24 @@ func Set(p Palette) {
 // most of the sixteen colour ones.
 var Monochrome = Palette{
 	Name:       "mono",
-	Text:       lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Muted:      lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	Accent:     lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Success:    lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Danger:     lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Warning:    lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	Info:       lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	Border:     lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
-	Highlight:  lipgloss.AdaptiveColor{Light: "#eeeeee", Dark: "#222222"},
-	Flame:      lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	FlameCore:  lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	Smoke:      lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
-	SmokeFaint: lipgloss.AdaptiveColor{Light: "#bbbbbb", Dark: "#444444"},
+	Text:       Adaptive{Light: "#000000", Dark: "#ffffff"},
+	Muted:      Adaptive{Light: "#666666", Dark: "#999999"},
+	Accent:     Adaptive{Light: "#000000", Dark: "#ffffff"},
+	Success:    Adaptive{Light: "#000000", Dark: "#ffffff"},
+	Danger:     Adaptive{Light: "#000000", Dark: "#ffffff"},
+	Warning:    Adaptive{Light: "#666666", Dark: "#999999"},
+	Info:       Adaptive{Light: "#666666", Dark: "#999999"},
+	Border:     Adaptive{Light: "#999999", Dark: "#666666"},
+	Highlight:  Adaptive{Light: "#eeeeee", Dark: "#222222"},
+	Flame:      Adaptive{Light: "#666666", Dark: "#999999"},
+	FlameCore:  Adaptive{Light: "#000000", Dark: "#ffffff"},
+	Smoke:      Adaptive{Light: "#999999", Dark: "#666666"},
+	SmokeFaint: Adaptive{Light: "#bbbbbb", Dark: "#444444"},
 
-	CodeKeyword: lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
-	CodeString:  lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"},
-	CodeComment: lipgloss.AdaptiveColor{Light: "#999999", Dark: "#666666"},
-	CodeNumber:  lipgloss.AdaptiveColor{Light: "#000000", Dark: "#ffffff"},
+	CodeKeyword: Adaptive{Light: "#000000", Dark: "#ffffff"},
+	CodeString:  Adaptive{Light: "#666666", Dark: "#999999"},
+	CodeComment: Adaptive{Light: "#999999", Dark: "#666666"},
+	CodeNumber:  Adaptive{Light: "#000000", Dark: "#ffffff"},
 }
 
 // All returns every theme that ships.
@@ -339,9 +344,41 @@ func Names() []string {
 	return names
 }
 
-func orText(c, text lipgloss.TerminalColor) lipgloss.TerminalColor {
+func orText(c, text color.Color) color.Color {
 	if c == nil {
 		return text
 	}
 	return c
 }
+
+// Adaptive is a colour with a value for light terminals and one for dark ones, chosen when it is
+// drawn, from what the terminal reported about its background (see SetDark). A hex string each.
+type Adaptive struct {
+	Light, Dark string
+}
+
+// RGBA is the colour for the background the terminal has, which makes Adaptive a color.Color.
+func (a Adaptive) RGBA() (r, g, b, alpha uint32) {
+	if dark.Load() {
+		return lipgloss.Color(a.Dark).RGBA()
+	}
+	return lipgloss.Color(a.Light).RGBA()
+}
+
+// dark is whether the terminal's background is dark. Assumed until the terminal says otherwise,
+// since most are.
+var dark atomic.Bool
+
+func init() { dark.Store(true) }
+
+// SetDark records the terminal's background, as Bubble Tea reports it. The first frame is drawn
+// before the terminal answers, on the dark assumption, so a change is a theme change: whatever was
+// drawn and kept in the old colours is thrown away, as it is when the palette changes.
+func SetDark(isDark bool) {
+	if dark.Swap(isDark) != isDark {
+		changed()
+	}
+}
+
+// Dark reports whether adaptive colours are drawing for a dark background.
+func Dark() bool { return dark.Load() }

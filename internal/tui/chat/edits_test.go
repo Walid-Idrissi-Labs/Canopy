@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -142,13 +142,13 @@ func TestCtrlOShowsEverythingAndFoldsItBack(t *testing.T) {
 	m := model(engine)
 	folded := strings.Count(plain(m.Body()), "a line of the file")
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m, _ = m.Update(keyCode('o', tea.ModCtrl))
 	opened := strings.Count(plain(m.Body()), "a line of the file")
 	if opened <= folded {
 		t.Errorf("ctrl+o showed no more of the result than the folded view: %d then %d", folded, opened)
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m, _ = m.Update(keyCode('o', tea.ModCtrl))
 	if again := strings.Count(plain(m.Body()), "a line of the file"); again != folded {
 		t.Errorf("ctrl+o did not fold the result back: %d, was %d", again, folded)
 	}
@@ -174,7 +174,7 @@ func TestARunningCallSaysHowLongItHasBeenRunning(t *testing.T) {
 	// The clock is the screen's, so the count only appears once the screen has watched the call for
 	// long enough to have something true to say.
 	time.Sleep(1100 * time.Millisecond)
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	m, _ = m.Update(keyCode('o', tea.ModCtrl))
 	if body := plain(m.Body()); !strings.Contains(body, "running for") {
 		t.Errorf("a call in flight for over a second does not say how long:\n%s", body)
 	}

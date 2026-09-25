@@ -3,7 +3,7 @@ package agents
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Measuring and padding styled text.

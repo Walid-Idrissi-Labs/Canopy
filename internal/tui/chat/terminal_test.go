@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -66,7 +67,7 @@ func TestAFinishedTurnHasAFooter(t *testing.T) {
 	turn := core.Turn{ID: "t", State: core.TurnComplete, Model: "claude-opus-5", Text: "ok",
 		Request: core.Message{Text: "q"},
 		Usage:   core.Usage{InputTokens: 100, CacheReadTokens: 900, OutputTokens: 50, CostUSD: 0.0123, CostKnown: true}}
-	joined := strings.Join(renderTurn(turn, 100, "", nil, Detail{}), "\n")
+	joined := stripStyles(strings.Join(renderTurn(turn, 100, "", nil, Detail{}), "\n"))
 	for _, want := range []string{"claude-opus-5", "1.0k in, 50 out", "90% cached", "$0.0123"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the footer lacks %q:\n%s", want, joined)
@@ -90,7 +91,7 @@ func TestAFinishedTurnIsDrawnInTheOrderItHappened(t *testing.T) {
 			{Role: core.RoleAssistant, Text: "Concluded after reading."},
 		},
 	}
-	joined := strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n")
+	joined := stripStyles(strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n"))
 	first, read, last := strings.Index(joined, "Looking first."), strings.Index(joined, "main.go"), strings.Index(joined, "Concluded after reading.")
 	if first < 0 || read < 0 || last < 0 || first >= read || read >= last {
 		t.Fatalf("the turn is not in the order it happened:\n%s", joined)
@@ -112,7 +113,7 @@ func TestAnInterruptedTurnKeepsItsPartialReply(t *testing.T) {
 			{Role: core.RoleUser, ToolResults: []core.ToolResult{{CallID: "c1", Content: "package main"}}},
 		},
 	}
-	joined := strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n")
+	joined := stripStyles(strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n"))
 	read, partial := strings.Index(joined, "main.go"), strings.Index(joined, "The answer was half")
 	if partial < 0 || read < 0 || partial < read || strings.Count(joined, "Looking first.") != 1 {
 		t.Fatalf("the partial reply is missing, misplaced or doubled:\n%s", joined)
@@ -128,8 +129,12 @@ func TestStepsThatDoNotMatchTheTextAreNotDrawnTwice(t *testing.T) {
 		Text:    "Rewritten reply.",
 		Steps:   []core.Message{{Role: core.RoleAssistant, Text: "Original reply."}},
 	}
-	joined := strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n")
+	joined := stripStyles(strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n"))
 	if strings.Contains(joined, "Original reply.") || strings.Count(joined, "Rewritten reply.") != 1 {
 		t.Fatalf("mismatched steps were drawn:\n%s", joined)
 	}
 }
+
+// stripStyles removes the colour codes a style puts in, which lipgloss now always writes, so a test
+// reads the text a person would.
+func stripStyles(s string) string { return ansi.Strip(s) }

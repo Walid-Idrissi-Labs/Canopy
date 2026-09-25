@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
@@ -47,7 +47,7 @@ func TestGoldenTheFirstScreen(t *testing.T) {
 		store := fake.New()
 		var model tea.Model = tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 		model, _ = model.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
-		golden(t, fmt.Sprintf("first-screen-%dx%d", size.w, size.h), model.View())
+		golden(t, fmt.Sprintf("first-screen-%dx%d", size.w, size.h), model.View().Content)
 		store.Close()
 	}
 }
@@ -57,16 +57,16 @@ func TestGoldenHelpAndKeys(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}, {200, 50}} {
 		for _, screen := range []struct {
 			name string
-			key  tea.KeyMsg
+			key  tea.KeyPressMsg
 		}{
-			{"help", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")}},
-			{"keys", tea.KeyMsg{Type: tea.KeyCtrlK}},
+			{"help", keyText("?")},
+			{"keys", keyCode('k', tea.ModCtrl)},
 		} {
 			store := fake.New()
 			var model tea.Model = tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 			model, _ = model.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 			model, _ = model.Update(screen.key)
-			golden(t, fmt.Sprintf("%s-%dx%d", screen.name, size.w, size.h), model.View())
+			golden(t, fmt.Sprintf("%s-%dx%d", screen.name, size.w, size.h), model.View().Content)
 			store.Close()
 		}
 	}

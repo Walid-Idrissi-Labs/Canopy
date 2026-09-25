@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
+	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
@@ -115,11 +115,11 @@ var chromaCache = struct {
 	order   []uint64
 }{entries: map[uint64][]string{}}
 
-// cachedChromaBlock is chromaBlock remembered by language, source, width and theme, since the same
+// cachedChromaBlock is chromaBlock remembered by language, source, width, theme and background, since the same
 // finished block is drawn on every frame a conversation is on screen.
 func cachedChromaBlock(lang string, code []string, width int) ([]string, bool) {
 	h := fnv.New64a()
-	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%s\x00", lang, width, theme.Current().Palette.Name)
+	_, _ = fmt.Fprintf(h, "%s\x00%d\x00%s\x00%t\x00", lang, width, theme.Current().Palette.Name, theme.Dark())
 	for _, line := range code {
 		_, _ = h.Write([]byte(line))
 		_, _ = h.Write([]byte{0})
