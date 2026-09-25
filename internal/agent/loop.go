@@ -215,6 +215,12 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			})
 		}
 
+		// A paused turn is continued by sending the same conversation again, which now ends with
+		// what the model said before pausing. The step bound above still applies.
+		if reply.stop == core.StopPauseTurn && len(reply.calls) == 0 {
+			continue
+		}
+
 		if reply.stop != core.StopToolUse || len(reply.calls) == 0 {
 			outcome.Stop = reply.stop
 			return outcome, nil

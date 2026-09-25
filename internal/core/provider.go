@@ -80,6 +80,12 @@ const (
 	StopCancelled StopReason = "cancelled"
 	// StopError means the turn failed. Err on the result says why.
 	StopError StopReason = "error"
+	// StopPauseTurn means the provider paused a long turn and expects the same conversation to be
+	// sent again to continue it. Nothing has failed.
+	StopPauseTurn StopReason = "pause-turn"
+	// StopContextExceeded means the conversation no longer fits the model's context window, which
+	// compaction can fix and retrying as it is cannot.
+	StopContextExceeded StopReason = "context-exceeded"
 )
 
 // Complete reports whether the turn produced a whole answer.
