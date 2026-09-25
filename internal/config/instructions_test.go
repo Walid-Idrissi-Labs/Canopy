@@ -28,7 +28,7 @@ func TestInstructionsAreGatheredInPrecedenceOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, c, j := strings.Index(got.Text, "use tabs"), strings.Index(got.Text, "run make test"), strings.Index(got.Text, "no em dashes")
-	if a < 0 || c < 0 || j < 0 || !(a < c && c < j) {
+	if a < 0 || c < 0 || j < 0 || a >= c || c >= j {
 		t.Fatalf("instructions are missing or out of order:\n%s", got.Text)
 	}
 	if len(got.Sources) != 3 {
