@@ -26,25 +26,34 @@ import (
 // ResponsesEnvVar turns the Responses transport on for OpenAI's own endpoint.
 const ResponsesEnvVar = "CANOPY_OPENAI_RESPONSES"
 
-// responsesProvider owns the native content this transport produces and replays.
+// responsesProvider owns the native content this transport produces and replays. Its native content
+// is a list of output items, which Message.WithoutReasoning does not recognise and leaves whole after
+// a compaction: OpenAI's encrypted reasoning is not bound to the conversation before it, so replaying
+// it there is harmless, only a little longer.
 const responsesProvider = "openai-responses"
 
 // WithResponses uses the Responses API rather than chat completions.
 func WithResponses() Option { return func(c *Client) { c.responses = true } }
 
 type responsesRequest struct {
-	Model           string          `json:"model"`
-	Instructions    string          `json:"instructions,omitempty"`
-	Input           []any           `json:"input"`
-	Tools           []responsesTool `json:"tools,omitempty"`
-	Stream          bool            `json:"stream"`
-	Store           bool            `json:"store"`
-	Include         []string        `json:"include,omitempty"`
-	MaxOutputTokens int             `json:"max_output_tokens,omitempty"`
-	PromptCacheKey  string          `json:"prompt_cache_key,omitempty"`
-	Reasoning       *struct {
-		Effort string `json:"effort,omitempty"`
-	} `json:"reasoning,omitempty"`
+	Model           string            `json:"model"`
+	Instructions    string            `json:"instructions,omitempty"`
+	Input           []any             `json:"input"`
+	Tools           []responsesTool   `json:"tools,omitempty"`
+	Stream          bool              `json:"stream"`
+	Store           bool              `json:"store"`
+	Include         []string          `json:"include,omitempty"`
+	MaxOutputTokens int               `json:"max_output_tokens,omitempty"`
+	PromptCacheKey  string            `json:"prompt_cache_key,omitempty"`
+	Reasoning       *reasoningOptions `json:"reasoning,omitempty"`
+}
+
+// reasoningOptions asks for an effort and for a summary of the reasoning as it goes: without the
+// summary a reasoning model says nothing for minutes, which is indistinguishable from a stalled
+// connection, and the summary is what the transcript shows as thinking.
+type reasoningOptions struct {
+	Effort  string `json:"effort,omitempty"`
+	Summary string `json:"summary,omitempty"`
 }
 
 type responsesTool struct {
@@ -52,6 +61,9 @@ type responsesTool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	// Strict is off: strict schemas need every property required and no others allowed, and
+	// Canopy's tools have optional arguments.
+	Strict bool `json:"strict"`
 }
 
 func (c *Client) buildResponsesRequest(ctx context.Context, req core.Request) responsesRequest {
@@ -67,15 +79,7 @@ func (c *Client) buildResponsesRequest(ctx context.Context, req core.Request) re
 		Include:        []string{"reasoning.encrypted_content"},
 		PromptCacheKey: core.SessionFrom(ctx),
 	}
-	if effort := string(req.Effort); effort != "" && effort != "max" && effort != "xhigh" {
-		out.Reasoning = &struct {
-			Effort string `json:"effort,omitempty"`
-		}{Effort: effort}
-	} else if effort == "max" || effort == "xhigh" {
-		out.Reasoning = &struct {
-			Effort string `json:"effort,omitempty"`
-		}{Effort: "high"}
-	}
+	out.Reasoning = &reasoningOptions{Summary: "auto", Effort: responsesEffort(req.Effort)}
 	for _, msg := range req.Messages {
 		for _, result := range msg.ToolResults {
 			output := result.Content
@@ -85,11 +89,14 @@ func (c *Client) buildResponsesRequest(ctx context.Context, req core.Request) re
 			out.Input = append(out.Input, map[string]any{"type": "function_call_output",
 				"call_id": result.CallID, "output": output})
 		}
-		// A reply this transport produced goes back exactly as it came, reasoning included.
+		// A reply this transport produced goes back as it came, reasoning included, less the ids the
+		// server gave its items: nothing is stored on its side, so an id refers to nothing there and
+		// the request is refused. The call ids that tie results to calls are kept.
 		if native := msg.NativeFor(responsesProvider); native != nil {
-			var items []json.RawMessage
+			var items []map[string]json.RawMessage
 			if json.Unmarshal(native, &items) == nil {
 				for _, item := range items {
+					delete(item, "id")
 					out.Input = append(out.Input, item)
 				}
 				continue
@@ -120,6 +127,18 @@ func (c *Client) buildResponsesRequest(ctx context.Context, req core.Request) re
 			Description: tool.Description, Parameters: json.RawMessage(tool.InputSchema)})
 	}
 	return out
+}
+
+// responsesEffort maps Canopy's effort onto the API's, whose top is high; empty leaves the model's
+// own default.
+func responsesEffort(e core.Effort) string {
+	switch e {
+	case "":
+		return ""
+	case core.EffortMax, core.EffortXHigh:
+		return "high"
+	}
+	return string(e)
 }
 
 func (c *Client) streamResponses(ctx context.Context, req core.Request) (core.Stream, error) {
@@ -205,6 +224,7 @@ func (s *responsesStream) handle(data string) {
 				Reason string `json:"reason"`
 			} `json:"incomplete_details"`
 			Error *struct {
+				Code    string `json:"code"`
 				Message string `json:"message"`
 			} `json:"error"`
 			Usage struct {
@@ -216,6 +236,7 @@ func (s *responsesStream) handle(data string) {
 			} `json:"usage"`
 		} `json:"response"`
 		Message string `json:"message"`
+		Code    string `json:"code"`
 	}
 	if json.Unmarshal([]byte(data), &event) != nil {
 		return
@@ -248,13 +269,22 @@ func (s *responsesStream) handle(data string) {
 		usage := core.Usage{InputTokens: u.InputTokens - u.InputTokensDetails.CachedTokens,
 			CacheReadTokens: u.InputTokensDetails.CachedTokens, OutputTokens: u.OutputTokens}
 		stop := core.StopEndTurn
-		switch {
-		case event.Type == "response.incomplete" && event.Response.IncompleteDetails != nil &&
-			event.Response.IncompleteDetails.Reason == "max_output_tokens":
-			stop = core.StopMaxTokens
-		case event.Type == "response.incomplete":
-			stop = core.StopRefusal
-		case calls > 0:
+		if event.Type == "response.incomplete" {
+			reason := ""
+			if event.Response.IncompleteDetails != nil {
+				reason = event.Response.IncompleteDetails.Reason
+			}
+			switch reason {
+			case "max_output_tokens":
+				stop = core.StopMaxTokens
+			case "content_filter":
+				stop = core.StopRefusal
+			default:
+				s.finish(core.StopError, s.client.fail(core.ErrUnknown,
+					fmt.Sprintf("the response was left incomplete (%s)", reason), nil))
+				return
+			}
+		} else if calls > 0 {
 			stop = core.StopToolUse
 		}
 		var native *core.Native
@@ -264,11 +294,12 @@ func (s *responsesStream) handle(data string) {
 		s.pending = append(s.pending, core.StreamEvent{Kind: core.EventDone, StopReason: stop, Usage: usage, Native: native})
 		s.finished = true
 	case "response.failed", "error":
-		message := event.Message
+		message, code := event.Message, event.Code
 		if event.Response.Error != nil {
-			message = event.Response.Error.Message
+			message, code = event.Response.Error.Message, event.Response.Error.Code
 		}
-		s.finish(core.StopError, s.client.fail(core.ErrUnknown, s.client.scrub(fmt.Sprintf("the provider failed the response: %s", message)), nil))
+		s.finish(core.StopError, s.client.fail(streamErrorKind(code),
+			s.client.scrub(fmt.Sprintf("the provider failed the response: %s", message)), nil))
 	}
 }
 
@@ -288,4 +319,20 @@ func (s *responsesStream) Close() error {
 	s.closed = true
 	s.stalls.stop()
 	return s.resp.Body.Close()
+}
+
+// streamErrorKind classifies an error reported inside the stream by its code, so a conversation
+// that outgrew its window is compacted and a rate limit is retried rather than both being unknown.
+func streamErrorKind(code string) core.ProviderErrorKind {
+	switch code {
+	case "context_length_exceeded":
+		return core.ErrContextLength
+	case "rate_limit_exceeded":
+		return core.ErrRateLimited
+	case "server_error", "server_is_overloaded":
+		return core.ErrOverloaded
+	case "invalid_api_key", "invalid_authentication":
+		return core.ErrAuthentication
+	}
+	return core.ErrUnknown
 }

@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -97,6 +98,14 @@ func TestTheResponsesTransportKeepsReasoning(t *testing.T) {
 	body := bodies[1]
 	raw, _ := json.Marshal(body["input"])
 	input := string(raw)
+	if strings.Contains(input, `"rs_1"`) {
+		t.Errorf("a replayed item kept its server id, which nothing stored on the server resolves:\n%s", input)
+	}
+	tools, _ := json.Marshal(body["tools"])
+	reasoning, _ := json.Marshal(body["reasoning"])
+	if !strings.Contains(string(tools), `"strict":false`) || !strings.Contains(string(reasoning), `"summary":"auto"`) {
+		t.Errorf("tools %s reasoning %s", tools, reasoning)
+	}
 	for _, want := range []string{`"encrypted_content":"ENC-abc"`, `"type":"function_call_output"`, `"call_id":"call_1"`, `"output":"package a"`} {
 		if !strings.Contains(input, want) {
 			t.Errorf("the second request's input lacks %s:\n%s", want, input)
@@ -113,5 +122,67 @@ func TestTheResponsesTransportKeepsReasoning(t *testing.T) {
 	}
 	if body["prompt_cache_key"] != "session-7" || body["store"] != false || body["instructions"] != "be brief" {
 		t.Errorf("request settings: key %v store %v instructions %v", body["prompt_cache_key"], body["store"], body["instructions"])
+	}
+}
+
+// sseOnce serves one scripted event and nothing else.
+func sseOnce(t *testing.T, event map[string]any) *Client {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		b, _ := json.Marshal(event)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+	}))
+	t.Cleanup(server.Close)
+	return New(server.URL, core.NewSecret("sk"), WithResponses())
+}
+
+func finalEvent(t *testing.T, c *Client) core.StreamEvent {
+	t.Helper()
+	stream, err := c.Stream(context.Background(), core.Request{Model: "gpt-5", Messages: []core.Message{{Role: core.RoleUser, Text: "x"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	var last core.StreamEvent
+	for stream.Next() {
+		last = stream.Event()
+	}
+	return last
+}
+
+// A response left incomplete says why: the length cap and the content filter have their own stops,
+// and any other reason is an error that names it rather than a refusal.
+func TestIncompleteResponsesAreMappedByReason(t *testing.T) {
+	for reason, want := range map[string]core.StopReason{
+		"max_output_tokens": core.StopMaxTokens, "content_filter": core.StopRefusal, "something_new": core.StopError,
+	} {
+		done := finalEvent(t, sseOnce(t, map[string]any{"type": "response.incomplete", "response": map[string]any{
+			"status": "incomplete", "incomplete_details": map[string]any{"reason": reason}}}))
+		if done.StopReason != want || (want == core.StopError && !strings.Contains(fmt.Sprint(done.Err), reason)) {
+			t.Errorf("%s: stop %s err %v", reason, done.StopReason, done.Err)
+		}
+	}
+}
+
+// An error inside the stream is classified by its code, so a conversation too long for the window
+// is compacted and a rate limit is retried.
+func TestStreamErrorsAreClassified(t *testing.T) {
+	for code, want := range map[string]core.ProviderErrorKind{
+		"context_length_exceeded": core.ErrContextLength, "rate_limit_exceeded": core.ErrRateLimited, "whatever": core.ErrUnknown,
+	} {
+		done := finalEvent(t, sseOnce(t, map[string]any{"type": "error", "code": code, "message": "no"}))
+		var perr *core.ProviderError
+		if !errors.As(done.Err, &perr) || perr.Kind != want {
+			t.Errorf("%s: %v", code, done.Err)
+		}
+	}
+}
+
+func TestResponsesEffort(t *testing.T) {
+	for in, want := range map[core.Effort]string{"": "", core.EffortLow: "low", core.EffortXHigh: "high", core.EffortMax: "high"} {
+		if got := responsesEffort(in); got != want {
+			t.Errorf("%q: %q", in, got)
+		}
 	}
 }

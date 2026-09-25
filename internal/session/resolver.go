@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -142,7 +143,7 @@ func (r *KeyResolver) ResolveForWorkspace(
 		options := []openai.Option{openai.WithName(meta.Ref.Name)}
 		// OpenAI's own endpoint, and only when asked for, until the Responses transport has been
 		// run against the real service.
-		if strings.Contains(meta.BaseURL, "api.openai.com") && strings.EqualFold(os.Getenv(openai.ResponsesEnvVar), "on") {
+		if useResponses(meta.BaseURL) {
 			options = append(options, openai.WithResponses())
 		}
 		return openai.New(meta.BaseURL, secret, options...), id, nil
@@ -251,4 +252,11 @@ func (r *KeyResolver) DefaultKeyName() string {
 	// a timestamp resolve the same way on every run. A default that changed between launches would be
 	// worse than having none.
 	return name
+}
+
+// useResponses reports whether an OpenAI-compatible key takes the Responses API: OpenAI's own
+// endpoint, and only when CANOPY_OPENAI_RESPONSES=on.
+func useResponses(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	return err == nil && u.Hostname() == "api.openai.com" && strings.EqualFold(os.Getenv(openai.ResponsesEnvVar), "on")
 }
