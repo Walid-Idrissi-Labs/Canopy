@@ -641,7 +641,7 @@ func toolKind(name string) string {
 		return "edit"
 	case name == "grep" || name == "glob" || strings.HasPrefix(name, "find_"):
 		return "search"
-	case name == "shell":
+	case name == "run_command" || name == "shell":
 		return "execute"
 	case name == "fetch_url":
 		return "fetch"

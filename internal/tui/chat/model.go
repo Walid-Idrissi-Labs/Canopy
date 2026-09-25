@@ -321,6 +321,9 @@ type Model struct {
 	files    func() []string
 	remember func(note string) (string, error)
 
+	// noteAsked is a "# note" waiting for the second enter that keeps it.
+	noteAsked string
+
 	// chordX is set by ctrl+x, the first half of ctrl+x ctrl+e, which opens the box in $EDITOR.
 	chordX bool
 
@@ -1312,10 +1315,11 @@ func (m *Model) acceptFromMenu() bool {
 		return false
 	}
 	if m.menu.sigil == "@" {
-		// The mention being typed is replaced by the whole path, and the rest of the box kept.
-		value := m.input.Value()
-		at := strings.LastIndexAny(value, " \t\n")
-		m.input.SetValue(value[:at+1] + "@" + chosen.name + " ")
+		// The mention being typed is replaced by the whole path, and the rest of the box kept on
+		// either side of it.
+		before := m.input.BeforeCursor()
+		at := strings.LastIndexAny(before, " \t\n")
+		m.input.Splice(before[:at+1]+"@"+chosen.name+" ", m.input.AfterCursor())
 		m.menu = menu{}
 		m.err = ""
 		return true
@@ -1337,7 +1341,18 @@ func (m Model) send() (Model, tea.Cmd) {
 
 	// "# note" is kept in the project's instructions rather than sent: the quick way to tell every
 	// later conversation something once.
-	if note, ok := strings.CutPrefix(trimmed, "# "); ok && m.remember != nil && strings.TrimSpace(note) != "" {
+	// Only a single line typed here, never a paste: a pasted markdown document beginning with a
+	// heading is a message, not an instruction for every later agent. And asked once, since what is
+	// kept is read by every conversation after it.
+	if note, ok := strings.CutPrefix(trimmed, "# "); ok && m.remember != nil && strings.TrimSpace(note) != "" &&
+		!strings.Contains(note, "\n") && !m.input.Pasted() {
+		if m.noteAsked != trimmed {
+			m.noteAsked = trimmed
+			m.notice = "enter again keeps this line in AGENTS.md, which every later conversation here reads; " +
+				"change it to send it as a message instead"
+			return m, nil
+		}
+		m.noteAsked = ""
 		path, err := m.remember(strings.TrimSpace(note))
 		if err != nil {
 			m.err = "the note was not kept: " + err.Error()

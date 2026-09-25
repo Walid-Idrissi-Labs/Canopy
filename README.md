@@ -92,6 +92,10 @@ canopy keys list                             # the MODEL column says NOT SET whe
 canopy keys rename nim minimax               # the value is not asked for again
 ```
 
+Already have `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set for another tool? `canopy keys import`
+shows what it found, by fingerprint and never by value, and stores them as named keys once you say
+yes.
+
 No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy keys signin` rather
 than `canopy keys add`, and read
 [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
@@ -114,6 +118,11 @@ The keys screen offers a dated catalog where Canopy knows both the endpoint and 
 transport, while still accepting an unlisted model id. OpenAI's offered list is intentionally
 limited to models the current Chat Completions adapter can invoke; models that require the
 Responses API need a transport Canopy does not yet ship.
+
+In a project with no canopy.json, `canopy init` writes one with the tests its go.mod, Cargo.toml,
+package.json or pytest setup suggests, for you to read and `canopy trust`. `canopy doctor` checks
+git, the key store, the sandbox, the project's configuration, language servers, the programs the
+subscription routes need, and the terminal, and says what to do about each that is missing.
 
 Now run `canopy` in a git repository. Press `?` for every key binding.
 
@@ -361,6 +370,24 @@ file never holds it; the trust prompt shows which variables go to which url, a s
 is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
 cloud's) is never sent to a server a repository names.
 
+A hook runs on something that happened: `tests-passed`, `tests-failed`, `verified`, `agent-idle` and
+`agent-blocked` for the project's state, and `pre-tool`, `post-tool` and `turn-end` around an agent's
+work. The last three are given what happened as JSON on stdin. A `pre-tool` hook can refuse a call,
+by answering `{"decision": "deny", "reason": "..."}` or exiting 2 with the reason on stderr, and the
+model is told why; it can never approve one, since it runs only after the permission layer has said
+yes. One that cannot answer, by crashing, timing out or saying something else, refuses the call too.
+A `post-tool` hook can answer `{"note": "..."}`, which is added to what the model is told of the
+result. `"tools": ["run_command"]` narrows either to some tools. Every hook runs in the sandbox, in
+the directory of the agent the call belongs to, which its input names as `workspace`.
+
+```json
+{"hooks": [
+  {"on": "pre-tool", "tools": ["run_command"], "run": "./scripts/guard.sh", "timeout": "10s"},
+  {"on": "post-tool", "tools": ["write_file", "edit_file"], "run": "./scripts/lint-note.sh"},
+  {"on": "turn-end", "run": "osascript -e 'display notification \"turn done\"'"}
+]}
+```
+
 ## Landing an agent's work
 
 ```sh
@@ -476,10 +503,12 @@ ctrl+p opens a palette of every command, mode, theme and file, narrowed as you t
 order are enough: `thn` finds `theme nord`); enter runs a built-in, puts one of the project's own
 commands in the box to be sent, and mentions a file. `@` at the start of a word offers the project's files as git lists them, ignored ones left out,
 best match first; tab or enter puts the path in. ctrl+x ctrl+e opens the message in `$VISUAL` or
-`$EDITOR` and takes back what you wrote. A message that begins with `# ` is not sent: it is kept as a
-line in AGENTS.md, which every conversation started afterwards reads. Since AGENTS.md is part of what
-you trusted, trust follows your note, but only while AGENTS.md is still what you trusted; if an agent
-has edited it meanwhile, the next start asks again.
+`$EDITOR` and takes back what you wrote. A single typed line that begins with `# ` is kept, after a
+second enter, as a line in AGENTS.md, which every conversation started afterwards reads; a paste, or
+anything over more than one line, is sent as an ordinary message. Since AGENTS.md is part of what
+you trusted, trust follows your note only when the repository is, after the note, exactly what you
+trusted plus that line; anything else that changed, an agent's edit included, is asked about at the
+next start.
 
 ## Modes, on shift+tab
 

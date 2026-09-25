@@ -25,6 +25,9 @@ type Hook struct {
 
 	// Timeout is a duration string such as "30s". Empty means the runner's default.
 	Timeout string `json:"timeout"`
+
+	// Tools limits a pre-tool or post-tool hook to the tools named; empty means every tool.
+	Tools []string `json:"tools,omitempty"`
 }
 
 // HookTimeout is how long this hook may run, or zero for the runner's default.
@@ -52,6 +55,7 @@ func (p Project) Runnable() []hooks.Hook {
 			On:      hooks.Event(hook.On),
 			Run:     hook.Run,
 			Timeout: hook.HookTimeout(),
+			Tools:   hook.Tools,
 		})
 	}
 	return out
@@ -71,6 +75,10 @@ func (p Project) validateHooks() error {
 		case hook.Run == "":
 			return fmt.Errorf("the hook on %q has no command, so there is nothing for it to run",
 				hook.On)
+		case len(hook.Tools) > 0 && !hooks.AboutTools(hooks.Event(hook.On)):
+			// Refused rather than ignored: a filter that silently does nothing reads as one that works.
+			return fmt.Errorf("the hook on %q names tools, but only pre-tool and post-tool hooks run "+
+				"for particular tools", hook.On)
 		}
 
 		if _, err := parseDuration(hook.Timeout); err != nil {

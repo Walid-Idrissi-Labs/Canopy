@@ -65,7 +65,7 @@ func (m *Model) refreshMenu() {
 	prefix, wanted := commandPrefix(m.input.Value())
 	sigil := "/"
 	if !wanted {
-		fragment, mentioning := mentionPrefix(m.input.Value())
+		fragment, mentioning := mentionPrefix(m.input.BeforeCursor())
 		if !mentioning || m.files == nil {
 			m.menu = menu{}
 			return

@@ -24,6 +24,15 @@ type server struct {
 	options any
 }
 
+// ServerNames are the language servers Canopy looks for on PATH.
+func ServerNames() []string {
+	names := make([]string, 0, len(known))
+	for _, s := range known {
+		names = append(names, s.name)
+	}
+	return names
+}
+
 // known are the servers looked for on PATH, first found wins for an extension.
 var known = []server{
 	{name: "gopls", argv: []string{"gopls"}, exts: []string{".go"}, languageID: fixed("go")},

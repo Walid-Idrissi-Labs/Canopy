@@ -138,6 +138,10 @@ type Loop struct {
 	// Tainted says whether the conversation has taken in content from outside, asked before every
 	// tool call; see permission.Request.Tainted. Nil means never.
 	Tainted func() bool
+
+	// Hooks are the project's own checks around each call the permission layer lets through. Nil
+	// means none.
+	Hooks ToolHooks
 	// Gate is asked before every model call after the first, with what the turn has used so far,
 	// and a reason stops the turn there. It is how a spending cap holds inside a long turn: the
 	// request in flight finishes, and the next one is not made.
@@ -495,6 +499,16 @@ func (l *Loop) invoke(
 		entry.Outcome = permission.Allow
 	}
 
+	// The project's pre-tool hooks see only calls that would run, and can only take the yes away.
+	if l.Hooks != nil {
+		if why := l.Hooks.Before(ctx, req); why != "" {
+			entry.Outcome = permission.Deny
+			entry.Reason = "refused by a pre-tool hook: " + why
+			return finish(core.ToolResult{CallID: call.ID, IsError: true,
+				Content: "refused by the project's pre-tool hook: " + why})
+		}
+	}
+
 	if req.Tainted {
 		ctx = core.WithTainted(ctx)
 	}
@@ -519,7 +533,20 @@ func (l *Loop) invoke(
 
 	entry.Ran = true
 	result.CallID = call.ID
+	if l.Hooks != nil {
+		if note := l.Hooks.After(ctx, req, result); note != "" {
+			result.Content += "\n\n[from the project's post-tool hook]\n" + note
+		}
+	}
 	return finish(result)
+}
+
+// ToolHooks are a project's own checks around a tool call. Before returns why a call is refused, or
+// "" to let it run; it cannot approve a call the permission layer would have asked about, since it
+// only runs once that layer has said yes. After returns a note for the model, or "".
+type ToolHooks interface {
+	Before(ctx context.Context, req permission.Request) string
+	After(ctx context.Context, req permission.Request, result core.ToolResult) string
 }
 
 func (l *Loop) tool(name string) (core.Tool, bool) {
