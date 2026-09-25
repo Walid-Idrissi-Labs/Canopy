@@ -39,6 +39,9 @@ type stream struct {
 	err      error
 	finished bool
 	closed   bool
+
+	// searched marks the content blocks whose search was already reported.
+	searched map[int64]bool
 }
 
 var _ core.Stream = (*stream)(nil)
@@ -77,6 +80,12 @@ func (s *stream) queueDeltas(event sdk.MessageStreamEventUnion) {
 		if use, ok := start.ContentBlock.AsAny().(sdk.ServerToolUseBlock); ok && use.Name == "web_search" {
 			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice, Text: "searching the web..."})
 		}
+		return
+	}
+	// The query is complete when its block is, and it is reported then: a reply that is cancelled
+	// or fails later has still been billed for the searches it ran, and the audit trail should say so.
+	if stop, ok := event.AsAny().(sdk.ContentBlockStopEvent); ok {
+		s.reportSearch(stop.Index)
 		return
 	}
 	delta, ok := event.AsAny().(sdk.ContentBlockDeltaEvent)
@@ -133,17 +142,9 @@ func (s *stream) finish() {
 		})
 	}
 
-	// Each search the provider ran is reported with its query once the reply is complete, so it
-	// reaches the audit trail as well as the screen.
-	for _, block := range s.message.Content {
-		if use, ok := block.AsAny().(sdk.ServerToolUseBlock); ok && use.Name == "web_search" {
-			var input struct {
-				Query string `json:"query"`
-			}
-			_ = json.Unmarshal([]byte(use.JSON.Input.Raw()), &input)
-			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice,
-				Text: WebSearchNotice + input.Query})
-		}
+	// Any search not yet reported, for a stream whose block ends went unseen.
+	for i := range s.message.Content {
+		s.reportSearch(int64(i))
 	}
 	s.native = s.nativeMessage()
 	s.finishWith(mapStopReason(s.message.StopReason), nil)
@@ -225,4 +226,25 @@ func (s *stream) Close() error {
 	}
 	s.closed = true
 	return s.inner.Close()
+}
+
+// reportSearch reports the search in a finished content block, with its query, once, so it reaches
+// the audit trail as well as the screen.
+func (s *stream) reportSearch(index int64) {
+	if index < 0 || index >= int64(len(s.message.Content)) || s.searched[index] {
+		return
+	}
+	use, ok := s.message.Content[index].AsAny().(sdk.ServerToolUseBlock)
+	if !ok || use.Name != "web_search" {
+		return
+	}
+	if s.searched == nil {
+		s.searched = map[int64]bool{}
+	}
+	s.searched[index] = true
+	var input struct {
+		Query string `json:"query"`
+	}
+	_ = json.Unmarshal([]byte(use.JSON.Input.Raw()), &input)
+	s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice, Text: WebSearchNotice + input.Query})
 }
