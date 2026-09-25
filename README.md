@@ -338,6 +338,22 @@ covers that exact configuration: change a hook, add an MCP server or add vendor 
 `.claude/settings.json`, and Canopy asks again. A repository's `"trust"` field may lower its agents to
 read-only or confined; it can never raise them above standard.
 
+An MCP server is a local program started over stdio, or a remote one reached over HTTP:
+
+```json
+{"mcp": [
+  {"name": "files", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]},
+  {"name": "issues", "url": "https://mcp.example.com/mcp",
+   "headers": {"Authorization": "Bearer ${ISSUES_TOKEN}"}}
+]}
+```
+
+A remote server's url must be https, or http to this machine, and a redirect is never followed. A
+header names its token as `${NAME}`, read from the environment Canopy starts in, so the committed
+file never holds it; the trust prompt shows which variables go to which url, a server whose variable
+is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
+cloud's) is never sent to a server a repository names.
+
 ## Landing an agent's work
 
 ```sh
@@ -380,6 +396,9 @@ to beginning, byte for byte, with the one before it. What that buys is visible:
   definitions, summary, messages, replies, replayed thinking, tool calls and results) and says how
   much of the last turn came from the cache, with a plain warning when a later turn got nothing
   from it.
+- On Anthropic's current models, once MCP servers bring more than about five thousand tokens of
+  tool definitions, those are held back and the model finds the ones it needs through a tool
+  search, so a request does not carry forty tools to use one.
 - A read of a file already sent and unchanged is answered with a short reference instead of the
   file again, and long tool output is kept aside with its head and tail shown and the rest one
   `read_output` away.

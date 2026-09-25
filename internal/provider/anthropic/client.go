@@ -148,7 +148,7 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 	}
 	params.Messages = messages
 
-	tools := buildTools(req.Tools)
+	tools := buildTools(req.Tools, adaptiveThinking(model))
 	if req.WebSearch {
 		tools = append(tools, webSearchTool(model))
 	}
@@ -234,11 +234,25 @@ func (c *Client) buildMessages(messages []core.Message) ([]sdk.MessageParam, err
 	return out, nil
 }
 
-func buildTools(tools []core.ToolDefinition) []sdk.ToolUnionParam {
+// deferThreshold is how large MCP tools' definitions may grow before they are held back behind a
+// tool search, in bytes: about five thousand tokens, which several servers' worth of tools pass
+// quickly and which every request would otherwise carry whether any of them is used or not.
+const deferThreshold = 20 * 1024
+
+func buildTools(tools []core.ToolDefinition, searchable bool) []sdk.ToolUnionParam {
 	if len(tools) == 0 {
 		return nil
 	}
-	out := make([]sdk.ToolUnionParam, 0, len(tools))
+	// Decided from the tool set alone, so it is the same on every request of a conversation and the
+	// cached prefix holds.
+	var externalBytes int
+	for _, tool := range tools {
+		if tool.External {
+			externalBytes += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
+		}
+	}
+	deferred := searchable && externalBytes > deferThreshold
+	out := make([]sdk.ToolUnionParam, 0, len(tools)+1)
 	for _, tool := range tools {
 		var schema sdk.ToolInputSchemaParam
 		if len(tool.InputSchema) > 0 {
@@ -247,11 +261,21 @@ func buildTools(tools []core.ToolDefinition) []sdk.ToolUnionParam {
 			// silently dropped here.
 			_ = json.Unmarshal(tool.InputSchema, &schema)
 		}
-		out = append(out, sdk.ToolUnionParam{OfTool: &sdk.ToolParam{
+		param := &sdk.ToolParam{
 			Name:        tool.Name,
 			Description: sdk.String(tool.Description),
 			InputSchema: schema,
-		}})
+		}
+		if deferred && tool.External {
+			param.DeferLoading = sdk.Bool(true)
+		}
+		out = append(out, sdk.ToolUnionParam{OfTool: param})
+	}
+	if deferred {
+		// The model finds a held-back tool by searching for it in words, and the provider then loads
+		// the definitions that matched.
+		out = append(out, sdk.ToolUnionParam{OfToolSearchToolBm25_20251119: &sdk.ToolSearchToolBm25_20251119Param{
+			Type: sdk.ToolSearchToolBm25_20251119TypeToolSearchToolBm25_20251119}})
 	}
 	return out
 }

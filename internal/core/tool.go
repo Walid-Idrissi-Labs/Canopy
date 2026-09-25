@@ -270,10 +270,12 @@ func (r *ToolRegistry) Definitions() []ToolDefinition {
 	out := make([]ToolDefinition, 0, len(r.order))
 	for _, name := range r.order {
 		tool := r.tools[name]
+		external, _ := tool.(ExternalTool)
 		out = append(out, ToolDefinition{
 			Name:        tool.Name(),
 			Description: tool.Description(),
 			InputSchema: tool.Schema(),
+			External:    external != nil && external.External(),
 		})
 	}
 	return out
