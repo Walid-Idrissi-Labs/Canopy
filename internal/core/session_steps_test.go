@@ -52,3 +52,17 @@ func TestAnUnansweredCallIsNotRebuiltIntoHistory(t *testing.T) {
 		}
 	}
 }
+
+// With text alongside it, an unanswered call is still left out while the text is kept.
+func TestAnUnansweredCallBesideTextIsLeftOut(t *testing.T) {
+	s := Session{Turns: []Turn{{
+		Request:   Message{Role: RoleUser, Text: "go"},
+		Text:      "I will write the file.",
+		ToolCalls: []ToolCall{{ID: "cut", Name: "write_file", Input: []byte(`{"path":"a`)}},
+	}}}
+	history := s.History()
+	last := history[len(history)-1]
+	if last.Text != "I will write the file." || len(last.ToolCalls) != 0 {
+		t.Fatalf("got %+v, want the text without the unanswered call", last)
+	}
+}
