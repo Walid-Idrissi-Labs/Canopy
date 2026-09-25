@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
@@ -110,9 +109,4 @@ func repoRoot(ctx context.Context, dir string) string {
 		}
 	}
 	return dir
-}
-
-// processAlive reports whether a process exists, by signalling it with nothing.
-func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
 }
