@@ -129,9 +129,12 @@ be rediscovered by getting burned by it.
   writes to the workspace, temporary directories and toolchain download caches, keeps git hooks and
   git config unwritable, and hides credential locations; on Linux it confines writes the same way
   but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since
-  Landlock cannot carve a path out of an allowed tree. On macOS the `.git` entry itself cannot be
-  moved or replaced either, so `git init` in a directory that is not yet a repository fails inside
-  the sandbox. The writable download caches (the Go module cache, Cargo's registry, Gradle's caches,
+  Landlock cannot carve a path out of an allowed tree. On macOS no `.git` can be made, moved or
+  replaced anywhere under the workspace, and no git config or hooks written in any repository,
+  submodule or worktree there, since a nested repository added as a gitlink is run by your own
+  `git status`; so `git init` or `git clone` into the workspace fails inside the sandbox, while a
+  clone into the temporary area or a cache, which a git dependency makes, works. On Linux none of
+  that is enforced. The writable download caches (the Go module cache, Cargo's registry, Gradle's caches,
   npm's) are shared with your own builds, and a command can alter a file in them that a later build
   uses; the sandbox narrows what can be planted, it does not verify caches. Network is open by
   default. Commands that
@@ -793,3 +796,26 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - A Windows stub already exists in the process-handling code, and it says plainly that it is
   incomplete rather than pretending to be finished: Windows has no process-group equivalent in
   place, so a cancelled command there can leave children running behind it (A4-03).
+
+## Round two additions
+
+- Anthropic web search is off unless `CANOPY_WEB_SEARCH=on`. A search runs on Anthropic's side, so
+  no approval prompt sees it, and its query can carry what the model read. Searches reach the audit
+  trail when the reply finishes, so a reply that is cancelled or fails part way loses the record of
+  searches that were already billed.
+- The no-progress check stops a turn that repeats the same call with the same result five times
+  with nothing changing in between. A successful write, or a command not run before in the turn,
+  resets it, so rewriting a file with the same content over and over is caught only by the step
+  limit.
+- The undo preview is taken on the first `/undo`; confirming within a minute restores without
+  taking it again, so edits made between the two are not listed, though they are undone.
+- A skill's trust fingerprint covers the first 200 files in its folder.
+- An agent definition's `tools:` list becomes a trust ceiling (no shell or editing tool: read-only;
+  editing without a shell: confined; a shell: standard); tool names are not enforced one by one.
+- `canopy bench` has no published baseline yet: its tasks are small, five in Go and one in Python,
+  and a single run is one sample, so compare runs on the same tasks and model rather than reading
+  one number as a score.
+- Spending caps are priced from Canopy's table. A model with no known rate cannot be held to a cap in
+  money and says so; the step and token bounds still apply.
+- `/context` estimates tokens from bytes, about four to a token; the provider's own count, shown
+  for the last turn, is the one that was billed.
