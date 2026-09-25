@@ -139,6 +139,17 @@ func (s *Store) SetClock(now func() time.Time) {
 // BackendName says where secrets are being kept.
 func (s *Store) BackendName() string { return s.backend.Name() }
 
+// Probe asks the backend for a credential that does not exist, which is the cheapest question that
+// shows whether it can answer at all: a keychain that is not there fails it, where listing keys,
+// which reads only this store's own index, would not.
+func (s *Store) Probe() error {
+	_, err := s.backend.Get("canopy-probe-no-such-credential")
+	if err == nil || errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
 // UsingInsecureBackend reports whether secrets are being written to a plain file.
 //
 // Exposed so the interface can keep saying so. A one time warning when the backend is chosen is

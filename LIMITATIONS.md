@@ -870,3 +870,6 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
   service manager. A question waiting for a client is announced on the server's error output only,
   with no desktop notification.
+- `canopy init` proposes `.venv/bin/python -m pytest` where the project has a `.venv`. An agent's
+  worktree has none unless canopy.json's `copy` or `setup` makes one, so the test fails there until
+  it does.

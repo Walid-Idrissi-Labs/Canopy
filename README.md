@@ -91,6 +91,10 @@ canopy keys list                             # the MODEL column says NOT SET whe
 canopy keys rename nim minimax               # the value is not asked for again
 ```
 
+Already have `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set for another tool? `canopy keys import`
+shows what it found, by fingerprint and never by value, and stores them as named keys once you say
+yes.
+
 No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy keys signin` rather
 than `canopy keys add`, and read
 [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
@@ -113,6 +117,11 @@ The keys screen offers a dated catalog where Canopy knows both the endpoint and 
 transport, while still accepting an unlisted model id. OpenAI's offered list is intentionally
 limited to models the current Chat Completions adapter can invoke; models that require the
 Responses API need a transport Canopy does not yet ship.
+
+In a project with no canopy.json, `canopy init` writes one with the tests its go.mod, Cargo.toml,
+package.json or pytest setup suggests, for you to read and `canopy trust`. `canopy doctor` checks
+git, the key store, the sandbox, the project's configuration, language servers, the programs the
+subscription routes need, and the terminal, and says what to do about each that is missing.
 
 Now run `canopy` in a git repository. Press `?` for every key binding.
 
