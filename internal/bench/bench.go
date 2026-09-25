@@ -308,10 +308,12 @@ func runOne(ctx context.Context, task Task, attempt Attempt) Result {
 	return res
 }
 
-// changedTests names the first of a task's test files that is missing or differs from the one laid
-// out, or returns "".
+// changedTests names the first test file that is missing, differs from the one laid out, or was
+// added by the attempt, or returns "". An added test file can end the run early or skip the real
+// tests as surely as an edited one.
 func changedTests(task Task, dir string) string {
 	root := path.Join("tasks", task.Name)
+	laidOut := map[string]bool{}
 	var changed string
 	_ = fs.WalkDir(embedded, root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || changed != "" {
@@ -321,9 +323,30 @@ func changedTests(task Task, dir string) string {
 		if !isTest(rel) {
 			return nil
 		}
+		laidOut[rel] = true
 		want, _ := fs.ReadFile(embedded, p)
 		got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
 		if err != nil || !bytes.Equal(got, want) {
+			changed = rel
+		}
+		return nil
+	})
+	if changed != "" {
+		return changed
+	}
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || changed != "" {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, p)
+		rel = filepath.ToSlash(rel)
+		if isTest(rel) && !laidOut[rel] {
 			changed = rel
 		}
 		return nil
@@ -334,6 +357,6 @@ func changedTests(task Task, dir string) string {
 // isTest reports whether a task file is one of its tests.
 func isTest(rel string) bool {
 	base := path.Base(rel)
-	return strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") ||
+	return strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") || base == "conftest.py" ||
 		strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
 }
