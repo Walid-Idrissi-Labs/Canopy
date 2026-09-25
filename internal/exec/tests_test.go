@@ -375,7 +375,9 @@ func TestRunsWaitForASlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner.Cancel(third)
+	if err := runner.Cancel(third); err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		mu.Lock()
