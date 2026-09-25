@@ -219,6 +219,13 @@ func (e *fakeEngine) Undo(_ context.Context, _, turnID string) error {
 	return nil
 }
 
+func (e *fakeEngine) UndoPreview(_ context.Context, _, _ string) ([]string, error) {
+	if e.undoErr != nil {
+		return nil, e.undoErr
+	}
+	return []string{"M main.go"}, nil
+}
+
 func model(engine chat.Engine) chat.Model {
 	m := chat.New(engine, "s1", "myproject", "claude")
 	m.SetSize(80, 24)

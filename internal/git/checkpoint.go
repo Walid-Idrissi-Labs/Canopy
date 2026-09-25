@@ -280,3 +280,33 @@ func environ(dir string) []string {
 		"GIT_COMMITTER_EMAIL=canopy@localhost",
 	})
 }
+
+// Preview lists what restoring a checkpoint would change, without changing anything: tracked files
+// that differ from it, marked M, A or D as git reports them, and files that would be removed because
+// they did not exist at the checkpoint and are not ignored. The removals include anything a person
+// created since, which is exactly what they need to see before agreeing.
+func (t *Taker) Preview(ctx context.Context, checkpoint Checkpoint) ([]string, error) {
+	if checkpoint.Commit == "" {
+		return nil, fmt.Errorf("that checkpoint has no commit to compare with")
+	}
+	changed, err := t.run(ctx, "diff", "--no-ext-diff", "--name-status", checkpoint.Commit)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, line := range strings.Split(changed, "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, strings.Join(strings.Fields(line), " "))
+		}
+	}
+	untracked, err := t.run(ctx, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range strings.Split(untracked, "\n") {
+		if strings.TrimSpace(path) != "" {
+			out = append(out, "remove "+path)
+		}
+	}
+	return out, nil
+}

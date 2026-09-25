@@ -198,6 +198,10 @@ func (e *stubEngine) Undo(_ context.Context, _, turnID string) error {
 	return nil
 }
 
+func (e *stubEngine) UndoPreview(context.Context, string, string) ([]string, error) {
+	return []string{"M main.go"}, nil
+}
+
 // Create hands back a session that is genuinely different from the one before it, since a stub
 // returning the same ID every time would make "the screen moved to the new conversation" pass
 // without the screen having moved anywhere.

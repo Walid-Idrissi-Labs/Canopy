@@ -1504,3 +1504,28 @@ func (e *Engine) PendingJoins(sessionID string) int {
 	defer e.mu.Unlock()
 	return len(e.joinNotes[sessionID])
 }
+
+// UndoPreview lists what Undo would change for a turn, without changing anything.
+func (e *Engine) UndoPreview(ctx context.Context, sessionID, turnID string) ([]string, error) {
+	e.mu.Lock()
+	taker := e.checkpoints
+	session, ok := e.sessions[sessionID]
+	var commit string
+	if ok {
+		for _, turn := range session.Turns {
+			if turn.ID == turnID {
+				commit = turn.Checkpoint
+			}
+		}
+	}
+	e.mu.Unlock()
+	switch {
+	case !ok:
+		return nil, fmt.Errorf("no session %q", sessionID)
+	case taker == nil:
+		return nil, errors.New("this directory is not a git repository, so nothing was checkpointed")
+	case commit == "":
+		return nil, fmt.Errorf("turn %s has no checkpoint, so there is nothing to restore", turnID)
+	}
+	return taker.Preview(ctx, git.Checkpoint{Commit: commit})
+}

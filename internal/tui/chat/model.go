@@ -66,6 +66,7 @@ type Engine interface {
 	// things to want, and doing both would throw away the record of what was tried along with the
 	// attempt, which is the half worth keeping when something did not work.
 	Undo(ctx context.Context, sessionID, turnID string) error
+	UndoPreview(ctx context.Context, sessionID, turnID string) ([]string, error)
 
 	// Mode is what this conversation's agent is doing, and SetMode changes it. This pair is what a
 	// mode is made of: the permission layer decides against the mode's level and the tool list the
@@ -314,6 +315,11 @@ type Model struct {
 	// so keeping a second animation timer alive there would redraw identical pixels forever.
 	markRunning bool
 
+	// undoArmed is the turn an undo preview was shown for, and when; a second /undo for the same
+	// turn within a minute performs it.
+	undoArmed   string
+	undoArmedAt time.Time
+
 	// ticking says the spinner's timer is scheduled; tickGeneration retires stale timers.
 	ticking        bool
 	tickGeneration int
@@ -548,6 +554,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.btwScroll = 0
 		m.notice = ""
 		m.err = ""
+		return m, nil
+
+	case undoPreviewMsg:
+		m.notice = ""
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.notice = describeUndo(msg.changes)
+		if len(msg.changes) > 0 {
+			m.undoArmed, m.undoArmedAt = msg.turnID, time.Now()
+		}
 		return m, nil
 
 	case undoneMsg:
