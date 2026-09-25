@@ -286,6 +286,9 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 			return nil, err
 		}
 	}
+	if err := registry.Register(tools.RepoMapTool(workspace)); err != nil {
+		return nil, err
+	}
 	for _, tool := range tools.GitTools(workspace) {
 		if err := registry.Register(tool); err != nil {
 			return nil, err
