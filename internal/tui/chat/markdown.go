@@ -459,12 +459,18 @@ func renderCodeBlock(lang string, code []string, width int) []string {
 	}
 
 	rules, highlighted := languageRules(lang)
+	body, chroma := chromaBlock(lang, code, width)
 
 	// Wrapped rather than assumed short: the language tag comes from whatever the model wrote after
 	// the fence, and nothing stops that being longer than the terminal.
 	var out []string
 	for _, wrapped := range wrap(fenceLabel, width) {
 		out = append(out, t.Muted.Render(wrapped))
+	}
+	if chroma {
+		out = append(out, body...)
+		out = append(out, t.Muted.Render("```"))
+		return out
 	}
 	for _, raw := range code {
 		raw = expandTabs(raw)
