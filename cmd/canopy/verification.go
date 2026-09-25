@@ -400,7 +400,7 @@ func loadProject(dir string) config.Project {
 	if !found {
 		return config.Project{}
 	}
-	return project
+	return gateProject(dir, project, os.Stdin, os.Stderr, isTerminal(os.Stdin) && isTerminal(os.Stderr))
 }
 
 // loadCommands resolves the user-level catalog with this project's definitions.

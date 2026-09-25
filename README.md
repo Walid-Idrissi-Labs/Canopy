@@ -295,6 +295,16 @@ unknown provider costs, names the sample size, and refuses a conclusion until at
 have three exact samples each. The result is an association in local history, not a claim that the
 model caused the outcome.
 
+## A repository has to be trusted before it runs anything
+
+canopy.json can name a setup command, test commands, hooks and MCP servers, and carry instructions
+for the model. None of that runs, and nothing of it reaches the model, until you have seen exactly
+what it asks for and said yes. Opening Canopy in a repository with such a configuration shows the list
+and asks once; `canopy trust` reviews it later, `canopy trust revoke` takes it back. The answer
+covers that exact configuration: change a hook, add an MCP server or add vendor agent settings such as
+`.claude/settings.json`, and Canopy asks again. A repository's `"trust"` field may lower its agents to
+read-only or confined; it can never raise them above standard.
+
 ## Reusable prompt commands
 
 Project commands live in `canopy.json`:

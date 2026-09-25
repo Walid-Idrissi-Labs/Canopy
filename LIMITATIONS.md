@@ -593,6 +593,11 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   a broken hook for hours. That is the exact failure automation invites, since the point of it is
   that somebody stops watching. A8-05 stays claimed for this reason alone.
 
+- Repository trust is recorded per directory and per exact configuration, in the user config
+  directory. Until a repository is trusted, its test commands do not run either, so verification says
+  nothing is configured there. Trust is a statement about the configuration, not about the code: a
+  trusted test command still runs whatever the repository's tests do.
+
 - MCP servers are started when a conversation opens and stopped when it closes, and their tools are
   governed exactly as Canopy's own are: every one of them counts as running a command, whatever the
   server says about itself, so read-only and confined agents get none of them and standard trust sees

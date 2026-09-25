@@ -114,7 +114,7 @@ func runChat(resume string) error {
 		KeyName:   keyName,
 		Model:     defaultModelFor(keyStore, keyName),
 		Dir:       dir,
-		Trust:     core.TrustStandard,
+		Trust:     projectTrust(project),
 	})
 	if err != nil {
 		if resume != "" {
@@ -238,7 +238,7 @@ func attachTools(engine *session.Engine, dir string, project config.Project) err
 
 	// The engine asks the person watching. It implements the approver itself, which is what lets a
 	// blocking question from a background goroutine reach an event loop that must never block.
-	engine.WithTools(registry, core.TrustStandard, engine)
+	engine.WithTools(registry, projectTrust(project), engine)
 
 	// Checkpoints only work in a git repository, and a conversation in a directory that is not one
 	// is a legitimate thing that should not be refused for want of somewhere to store a snapshot.
@@ -614,4 +614,18 @@ func printTable(out *errWriter, snap core.ProjectSnapshot) {
 	if out.err == nil {
 		out.err = table.err
 	}
+}
+
+// projectTrust is the trust level a project's own configuration allows its agents.
+//
+// A repository may lower it, to read-only or confined, and may not raise it: a hostile repository
+// that could configure itself into broad trust would be granting itself shell without a prompt. A
+// level above standard is therefore read as standard, and anything unrecognised, which config
+// validation already refuses, as standard too.
+func projectTrust(project config.Project) core.TrustLevel {
+	level := core.TrustLevel(project.Trust)
+	if !level.Valid() || level.AtLeast(core.TrustStandard) {
+		return core.TrustStandard
+	}
+	return level
 }
