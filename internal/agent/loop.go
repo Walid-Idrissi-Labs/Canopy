@@ -244,10 +244,16 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			// The same call with the same answer, again: a model going round in a circle, rerunning
 			// an unchanged failing test or reading a file it just read. Said to it plainly on the
 			// third time, and the turn is stopped with a blocker on the fifth, rather than spending
-			// the whole step budget learning nothing.
+			// the whole step budget learning nothing. A call that may have changed something, a
+			// successful edit or a command not run before, starts the count again: the same build
+			// passing after each of five different edits is progress, not a circle.
 			key := call.Name + "\x00" + string(call.Input) + "\x00" + result.Content
 			repeats[key]++
-			switch n := repeats[key]; {
+			n := repeats[key]
+			if !result.IsError && l.mayChange(call.Name, n) {
+				clear(repeats)
+			}
+			switch {
 			case n == 3:
 				result.Content += fmt.Sprintf("\n\n(Canopy: this exact call has now returned this exact "+
 					"result %d times in this turn. Doing it again will not change the answer; try a "+
@@ -730,3 +736,19 @@ func (noopObserver) Thinking(string)                             {}
 func (noopObserver) ToolRequested(core.ToolCall)                 {}
 func (noopObserver) ToolFinished(core.ToolCall, core.ToolResult) {}
 func (noopObserver) StepFinished(core.Usage)                     {}
+
+// mayChange reports whether a call could have moved the workspace on: any write, or an execute
+// seen for the first time. Reads never do, and neither does a command rerun exactly as before.
+func (l *Loop) mayChange(name string, seen int) bool {
+	tool, ok := l.tool(name)
+	if !ok {
+		return false
+	}
+	switch tool.Kind() {
+	case core.ToolWrite:
+		return true
+	case core.ToolExecute:
+		return seen == 1
+	}
+	return false
+}

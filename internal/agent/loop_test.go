@@ -986,3 +986,27 @@ func (*sameAnswer) Schema() json.RawMessage { return json.RawMessage(`{"type":"o
 func (*sameAnswer) Run(context.Context, json.RawMessage) (core.ToolResult, error) {
 	return core.ToolResult{Content: "3 files"}, nil
 }
+
+// Edit, build, edit, build: the build answers "ok" every time, but each edit is different, so the
+// turn is making progress and must not be stopped as a circle.
+func TestTheSameCheckAfterDifferentEditsIsNotACircle(t *testing.T) {
+	var turns [][]core.StreamEvent
+	for i := 0; i < 8; i++ {
+		turns = append(turns,
+			asksFor("edit", fmt.Sprintf(`{"n":%d}`, i)),
+			asksFor("build", `{}`))
+	}
+	turns = append(turns, says("done"))
+	client := &scriptedClient{turns: turns}
+	edit := &countingTool{name: "edit", kind: core.ToolWrite, answer: "edited"}
+	build := &countingTool{name: "build", kind: core.ToolExecute, answer: "ok"}
+	l := loop(client, registryWith(edit, build), core.TrustBroad)
+	l.MaxSteps = 100
+	outcome, err := l.Run(context.Background(), ask("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.LimitHit != "" || build.count() != 8 {
+		t.Fatalf("stopped with %q after %d builds; eight edit-and-build rounds are progress", outcome.LimitHit, build.count())
+	}
+}
