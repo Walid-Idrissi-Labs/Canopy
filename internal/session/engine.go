@@ -1438,6 +1438,21 @@ func (e *Engine) systemPrompt() string {
 	return core.SystemPrompt + "\n\n" + core.InstructionsPreamble + "\n\n" + instructions
 }
 
+// Inventory is what the next request in a conversation will carry, part by part, taken from the
+// same system prompt, tools and history a turn sends.
+func (e *Engine) Inventory(sessionID string) core.Inventory {
+	system := e.systemPrompt()
+	e.mu.Lock()
+	tools, _ := e.toolsForLocked(sessionID)
+	e.mu.Unlock()
+	var definitions []core.ToolDefinition
+	if tools != nil {
+		definitions = tools.Definitions()
+	}
+	instructions := strings.TrimPrefix(system, core.SystemPrompt)
+	return core.TakeInventory(core.SystemPrompt, instructions, definitions, e.snapshot(sessionID).History())
+}
+
 // SetMaxSteps bounds the model calls in each turn, for unattended runs.
 func (e *Engine) SetMaxSteps(n int) {
 	e.mu.Lock()

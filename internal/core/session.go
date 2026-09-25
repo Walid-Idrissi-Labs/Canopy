@@ -413,7 +413,7 @@ func (s Session) History() []Message {
 	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(turns) {
 		messages = append(messages, Message{
 			Role: RoleUser,
-			Text: "Summary of the earlier part of this conversation:\n\n" + compaction.Summary,
+			Text: SummaryHeading + compaction.Summary,
 		})
 		turns = turns[compaction.Through:]
 		compactedAt = compaction.At
