@@ -50,14 +50,17 @@ const (
 	repoMapMaxFiles     = 5000
 	repoMapMaxFileBytes = 512 * 1024
 	repoMapMaxSymbols   = 15
+	// repoMapMaxBytes bounds what one outline reads in all, so a huge tree costs a bounded pass.
+	repoMapMaxBytes = 64 << 20
 )
 
-// mapFile is one source file and what it declares.
+// mapFile is one source file, what it declares, and the compound names it mentions.
 type mapFile struct {
-	rel     string
-	symbols []string
-	names   []string
-	refs    int
+	rel      string
+	symbols  []string
+	names    []string
+	mentions map[string]struct{}
+	refs     int
 }
 
 func (t *repoMapTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResult, error) {
@@ -88,7 +91,7 @@ func (t *repoMapTool) Run(ctx context.Context, input json.RawMessage) (core.Tool
 	}
 
 	var files []*mapFile
-	contents := map[*mapFile][]byte{}
+	var read int64
 	truncated := false
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -108,7 +111,7 @@ func (t *repoMapTool) Run(ctx context.Context, input json.RawMessage) (core.Tool
 		if extract == nil || strings.HasPrefix(name, ".") || !entry.Type().IsRegular() {
 			return nil
 		}
-		if len(files) >= repoMapMaxFiles {
+		if len(files) >= repoMapMaxFiles || read >= repoMapMaxBytes {
 			truncated = true
 			return filepath.SkipAll
 		}
@@ -120,10 +123,16 @@ func (t *repoMapTool) Run(ctx context.Context, input json.RawMessage) (core.Tool
 		if err != nil {
 			return nil //nolint:nilerr // as above
 		}
-		f := &mapFile{rel: t.w.Relative(path)}
+		read += int64(len(data))
+		// The compound names it mentions are kept for ranking, not its bytes.
+		f := &mapFile{rel: t.w.Relative(path), mentions: map[string]struct{}{}}
 		f.symbols, f.names = extract(name, data)
+		for _, word := range identifier.FindAll(data, -1) {
+			if w := string(word); compound(w) {
+				f.mentions[w] = struct{}{}
+			}
+		}
 		files = append(files, f)
-		contents[f] = data
 		return nil
 	})
 	if err != nil {
@@ -133,7 +142,7 @@ func (t *repoMapTool) Run(ctx context.Context, input json.RawMessage) (core.Tool
 		return core.ToolResult{Content: "no source files here"}, nil
 	}
 
-	rankByReferences(files, contents)
+	rankByReferences(files)
 	sort.SliceStable(files, func(i, j int) bool {
 		if files[i].refs != files[j].refs {
 			return files[i].refs > files[j].refs
@@ -194,7 +203,7 @@ func (t *repoMapTool) Run(ctx context.Context, input json.RawMessage) (core.Tool
 // declared in exactly one file count, so Model, String or New, declared all over, say nothing. So
 // must a name be a compound, camelCase, snake_case or with a digit: a single word such as server
 // or Report turns up in the prose of comments everywhere and would rank whatever declares it.
-func rankByReferences(files []*mapFile, contents map[*mapFile][]byte) {
+func rankByReferences(files []*mapFile) {
 	definedIn := map[string][]*mapFile{}
 	for _, f := range files {
 		for _, n := range f.names {
@@ -205,8 +214,8 @@ func rankByReferences(files []*mapFile, contents map[*mapFile][]byte) {
 	}
 	for _, f := range files {
 		counted := map[*mapFile]bool{}
-		for _, word := range identifier.FindAll(contents[f], -1) {
-			defs := definedIn[string(word)]
+		for word := range f.mentions {
+			defs := definedIn[word]
 			if len(defs) != 1 || defs[0] == f || counted[defs[0]] {
 				continue
 			}

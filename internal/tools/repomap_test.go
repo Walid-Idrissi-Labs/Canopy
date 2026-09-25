@@ -79,3 +79,21 @@ func TestTheRepoMapKeepsToItsBudget(t *testing.T) {
 		t.Fatalf("%d bytes for a 500-token budget:\n%s", len(result.Content), result.Content)
 	}
 }
+
+// A name declared in more than one file says nothing about which one a caller means, so it does
+// not rank either of them.
+func TestANameDeclaredTwiceDoesNotRank(t *testing.T) {
+	dir := writeTree(t, map[string]string{
+		"a/one.go":  "package a\n\nfunc HandleThing() {}\n",
+		"b/two.go":  "package b\n\nfunc HandleThing() {}\n",
+		"c/user.go": "package c\n\nfunc use() { a.HandleThing(); b.HandleThing() }\n",
+	})
+	w, err := OpenWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, _ := RepoMapTool(w).Run(context.Background(), nil)
+	if strings.Contains(result.Content, "used by") {
+		t.Fatalf("a name declared twice ranked a file:\n%s", result.Content)
+	}
+}
