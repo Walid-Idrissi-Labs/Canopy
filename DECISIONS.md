@@ -1372,6 +1372,22 @@ no sandbox is available or `CANOPY_SANDBOX=off`, says so in its result. D-33's d
 contracts are unchanged; what changed is that the shell now has an enforced boundary on the two
 platforms Canopy supports, stated per platform rather than implied.
 
+## D-57 Outside content taints a conversation, and a tainted conversation asks before sending data out. Decided 2026-09-25.
+
+Extends D-33's approval scope; nothing it grants is withdrawn for a conversation that has read
+nothing from outside. A conversation is tainted once it has taken in content Canopy did not produce
+and the person did not type: a page from `fetch_url`, a web search the provider ran, or any MCP
+tool's result. Such content can carry instructions aimed at the model. From then on, for the rest
+of the conversation, across compaction and a restart, and for any agent it dispatches, an action
+that could send data out is asked about whatever the trust level and whatever was approved before:
+network tools, every MCP tool, a git push or a change of remote, and a shell command that reaches
+the network or runs text it does not show (curl, ssh, `gh`, publishing commands, `base64`, `eval`,
+`python -c`, a pipe into `sh` and the like). Everything else keeps its level: reading, editing and
+ordinary commands such as builds and tests are not asked about. The rule is enforced in the
+permission layer, never left to the model. It narrows exfiltration; it does not prevent it: a
+shell command can reach the network in ways no word list names, which is why the sandbox's egress
+control remains the stronger boundary.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

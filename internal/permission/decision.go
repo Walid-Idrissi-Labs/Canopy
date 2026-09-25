@@ -95,6 +95,11 @@ type Request struct {
 	//	{"path": "project-1", "operation": "read"}
 	//	{"path": "project-1", "operation": "delete"}
 	Opaque bool
+
+	// Tainted says the conversation has taken in content from outside, a fetched page, a web search
+	// or an MCP tool's result, which may carry instructions nobody here wrote. From then on an action
+	// that could send data out is asked about whatever the level or earlier approvals say.
+	Tainted bool
 }
 
 // Decision is the answer, and why.
@@ -180,6 +185,14 @@ func Decide(req Request, level core.TrustLevel, granted *Grants) Decision {
 	}
 
 	scope := scopeFor(req)
+	// Before standing approvals and the level: an approval given before outside text arrived was
+	// given to the conversation as it was then, and injected instructions aim precisely at the
+	// actions a broad level runs unasked.
+	if req.Tainted && exfiltrationCapable(req) {
+		return Decision{Outcome: Ask, Scope: scope, Reason: "this conversation has read content from " +
+			"outside (a fetched page, a web search or an MCP tool), which can carry instructions, and " +
+			"this could send data out; it is asked about every time from here on"}
+	}
 	if granted != nil && granted.Covers(req, scope) {
 		return Decision{Outcome: Allow, Reason: "already approved", Scope: scope}
 	}
@@ -383,3 +396,54 @@ func PathScope(tool, dir string) Scope {
 // The broadest thing on offer and it is still bounded by the session, because an approval that
 // outlives the conversation it was given in is one nobody remembers granting.
 func KindScope(kind core.ToolKind) Scope { return Scope{Kind: kind} }
+
+// exfiltrationCapable reports whether a call could carry data out of the machine: anything on the
+// network, any MCP tool, a shell command that reaches the network or hides what it runs, and a git
+// push or a change of remote.
+func exfiltrationCapable(req Request) bool {
+	switch {
+	case req.Kind == core.ToolNetwork, req.Opaque:
+		return true
+	case req.Kind == core.ToolGit:
+		command := strings.TrimSpace(req.Command)
+		return strings.HasPrefix(command, "push") || strings.HasPrefix(command, "remote")
+	case req.Kind == core.ToolExecute:
+		return networkish(req.Command)
+	}
+	return false
+}
+
+// networkMarkers are the words of shell commands that reach the network, or that run something
+// whose text is not in the command itself and so could.
+var networkMarkers = []string{
+	"curl", "wget", "nc", "ncat", "netcat", "socat", "telnet", "ssh", "scp", "sftp", "rsync", "ftp",
+	"http://", "https://", "git push", "git remote", "git send-email", "gh", "npm publish",
+	"yarn publish", "pnpm publish", "cargo publish", "twine", "gem push", "docker push", "aws", "gcloud",
+	"az", "kubectl", "base64", "eval", "exec", "xxd", "openssl", "/dev/tcp", "/dev/udp", "sendmail",
+	"mail", "python -c", "python3 -c", "node -e", "perl -e", "ruby -e", "php -r", "| sh", "| bash",
+	"|sh", "|bash", "sh -c", "bash -c",
+}
+
+// networkish reports whether a shell command carries one of the network markers as a word.
+func networkish(command string) bool {
+	lower := strings.ToLower(command)
+	for _, marker := range networkMarkers {
+		for from := 0; ; {
+			i := strings.Index(lower[from:], marker)
+			if i < 0 {
+				break
+			}
+			i += from
+			end := i + len(marker)
+			if (i == 0 || !wordChar(lower[i-1])) && (end == len(lower) || !wordChar(lower[end]) || !wordChar(marker[len(marker)-1])) {
+				return true
+			}
+			from = i + 1
+		}
+	}
+	return false
+}
+
+func wordChar(b byte) bool {
+	return b == '_' || b == '-' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z'
+}

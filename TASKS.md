@@ -7994,6 +7994,19 @@ command output stored behind a handle with its failures and ending kept inline.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-T1 Outside content taints a conversation (D-57)
+`status: review | owner: Claude | branch: feat/taint`
+
+A fetched page, a provider web search or an MCP result taints the conversation, derived from its
+record so it survives compaction and restarts, and inherited by agents it dispatches. Once tainted,
+network tools, MCP tools, git push or remote changes and network-capable or opaque shell commands
+are asked about even at broad trust and past standing approvals; reads, edits, builds and tests
+are not. Tests: permission outcomes tainted and untainted at broad with a standing approval; an
+engine run where the same `curl` runs unasked before a fetch and is asked about after it; a search
+taints and a child inherits.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ---
 
 ## Appendix: change log for this file

@@ -120,8 +120,10 @@ type Engine struct {
 
 	mu       sync.Mutex
 	sessions map[string]*core.Session
-	order    []string
-	cancels  map[string]context.CancelFunc
+	// taint marks conversations known to have taken in outside content; see tainted.
+	taint   map[string]bool
+	order   []string
+	cancels map[string]context.CancelFunc
 
 	resolver Resolver
 	events   *store.Broker
@@ -901,6 +903,7 @@ func (e *Engine) run(
 		SessionID: sessionID,
 		MaxSteps:  e.maxStepsSetting(),
 		Gate:      e.budgetGate(sessionID, id),
+		Tainted:   func() bool { return e.tainted(sessionID) },
 	}
 
 	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never

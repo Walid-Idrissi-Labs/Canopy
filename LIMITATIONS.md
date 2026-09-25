@@ -819,3 +819,9 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   money and says so; the step and token bounds still apply.
 - `/context` estimates tokens from bytes, about four to a token; the provider's own count, shown
   for the last turn, is the one that was billed.
+- Once a conversation has read a fetched page, a provider search or an MCP result, anything that
+  could send data out is asked about, even in runway and cruise (D-57). Which shell commands count
+  is a list of words: curl, ssh, `gh`, publishing commands, `base64`, `eval`, `python -c`, a pipe
+  into `sh` and similar. A command can still reach the network in a way the list does not name, so
+  this narrows exfiltration after injected instructions rather than preventing it. Files in the
+  workspace do not taint a conversation, though they can carry instructions too.
