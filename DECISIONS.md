@@ -1447,9 +1447,11 @@ sandbox is available, for the verification the interface runs, `canopy run -veri
 land`, with the network narrowed as `CANOPY_SANDBOX_NETWORK` narrows the shell's; a taint (D-57)
 does not narrow it, since a verification belongs to no one conversation. A suite that writes outside the workspace, the temporary area and the toolchain caches fails
 there and says why; `CANOPY_SANDBOX=off` is the way out, for everything at once. Hooks run there
-too, since a hook usually runs a script in the repository an agent can have edited. Setup and MCP
-servers remain unconfined for now: setup runs from the trusted configuration before any agent has
-touched the worktree, and servers commonly need to write where the sandbox does not allow.
+too, since a hook usually runs a script in the repository an agent can have edited, and so does the
+setup `canopy land` runs in its scratch worktree, which holds the agent's merged changes. Setup for a
+new agent worktree and MCP servers remain unconfined for now: that setup runs from the trusted
+configuration before any agent has touched the worktree, and servers commonly need to write where
+the sandbox does not allow.
 
 ## Appendix: where the settled scope comes from
 

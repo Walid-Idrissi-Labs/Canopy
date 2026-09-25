@@ -152,7 +152,8 @@ be rediscovered by getting burned by it.
   area and the caches fails there: Gradle (its wrapper and daemon directories, and its properties
   file, which is unreadable), SwiftPM's package cache, and browser downloads for Playwright or
   Cypress among them. In runway such a suite fails its gate and the turn is put back.
-  `CANOPY_SANDBOX=off` is the way out. Hooks run in the sandbox as well. Setup, MCP servers and
+  `CANOPY_SANDBOX=off` is the way out. Hooks run in the sandbox as well, and so does the setup
+  `canopy land` runs on an agent's merged changes. Setup for a new agent worktree, MCP servers and
   delegated vendor agents still run unconfined. A command that runs without the sandbox says so,
   and `CANOPY_SANDBOX=off` switches it off.
 

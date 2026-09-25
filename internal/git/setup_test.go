@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"os"
 	"path/filepath"
 	"strings"
@@ -361,5 +362,29 @@ func TestAnEmptyEnvironmentDoesNothingAndSaysSo(t *testing.T) {
 	}
 	if !result.OK() || result.Summary() != "ready" {
 		t.Errorf("summary = %q, OK = %v, want a plain ready", result.Summary(), result.OK())
+	}
+}
+
+// A setup given a sandbox runs in it: writing in the worktree works, writing anywhere else does not.
+// canopy land relies on this, since its scratch worktree holds an agent's changes.
+func TestASandboxedSetupStaysInTheWorktree(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	r, _, workspace := prepared(t)
+	outside := t.TempDir()
+	root, _ := filepath.EvalSymlinks(workspace.Path)
+	policy := &sandbox.Policy{Writable: []string{root}, Devices: []string{"/dev/null"}, Network: sandbox.NetworkOpen}
+	result, err := r.Prepare(context.Background(), workspace, Environment{
+		Setup:   "touch built-here; touch " + filepath.Join(outside, "leak"),
+		Sandbox: policy}, yesToEverything())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.Path, "built-here")); err != nil {
+		t.Fatalf("a sandboxed setup could not write in its worktree: %s", result.Output)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "leak")); err == nil {
+		t.Fatal("a sandboxed setup wrote outside its worktree")
 	}
 }

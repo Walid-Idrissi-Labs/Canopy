@@ -39,6 +39,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
 
 // LargeCopy is the size above which a copy is worth mentioning out loud before it is confirmed.
@@ -73,6 +74,11 @@ type Environment struct {
 	// find out about later, which is the wrong way round for the one feature here that moves
 	// secrets.
 	Copy []string
+
+	// Sandbox, when set, confines the setup command: where the worktree holds an agent's changes,
+	// as the scratch worktree canopy land prepares does, setup runs install scripts the agent may
+	// have edited.
+	Sandbox *sandbox.Policy
 }
 
 // CopyRequest is one allow list entry, measured, ready to be asked about.
@@ -228,6 +234,7 @@ func (r *Repo) Prepare(
 		Dir:     workspace.Path,
 		Env:     setupEnv(),
 		Timeout: timeout,
+		Sandbox: env.Sandbox,
 	})
 	if err != nil {
 		return prepared, fmt.Errorf("running the setup command: %w", err)
