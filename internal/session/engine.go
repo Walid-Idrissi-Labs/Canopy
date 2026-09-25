@@ -1301,14 +1301,16 @@ func (e *Engine) finish(
 
 	e.persistTurn(sessionID, ordinal, finished)
 	e.persistSession(saved)
-	e.publishTurn(sessionID, turnID, true)
 
+	// Told before the turn is published as finished, so whoever waits for the finish, canopy run
+	// on its way out among them, finds the turn-end hooks already started and can wait for them.
 	e.mu.Lock()
 	hooks := e.toolHooks
 	e.mu.Unlock()
 	if hooks != nil {
 		hooks.TurnEnded(sessionID, finished)
 	}
+	e.publishTurn(sessionID, turnID, true)
 }
 
 // ToolHooks are a project's hooks around each tool call and at the end of each turn.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
@@ -39,24 +38,56 @@ func TestTurnEndHooksAreToldOfEveryTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForTurn(t, e, session.ID, turnID)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		hooks.mu.Lock()
-		n := len(hooks.ended)
-		var got core.Turn
-		if n > 0 {
-			got = hooks.ended[0]
-		}
-		hooks.mu.Unlock()
-		if n == 1 {
-			if got.ID != turnID || got.State != core.TurnComplete || got.Text != "Hello" {
-				t.Fatalf("told of %+v", got)
-			}
-			return
-		}
-		if n > 1 || time.Now().After(deadline) {
-			t.Fatalf("told of %d turns", n)
-		}
-		time.Sleep(5 * time.Millisecond)
+	// Already told by the time the turn reads as finished, so whoever waits for the finish on their
+	// way out finds the hooks started and can wait for them.
+	hooks.mu.Lock()
+	defer hooks.mu.Unlock()
+	if len(hooks.ended) != 1 {
+		t.Fatalf("told of %d turns when the turn read as finished", len(hooks.ended))
+	}
+	if got := hooks.ended[0]; got.ID != turnID || got.State != core.TurnComplete || got.Text != "Hello" {
+		t.Fatalf("told of %+v", got)
+	}
+}
+
+type refusingHooks struct {
+	endedHooks
+	asked []permission.Request
+}
+
+func (h *refusingHooks) Before(_ context.Context, req permission.Request) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.asked = append(h.asked, req)
+	return "not today"
+}
+
+// The engine's hooks reach every agent's loop: a call is refused by them and never runs.
+func TestTheEnginesHooksReachTheLoop(t *testing.T) {
+	step := []core.StreamEvent{
+		{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: "c", Name: "reader", Input: []byte(`{}`)}},
+		{Kind: core.EventDone, StopReason: core.StopToolUse},
+	}
+	client := &scriptedClient{name: "claude", events: step}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	reader := &kindTool{name: "reader", kind: core.ToolRead}
+	registry := core.NewToolRegistry()
+	registry.MustRegister(reader)
+	e.WithTools(registry, core.TrustStandard, nil)
+	e.SetMaxSteps(2)
+	hooks := &refusingHooks{}
+	e.SetToolHooks(hooks)
+
+	session := e.Create("claude", "claude-opus-5")
+	turnID, err := e.Send(session.ID, "read")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, e, session.ID, turnID)
+	hooks.mu.Lock()
+	defer hooks.mu.Unlock()
+	if len(hooks.asked) == 0 || hooks.asked[0].Tool != "reader" || reader.runs.Load() != 0 {
+		t.Fatalf("asked %d times, the tool ran %d times", len(hooks.asked), reader.runs.Load())
 	}
 }

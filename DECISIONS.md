@@ -1499,7 +1499,12 @@ other than allow or deny, because a guard that fails open stops guarding without
 A refusal is returned to the model with its reason and audited as a denial. A post-tool hook can add
 a note to the result the model is told; a turn-end hook changes nothing and nothing waits on it.
 Their failures are reported the way the other hooks' are. They arrive through canopy.json, so they
-are part of what a person trusts, the tools each is limited to included.
+are part of what a person trusts, the tools each is limited to included. A hook runs in the
+directory of the agent its call belongs to, and is told that directory, so a guard for an agent in
+its own worktree looks at that worktree. Trust covers the command a hook runs, not the script it
+names: an agent allowed to write files can edit a guard script in its workspace, so a guard worth
+the name lives outside the repository or in a path the agent cannot write. The subscription routes
+of D-51 run their vendor's own tools, which these hooks never see.
 
 ## Appendix: where the settled scope comes from
 

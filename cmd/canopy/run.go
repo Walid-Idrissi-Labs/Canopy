@@ -88,6 +88,10 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	resolver := session.NewKeyResolver(keyStore, version)
 	resolver.Renews(signInSources())
 	engine := session.New(resolver)
+	// Turn-end hooks are waited for after the engine has closed, which is when the last turn has
+	// ended and told them.
+	var toolHooks *hooks.ToolRunner
+	defer func() { toolHooks.Wait(hookShutdownLimit) }()
 	defer engine.Close()
 	// One prompt and done: a summary compacted at the end would be paid for and never read.
 	engine.SetAutoCompact(false)
@@ -133,11 +137,11 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	}
 	stopServers := attachMCP(engine, dir, project)
 	defer stopServers()
-	defer attachToolHooks(engine, dir, project, func(r hooks.Report) {
+	toolHooks = attachToolHooks(engine, dir, project, func(r hooks.Report) {
 		if r.Failed() {
-			_, _ = fmt.Fprintln(errOut, "warning: "+r.Summary())
+			_, _ = fmt.Fprintln(errOut, "warning: "+terminalText(r.Summary()))
 		}
-	}).Wait()
+	}, errOut)
 
 	if *keyName == "" {
 		*keyName = resolver.DefaultKeyName()

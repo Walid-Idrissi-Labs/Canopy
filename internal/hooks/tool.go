@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
@@ -67,9 +68,12 @@ const maxResultForHook = 16 << 10
 type ToolRunner struct {
 	pre, post, turnEnd []Hook
 	dir                string
-	exec               JSONExecutor
-	report             func(Report)
-	running            sync.WaitGroup
+	// workspace says which agent a conversation is and where it works, so a hook for an agent in its
+	// own worktree looks at that worktree rather than the main checkout.
+	workspace func(sessionID string) (agent, dir string)
+	exec      JSONExecutor
+	report    func(Report)
+	running   sync.WaitGroup
 }
 
 // NewToolRunner builds the runner for the tool and turn hooks among hooks, or nil when there are
@@ -92,11 +96,42 @@ func NewToolRunner(hooks []Hook, dir string, exec JSONExecutor, report func(Repo
 	return r
 }
 
+// SetWorkspaces tells the runner where each conversation's agent works.
+func (r *ToolRunner) SetWorkspaces(workspace func(sessionID string) (agent, dir string)) {
+	if r != nil {
+		r.workspace = workspace
+	}
+}
+
+// where is the agent's name and the directory a hook runs in for a conversation.
+func (r *ToolRunner) where(sessionID string) (string, string) {
+	if r.workspace != nil {
+		if agent, dir := r.workspace(sessionID); dir != "" {
+			return agent, dir
+		}
+	}
+	return "", r.dir
+}
+
+// Named is every tool a hook is limited to, for a caller to check against the tools there are.
+func (r *ToolRunner) Named() []string {
+	if r == nil {
+		return nil
+	}
+	var names []string
+	for _, h := range append(append([]Hook(nil), r.pre...), r.post...) {
+		names = append(names, h.Tools...)
+	}
+	return names
+}
+
 // callInput is what a tool hook is told of the call.
 type callInput struct {
 	Event     Event           `json:"event"`
 	Session   string          `json:"session"`
 	Agent     string          `json:"agent"`
+	AgentName string          `json:"agent_name,omitempty"`
+	Workspace string          `json:"workspace"`
 	Tool      string          `json:"tool"`
 	CallID    string          `json:"call_id,omitempty"`
 	Kind      string          `json:"kind"`
@@ -118,7 +153,9 @@ func (r *ToolRunner) input(event Event, req permission.Request) callInput {
 	if !json.Valid(args) {
 		args, _ = json.Marshal(req.Arguments)
 	}
-	return callInput{Event: event, Session: req.SessionID, Agent: req.AgentID, Tool: req.Tool,
+	name, dir := r.where(req.SessionID)
+	return callInput{Event: event, Session: req.SessionID, Agent: req.AgentID, AgentName: name, Workspace: dir,
+		Tool:   req.Tool,
 		CallID: req.CallID, Kind: string(req.Kind), Arguments: args, Paths: req.Paths,
 		Command: req.Command, Tainted: req.Tainted}
 }
@@ -148,12 +185,13 @@ func (r *ToolRunner) Before(ctx context.Context, req permission.Request) string 
 	if r == nil {
 		return ""
 	}
-	input, _ := json.Marshal(r.input(PreTool, req))
+	in := r.input(PreTool, req)
+	input, _ := json.Marshal(in)
 	for _, h := range r.pre {
 		if !matches(h, req.Tool) {
 			continue
 		}
-		answer := r.exec(ctx, h.Run, r.dir, timeoutOf(h), input)
+		answer := r.exec(ctx, h.Run, in.Workspace, timeoutOf(h), input)
 		why, failed := preToolVerdict(answer)
 		if failed != "" {
 			r.tell(Report{Event: PreTool, Subject: req.Tool, Command: h.Run, Err: fmt.Errorf("%s", failed)})
@@ -229,7 +267,7 @@ func (r *ToolRunner) After(ctx context.Context, req permission.Request, result c
 		if !matches(h, req.Tool) {
 			continue
 		}
-		answer := r.exec(ctx, h.Run, r.dir, timeoutOf(h), input)
+		answer := r.exec(ctx, h.Run, in.Workspace, timeoutOf(h), input)
 		if answer.Failed != "" || answer.ExitCode != 0 {
 			failed := answer.Failed
 			if failed == "" {
@@ -265,13 +303,15 @@ func (r *ToolRunner) TurnEnded(sessionID string, turn core.Turn) {
 	if len(text) > maxResultForHook {
 		text = text[:maxResultForHook]
 	}
-	input, _ := json.Marshal(map[string]any{"event": TurnEnd, "session": sessionID, "turn": turn.ID,
-		"state": turn.State, "error": turn.Error, "text": text, "tool_calls": len(turn.ToolCalls)})
+	agent, dir := r.where(sessionID)
+	input, _ := json.Marshal(map[string]any{"event": TurnEnd, "session": sessionID, "agent_name": agent,
+		"workspace": dir, "turn": turn.ID, "state": turn.State, "error": turn.Error, "text": text,
+		"tool_calls": len(turn.ToolCalls)})
 	for _, h := range r.turnEnd {
 		r.running.Add(1)
 		go func() {
 			defer r.running.Done()
-			answer := r.exec(context.Background(), h.Run, r.dir, timeoutOf(h), input)
+			answer := r.exec(context.Background(), h.Run, dir, timeoutOf(h), input)
 			if answer.Failed != "" || answer.ExitCode != 0 {
 				failed := answer.Failed
 				if failed == "" {
@@ -283,10 +323,20 @@ func (r *ToolRunner) TurnEnded(sessionID string, turn core.Turn) {
 	}
 }
 
-// Wait returns once every turn-end hook started has finished.
-func (r *ToolRunner) Wait() {
-	if r != nil {
+// Wait returns once every turn-end hook started has finished, or once limit has passed, so a hook
+// with a long timeout cannot hold the program open on its way out.
+func (r *ToolRunner) Wait(limit time.Duration) {
+	if r == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
 		r.running.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(limit):
 	}
 }
 
@@ -299,8 +349,12 @@ func (r *ToolRunner) tell(report Report) {
 // short keeps what a hook says to a length a transcript can hold.
 func short(s string) string {
 	const limit = 2000
-	if len(s) > limit {
-		return s[:limit] + "..."
+	if len(s) <= limit {
+		return s
 	}
-	return s
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }

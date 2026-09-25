@@ -71,10 +71,13 @@ func openHost(name string, args []string, errOut io.Writer) (*host, int) {
 	resolver.Renews(signInSources())
 	engine := session.New(resolver)
 	var closers []func()
+	var toolHooks *hooks.ToolRunner
 	closeAll := func() {
 		for i := len(closers) - 1; i >= 0; i-- {
 			closers[i]()
 		}
+		// After the engine has closed, which is when the last turn has ended and told them.
+		toolHooks.Wait(hookShutdownLimit)
 	}
 	closers = append(closers, engine.Close)
 	if err := attachHistory(engine); err != nil {
@@ -107,12 +110,11 @@ func openHost(name string, args []string, errOut io.Writer) (*host, int) {
 		engine.WithTools(registry, projectTrust(project), agent.ApproverFunc(hub.Approve))
 	}
 	closers = append(closers, attachMCP(engine, dir, project))
-	toolHooks := attachToolHooks(engine, dir, project, func(r hooks.Report) {
+	toolHooks = attachToolHooks(engine, dir, project, func(r hooks.Report) {
 		if r.Failed() {
-			_, _ = fmt.Fprintln(errOut, "warning: "+r.Summary())
+			_, _ = fmt.Fprintln(errOut, "warning: "+terminalText(r.Summary()))
 		}
-	})
-	closers = append(closers, toolHooks.Wait)
+	}, errOut)
 	return &host{hub: hub, dir: dir, close: closeAll}, exitOK
 }
 

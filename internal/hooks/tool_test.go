@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
@@ -126,7 +127,7 @@ func TestTurnEndHooksRunInTheBackground(t *testing.T) {
 	r := NewToolRunner([]Hook{{On: TurnEnd, Run: "notify"}, {On: TurnEnd, Run: "fails"}}, "/work", exec.run,
 		func(rep Report) { mu.Lock(); reports = append(reports, rep); mu.Unlock() })
 	r.TurnEnded("s1", core.Turn{ID: "t1", State: core.TurnComplete, Text: "done"})
-	r.Wait()
+	r.Wait(5 * time.Second)
 	if len(exec.inputs) != 2 || exec.inputs[0]["state"] != "complete" || exec.inputs[0]["text"] != "done" {
 		t.Fatalf("told %v", exec.inputs)
 	}
@@ -165,5 +166,58 @@ func TestAJSONHookReadsItsInputAndAnswers(t *testing.T) {
 	answer = exec(context.Background(), "sleep 5", dir, 100*time.Millisecond, nil)
 	if why, _ := preToolVerdict(answer); !strings.Contains(why, "could not give an answer") {
 		t.Fatalf("a hook that timed out gave %q", why)
+	}
+}
+
+// A hook for an agent working in its own worktree runs there and is told so, rather than looking
+// at the main checkout.
+func TestAHookRunsWhereItsAgentWorks(t *testing.T) {
+	var dirs []string
+	exec := func(_ context.Context, _, dir string, _ time.Duration, input []byte) Answer {
+		dirs = append(dirs, dir)
+		var in map[string]any
+		_ = json.Unmarshal(input, &in)
+		if in["workspace"] != dir {
+			t.Errorf("told workspace %v, ran in %s", in["workspace"], dir)
+		}
+		return Answer{}
+	}
+	r := NewToolRunner([]Hook{{On: PreTool, Run: "guard", Tools: []string{"run_command"}}, {On: PostTool, Run: "note"}},
+		"/main", exec, nil)
+	r.SetWorkspaces(func(session string) (string, string) {
+		if session == "s1" {
+			return "refactor", "/worktrees/refactor"
+		}
+		return "", ""
+	})
+	r.Before(context.Background(), shellCall)
+	other := shellCall
+	other.SessionID = "s9"
+	r.After(context.Background(), other, core.ToolResult{})
+	if len(dirs) != 2 || dirs[0] != "/worktrees/refactor" || dirs[1] != "/main" {
+		t.Fatalf("ran in %v", dirs)
+	}
+	if names := r.Named(); len(names) != 1 || names[0] != "run_command" {
+		t.Fatalf("named %v", names)
+	}
+}
+
+func TestWaitingForTurnEndHooksIsBounded(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	exec := func(context.Context, string, string, time.Duration, []byte) Answer { <-release; return Answer{} }
+	r := NewToolRunner([]Hook{{On: TurnEnd, Run: "slow"}}, "/w", exec, nil)
+	r.TurnEnded("s1", core.Turn{})
+	started := time.Now()
+	r.Wait(50 * time.Millisecond)
+	if time.Since(started) > 2*time.Second {
+		t.Fatal("waiting was not bounded")
+	}
+}
+
+func TestAShortenedAnswerKeepsWholeCharacters(t *testing.T) {
+	got := short(strings.Repeat("é", 1500))
+	if !utf8.ValidString(got) {
+		t.Fatal("cut through a character")
 	}
 }

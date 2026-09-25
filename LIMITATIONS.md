@@ -875,3 +875,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   model wrote them, and the result it is given by post-tool is cut at 16 KB. A turn-end hook's
   failure is reported on the way out in the interface and as a warning in `canopy run`, `acp` and
   `serve`, not on screen as it happens.
+- Trust covers a hook's command, not the script it runs (D-64). An agent that may write files can edit
+  a guard script kept in the repository, so a pre-tool guard meant to hold against the agent belongs
+  outside it. On the subscription routes, which run the vendor's own tools, tool hooks do not run at
+  all. A tool name in a hook's `tools` that Canopy does not have is warned about at start and never
+  matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds.
