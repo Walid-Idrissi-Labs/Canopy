@@ -82,6 +82,10 @@ type Environment struct {
 	// SandboxEnv is added to the setup's environment with the sandbox: the network proxy's variables,
 	// when the sandbox limits the network to it.
 	SandboxEnv []string
+
+	// Confine gives the sandbox for a worktree once its path is known, where Sandbox is not set: a
+	// new agent's worktree does not exist when its environment is described.
+	Confine func(dir string) (*sandbox.Policy, []string)
 }
 
 // CopyRequest is one allow list entry, measured, ready to be asked about.
@@ -231,6 +235,9 @@ func (r *Repo) Prepare(
 	}
 
 	prepared.Ran = true
+	if env.Sandbox == nil && env.Confine != nil {
+		env.Sandbox, env.SandboxEnv = env.Confine(workspace.Path)
+	}
 	// Through a shell, because a setup command is written the way somebody would type it and
 	// frequently contains a pipe or a conditional.
 	result, err := exec.Run(ctx, "/bin/sh", []string{"-c", env.Setup}, exec.Options{

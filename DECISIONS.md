@@ -1506,6 +1506,16 @@ names: an agent allowed to write files can edit a guard script in its workspace,
 the name lives outside the repository or in a path the agent cannot write. The subscription routes
 of D-51 run their vendor's own tools, which these hooks never see.
 
+## D-65 A new worktree's setup and local MCP servers run in the sandbox too. Decided 2026-09-26.
+
+Completes D-61, which left both unconfined. The setup a new agent's worktree runs is the project's
+own install, and the branch it runs on can hold what earlier agents merged; a local MCP server is a
+program the repository names and often ships. Both now run in the sandbox the project's tests run
+in, with the network as `CANOPY_SANDBOX_NETWORK` sets it. The worktree's sandbox is made once the
+worktree exists, since its path is not known before. A local server that cannot work inside it can
+be marked `"unconfined": true` in canopy.json; that is part of what a person trusts, and the trust
+prompt names it as running outside the sandbox. A server that cannot be confined is not started.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

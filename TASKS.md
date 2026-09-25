@@ -8069,6 +8069,18 @@ through theme styles and a rewrite needs its own golden review.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-S65 Worktree setup and local MCP servers in the sandbox (D-65)
+`status: review | owner: Claude | branch: feat/sandbox-setup-and-mcp`
+
+git.Environment gained Confine, a sandbox made from the worktree's path once it exists, which new
+agent worktrees get from tools.Confinement. mcp.Spec gained Sandbox and SandboxEnv; local servers are
+wrapped unless canopy.json marks them unconfined, which trust shows. Tests: a real confined MCP
+server cannot write outside its workspace while the same server unconfined can; a setup confined by
+path is confined to the worktree and asked for its path; spec building confines local servers and
+not unconfined or remote ones; the trust prompt names an unconfined server. Mutation-checked.
+
+`verify: claude [x] 2026-09-26   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 

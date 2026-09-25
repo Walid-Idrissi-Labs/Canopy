@@ -15,6 +15,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools/mcp"
 )
 
@@ -92,7 +93,7 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 				server.Name, strings.Join(missing, ", "))
 			continue
 		}
-		specs = append(specs, mcp.Spec{
+		spec := mcp.Spec{
 			Name:    server.Name,
 			Command: server.Command,
 			Args:    server.Args,
@@ -101,7 +102,13 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 			Timeout: server.MCPTimeout(),
 			URL:     server.URL,
 			Headers: headers,
-		})
+		}
+		// A local server runs the project's configuration, and often its code, so it runs in the
+		// sandbox like everything else the project starts, unless the project says otherwise.
+		if server.URL == "" && !server.Unconfined {
+			spec.Sandbox, spec.SandboxEnv = tools.Confinement(dir)
+		}
+		specs = append(specs, spec)
 	}
 	return specs
 }

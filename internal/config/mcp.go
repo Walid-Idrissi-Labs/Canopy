@@ -50,6 +50,10 @@ type MCPServer struct {
 	// Disabled keeps a server in the file without starting it, which is what people actually want
 	// when a server is broken: commenting it out is not available, because JSON has no comments.
 	Disabled bool `json:"disabled"`
+
+	// Unconfined starts a local server outside the sandbox, for one that needs what the sandbox
+	// withholds, a container runtime's socket for one. Part of what a person trusts, and said there.
+	Unconfined bool `json:"unconfined,omitempty"`
 }
 
 // validateMCP checks what can be checked without starting anything.

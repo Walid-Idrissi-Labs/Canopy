@@ -842,8 +842,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
   also cut off the local servers tests start), and anything whose purpose is to send data out is
   asked about, even in runway and cruise. The project's tests run in the sandbox but a taint does
-  not limit their network, and a new worktree's setup commands run outside it, so a test a tainted
-  agent writes can still reach the network when runway runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
+  not limit their network, so a test a tainted agent writes can still reach the network when runway
+  runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
   `gh`, `nslookup`, `base64`, `eval`, `sh -c` and the like. A registry is still a server on the
   internet, and where the network cannot be limited the word list is the only guard, which a
   determined script can get around. Files in the workspace do not taint a conversation, though they
@@ -884,3 +884,7 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   all. A tool name in a hook's `tools` that Canopy does not have is warned about at start and never
   matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
   running after that is left to finish on its own.
+- Local MCP servers run in the sandbox (D-65), which lets them write only in the workspace, the
+  temporary area and the toolchain caches. A server that needs more, one run through a container
+  runtime for instance, fails to start until canopy.json marks it `"unconfined": true`. Remote servers
+  start nothing and are unaffected.
