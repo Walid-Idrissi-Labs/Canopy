@@ -341,6 +341,21 @@ func (s *appServer) sentMethod(method string) (message, bool) {
 //
 // The client can finish the turn before this server has read the reply it wrote just ahead of
 // that, so the reply is waited for briefly rather than looked for once.
+// awaitMethod is sentMethod for a frame the client wrote just before stopping the server: this
+// fake reads it on its own goroutine, so it is waited for briefly rather than looked for once.
+func (s *appServer) awaitMethod(method string) (message, bool) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if m, ok := s.sentMethod(method); ok {
+			return m, true
+		}
+		if time.Now().After(deadline) {
+			return message{}, false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func (s *appServer) answered(id int64) (message, bool) {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
