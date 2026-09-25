@@ -40,7 +40,11 @@ type httpClient struct {
 }
 
 func newHTTPClient(url string, headers map[string]string) *httpClient {
-	return &httpClient{url: url, headers: headers, http: &http.Client{Timeout: 0}}
+	return &httpClient{url: url, headers: headers, http: &http.Client{
+		// A redirect is not followed: the server named in the configuration is the one trusted with
+		// its headers and the model's arguments, and a redirect would send both somewhere else.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 // maxHTTPResponse bounds one answer, so a server cannot fill memory with one reply.

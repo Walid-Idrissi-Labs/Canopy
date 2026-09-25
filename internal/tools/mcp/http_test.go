@@ -112,3 +112,22 @@ func TestARemoteServerOverHTTP(t *testing.T) {
 		t.Error("the session was not ended")
 	}
 }
+
+// A server that redirects is not followed: its headers and the model's arguments go only to the url
+// the configuration names.
+func TestARedirectIsNotFollowed(t *testing.T) {
+	var reached bool
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	defer elsewhere.Close()
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirecting.Close()
+	if _, err := Connect(context.Background(), Spec{Name: "r", URL: redirecting.URL,
+		Headers: map[string]string{"Authorization": "Bearer t0ken"}}); err == nil {
+		t.Fatal("a redirecting server was connected")
+	}
+	if reached {
+		t.Fatal("the redirect was followed")
+	}
+}
