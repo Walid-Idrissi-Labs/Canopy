@@ -198,6 +198,9 @@ type ToolDefinition struct {
 	// InputSchema is JSON Schema. Declared once and used both for the provider call and for local
 	// argument validation, so the two cannot drift apart.
 	InputSchema []byte
+	// External marks a tool reached over MCP, whose definition a provider may hold back until the
+	// model searches for it when there are many.
+	External bool
 }
 
 // Request is one turn's worth of input.

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
 
@@ -85,6 +86,43 @@ func TestAnUnsandboxedCommandSaysSo(t *testing.T) {
 	}
 }
 
+// A project's test command is code in the repository, which an agent may have written, so it runs
+// in the same sandbox as the agent's shell: it can write in the workspace and nowhere else.
+func TestProjectTestsAreConfined(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	w := testWorkspace(t)
+	// Beside the test's own source rather than in the temporary area, which the sandbox allows.
+	outside, err := os.MkdirTemp(".", "outside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(outside) })
+	outside, _ = filepath.Abs(outside)
+	outside, _ = filepath.EvalSymlinks(outside)
+	test := exec.Test{Name: "sneaky", Command: exec.Invocation{
+		Shell: "echo ok > inside.txt && echo leaked > " + filepath.Join(outside, "leak.txt")}}
+	policy, env := Confinement(w.Root())
+	// Where the checkout itself lies in a place the sandbox allows, the temporary area say, there is
+	// no outside to write to here, and the verifier's own test covers the wiring instead.
+	for _, dir := range policy.Writable {
+		if rel, err := filepath.Rel(dir, outside); err == nil && !strings.HasPrefix(rel, "..") {
+			t.Skipf("this checkout is under %s, which the sandbox allows", dir)
+		}
+	}
+	outcome := exec.RunTest(context.Background(), test, exec.Target{Dir: w.Root(), Sandbox: policy, Env: env}, "r1")
+	if _, err := os.Stat(filepath.Join(outside, "leak.txt")); err == nil {
+		t.Fatalf("a test command wrote outside the workspace: %+v", outcome.Run)
+	}
+	if _, err := os.Stat(filepath.Join(w.Root(), "inside.txt")); err != nil {
+		t.Fatalf("a test command could not write in the workspace: %s", outcome.Output)
+	}
+	if outcome.Run.State == core.TestPassing {
+		t.Fatal("a test whose write was refused reported passing")
+	}
+}
+
 // With the network limited to registries, a command's request to any other host is refused by the
 // proxy, and the result says which host, so the model neither retries blindly nor calls the
 // network down.
@@ -132,5 +170,43 @@ func TestATaintedCommandReachesOnlyRegistries(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "allow list refused: exfil.test") {
 		t.Fatalf("a tainted command reached past the registries:\n%s", result.Content)
+	}
+}
+
+// A project's tests follow the shell's network setting: cut off with off, and through the proxy,
+// with its variables, with registries.
+func TestProjectTestsFollowTheNetworkSetting(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	w := testWorkspace(t)
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "off")
+	if policy, _ := Confinement(w.Root()); policy == nil || policy.Network != sandbox.NetworkNone {
+		t.Fatalf("off: %+v", policy)
+	}
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "registries")
+	policy, env := Confinement(w.Root())
+	if policy == nil || policy.Network != sandbox.NetworkProxy || policy.ProxyPort == 0 ||
+		!strings.Contains(strings.Join(env, " "), "HTTPS_PROXY=http://127.0.0.1:") {
+		t.Fatalf("registries: %+v %v", policy, env)
+	}
+}
+
+// The proxy's variables reach a test command in registries mode, and a setting nobody can read is
+// the strictest rather than open.
+func TestATestGetsTheProxyAndBadSettingsCloseTheNetwork(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	w := testWorkspace(t)
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "registries")
+	policy, env := Confinement(w.Root())
+	test := exec.Test{Name: "env", Command: exec.Invocation{Shell: `test -n "$HTTPS_PROXY"`}}
+	if outcome := exec.RunTest(context.Background(), test, exec.Target{Dir: w.Root(), Sandbox: policy, Env: env}, "r1"); outcome.Run.State != core.TestPassing {
+		t.Fatalf("the test did not see the proxy: %s %s", outcome.Run.State, outcome.Output)
+	}
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "everything")
+	if policy, _ := Confinement(w.Root()); policy == nil || policy.Network != sandbox.NetworkNone {
+		t.Fatalf("an unreadable setting left the network %v", policy)
 	}
 }

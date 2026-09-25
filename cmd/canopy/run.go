@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"io"
 	"os"
 	"os/signal"
@@ -323,7 +324,7 @@ func verifyWorkspace(ctx context.Context, dir string, project config.Project, er
 	}
 	var failures []string
 	for i, test := range tests {
-		outcome := execpkg.RunTest(ctx, test, execpkg.Target{Dir: dir}, fmt.Sprintf("verify-%d", i))
+		outcome := execpkg.RunTest(ctx, test, confinedTarget(dir), fmt.Sprintf("verify-%d", i))
 		if outcome.Run.State == core.TestPassing || !test.Required {
 			continue
 		}
@@ -350,4 +351,10 @@ func nextEffort(e core.Effort) core.Effort {
 	default:
 		return core.EffortMax
 	}
+}
+
+// confinedTarget is where a project's test runs: dir, in the workspace's sandbox where there is one.
+func confinedTarget(dir string) execpkg.Target {
+	policy, env := tools.Confinement(dir)
+	return execpkg.Target{Dir: dir, Sandbox: policy, Env: env}
 }

@@ -145,12 +145,17 @@ be rediscovered by getting burned by it.
   connections by port, not address, so a program that ignores the proxy variables can reach any
   address on the proxy's port, a test that starts a local server on another port cannot reach it,
   and a kernel older than 6.7 cannot limit the network at all. `CANOPY_SANDBOX_NETWORK=off` allows
-  no connections. Commands that
-  install into your home break inside it: `pip install --user`, `gem install`, global npm installs,
-  version managers (nvm, pyenv, rbenv), Homebrew, and anything writing `~/.local/bin` or most of
-  `~/.config`. Test commands, setup, hooks, MCP servers and delegated vendor agents still run
-  unconfined. A command that runs without the sandbox says so, and `CANOPY_SANDBOX=off` switches it
-  off.
+  no connections. Commands that install into your home break inside it: `pip install --user`, `gem
+  install`, global npm installs, version managers (nvm, pyenv, rbenv), Homebrew, and anything
+  writing `~/.local/bin` or most of `~/.config`, and so do test commands that do: the project's
+  tests run in the same sandbox (D-61), so a suite that writes outside the workspace, the temporary
+  area and the caches fails there: Gradle (its wrapper and daemon directories, and its properties
+  file, which is unreadable), SwiftPM's package cache, and browser downloads for Playwright or
+  Cypress among them. In runway such a suite fails its gate and the turn is put back.
+  `CANOPY_SANDBOX=off` is the way out. Hooks run in the sandbox as well, and so does the setup
+  `canopy land` runs on an agent's merged changes. Setup for a new agent worktree, MCP servers and
+  delegated vendor agents still run unconfined. A command that runs without the sandbox says so,
+  and `CANOPY_SANDBOX=off` switches it off.
 
 - A freshly prepared worktree gets no isolated database, queue, cache, or OAuth callback. A named
   port is templated in, but a port does not isolate the service listening behind it. Only small,
@@ -836,9 +841,9 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - Once a conversation has read a fetched page, a provider search or an MCP result (D-57), its shell
   commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
   also cut off the local servers tests start), and anything whose purpose is to send data out is
-  asked about, even in runway and cruise. The project's test, setup and hook commands run outside
-  the sandbox and are not confined by this, so a test a tainted agent writes can still reach the
-  network when runway runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
+  asked about, even in runway and cruise. The project's tests run in the sandbox but a taint does
+  not limit their network, and setup and hook commands run outside it, so a test a tainted agent
+  writes can still reach the network when runway runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
   `gh`, `nslookup`, `base64`, `eval`, `sh -c` and the like. A registry is still a server on the
   internet, and where the network cannot be limited the word list is the only guard, which a
   determined script can get around. Files in the workspace do not taint a conversation, though they

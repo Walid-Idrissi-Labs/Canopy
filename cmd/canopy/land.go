@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"io"
 	"os"
 	"os/exec"
@@ -122,8 +123,12 @@ func runLand(args []string, stdin io.Reader, out io.Writer) error {
 		if err != nil {
 			return err
 		}
+		// The scratch worktree holds the agent's merged changes, so its setup, often an install
+		// that runs the project's own scripts, runs in the sandbox.
+		confined, confinedEnv := tools.Confinement(scratch)
 		prepared, err := repo.Prepare(ctx, core.WorkspaceSnapshot{Path: scratch, Ownership: core.OwnershipManaged},
-			gitpkg.Environment{Setup: project.Setup, SetupTimeout: project.SetupDuration(), Copy: project.Copy},
+			gitpkg.Environment{Setup: project.Setup, SetupTimeout: project.SetupDuration(), Copy: project.Copy,
+				Sandbox: confined, SandboxEnv: confinedEnv},
 			// Only files git ignores, from the person's own checkout into a worktree about to be
 			// deleted; overwriting a committed file is never confirmed here.
 			gitpkg.Confirm{Ignored: func(gitpkg.CopyRequest) bool { return true }})
@@ -137,7 +142,7 @@ func runLand(args []string, stdin io.Reader, out io.Writer) error {
 	}
 	failed := 0
 	for i, test := range tests {
-		outcome := execpkg.RunTest(ctx, test, execpkg.Target{Dir: scratch}, fmt.Sprintf("land-%d", i))
+		outcome := execpkg.RunTest(ctx, test, confinedTarget(scratch), fmt.Sprintf("land-%d", i))
 		mark := "passed"
 		if outcome.Run.State != core.TestPassing {
 			mark = string(outcome.Run.State)

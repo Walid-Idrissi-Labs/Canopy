@@ -14,8 +14,13 @@ package config
 
 import (
 	"fmt"
+	"net/url"
+	"os"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 )
 
 // MCPServer is one Model Context Protocol server to connect to.
@@ -24,9 +29,15 @@ type MCPServer struct {
 	// a tool called "search" and an audit trail can say which one ran.
 	Name string `json:"name"`
 
-	// Command and Args start it. Stdio transport only in v0.1, so this is always a local program.
+	// Command and Args start it as a local program over stdio.
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
+
+	// URL instead reaches a remote server over the Streamable HTTP transport: https, or http to the
+	// loopback address. Headers go with every request, and ${NAME} in a value is replaced from the
+	// environment Canopy started in, so a token is named here and never written here.
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers"`
 
 	// Env is added to the environment the server starts with, as "KEY=value" entries.
 	Env []string `json:"env"`
@@ -55,9 +66,15 @@ func (p Project) validateMCP() error {
 			return fmt.Errorf(
 				"%q is not a usable MCP server name: use letters, digits, dashes and underscores",
 				server.Name)
-		case server.Command == "":
-			return fmt.Errorf("the MCP server %q has no command, so there is nothing to start",
+		case server.Command == "" && server.URL == "":
+			return fmt.Errorf("the MCP server %q has no command or url, so there is nothing to reach",
 				server.Name)
+		case server.Command != "" && server.URL != "":
+			return fmt.Errorf("the MCP server %q has both a command and a url; it is one or the other",
+				server.Name)
+		case server.URL != "" && !usableURL(server.URL):
+			return fmt.Errorf("the MCP server %q's url must be https, or http to localhost: %q",
+				server.Name, server.URL)
 		case seen[server.Name]:
 			// Two servers with one name would collide on every tool they both offer, and the
 			// registry refuses duplicates, so the second server would silently contribute nothing.
@@ -98,4 +115,56 @@ func validServerName(name string) bool {
 func (s MCPServer) MCPTimeout() time.Duration {
 	d, _ := parseDuration(s.Timeout)
 	return d
+}
+
+// usableURL reports whether a server URL keeps what is sent to it private in transit: https, or
+// plain http only to this machine.
+func usableURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	switch u.Scheme {
+	case "https":
+		return true
+	case "http":
+		host := u.Hostname()
+		return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	}
+	return false
+}
+
+// ExpandedHeaders is Headers with ${NAME} replaced from the environment. It also returns the names
+// that were not set, so a missing token is said rather than sent empty, and the names it refused:
+// a general credential (a code host's, a cloud's, a model provider's) is never sent to a server a
+// repository names, whatever the file says.
+func (s MCPServer) ExpandedHeaders() (headers map[string]string, missing, refused []string) {
+	headers = make(map[string]string, len(s.Headers))
+	for name, value := range s.Headers {
+		headers[name] = os.Expand(value, func(key string) string {
+			if childenv.WellKnown(key) {
+				refused = append(refused, key)
+				return ""
+			}
+			v, ok := os.LookupEnv(key)
+			if !ok {
+				missing = append(missing, key)
+			}
+			return v
+		})
+	}
+	return headers, missing, refused
+}
+
+// HeaderVariables names the environment variables the headers read, for the trust prompt.
+func (s MCPServer) HeaderVariables() []string {
+	var names []string
+	for _, value := range s.Headers {
+		os.Expand(value, func(key string) string {
+			names = append(names, key)
+			return ""
+		})
+	}
+	sort.Strings(names)
+	return names
 }

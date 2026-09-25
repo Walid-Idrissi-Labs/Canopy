@@ -1393,9 +1393,9 @@ a shell reading `-c` or its input, publishing commands). Only command words coun
 package called `mail` or grepping for `curl` is not asked about. Reading, editing, building and
 testing keep their level. Enforced in the permission layer and the sandbox, never left to the
 model. Where the network is not limited, the word list is the only guard, and it narrows
-exfiltration rather than preventing it. The project's own test, setup and hook commands are not
-covered: they run outside the sandbox (D-56), so a test a tainted agent writes, and runway then
-runs, is not confined by this.
+exfiltration rather than preventing it. The project's tests run in the sandbox (D-61), but a taint
+does not limit their network, and setup and hook commands run outside it, so a test a tainted agent
+writes, and runway then runs, can still reach the network.
 
 ## D-58 Language servers are back, for diagnostics and navigation, and only confined. Decided 2026-09-25.
 
@@ -1437,6 +1437,21 @@ only, so it reaches local services and nothing beyond the machine; on Linux, Lan
 rather than addresses, so it can reach any address on the proxy's one port. The list includes
 general-purpose hosts, GitHub and Google's storage among them, because dependencies are fetched
 from them, which is why this narrows where data can go rather than stopping it.
+
+## D-61 A project's tests run in the sandbox too. Decided 2026-09-25.
+
+Extends D-56. A test command is code in the repository, which an agent may have written, and runway
+runs it after every turn without asking; leaving it unconfined made the shell's boundary one step
+deep. The project's tests now run in the same sandbox as an agent's shell commands, wherever that
+sandbox is available, for the verification the interface runs, `canopy run -verify` and `canopy
+land`, with the network narrowed as `CANOPY_SANDBOX_NETWORK` narrows the shell's; a taint (D-57)
+does not narrow it, since a verification belongs to no one conversation. A suite that writes outside the workspace, the temporary area and the toolchain caches fails
+there and says why; `CANOPY_SANDBOX=off` is the way out, for everything at once. Hooks run there
+too, since a hook usually runs a script in the repository an agent can have edited, and so does the
+setup `canopy land` runs in its scratch worktree, which holds the agent's merged changes. Setup for a
+new agent worktree and MCP servers remain unconfined for now: that setup runs from the trusted
+configuration before any agent has touched the worktree, and servers commonly need to write where
+the sandbox does not allow.
 
 ## Appendix: where the settled scope comes from
 
