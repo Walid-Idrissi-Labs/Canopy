@@ -8029,6 +8029,25 @@ reports git, repository, key store (naming CANOPY_KEY_BACKEND=file where there i
 keys, sandbox, canopy.json and its trust, language servers, the subscription routes' programs, the
 terminal and tmux clipboard, and exits 1 when something needed is missing. Tests cover each branch,
 mutation-checked.
+### Z-V02 Themes as data, a person's own themes, and the colour gate (part of V-02)
+`status: review | owner: Claude | branch: feat/themes-as-data`
+
+Themes beyond canopy and mono are JSON files: catppuccin, dracula, gruvbox, nord, solarized and
+tokyonight ship embedded, each light and dark, and a person's own load from `canopy/themes` in the
+config directory. A file is checked colour by colour (every role present, each `#rrggbb`, no unknown
+keys, a plain name); one that fails, or takes a name already used, is skipped and named by a bare
+`/theme`, which also reads the files again and shows the current palette's description. A pipe, a
+device or a file over 64 KB is refused without being read, the reading happens outside the lock, and
+a file's name is quoted where it is shown. Tests: every shipped theme loads; each way a file can be
+wrong is refused and the missing colour named (a key twice, a key in other case, a stray half, a bad
+dark half, trailing data; a byte order mark is accepted); a person's theme loads beside the shipped
+ones in file-name order and cannot replace one, canopy and mono included; a pipe and /dev/zero do
+not hang the load; every palette clears WCAG contrast against the background it was made for (text
+4.5, outcomes and quiet text 3, code 2.5, borders 1.2), which moved a few upstream colours, each said
+in the theme's description; nothing in internal or cmd outside the theme package makes a colour,
+checked by planting four kinds of one. Still open from V-02: the
+component set (Card, Badge, StatusPill, KeyHint and the rest), since the screens already draw these
+through theme styles and a rewrite needs its own golden review.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 

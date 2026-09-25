@@ -63,6 +63,7 @@ Those are stated plainly rather than deferred quietly, and
 - [Where the tokens go](#where-the-tokens-go)
 - [Reusable prompt commands](#reusable-prompt-commands)
 - [Modes, on shift+tab](#modes-on-shifttab)
+- [Themes](#themes)
 - [A report for the pull request](#a-report-for-the-pull-request)
 - [What it will not do](#what-it-will-not-do)
 - [Requirements](#requirements)
@@ -505,6 +506,23 @@ plan for a fraction of a second on its way from cruise to build. The box says bo
 `cruise → plan`, so the mode in effect is never the one being claimed. Sending a message, naming a
 mode with `/mode`, leaving the conversation or quitting all apply it at once, and `/mode plan` skips
 the wait entirely. The key is not the emergency stop, and never was: `esc` ends the turn now.
+
+## Themes
+
+`/theme` lists the palettes and `/theme nord` switches to one; `CANOPY_THEME=nord` starts in it.
+Canopy's own palette ships with catppuccin, dracula, gruvbox, nord, solarized and tokyonight, each in
+a light and a dark form that follow the terminal's background, and `mono`, which is what `NO_COLOR`
+gives. Every shipped palette is checked for contrast against the background it was made for (text
+4.5:1, outcomes and quiet text 3:1, code 2.5:1, borders just visible), which deepened a few of the
+upstream colours, as each theme's own description says. A test fails if a colour is made outside the
+theme package in any of the ways it knows to look for, so a theme reaches the whole interface.
+
+A theme of your own is a JSON file in `canopy/themes` under your config directory
+(`~/Library/Application Support` on macOS, `~/.config` on Linux, or `CANOPY_THEMES_DIR`), one colour
+per role, each either
+`"#rrggbb"` or `{"light": "#rrggbb", "dark": "#rrggbb"}`. The shipped ones in
+`internal/tui/theme/themes` are complete examples. A file that does not load is named, with the
+reason, by a bare `/theme`.
 
 ## A report for the pull request
 
