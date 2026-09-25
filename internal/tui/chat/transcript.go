@@ -54,6 +54,10 @@ type Detail struct {
 	// the honest thing to render: the label says "running for", not "took".
 	Now     time.Time
 	Started map[string]time.Time
+
+	// streamKey identifies a turn still being streamed, so its finished blocks are rendered once;
+	// see streamingMarkdown. Empty for anything else.
+	streamKey string
 }
 
 func Transcript(session core.Session, width int, spinner string, kinds KindOf) []string {
@@ -156,7 +160,11 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 		// The reply goes through the markdown renderer; the question above does not. What somebody
 		// typed is what they typed, and rendering their asterisks as emphasis would change their
 		// own words back at them.
-		lines = append(lines, RenderMarkdown(turn.Text, width)...)
+		if detail.streamKey != "" {
+			lines = append(lines, streamingMarkdown(detail.streamKey, turn.Text, width)...)
+		} else {
+			lines = append(lines, RenderMarkdown(turn.Text, width)...)
+		}
 	}
 
 	for _, call := range turn.ToolCalls {
