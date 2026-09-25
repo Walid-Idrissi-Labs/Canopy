@@ -1,0 +1,6 @@
+package text
+
+// Reverse returns s with its characters in reverse order.
+func Reverse(s string) string {
+	return ""
+}

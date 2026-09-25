@@ -1,0 +1,1 @@
+{"prompt": "The slugify tests fail. Fix slug.py so they pass, without changing the tests.", "check": ["python3", "-m", "unittest", "-q"], "kind": "bug fix"}
