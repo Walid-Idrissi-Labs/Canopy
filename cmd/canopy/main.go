@@ -24,6 +24,7 @@ usage:
   canopy ask           send one message to a provider and stream the reply
   canopy search        find a message across every saved conversation
   canopy report        run this repository's checks and print a markdown summary
+  canopy land BRANCH   merge an agent's branch into yours only if the merged result passes the tests
   canopy trust         review what this repository's canopy.json runs, and allow it (revoke, list)
   canopy worktree      list the agent worktrees Canopy made here; gc removes the clean ones
   canopy snapshot      print the current project snapshot as JSON
@@ -88,6 +89,9 @@ func run(args []string) error {
 	}
 	if command == "worktree" || command == "worktrees" {
 		return runWorktree(args[1:], os.Stdout)
+	}
+	if command == "land" {
+		return runLand(args[1:], os.Stdin, os.Stdout)
 	}
 	if command == "trust" {
 		return runTrust(args[1:], os.Stdout)
