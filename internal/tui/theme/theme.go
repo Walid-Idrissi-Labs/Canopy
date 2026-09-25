@@ -25,6 +25,11 @@ import (
 // satisfy the same set without any of the names becoming lies.
 type Palette struct {
 	Name string
+	// About is one line on where the palette comes from, for the list of themes.
+	About string
+	// Background is the background the palette was made for. Never painted, since the terminal's
+	// own background is left alone; it is what the palette's contrast is checked against.
+	Background Adaptive
 
 	Text   color.Color
 	Muted  color.Color
@@ -151,16 +156,18 @@ const (
 // ever used, and overriding them to fit a palette is how a failure comes to look like a success.
 // They are tuned to sit beside the brand colours rather than chosen freely.
 var Default = Palette{
-	Name:      "canopy",
-	Text:      Adaptive{Light: "#1f2328", Dark: "#e6edf3"},
-	Muted:     Adaptive{Light: brandAccentLight, Dark: brandAccent},
-	Accent:    Adaptive{Light: brandPrimaryLight, Dark: brandPrimary},
-	Success:   Adaptive{Light: brandSecondaryLight, Dark: brandSecondary},
-	Danger:    Adaptive{Light: "#c4342b", Dark: "#ef5f5f"},
-	Warning:   Adaptive{Light: "#9a6700", Dark: "#e0a33a"},
-	Info:      Adaptive{Light: brandPrimaryLight, Dark: brandPrimary},
-	Border:    Adaptive{Light: "#d6d6d6", Dark: "#3a3a3a"},
-	Highlight: Adaptive{Light: "#f2f4f5", Dark: "#16242b"},
+	Name:       "canopy",
+	About:      "Canopy's own, light or dark to match the terminal",
+	Background: Adaptive{Light: "#ffffff", Dark: "#1e1e1e"},
+	Text:       Adaptive{Light: "#1f2328", Dark: "#e6edf3"},
+	Muted:      Adaptive{Light: brandAccentLight, Dark: brandAccent},
+	Accent:     Adaptive{Light: brandPrimaryLight, Dark: brandPrimary},
+	Success:    Adaptive{Light: brandSecondaryLight, Dark: brandSecondary},
+	Danger:     Adaptive{Light: "#c4342b", Dark: "#ef5f5f"},
+	Warning:    Adaptive{Light: "#9a6700", Dark: "#e0a33a"},
+	Info:       Adaptive{Light: brandPrimaryLight, Dark: brandPrimary},
+	Border:     Adaptive{Light: "#d6d6d6", Dark: "#3a3a3a"},
+	Highlight:  Adaptive{Light: "#f2f4f5", Dark: "#16242b"},
 
 	// The campfire takes the secondary brand colour, which is the one place in the interface it is
 	// used for something that is not an outcome. It is also what makes the mark carry two of the
@@ -301,6 +308,8 @@ func changed() {
 // most of the sixteen colour ones.
 var Monochrome = Palette{
 	Name:       "mono",
+	About:      "no colour at all; what NO_COLOR gives",
+	Background: Adaptive{Light: "#ffffff", Dark: "#1e1e1e"},
 	Text:       Adaptive{Light: "#000000", Dark: "#ffffff"},
 	Muted:      Adaptive{Light: "#666666", Dark: "#999999"},
 	Accent:     Adaptive{Light: "#000000", Dark: "#ffffff"},
@@ -321,8 +330,15 @@ var Monochrome = Palette{
 	CodeNumber:  Adaptive{Light: "#000000", Dark: "#ffffff"},
 }
 
-// All returns every theme that ships.
-func All() []Palette { return []Palette{Default, Monochrome} }
+// All returns every theme: the two built in, those that ship as files, and a person's own.
+func All() []Palette {
+	load()
+	loadMu.Lock()
+	defer loadMu.Unlock()
+	all := []Palette{Default, Monochrome}
+	all = append(all, shipped...)
+	return append(all, personal...)
+}
 
 // ByName returns a theme by name, and whether it exists.
 func ByName(name string) (Palette, bool) {
