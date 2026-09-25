@@ -143,8 +143,8 @@ type SwitchMsg struct {
 	AgentName string
 }
 
-// tickMsg advances the spinner.
-type tickMsg struct{}
+// tickMsg advances the spinner. The generation lets a newer timer retire an older one.
+type tickMsg struct{ generation int }
 
 // compactedMsg carries the outcome of a compaction back into the update loop.
 type compactedMsg struct {
@@ -314,6 +314,10 @@ type Model struct {
 	// so keeping a second animation timer alive there would redraw identical pixels forever.
 	markRunning bool
 
+	// ticking says the spinner's timer is scheduled; tickGeneration retires stale timers.
+	ticking        bool
+	tickGeneration int
+
 	// menu is the command list that drops out of the message box.
 	menu menu
 
@@ -431,7 +435,7 @@ func promptsOf(s core.Session) []string {
 
 // Init subscribes to engine events and starts the spinner and the mark.
 func (m Model) Init() tea.Cmd {
-	commands := []tea.Cmd{m.subscribe(), tick()}
+	commands := []tea.Cmd{m.subscribe(), tick(0)}
 	if m.markRunning {
 		commands = append(commands, markTick(m.markGeneration))
 	}
@@ -459,8 +463,8 @@ func (m Model) subscribe() tea.Cmd {
 	}
 }
 
-func tick() tea.Cmd {
-	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return tickMsg{} })
+func tick(generation int) tea.Cmd {
+	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return tickMsg{generation: generation} })
 }
 
 // SetSize tells the model how much room it has.
@@ -480,17 +484,32 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case EventMsg:
 		m.refresh()
+		// The spinner only turns while something is running; an idle screen redrew itself eight
+		// times a second for nothing. An event that starts work starts it again.
+		if m.working && !m.ticking {
+			m.ticking = true
+			m.tickGeneration++
+			return m, tea.Batch(m.subscribe(), tick(m.tickGeneration))
+		}
 		// Waiting for the next event on the same subscription. The read still happens inside a
 		// command rather than a goroutine the model owns, which is what keeps the model safe to copy.
 		return m, m.subscribe()
 
 	case tickMsg:
+		if msg.generation != m.tickGeneration {
+			return m, nil
+		}
 		m.spinner = (m.spinner + 1) % len(spinnerFrames)
 		// The refresh matters more than the frame. Coalescing means several tokens can arrive as
 		// one notification or, under load, as none at all for a moment, and this is the beat that
 		// guarantees the screen catches up regardless.
 		m.refresh()
-		return m, tea.Batch(tick(), m.ensureMark())
+		if !m.working && !m.compacting {
+			m.ticking = false
+			return m, m.ensureMark()
+		}
+		m.ticking = true
+		return m, tea.Batch(tick(m.tickGeneration), m.ensureMark())
 
 	case markTickMsg:
 		if msg.generation != m.markGeneration {
@@ -968,10 +987,11 @@ func (m Model) compact() (Model, tea.Cmd) {
 	m.err = ""
 
 	engine, sessionID := m.engine, m.sessionID
-	return m, func() tea.Msg {
+	compact := func() tea.Msg {
 		result, err := engine.Compact(context.Background(), sessionID)
 		return compactedMsg{result: result, err: err}
 	}
+	return m, compact
 }
 
 // compactionOffer is the sentence somebody agrees to before anything is sent.
