@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -171,5 +172,47 @@ func TestASharedGitDirectoryOutsideTheWorkspaceIsGuarded(t *testing.T) {
 	}
 	if out, err := run(t, p, "echo ok > '"+filepath.Join(common, "worktrees", "w", "HEAD")+"'"); err != nil {
 		t.Fatalf("an ordinary write in the shared git directory was refused: %v %s", err, out)
+	}
+}
+
+// In proxy mode a command can reach the loopback address, where the proxy and a test's own servers
+// are, and nothing else. The outside attempt is a UDP datagram to a documentation address, which
+// needs no answer: unconfined it is sent at once, confined the sandbox refuses the send.
+func TestProxyModeReachesOnlyTheLoopback(t *testing.T) {
+	requireSandbox(t)
+	if runtime.GOOS != "darwin" {
+		t.Skip("Landlock names ports, not addresses; covered on macOS")
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 sends the probe")
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte("HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nok"))
+			_ = conn.Close()
+		}
+	}()
+	port := listener.Addr().(*net.TCPAddr).Port
+	ws, _ := filepath.EvalSymlinks(t.TempDir())
+	open := Policy{Writable: []string{ws}, Network: NetworkOpen}
+	proxied := Policy{Writable: []string{ws}, Network: NetworkProxy, ProxyPort: port}
+	probe := `python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).sendto(b'x', ('192.0.2.1', 9))"`
+	if out, err := run(t, open, probe); err != nil {
+		t.Skipf("a datagram cannot be sent even unconfined: %v %s", err, out)
+	}
+	if out, err := run(t, proxied, fmt.Sprintf("curl -s --noproxy '*' --max-time 3 http://127.0.0.1:%d/", port)); err != nil || out != "ok" {
+		t.Fatalf("the loopback was not reachable in proxy mode: %v %q", err, out)
+	}
+	if out, err := run(t, proxied, probe); err == nil {
+		t.Fatalf("a datagram left the machine in proxy mode: %s", out)
 	}
 }

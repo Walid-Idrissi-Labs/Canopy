@@ -1372,6 +1372,17 @@ no sandbox is available or `CANOPY_SANDBOX=off`, says so in its result. D-33's d
 contracts are unchanged; what changed is that the shell now has an enforced boundary on the two
 platforms Canopy supports, stated per platform rather than implied.
 
+## D-60 The sandbox's network can be narrowed to package registries. Decided 2026-09-25.
+
+Follows D-56, which left the network open and named an egress allow list as the next step. Open
+stays the default, since a build that cannot fetch its dependencies is a build that fails for
+reasons nobody can see. `CANOPY_SANDBOX_NETWORK=registries` confines a command to the loopback
+address, where Canopy runs an HTTP proxy that forwards only to package registries and GitHub, and
+to hosts named in `CANOPY_SANDBOX_ALLOW`; everything else is refused, and the command's result says
+which hosts. `off` allows no connections. The proxy decides by host name, so the list is readable;
+a program that ignores the proxy variables reaches nothing rather than everything. Enforced by
+Seatbelt on macOS by address and by Landlock on Linux by port, which is stated per platform.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
