@@ -305,6 +305,15 @@ conversation, so they are cached rather than paid for again on every step. Overs
 (over 48 KB together) are refused by name rather than cut. Like the rest of a repository's
 configuration, they are only sent once the repository is trusted.
 
+## Skills
+
+Canopy reads Agent Skills: folders holding a `SKILL.md` whose frontmatter has a `name` and a
+`description`. Only the name and description go into the system prompt; the model loads a skill's
+full instructions, and any file beside it, with the `skill` tool when a task calls for it, so a
+hundred skills cost a hundred lines. Your own skills are read from `skills/` in the Canopy config
+directory, `~/.claude/skills` and `~/.agents/skills`; a repository's from `.canopy/skills`,
+`.claude/skills` and `.agents/skills`, once the repository is trusted.
+
 ## A repository has to be trusted before it runs anything
 
 canopy.json can name a setup command, test commands, hooks and MCP servers, and carry instructions
