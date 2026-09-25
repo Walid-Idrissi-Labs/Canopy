@@ -180,6 +180,13 @@ type Turn struct {
 	ToolCalls   []ToolCall
 	ToolResults []ToolResult
 
+	// Steps is every message this turn added to the conversation after its request, in order and
+	// exactly as exchanged: each assistant step with its native encoding, each set of tool results.
+	// History replays these verbatim, so the conversation a provider sees on the next turn is the
+	// one it saw during this one with nothing merged, reordered or dropped. Empty for turns saved
+	// before it existed, which History rebuilds the old way.
+	Steps []Message
+
 	// Usage is what the turn consumed. Meaningful only once the turn is terminal; before that it
 	// is whatever the provider has reported so far, which is usually nothing.
 	Usage Usage
@@ -406,6 +413,11 @@ func (s Session) History() []Message {
 
 	for _, turn := range turns {
 		messages = append(messages, turn.Request)
+
+		if len(turn.Steps) > 0 {
+			messages = append(messages, turn.Steps...)
+			continue
+		}
 
 		// A turn that produced nothing is left out entirely. An empty assistant message is rejected
 		// by the API, and a turn that failed before the model said anything has nothing to

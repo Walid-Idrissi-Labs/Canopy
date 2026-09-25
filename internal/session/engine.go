@@ -769,6 +769,10 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 		s.Title = summarise(prompt)
 	}
 
+	// The mode travels as a note on the message where it took effect, never as a change to the
+	// system prompt. See core.SystemPrompt.
+	s.Turns[len(s.Turns)-1].Request.Note = pendingModeNote(*s, e.modeLocked(sessionID))
+
 	history := s.History()
 	keyName, model := s.KeyName, s.Model
 
@@ -866,10 +870,18 @@ func (e *Engine) run(
 	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
 	// call, because a system prompt that changed mid conversation would rewrite what the model
 	// believes it was told earlier.
-	request := core.Request{Model: model, Messages: history, System: e.Mode(sessionID).Prompt}
+	request := core.Request{Model: model, Messages: history, System: core.SystemPrompt}
 
 	outcome, err := loop.Run(ctx, request,
 		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
+
+	// Every message the loop added, exactly as exchanged, is what the next turn replays. Recorded
+	// on failure too: a step that completed before the failure was seen by the provider, and a
+	// history that omitted it would not be the conversation the provider remembers.
+	if len(outcome.Messages) > len(history) {
+		steps := append([]core.Message(nil), outcome.Messages[len(history):]...)
+		e.update(sessionID, turnID, func(t *core.Turn) { t.Steps = steps })
+	}
 	if err != nil {
 		// failureState rather than a flat TurnFailed: a provider can take several seconds to send
 		// its first byte, and somebody who presses escape in that window has stopped the turn
@@ -1320,4 +1332,27 @@ func (e *Engine) RenameCredential(from, to string) int {
 		e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: s.ID})
 	}
 	return len(moved)
+}
+
+// pendingModeNote is the mode note the newest turn must carry, or "" when the model already has it.
+//
+// The model has been told the mode when the most recent note it can still see says the same thing.
+// Only turns after the latest compaction count, because the ones before it are no longer sent.
+func pendingModeNote(s core.Session, mode core.Mode) string {
+	if mode.Prompt == "" {
+		return ""
+	}
+	first := 0
+	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(s.Turns) {
+		first = compaction.Through
+	}
+	for i := len(s.Turns) - 2; i >= first; i-- {
+		if note := s.Turns[i].Request.Note; note != "" {
+			if note == mode.Prompt {
+				return ""
+			}
+			break
+		}
+	}
+	return mode.Prompt
 }

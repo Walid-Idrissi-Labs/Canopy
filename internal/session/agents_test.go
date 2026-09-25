@@ -311,7 +311,7 @@ func TestResumingAConversationThatIsNotThereIsRefused(t *testing.T) {
 // refused, tries again, and spends the turn thrashing against a boundary nobody told it about. The
 // engine was not setting a system prompt at all before modes existed, so this is the whole of the
 // wiring and worth pinning: it is invisible from the interface and would fail silently.
-func TestTheModePromptIsSentAsTheSystemPrompt(t *testing.T) {
+func TestTheModePromptTravelsAsANoteAndTheSystemPromptNeverChanges(t *testing.T) {
 	client := &scriptedClient{name: "claude", events: reply("a plan")}
 	e := New(fixedResolver{client: client, id: anthropicID()})
 	t.Cleanup(e.Close)
@@ -329,17 +329,62 @@ func TestTheModePromptIsSentAsTheSystemPrompt(t *testing.T) {
 	waitForTurn(t, e, created.ID, turnID)
 
 	client.mu.Lock()
-	got := client.system
+	system, history := client.system, client.history
 	client.mu.Unlock()
 
-	if got != plan.Prompt {
-		t.Errorf("the provider was sent system prompt %q, want the plan mode prompt", got)
+	// The system prompt is the same in every mode: changing it between turns would discard the
+	// provider's cache and, on current models, every reasoning block before the change.
+	if system != core.SystemPrompt {
+		t.Errorf("the provider was sent system prompt %q, want the frozen core prompt", system)
+	}
+	if last := history[len(history)-1]; last.Note != plan.Prompt {
+		t.Errorf("the message that entered plan mode carried note %q, want the plan prompt", last.Note)
 	}
 }
 
-// And build sends none, which is the deliberate exception: it is the ordinary way to work, and
-// describing it would spend context telling the model that nothing unusual is going on.
-func TestBuildModeSendsNoSystemPrompt(t *testing.T) {
+// A mode is stated once, where it took effect, and not repeated on every message after it.
+func TestAModeNoteIsSentOnlyWhereTheModeChanges(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("ok")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	created := e.Create("claude", "claude-opus-5")
+
+	send := func(text string) []core.Message {
+		turnID, err := e.Send(created.ID, text)
+		if err != nil {
+			t.Fatalf("Send: %v", err)
+		}
+		waitForTurn(t, e, created.ID, turnID)
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		return client.history
+	}
+	build, _ := core.ModeByName(core.ModeBuild)
+	plan, _ := core.ModeByName(core.ModePlan)
+
+	first := send("one")
+	if first[len(first)-1].Note != build.Prompt {
+		t.Fatalf("the first message did not state the mode: %q", first[len(first)-1].Note)
+	}
+	second := send("two")
+	if second[len(second)-1].Note != "" {
+		t.Errorf("an unchanged mode was stated again: %q", second[len(second)-1].Note)
+	}
+	if err := e.SetMode(created.ID, plan); err != nil {
+		t.Fatal(err)
+	}
+	third := send("three")
+	if third[len(third)-1].Note != plan.Prompt {
+		t.Errorf("a mode change was not stated where it happened: %q", third[len(third)-1].Note)
+	}
+	if third[0].Note != build.Prompt {
+		t.Error("an earlier note was rewritten; history must only ever be appended to")
+	}
+}
+
+// Build states itself too, so the model knows commands ask first, and the system prompt is the same
+// core prompt every mode shares.
+func TestBuildModeSendsTheCorePrompt(t *testing.T) {
 	client := &scriptedClient{name: "claude", events: reply("done")}
 	e := New(fixedResolver{client: client, id: anthropicID()})
 	t.Cleanup(e.Close)
@@ -355,8 +400,8 @@ func TestBuildModeSendsNoSystemPrompt(t *testing.T) {
 	got := client.system
 	client.mu.Unlock()
 
-	if got != "" {
-		t.Errorf("build sent a system prompt: %q", got)
+	if got != core.SystemPrompt {
+		t.Errorf("build sent system prompt %q, want the frozen core prompt", got)
 	}
 }
 

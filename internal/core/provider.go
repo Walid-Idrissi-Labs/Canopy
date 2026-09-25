@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -106,6 +107,13 @@ type Message struct {
 	// Text is the message body.
 	Text string
 
+	// Note is an instruction from Canopy rather than from the person, carried on a user message:
+	// the mode the conversation entered at this point, for example. Adapters send it ahead of Text,
+	// marked as coming from Canopy, and it is never shown as something the person typed. Appended
+	// with the message it rides on and never edited afterwards, which is what keeps the
+	// conversation's prefix stable. See SystemPrompt.
+	Note string `json:",omitempty"`
+
 	// ToolCalls are tool invocations the assistant requested.
 	ToolCalls []ToolCall
 
@@ -113,6 +121,32 @@ type Message struct {
 	// message, and every call must be answered, including failed ones: dropping a result leaves
 	// the model waiting for an answer that never comes.
 	ToolResults []ToolResult
+
+	// Native is the assistant message exactly as the provider produced it, thinking blocks and
+	// their signatures included. A provider that finds its own name here replays these bytes
+	// rather than rebuilding the message from the fields above.
+	//
+	// Current models bind a thinking block to the exact conversation that produced it, and reject
+	// or discard it if anything before it changed. Rebuilding a message from Text and ToolCalls
+	// drops the thinking, reorders blocks and re-serialises tool inputs, any of which is a change.
+	// Replaying what was received is the only reconstruction that cannot differ.
+	Native *Native `json:",omitempty"`
+}
+
+// Native is one provider's own encoding of a message.
+type Native struct {
+	// Provider is the adapter name that produced it, as its Name method returns.
+	Provider string
+	// Data is that provider's JSON for the message.
+	Data json.RawMessage
+}
+
+// NativeFor returns the native encoding when it belongs to provider, nil otherwise.
+func (m Message) NativeFor(provider string) json.RawMessage {
+	if m.Native == nil || m.Native.Provider != provider || len(m.Native.Data) == 0 {
+		return nil
+	}
+	return m.Native.Data
 }
 
 // ToolCall is the model asking for a tool to be run.
@@ -293,6 +327,10 @@ type StreamEvent struct {
 	StopReason StopReason
 	Usage      Usage
 	Err        error
+
+	// Native is the finished assistant message in the provider's own encoding, on the done event
+	// of a stream that completed a message. See Message.Native.
+	Native *Native
 }
 
 // Stream is a response in progress.

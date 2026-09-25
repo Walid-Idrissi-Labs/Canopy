@@ -211,6 +211,7 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 				Role:      core.RoleAssistant,
 				Text:      reply.text,
 				ToolCalls: reply.calls,
+				Native:    reply.native,
 			})
 		}
 
@@ -242,10 +243,11 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 
 // reply is one model call's worth of output.
 type reply struct {
-	text  string
-	calls []core.ToolCall
-	usage core.Usage
-	stop  core.StopReason
+	native *core.Native
+	text   string
+	calls  []core.ToolCall
+	usage  core.Usage
+	stop   core.StopReason
 }
 
 // step performs one model call and collects what came back.
@@ -278,6 +280,7 @@ func (l *Loop) step(ctx context.Context, req core.Request, obs Observer) (reply,
 			// leaving an event unread.
 			out.usage = event.Usage
 			out.stop = event.StopReason
+			out.native = event.Native
 			out.text = string(text)
 			return out, event.Err
 		}

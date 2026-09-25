@@ -30,11 +30,12 @@ import (
 // last few words of a reply that was still arriving when the process died is not a loss worth
 // paying for on every keystroke of every agent.
 type Storage struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 8
+const schemaVersion = 9
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -203,6 +204,11 @@ var migrations = []string{
 
 	CREATE INDEX asides_by_session ON asides (session_id, created_at);
 	`,
+
+	// Added when history stopped being rebuilt from a turn's summary fields. Each turn keeps the
+	// messages it added exactly as they were exchanged, native encodings included, and the next
+	// turn replays them; see core.Turn.Steps.
+	`ALTER TABLE turns ADD COLUMN steps TEXT NOT NULL DEFAULT '[]';`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -243,7 +249,7 @@ func OpenStorage(path string) (*Storage, error) {
 		_ = os.Chmod(path+suffix, 0o600)
 	}
 
-	s := &Storage{db: db}
+	s := &Storage{db: db, path: path}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -266,6 +272,20 @@ func (s *Storage) migrate() error {
 			"this history was written by a newer version of Canopy (schema %d, this build "+
 				"understands %d). Upgrade rather than downgrade, or the newer data would be lost",
 			version, schemaVersion)
+	}
+
+	// A copy of the file as it was, before anything changes it. A migration that goes wrong, or a
+	// build that turns out to be bad, should cost a restore rather than somebody's history.
+	if version > 0 && version < len(migrations) && s.path != "" {
+		backup := fmt.Sprintf("%s.schema-%d.bak", s.path, version)
+		if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
+			// VACUUM INTO takes no bound parameter; the path is Canopy's own, quoted for SQL.
+			quoted := "'" + strings.ReplaceAll(backup, "'", "''") + "'"
+			if _, err := s.db.Exec(`VACUUM INTO ` + quoted); err != nil {
+				return fmt.Errorf("backing up the history before upgrading it: %w", err)
+			}
+			_ = os.Chmod(backup, 0o600)
+		}
 	}
 
 	for version < len(migrations) {
@@ -498,14 +518,18 @@ func (s *Storage) SaveTurn(sessionID string, ordinal int, turn core.Turn) error 
 	if err != nil {
 		return fmt.Errorf("encoding the tool results of turn %s: %w", turn.ID, err)
 	}
+	steps, err := json.Marshal(turn.Steps)
+	if err != nil {
+		return fmt.Errorf("encoding the steps of turn %s: %w", turn.ID, err)
+	}
 
 	_, err = s.db.Exec(`
 		INSERT INTO turns (
 			session_id, turn_id, ordinal, state, request, request_text, reply, thinking,
 			tool_calls, tool_results,
 			input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_known,
-			provider, model, error, started_at, ended_at, checkpoint
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider, model, error, started_at, ended_at, checkpoint, steps
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id, turn_id) DO UPDATE SET
 			state = excluded.state,
 			reply = excluded.reply,
@@ -522,14 +546,15 @@ func (s *Storage) SaveTurn(sessionID string, ordinal int, turn core.Turn) error 
 			model = excluded.model,
 			error = excluded.error,
 			ended_at = excluded.ended_at,
-			checkpoint = excluded.checkpoint`,
+			checkpoint = excluded.checkpoint,
+			steps = excluded.steps`,
 		sessionID, turn.ID, ordinal, string(turn.State), string(request), turn.Request.Text,
 		turn.Text, turn.Thinking, string(calls), string(results),
 		turn.Usage.InputTokens, turn.Usage.OutputTokens,
 		turn.Usage.CacheReadTokens, turn.Usage.CacheWriteTokens,
 		turn.Usage.CostUSD, boolToInt(turn.Usage.CostKnown),
 		turn.Provider, turn.Model, turn.Error, unix(turn.StartedAt), unix(turn.EndedAt),
-		turn.Checkpoint)
+		turn.Checkpoint, string(steps))
 	if err != nil {
 		return fmt.Errorf("saving turn %s: %w", turn.ID, err)
 	}
@@ -587,7 +612,7 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 	rows, err := s.db.Query(`
 		SELECT turn_id, state, request, reply, thinking, tool_calls, tool_results,
 		       input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_known,
-		       provider, model, error, started_at, ended_at, checkpoint
+		       provider, model, error, started_at, ended_at, checkpoint, steps
 		FROM turns WHERE session_id = ? ORDER BY ordinal`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("loading the turns of session %s: %w", sessionID, err)
@@ -597,7 +622,7 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 	var turns []core.Turn
 	for rows.Next() {
 		var t core.Turn
-		var state, request, calls, results string
+		var state, request, calls, results, steps string
 		var costKnown int
 		var started, ended int64
 
@@ -605,7 +630,7 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 			&t.Usage.InputTokens, &t.Usage.OutputTokens,
 			&t.Usage.CacheReadTokens, &t.Usage.CacheWriteTokens,
 			&t.Usage.CostUSD, &costKnown,
-			&t.Provider, &t.Model, &t.Error, &started, &ended, &t.Checkpoint); err != nil {
+			&t.Provider, &t.Model, &t.Error, &started, &ended, &t.Checkpoint, &steps); err != nil {
 			return nil, err
 		}
 
@@ -622,6 +647,9 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 		}
 		if err := json.Unmarshal([]byte(results), &t.ToolResults); err != nil {
 			return nil, fmt.Errorf("decoding the tool results of turn %s: %w", t.ID, err)
+		}
+		if err := json.Unmarshal([]byte(steps), &t.Steps); err != nil {
+			return nil, fmt.Errorf("decoding the steps of turn %s: %w", t.ID, err)
 		}
 
 		// A turn that was in flight when the process died is not in flight now, and nothing is

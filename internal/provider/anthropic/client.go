@@ -18,6 +18,7 @@ import (
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -44,14 +45,34 @@ var _ core.ProviderClient = (*Client)(nil)
 //
 // The secret is revealed once, here, and handed straight to the SDK. That is the whole window in
 // which it exists as an ordinary string in this package.
-func New(secret core.Secret) *Client {
+func New(secret core.Secret, opts ...Option) *Client {
+	var settings settings
+	for _, opt := range opts {
+		opt(&settings)
+	}
+	requestOptions := []option.RequestOption{option.WithAPIKey(secret.Reveal())}
+	if settings.baseURL != "" {
+		requestOptions = append(requestOptions, option.WithBaseURL(settings.baseURL))
+	}
 	return &Client{
-		sdk:    sdk.NewClient(option.WithAPIKey(secret.Reveal())),
+		sdk:    sdk.NewClient(requestOptions...),
 		secret: secret,
 	}
 }
 
-func (c *Client) Name() string { return "anthropic" }
+// Option configures a client.
+type Option func(*settings)
+
+type settings struct{ baseURL string }
+
+// WithBaseURL points the client at another host speaking the Messages API: a gateway, a proxy, or a
+// test server.
+func WithBaseURL(url string) Option { return func(s *settings) { s.baseURL = url } }
+
+// providerName is what this adapter calls itself, and the owner recorded on native messages.
+const providerName = "anthropic"
+
+func (c *Client) Name() string { return providerName }
 
 // Stream sends a request and returns the response as it arrives.
 func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, error) {
@@ -127,12 +148,22 @@ func (c *Client) buildMessages(messages []core.Message) ([]sdk.MessageParam, err
 	out := make([]sdk.MessageParam, 0, len(messages))
 
 	for i, msg := range messages {
+		// An assistant message this adapter produced goes back byte for byte. See core.Native.
+		if raw := msg.NativeFor(providerName); raw != nil && msg.Role == core.RoleAssistant {
+			var replay sdk.MessageParam
+			param.SetJSON(raw, &replay)
+			out = append(out, replay)
+			continue
+		}
 		blocks := make([]sdk.ContentBlockParamUnion, 0, 1+len(msg.ToolCalls)+len(msg.ToolResults))
 
 		// Tool results come first in a user turn. The API expects them at the head of the message
 		// answering the assistant's calls.
 		for _, result := range msg.ToolResults {
 			blocks = append(blocks, sdk.NewToolResultBlock(result.CallID, result.Content, result.IsError))
+		}
+		if msg.Note != "" {
+			blocks = append(blocks, sdk.NewTextBlock(core.ReminderText(msg.Note)))
 		}
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
