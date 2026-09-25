@@ -87,9 +87,6 @@ func runChat(resume string) error {
 		}
 	}
 
-	if err := gitsafe.CheckVersion(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-	}
 	project := loadProject(dir)
 	commands := loadCommands(project.Commands)
 
@@ -313,7 +310,7 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 func isGitRepository(dir string) bool {
 	result, err := execpkg.Run(context.Background(), "git",
 		[]string{"rev-parse", "--is-inside-work-tree"},
-		execpkg.Options{Dir: dir, Env: gitsafe.Inherited(), Timeout: 10 * time.Second})
+		execpkg.Options{Dir: dir, Env: gitsafe.InheritedFor(dir), Timeout: 10 * time.Second})
 	return err == nil && result.Succeeded()
 }
 

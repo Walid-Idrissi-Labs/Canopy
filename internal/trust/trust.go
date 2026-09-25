@@ -233,9 +233,22 @@ func (s *Store) write(dir string, rec *record) error {
 func key(dir string) string {
 	// A repository and every worktree cut from it share one answer: an agent's worktree carries the
 	// same committed configuration, and asking again for each would make delegation unusable there.
+	//
+	// The path inside the repository is kept, so two configurations in different subdirectories of
+	// one repository are separate answers rather than overwriting each other.
 	if root := repositoryRoot(dir); root != "" {
-		dir = root
+		if top := toplevel(dir); top != "" {
+			if rel, err := filepath.Rel(canonical(top), canonical(dir)); err == nil {
+				return canonical(root) + "#" + filepath.ToSlash(rel)
+			}
+		}
+		return canonical(root)
 	}
+	return canonical(dir)
+}
+
+// canonical is an absolute, symlink-free spelling of a path, when one can be had.
+func canonical(dir string) string {
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 		dir = resolved
 	}
@@ -338,4 +351,16 @@ func repositoryRoot(dir string) string {
 		return filepath.Dir(common)
 	}
 	return common
+}
+
+// toplevel is the root of the working tree dir is in, or "" outside one.
+func toplevel(dir string) string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	cmd.Env = gitsafe.Inherited()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

@@ -139,7 +139,7 @@ func (t *gitTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResu
 		// The user's environment, for their identity and credentials, with the repository's own
 		// command-valued configuration switched off. A hook or fsmonitor written into .git/config is
 		// otherwise a shell command nobody approved.
-		Env: gitsafe.Inherited(),
+		Env: gitsafe.InheritedFor(t.w.Root()),
 		// Short. Every operation here is local and finishes in milliseconds; one that does not has
 		// hit an interactive prompt, which is the case a timeout exists for.
 		Timeout: 30 * time.Second,

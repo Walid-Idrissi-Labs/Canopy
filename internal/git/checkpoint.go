@@ -84,7 +84,7 @@ func (t *Taker) Take(ctx context.Context, id, label string) (Checkpoint, error) 
 		return Checkpoint{}, fmt.Errorf("finding the index for the checkpoint: %w", err)
 	}
 	indexFile := fmt.Sprintf("%s.canopy-checkpoint-%s", index, id)
-	env := append(environ(), "GIT_INDEX_FILE="+indexFile)
+	env := append(environ(t.dir), "GIT_INDEX_FILE="+indexFile)
 	// Removed with os rather than by shelling out, since it is a plain file and `git rm` means
 	// something entirely different from removing a file off disk.
 	defer func() { _ = os.Remove(indexFile) }()
@@ -242,7 +242,7 @@ func (t *Taker) indexPath(ctx context.Context) (string, error) {
 }
 
 func (t *Taker) run(ctx context.Context, args ...string) (string, error) {
-	return t.runEnv(ctx, environ(), args...)
+	return t.runEnv(ctx, environ(t.dir), args...)
 }
 
 func (t *Taker) runEnv(ctx context.Context, env []string, args ...string) (string, error) {
@@ -268,8 +268,8 @@ func (t *Taker) runEnv(ctx context.Context, env []string, args ...string) (strin
 // Deliberately minimal rather than inherited. A user's `GIT_INDEX_FILE`, `GIT_DIR` or
 // `GIT_WORK_TREE` would redirect Canopy's bookkeeping somewhere unexpected, and the failure would be
 // a checkpoint silently taken of the wrong thing.
-func environ() []string {
-	return gitsafe.Env([]string{
+func environ(dir string) []string {
+	return gitsafe.EnvFor(dir, []string{
 		"PATH=" + pathEnv(),
 		"HOME=" + homeEnv(),
 		// Git refuses to write a commit without these, and a checkpoint is not authored by the user.
