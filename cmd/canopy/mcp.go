@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -79,6 +80,12 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 		if server.Disabled {
 			continue
 		}
+		headers, missing := server.ExpandedHeaders()
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: the MCP server %q is not connected: %s is not set\n",
+				server.Name, strings.Join(missing, ", "))
+			continue
+		}
 		specs = append(specs, mcp.Spec{
 			Name:    server.Name,
 			Command: server.Command,
@@ -86,6 +93,8 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 			Env:     server.Env,
 			Dir:     dir,
 			Timeout: server.MCPTimeout(),
+			URL:     server.URL,
+			Headers: headers,
 		})
 	}
 	return specs
