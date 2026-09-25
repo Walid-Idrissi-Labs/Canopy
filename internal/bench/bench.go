@@ -7,6 +7,7 @@
 package bench
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -295,9 +296,44 @@ func runOne(ctx context.Context, task Task, attempt Attempt) Result {
 	if err != nil {
 		res.Error = err.Error()
 	}
+	// A check passed by rewriting it proves nothing: every test file must be as it was laid out.
+	if changed := changedTests(task, dir); changed != "" {
+		res.Error = "the attempt changed " + changed + ", so the check no longer measures the task"
+		return res
+	}
 	res.Passed, _, err = RunCheck(ctx, task, dir)
 	if err != nil && res.Error == "" {
 		res.Error = err.Error()
 	}
 	return res
+}
+
+// changedTests names the first of a task's test files that is missing or differs from the one laid
+// out, or returns "".
+func changedTests(task Task, dir string) string {
+	root := path.Join("tasks", task.Name)
+	var changed string
+	_ = fs.WalkDir(embedded, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || changed != "" {
+			return err
+		}
+		rel := strings.TrimSuffix(strings.TrimPrefix(p, root+"/"), ".txt")
+		if !isTest(rel) {
+			return nil
+		}
+		want, _ := fs.ReadFile(embedded, p)
+		got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		if err != nil || !bytes.Equal(got, want) {
+			changed = rel
+		}
+		return nil
+	})
+	return changed
+}
+
+// isTest reports whether a task file is one of its tests.
+func isTest(rel string) bool {
+	base := path.Base(rel)
+	return strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") ||
+		strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
 }

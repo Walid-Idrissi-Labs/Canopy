@@ -72,3 +72,33 @@ func TestARunScoresTheCheckAfterTheAttempt(t *testing.T) {
 		t.Errorf("compare = %s", cmp)
 	}
 }
+
+// An attempt that makes the check pass by emptying the tests is scored as a failure, not a pass.
+func TestEditingTheTestsIsNotAPass(t *testing.T) {
+	tasks, err := Tasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ = Select(tasks, []string{"go-off-by-one"})
+	cheat := func(_ context.Context, _ Task, dir string) (Usage, error) {
+		return Usage{}, os.WriteFile(filepath.Join(dir, "sum_test.go"), []byte("package sum\n"), 0o644)
+	}
+	results := Run(context.Background(), tasks, cheat, nil)
+	if results[0].Passed || !strings.Contains(results[0].Error, "sum_test.go") {
+		t.Fatalf("an attempt that emptied the tests scored %+v", results[0])
+	}
+}
+
+// A task whose check already passes is refused before the attempt, since it would score a win for
+// doing nothing.
+func TestATaskThatAlreadyPassesIsRefused(t *testing.T) {
+	task := Task{Name: "go-off-by-one", Kind: "bug fix", Check: []string{"true"}}
+	ran := false
+	results := Run(context.Background(), []Task{task}, func(context.Context, Task, string) (Usage, error) {
+		ran = true
+		return Usage{}, nil
+	}, nil)
+	if ran || results[0].Passed || !strings.Contains(results[0].Error, "measures nothing") {
+		t.Fatalf("an already-passing task was attempted or scored: ran=%v %+v", ran, results[0])
+	}
+}
