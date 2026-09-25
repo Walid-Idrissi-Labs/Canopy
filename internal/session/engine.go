@@ -1122,8 +1122,10 @@ func (o *turnObserver) Text(chunk string) {
 
 func (o *turnObserver) Notice(text string) {
 	// A search the provider ran is recorded in the audit trail like any tool call, marked as run by
-	// the provider, since no approval prompt saw it.
+	// the provider, since no approval prompt saw it. It taints the conversation now, and the taint is
+	// saved now: the notice itself is not kept across a restart.
 	if query, ok := strings.CutPrefix(text, anthropic.WebSearchNotice); ok {
+		o.engine.markTainted(o.sessionID)
 		o.engine.mu.Lock()
 		trail := o.engine.trail
 		o.engine.mu.Unlock()
@@ -1152,11 +1154,20 @@ func (o *turnObserver) ToolRequested(call core.ToolCall) {
 	})
 }
 
-func (o *turnObserver) ToolFinished(_ core.ToolCall, result core.ToolResult) {
+func (o *turnObserver) ToolFinished(call core.ToolCall, result core.ToolResult) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
 		t.ToolResults = append(t.ToolResults, result)
 		t.State = core.TurnStreaming
 	})
+	// Outside content taints the conversation when it arrives, and the taint is saved then, rather
+	// than worked out later from a record that may not show it after a restart (an MCP server not
+	// started again, for one).
+	o.engine.mu.Lock()
+	tools, _ := o.engine.toolsForLocked(o.sessionID)
+	o.engine.mu.Unlock()
+	if taintSource(tools, call.Name) {
+		o.engine.markTainted(o.sessionID)
+	}
 	o.engine.refreshTasks(o.sessionID)
 }
 

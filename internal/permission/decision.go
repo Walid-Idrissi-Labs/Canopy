@@ -451,12 +451,20 @@ func networkish(command string) bool {
 		if len(words) == 0 {
 			continue
 		}
-		name := words[0]
-		if i := strings.LastIndexByte(name, '/'); i >= 0 {
-			name = name[i+1:]
+		name := commandName(words[0])
+		// A command named by a variable or a substitution runs something the line does not show.
+		if strings.HasPrefix(name, "$") {
+			return true
 		}
 		if networkCommands[name] {
 			return true
+		}
+		// find runs the command after -exec for each file it finds.
+		for i, w := range words[1:] {
+			if (w == "-exec" || w == "-execdir" || w == "-ok" || w == "-okdir") && i+2 < len(words) &&
+				networkCommands[commandName(words[i+2])] {
+				return true
+			}
 		}
 		// A shell given its commands as a string or on its input runs text the command line does
 		// not show; one given a script file is the script's own business.
@@ -476,6 +484,16 @@ func networkish(command string) bool {
 		}
 	}
 	return false
+}
+
+// commandName is a command word as the shell will run it: quotes and backslashes removed, since
+// "curl" and c\url are curl, and the directory dropped.
+func commandName(word string) string {
+	name := strings.NewReplacer(`"`, "", "'", "", `\`, "").Replace(word)
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
 }
 
 // subcommand is the first word that is not an option, skipping the values of the options that take

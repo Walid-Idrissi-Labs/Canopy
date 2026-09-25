@@ -160,3 +160,7 @@ const landlockRuleNetPort = 2
 // NetworkEnforced reports whether this machine can limit a command's network: Landlock ABI 4,
 // Linux 6.7 and later.
 func NetworkEnforced() bool { return abi() >= 4 }
+
+// LoopbackKept reports whether a network limited to the proxy still reaches the loopback address;
+// Landlock limits by port, so a local server on another port is cut off.
+func LoopbackKept() bool { return false }

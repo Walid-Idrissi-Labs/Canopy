@@ -828,9 +828,11 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - `/context` estimates tokens from bytes, about four to a token; the provider's own count, shown
   for the last turn, is the one that was billed.
 - Once a conversation has read a fetched page, a provider search or an MCP result (D-57), its shell
-  commands reach only package registries where the sandbox can limit the network (macOS, and Linux
-  6.7 or later), and anything whose purpose is to send data out is asked about, even in runway and
-  cruise. Which commands are asked about is decided by the command word of each stage: curl, ssh,
+  commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
+  also cut off the local servers tests start), and anything whose purpose is to send data out is
+  asked about, even in runway and cruise. The project's test, setup and hook commands run outside
+  the sandbox and are not confined by this, so a test a tainted agent writes can still reach the
+  network when runway runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
   `gh`, `nslookup`, `base64`, `eval`, `sh -c` and the like. A registry is still a server on the
   internet, and where the network cannot be limited the word list is the only guard, which a
   determined script can get around. Files in the workspace do not taint a conversation, though they

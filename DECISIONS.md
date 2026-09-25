@@ -1383,16 +1383,20 @@ a pickup; agents a tainted conversation starts inherit it, and a tainted agent p
 conversation it reports to.
 
 From then on two things hold, in every mode and past earlier approvals. Every shell command runs
-with its network limited to package registries through the egress proxy (D-60), where the sandbox
-can enforce it, so a script the model writes cannot post what it read anywhere else. And an action
+with its network limited to package registries through the egress proxy (D-60) where the sandbox
+limits by address, which is macOS, so a script the model writes cannot post what it read anywhere
+but a registry; on Linux, where the limit would be by port and cut off the local servers tests
+start, it is not forced. And an action
 whose purpose is to send data out is asked about: network tools, every MCP tool, a git push, fetch,
 clone or change of remote, and a shell command whose command word, in any stage of a pipeline, is a
 network program or runs text the line does not show (curl, ssh, `gh`, `nslookup`, `base64`, `eval`,
 a shell reading `-c` or its input, publishing commands). Only command words count, so building a
 package called `mail` or grepping for `curl` is not asked about. Reading, editing, building and
 testing keep their level. Enforced in the permission layer and the sandbox, never left to the
-model. Where the sandbox cannot limit the network, the word list is the only guard, and it narrows
-exfiltration rather than preventing it.
+model. Where the network is not limited, the word list is the only guard, and it narrows
+exfiltration rather than preventing it. The project's own test, setup and hook commands are not
+covered: they run outside the sandbox (D-56), so a test a tainted agent writes, and runway then
+runs, is not confined by this.
 
 ## D-60 The sandbox's network can be narrowed to package registries. Decided 2026-09-25.
 

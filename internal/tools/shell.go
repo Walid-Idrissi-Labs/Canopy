@@ -109,13 +109,10 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 			return failure("%v", err), nil
 		}
 		// A conversation that has read outside content may be following instructions from it, so
-		// its commands reach package registries and nothing else, whatever they are (D-57).
-		if mode == egress.ModeOpen && core.TaintedFrom(ctx) {
-			mode = egress.ModeRegistries
-		}
-		// A conversation that has read outside content may be following instructions from it, so
-		// its commands reach package registries and nothing else, whatever they are (D-57).
-		if mode == egress.ModeOpen && core.TaintedFrom(ctx) {
+		// its commands reach package registries and nothing else, whatever they are (D-57). Only
+		// where the loopback address stays reachable: on Linux the limit is by port, and forcing it
+		// would break every test that starts a local server.
+		if mode == egress.ModeOpen && core.TaintedFrom(ctx) && sandbox.LoopbackKept() {
 			mode = egress.ModeRegistries
 		}
 		if mode != egress.ModeOpen && !sandbox.NetworkEnforced() {

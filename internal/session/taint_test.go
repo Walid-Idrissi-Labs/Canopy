@@ -138,3 +138,52 @@ func TestAChildPassesItsTaintToItsParent(t *testing.T) {
 		t.Fatal("the parent of a tainted agent is not tainted")
 	}
 }
+
+// A turn whose only outside content was a web search, followed by a plain answer, is tainted after
+// a restart too: the taint is saved when the search arrives, since the notice itself is not kept.
+func TestASearchOnlyTurnIsTaintedAfterARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searched := append([]core.StreamEvent{{Kind: core.EventNotice, Text: anthropic.WebSearchNotice + "docs"}},
+		reply("here is what I found")...)
+	first := New(fixedResolver{client: &sequenceClient{replies: [][]core.StreamEvent{searched}}, id: anthropicID()})
+	if err := first.WithStorage(storage, func(err error) { t.Errorf("storage: %v", err) }); err != nil {
+		t.Fatal(err)
+	}
+	s := first.Create("claude", "claude-opus-5")
+	id, err := first.Send(s.ID, "look it up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, first, s.ID, id)
+	first.Close()
+
+	second, _ := asideEngine(t, path)
+	t.Cleanup(second.Close)
+	if !second.tainted(s.ID) {
+		t.Fatal("a search's taint was lost on restart")
+	}
+}
+
+// A fork carries what its source read, so it carries the taint.
+func TestAForkOfATaintedConversationIsTainted(t *testing.T) {
+	e := New(fixedResolver{client: &sequenceClient{}, id: anthropicID()})
+	t.Cleanup(e.Close)
+	s := e.Create("claude", "claude-opus-5")
+	id, err := e.Send(s.ID, "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, e, s.ID, id)
+	e.markTainted(s.ID)
+	fork, err := e.Fork(s.ID, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !e.tainted(fork.ID) {
+		t.Fatal("the fork of a tainted conversation is not tainted")
+	}
+}
