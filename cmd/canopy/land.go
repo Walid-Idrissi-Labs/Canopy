@@ -115,6 +115,26 @@ func runLand(args []string, stdin io.Reader, out io.Writer) error {
 		return errors.New("no tests are configured (or the repository is not trusted), so the merged " +
 			"result cannot be checked; nothing was changed")
 	}
+	// Prepared the way an agent's worktree is, the allow-listed files copied in and the setup run,
+	// or tests that need dependencies fail on the merge for want of them rather than on its merits.
+	if project.Setup != "" || len(project.Copy) > 0 {
+		repo, err := gitpkg.OpenRepo(top)
+		if err != nil {
+			return err
+		}
+		prepared, err := repo.Prepare(ctx, core.WorkspaceSnapshot{Path: scratch, Ownership: core.OwnershipManaged},
+			gitpkg.Environment{Setup: project.Setup, SetupTimeout: project.SetupDuration(), Copy: project.Copy},
+			// Only files git ignores, from the person's own checkout into a worktree about to be
+			// deleted; overwriting a committed file is never confirmed here.
+			gitpkg.Confirm{Ignored: func(gitpkg.CopyRequest) bool { return true }})
+		if err != nil {
+			return fmt.Errorf("preparing the scratch worktree: %w", err)
+		}
+		if !prepared.OK() {
+			return fmt.Errorf("the project's setup failed in the scratch worktree, so nothing was changed: %s",
+				prepared.Summary())
+		}
+	}
 	failed := 0
 	for i, test := range tests {
 		outcome := execpkg.RunTest(ctx, test, execpkg.Target{Dir: scratch}, fmt.Sprintf("land-%d", i))

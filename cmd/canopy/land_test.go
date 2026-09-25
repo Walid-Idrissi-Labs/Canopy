@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,7 +15,20 @@ import (
 // and one that does not.
 func landRepo(t *testing.T) string {
 	t.Helper()
+	return landRepoWith(t, `{"tests":[{"name":"has-ok","command":{"argv":["test","-f","ok.txt"]},"required":true}]}`)
+}
+
+// landRepoWith is landRepo with its own canopy.json.
+func landRepoWith(t *testing.T, config string) string {
+	t.Helper()
 	dir := t.TempDir()
+	landIn(t, dir, config)
+	return dir
+}
+
+// landIn builds the landing repository in dir.
+func landIn(t *testing.T, dir, config string) {
+	t.Helper()
 	git := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-c", "user.email=a@b", "-c", "user.name=a"}, args...)...)
 		cmd.Dir = dir
@@ -26,7 +41,6 @@ func landRepo(t *testing.T) string {
 	// machine has no identity of its own for git to fall back on.
 	git("config", "user.email", "a@b")
 	git("config", "user.name", "a")
-	config := `{"tests":[{"name":"has-ok","command":{"argv":["test","-f","ok.txt"]},"required":true}]}`
 	if err := os.WriteFile(filepath.Join(dir, "canopy.json"), []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +67,6 @@ func landRepo(t *testing.T) string {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
-	return dir
 }
 
 func head(t *testing.T, dir string) string {
@@ -100,7 +113,39 @@ func TestLandingRefusesADirtyCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := runLand([]string{"good"}, strings.NewReader(""), &out); err == nil {
-		t.Fatal("landed over uncommitted work")
+	err := runLand([]string{"good"}, strings.NewReader(""), &out)
+	// Refused up front, before any merge is made or any test run.
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") || strings.Contains(out.String(), "merging") {
+		t.Fatalf("landed over uncommitted work, or found out too late: %v\n%s", err, out.String())
+	}
+}
+
+// The scratch worktree is prepared like an agent's: a project whose tests need its setup's output
+// lands, rather than failing for want of it.
+func TestLandingRunsTheProjectSetupFirst(t *testing.T) {
+	landRepoWith(t, `{"setup":"mkdir -p deps && touch deps/lib",`+
+		`"tests":[{"name":"deps","command":{"argv":["test","-f","deps/lib"]},"required":true}]}`)
+	var out bytes.Buffer
+	if err := runLand([]string{"good"}, strings.NewReader(""), &out); err != nil {
+		t.Fatalf("the setup did not run before the tests: %v\n%s", err, out.String())
+	}
+}
+
+// A checkout that moves while the tests run is not overwritten with a result tested against what
+// it was before.
+func TestLandingRefusesACheckoutThatMovedDuringTheTests(t *testing.T) {
+	dir := t.TempDir()
+	commit := fmt.Sprintf("git -C %q -c user.name=a -c user.email=a@b commit -q --allow-empty -m moved", dir)
+	config, _ := json.Marshal(map[string]any{"tests": []any{map[string]any{"name": "moves", "required": true,
+		"command": map[string]any{"argv": []string{"sh", "-c", commit}}}}})
+	landIn(t, dir, string(config))
+	before := head(t, dir)
+	var out bytes.Buffer
+	err := runLand([]string{"good"}, strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "changed while the tests ran") {
+		t.Fatalf("landed over a checkout that moved: %v\n%s", err, out.String())
+	}
+	if moved := head(t, dir); moved == before {
+		t.Fatal("the test command did not move the checkout, so this proves nothing")
 	}
 }
