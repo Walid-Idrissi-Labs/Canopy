@@ -18,6 +18,7 @@ import (
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/anthropics/anthropic-sdk-go/packages/param"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -44,14 +45,34 @@ var _ core.ProviderClient = (*Client)(nil)
 //
 // The secret is revealed once, here, and handed straight to the SDK. That is the whole window in
 // which it exists as an ordinary string in this package.
-func New(secret core.Secret) *Client {
+func New(secret core.Secret, opts ...Option) *Client {
+	var settings settings
+	for _, opt := range opts {
+		opt(&settings)
+	}
+	requestOptions := []option.RequestOption{option.WithAPIKey(secret.Reveal())}
+	if settings.baseURL != "" {
+		requestOptions = append(requestOptions, option.WithBaseURL(settings.baseURL))
+	}
 	return &Client{
-		sdk:    sdk.NewClient(option.WithAPIKey(secret.Reveal())),
+		sdk:    sdk.NewClient(requestOptions...),
 		secret: secret,
 	}
 }
 
-func (c *Client) Name() string { return "anthropic" }
+// Option configures a client.
+type Option func(*settings)
+
+type settings struct{ baseURL string }
+
+// WithBaseURL points the client at another host speaking the Messages API: a gateway, a proxy, or a
+// test server.
+func WithBaseURL(url string) Option { return func(s *settings) { s.baseURL = url } }
+
+// providerName is what this adapter calls itself, and the owner recorded on native messages.
+const providerName = "anthropic"
+
+func (c *Client) Name() string { return providerName }
 
 // Stream sends a request and returns the response as it arrives.
 func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, error) {
@@ -66,8 +87,12 @@ func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, err
 		return nil, err
 	}
 
+	var requestOptions []option.RequestOption
+	if params.Thinking.OfAdaptive != nil {
+		requestOptions = append(requestOptions, option.WithHeaderAdd("anthropic-beta", bindingBeta))
+	}
 	return &stream{
-		inner:  c.sdk.Messages.NewStreaming(ctx, params),
+		inner:  c.sdk.Messages.NewStreaming(ctx, params, requestOptions...),
 		client: c,
 		ctx:    ctx,
 	}, nil
@@ -96,12 +121,25 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 		params.OutputConfig = sdk.OutputConfigParam{Effort: effort}
 	}
 
-	// Thinking is on by default on current models, so an unset field means it thinks. Only the
-	// explicit opt out needs saying.
-	if req.DisableThinking {
+	// Adaptive thinking, stated rather than left to each model's default: Opus 4.7 and 4.8 do not
+	// think at all unless asked, and the rest think by default but return nothing readable unless
+	// the display is set. Summarised display is what lets the screen show progress during a long
+	// silent stretch. Models without adaptive thinking get no thinking field, since budget-based
+	// configuration is rejected by the ones that have it.
+	switch {
+	case req.DisableThinking:
 		params.Thinking = sdk.ThinkingConfigParamUnion{
 			OfDisabled: &sdk.ThinkingConfigDisabledParam{},
 		}
+	case adaptiveThinking(model):
+		adaptive := sdk.ThinkingConfigAdaptiveParam{Display: sdk.ThinkingConfigAdaptiveDisplaySummarized}
+		// Replayed thinking that no longer matches its conversation is dropped rather than failing
+		// the request. The history is append-only, so this should never happen; if it does, a turn
+		// without that reasoning is better than a turn that cannot be sent at all.
+		adaptive.SetExtraFields(map[string]any{
+			"block_binding": map[string]any{"prefix_mismatch_behavior": "drop_block"},
+		})
+		params.Thinking = sdk.ThinkingConfigParamUnion{OfAdaptive: &adaptive}
 	}
 
 	messages, err := c.buildMessages(req.Messages)
@@ -127,12 +165,22 @@ func (c *Client) buildMessages(messages []core.Message) ([]sdk.MessageParam, err
 	out := make([]sdk.MessageParam, 0, len(messages))
 
 	for i, msg := range messages {
+		// An assistant message this adapter produced goes back byte for byte. See core.Native.
+		if raw := msg.NativeFor(providerName); raw != nil && msg.Role == core.RoleAssistant {
+			var replay sdk.MessageParam
+			param.SetJSON(raw, &replay)
+			out = append(out, replay)
+			continue
+		}
 		blocks := make([]sdk.ContentBlockParamUnion, 0, 1+len(msg.ToolCalls)+len(msg.ToolResults))
 
 		// Tool results come first in a user turn. The API expects them at the head of the message
 		// answering the assistant's calls.
 		for _, result := range msg.ToolResults {
 			blocks = append(blocks, sdk.NewToolResultBlock(result.CallID, result.Content, result.IsError))
+		}
+		if msg.Note != "" {
+			blocks = append(blocks, sdk.NewTextBlock(core.ReminderText(msg.Note)))
 		}
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
@@ -222,28 +270,40 @@ func buildTools(tools []core.ToolDefinition) []sdk.ToolUnionParam {
 // the next turn immediately invalidates by appending to it, paying the write premium for a read
 // that never happens.
 func markCacheBreakpoints(params *sdk.MessageNewParams) {
-	if n := len(params.Tools); n > 0 {
+	// The end of the system prompt, which caches the tools before it as well. Without a system
+	// prompt the last tool carries it instead.
+	if n := len(params.System); n > 0 {
+		params.System[n-1].CacheControl = sdk.NewCacheControlEphemeralParam()
+	} else if n := len(params.Tools); n > 0 {
 		if tool := params.Tools[n-1].OfTool; tool != nil {
 			tool.CacheControl = sdk.NewCacheControlEphemeralParam()
 		}
 	}
 
-	if n := len(params.System); n > 0 {
-		params.System[n-1].CacheControl = sdk.NewCacheControlEphemeralParam()
-	}
+	// And the newest block, through the API's automatic placement. Caching is a prefix match, so an
+	// entry written at the end of this request is exactly what the next request reads: the next one
+	// repeats all of this and appends. The previous placement, one message back, left every new
+	// tool result billed once as fresh input and again as a cache write on the following step.
+	params.CacheControl = sdk.NewCacheControlEphemeralParam()
+}
 
-	// Fewer than three messages is a first turn or close to it, where the history is smaller than
-	// the minimum the API will cache and a breakpoint buys nothing.
-	if len(params.Messages) < 3 {
-		return
-	}
-	previous := params.Messages[len(params.Messages)-2]
-	if n := len(previous.Content); n > 0 {
-		if control := previous.Content[n-1].GetCacheControl(); control != nil {
-			*control = sdk.NewCacheControlEphemeralParam()
+// adaptiveThinking reports whether a model takes adaptive thinking: the 4.6 generation onward and
+// every 5.x model. Matched on the family and version in the id so pinned ids resolve too.
+func adaptiveThinking(model string) bool {
+	for _, prefix := range []string{
+		"claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-4-6",
+		"claude-opus-5", "claude-sonnet-5", "claude-fable-", "claude-mythos-",
+	} {
+		if strings.HasPrefix(model, prefix) {
+			return true
 		}
 	}
+	return false
 }
+
+// bindingBeta is the beta that lets a request say what happens to replayed thinking whose
+// conversation changed. Sent only with adaptive thinking, which is where the field goes.
+const bindingBeta = "thinking-binding-controls-2026-08-01"
 
 func mapEffort(effort core.Effort) sdk.OutputConfigEffort {
 	switch effort {
@@ -277,6 +337,10 @@ func mapStopReason(reason sdk.StopReason) core.StopReason {
 		return core.StopMaxTokens
 	case sdk.StopReasonRefusal:
 		return core.StopRefusal
+	case sdk.StopReasonPauseTurn:
+		return core.StopPauseTurn
+	case sdk.StopReasonModelContextWindowExceeded:
+		return core.StopContextExceeded
 	case "":
 		// A stream that ended without a stop reason did not finish. Reporting it as end-turn would
 		// present a truncated answer as complete.

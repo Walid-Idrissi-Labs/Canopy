@@ -3,7 +3,9 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -489,5 +491,91 @@ func TestAnEmptyCommandIsRefused(t *testing.T) {
 	result := call(t, ShellTool(w), map[string]any{"command": "   "})
 	if !result.IsError {
 		t.Error("an empty command should be refused rather than running a shell that does nothing")
+	}
+}
+
+func readWith(t *testing.T, tool core.Tool, ctx context.Context, args string) string {
+	t.Helper()
+	result, err := tool.Run(ctx, json.RawMessage(args))
+	if err != nil || result.IsError {
+		t.Fatalf("read_file %s: %v %s", args, err, result.Content)
+	}
+	return result.Content
+}
+
+// A range costs the range, numbered as in the whole file, and says where it sits in the file.
+func TestARangedReadCostsTheRange(t *testing.T) {
+	w := testWorkspace(t)
+	var body strings.Builder
+	for i := 1; i <= 50; i++ {
+		fmt.Fprintf(&body, "line %d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(w.Root(), "long.txt"), []byte(body.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := FileTools(w)[0]
+	got := readWith(t, read, context.Background(), `{"path":"long.txt","offset":10,"limit":3}`)
+	if !strings.Contains(got, "10\tline 10") || !strings.Contains(got, "12\tline 12") ||
+		strings.Contains(got, "line 13") || !strings.Contains(got, "lines 10-12 of 50") {
+		t.Fatalf("ranged read:\n%s", got)
+	}
+}
+
+// The same unchanged range, read again in the same conversation epoch, costs one line; a change to
+// the file, or another conversation, gets the content.
+func TestARepeatedUnchangedReadIsOneLine(t *testing.T) {
+	w := testWorkspace(t)
+	read := FileTools(w)[0]
+	ctx := core.WithConversation(context.Background(), "s1#0")
+	first := readWith(t, read, ctx, `{"path":"main.go"}`)
+	again := readWith(t, read, ctx, `{"path":"main.go"}`)
+	if !strings.Contains(first, "package main") || !strings.Contains(again, "unchanged since you last read") {
+		t.Fatalf("first %q, again %q", first, again)
+	}
+	other := readWith(t, read, core.WithConversation(context.Background(), "s1#1"), `{"path":"main.go"}`)
+	if !strings.Contains(other, "package main") {
+		t.Fatalf("a new epoch was given a stub for content it may no longer have: %q", other)
+	}
+	if err := os.WriteFile(filepath.Join(w.Root(), "main.go"), []byte("package changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if changed := readWith(t, read, ctx, `{"path":"main.go"}`); !strings.Contains(changed, "package changed") {
+		t.Fatalf("a changed file was answered with a stub: %q", changed)
+	}
+}
+
+// Both search paths, ripgrep when installed and the built-in walk, answer the same questions:
+// literal, regular expression, case-insensitive, with context.
+func TestGrepOptionsOnBothPaths(t *testing.T) {
+	for _, path := range []string{"ripgrep", "builtin"} {
+		t.Run(path, func(t *testing.T) {
+			if path == "builtin" {
+				t.Setenv("PATH", "")
+			} else if _, err := exec.LookPath("rg"); err != nil {
+				t.Skip("ripgrep is not installed")
+			}
+			w := testWorkspace(t)
+			src := "package main\n\nfunc Alpha() {}\n\nfunc beta() {}\n"
+			if err := os.WriteFile(filepath.Join(w.Root(), "funcs.go"), []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			grep := FileTools(w)[4]
+			run := func(args string) string {
+				result, err := grep.Run(context.Background(), json.RawMessage(args))
+				if err != nil || result.IsError {
+					t.Fatalf("grep %s: %v %s", args, err, result.Content)
+				}
+				return result.Content
+			}
+			if got := run(`{"query":"func [a-z]+\\(","regex":true}`); !strings.Contains(got, "beta") || strings.Contains(got, "Alpha") {
+				t.Errorf("regex: %q", got)
+			}
+			if got := run(`{"query":"ALPHA","ignore_case":true}`); !strings.Contains(got, "funcs.go:3") {
+				t.Errorf("ignore_case: %q", got)
+			}
+			if got := run(`{"query":"Alpha","context":1}`); !strings.Contains(got, "funcs.go-2") || !strings.Contains(got, "funcs.go-4") {
+				t.Errorf("context: %q", got)
+			}
+		})
 	}
 }
