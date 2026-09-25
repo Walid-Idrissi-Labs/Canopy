@@ -206,6 +206,15 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 		// The assistant's message goes in whatever happened, because it is what the model said and
 		// the next request has to contain it. A turn that dropped it would ask the model to
 		// continue from a conversation it does not recognise.
+		// A step that stopped for any reason other than wanting its tools run, a length cap above
+		// all, can still carry calls, and their inputs may be cut off. They are dropped from what is
+		// recorded, along with the native encoding that contains them: every recorded call must be
+		// answered by a result in the next message or the provider rejects the whole conversation,
+		// and a call that was never going to run has no honest result.
+		if reply.stop != core.StopToolUse && len(reply.calls) > 0 {
+			reply.calls = nil
+			reply.native = nil
+		}
 		if reply.text != "" || len(reply.calls) > 0 {
 			outcome.Messages = append(outcome.Messages, core.Message{
 				Role:      core.RoleAssistant,
@@ -235,6 +244,15 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			// was stopped should not run the remaining three tools it had queued up, and the tools
 			// themselves take a context but a fast one will have finished before it fires.
 			if ctx.Err() != nil {
+				// Every call still gets a result, the ones never run included, or the next request
+				// in this conversation carries an unanswered call and is refused outright.
+				for _, pending := range reply.calls[len(results):] {
+					results = append(results, core.ToolResult{
+						CallID:  pending.ID,
+						Content: "Not run: the turn was stopped before this call.",
+						IsError: true,
+					})
+				}
 				outcome.Messages = append(outcome.Messages,
 					core.Message{Role: core.RoleUser, ToolResults: results})
 				outcome.Stop = core.StopCancelled

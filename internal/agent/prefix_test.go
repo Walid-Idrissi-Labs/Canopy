@@ -139,7 +139,8 @@ func TestTheConversationIsOnlyEverAppendedTo(t *testing.T) {
 		}
 	}
 	last := string(fake.bodies[2])
-	for _, want := range []string{"SIG-ONE", "SIG-done", `"zeta":1`} {
+	// The tool input keeps the order it was written in; a rebuild would have sorted "path" first.
+	for _, want := range []string{"SIG-ONE", "SIG-done", `{"zeta":1,"path":"a.go"}`} {
 		if !strings.Contains(strings.ReplaceAll(last, " ", ""), want) {
 			t.Errorf("the third request lost %s:\n%s", want, last)
 		}

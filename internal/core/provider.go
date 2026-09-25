@@ -476,3 +476,47 @@ func (e *ProviderError) Retryable() bool { return e.Kind.Retryable() }
 
 // AllowsFallback reports whether this failure justifies trying a different credential.
 func (e *ProviderError) AllowsFallback() bool { return e.Kind.AllowsFallback() }
+
+// WithoutReasoning is the message with any thinking and redacted_thinking blocks removed from its
+// native encoding. Deterministic, so the same message gives the same bytes on every request. A
+// message that held nothing else loses its native encoding and is rebuilt from its fields.
+func (m Message) WithoutReasoning() Message {
+	if m.Native == nil || len(m.Native.Data) == 0 {
+		return m
+	}
+	var msg map[string]json.RawMessage
+	if json.Unmarshal(m.Native.Data, &msg) != nil {
+		return m
+	}
+	var blocks []json.RawMessage
+	if json.Unmarshal(msg["content"], &blocks) != nil {
+		return m
+	}
+	kept := blocks[:0:0]
+	for _, block := range blocks {
+		var probe struct {
+			Type string `json:"type"`
+		}
+		_ = json.Unmarshal(block, &probe)
+		if probe.Type == "thinking" || probe.Type == "redacted_thinking" {
+			continue
+		}
+		kept = append(kept, block)
+	}
+	out := m
+	if len(kept) == 0 {
+		out.Native = nil
+		return out
+	}
+	content, err := json.Marshal(kept)
+	if err != nil {
+		return m
+	}
+	msg["content"] = content
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return m
+	}
+	out.Native = &Native{Provider: m.Native.Provider, Data: data}
+	return out
+}

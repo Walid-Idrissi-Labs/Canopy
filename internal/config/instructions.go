@@ -55,8 +55,7 @@ func LoadInstructions(dir string, project Project) (Instructions, error) {
 		}
 	}
 	for _, name := range instructionFiles {
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err == nil {
+		if data, ok := readRegular(filepath.Join(dir, name)); ok {
 			add(filepath.ToSlash(name), string(data))
 		}
 	}
@@ -82,9 +81,21 @@ func describeSources(sources []InstructionSource) string {
 func InstructionFiles(dir string) []string {
 	var found []string
 	for _, name := range instructionFiles {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+		if _, ok := readRegular(filepath.Join(dir, name)); ok {
 			found = append(found, filepath.ToSlash(name))
 		}
 	}
 	return found
+}
+
+// readRegular reads a file only when it is a regular file, never through a symlink. A repository
+// whose CLAUDE.md links to /etc/hosts, or to a file in the user's home, would otherwise send that
+// file into every request's system prompt under an innocent name.
+func readRegular(path string) ([]byte, bool) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	data, err := os.ReadFile(path)
+	return data, err == nil
 }

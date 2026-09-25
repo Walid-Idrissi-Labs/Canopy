@@ -573,7 +573,7 @@ func TestGrepOptionsOnBothPaths(t *testing.T) {
 			if got := run(`{"query":"ALPHA","ignore_case":true}`); !strings.Contains(got, "funcs.go:3") {
 				t.Errorf("ignore_case: %q", got)
 			}
-			if got := run(`{"query":"Alpha","context":1}`); !strings.Contains(got, "func beta") && !strings.Contains(got, "funcs.go-2") {
+			if got := run(`{"query":"Alpha","context":1}`); !strings.Contains(got, "funcs.go-2") || !strings.Contains(got, "funcs.go-4") {
 				t.Errorf("context: %q", got)
 			}
 		})

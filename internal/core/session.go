@@ -409,18 +409,30 @@ func (s Session) History() []Message {
 	// A compaction replaces the turns it covers with its summary. Sent as a user message rather
 	// than an assistant one, because it is Canopy speaking about the conversation and not the model
 	// recalling it, and a model that reads its own summary as something it said will defend it.
+	var compactedAt time.Time
 	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(turns) {
 		messages = append(messages, Message{
 			Role: RoleUser,
 			Text: "Summary of the earlier part of this conversation:\n\n" + compaction.Summary,
 		})
 		turns = turns[compaction.Through:]
+		compactedAt = compaction.At
 	}
 
 	for _, turn := range turns {
 		messages = append(messages, turn.Request)
 
 		if len(turn.Steps) > 0 {
+			// A turn kept verbatim across a compaction was answered with the full conversation in
+			// front of the model. Its reasoning blocks are bound to that conversation, which the
+			// summary has replaced, so replaying them would have the provider drop them and every
+			// reasoning block after them for the rest of the session. They are left out instead.
+			if !compactedAt.IsZero() && turn.StartedAt.Before(compactedAt) {
+				for _, step := range turn.Steps {
+					messages = append(messages, step.WithoutReasoning())
+				}
+				continue
+			}
 			messages = append(messages, turn.Steps...)
 			continue
 		}

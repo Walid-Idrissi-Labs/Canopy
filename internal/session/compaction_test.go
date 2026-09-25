@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"context"
 	"path/filepath"
 	"strings"
@@ -391,5 +392,50 @@ func TestAutomaticCompactionCanBeTurnedOff(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if got, _ := e.Session(s.ID); len(got.Compactions) != 0 {
 		t.Fatal("compaction ran with automatic compaction turned off")
+	}
+}
+
+// A second compaction summarises the first summary and the turns since, not the whole
+// conversation again, or it would overflow the window it exists to make room in.
+func TestASecondCompactionDoesNotResendTheFirstTurns(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	s := e.Create("claude", "claude-opus-5")
+	send := func(text string) {
+		client.events = reply("answer")
+		turnID, err := e.Send(s.ID, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForTurn(t, e, s.ID, turnID)
+	}
+	for i := 0; i < keepRecentTurns+2; i++ {
+		send(fmt.Sprintf("question-%d", i))
+	}
+	client.events = reply("FIRST SUMMARY")
+	first, err := e.Compact(context.Background(), s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Apply(s.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		send(fmt.Sprintf("later-%d", i))
+	}
+	client.events = reply("SECOND SUMMARY")
+	if _, err := e.Compact(context.Background(), s.ID); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	sent := client.history
+	client.mu.Unlock()
+	var all strings.Builder
+	for _, m := range sent {
+		all.WriteString(m.Text)
+	}
+	if strings.Contains(all.String(), "question-0") || !strings.Contains(all.String(), "FIRST SUMMARY") {
+		t.Fatalf("the second compaction resent turns the first had already summarised:\n%s", all.String())
 	}
 }
