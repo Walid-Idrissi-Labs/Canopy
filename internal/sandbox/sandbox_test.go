@@ -147,3 +147,29 @@ func TestOnlyTheWorkspaceIsGuardedAgainstNestedRepositories(t *testing.T) {
 		t.Fatal("a nested repository was made inside the workspace")
 	}
 }
+
+// A worktree's shared git directory lies outside the workspace, and its submodules' and worktrees'
+// config and hooks are obeyed all the same, so they stay unwritable when the rules are anchored.
+func TestASharedGitDirectoryOutsideTheWorkspaceIsGuarded(t *testing.T) {
+	requireSandbox(t)
+	if runtime.GOOS != "darwin" {
+		t.Skip("carving paths out of a writable tree is enforced on macOS")
+	}
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	ws, common := filepath.Join(base, "ws"), filepath.Join(base, "repo.git")
+	for _, d := range []string{ws, filepath.Join(common, "modules", "m"), filepath.Join(common, "worktrees", "w")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := Policy{Workspace: ws, Writable: []string{ws, common}, Network: NetworkOpen}.WithGitDirs(common)
+	for _, target := range []string{"modules/m/config", "modules/m/hooks", "worktrees/w/config.worktree"} {
+		_, _ = run(t, p, "echo x > '"+filepath.Join(common, target)+"' || mkdir '"+filepath.Join(common, target)+"'")
+		if _, err := os.Stat(filepath.Join(common, target)); err == nil {
+			t.Errorf("%s was written in the shared git directory", target)
+		}
+	}
+	if out, err := run(t, p, "echo ok > '"+filepath.Join(common, "worktrees", "w", "HEAD")+"'"); err != nil {
+		t.Fatalf("an ordinary write in the shared git directory was refused: %v %s", err, out)
+	}
+}
