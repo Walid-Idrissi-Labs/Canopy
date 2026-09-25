@@ -57,7 +57,7 @@ func fakeServer() {
 		case "textDocument/definition":
 			// The definition of anything is line 1 of the same file; a list of links, as some servers send.
 			send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": []any{map[string]any{
-				"targetUri": m.Params.TextDocument.URI,
+				"targetUri":            m.Params.TextDocument.URI,
 				"targetSelectionRange": map[string]any{"start": map[string]any{"line": 0, "character": 5}}}}})
 		case "textDocument/references":
 			send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": []any{
