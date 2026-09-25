@@ -95,6 +95,9 @@ type Engine struct {
 	// webSearch offers the provider's own web search on every request; see SetWebSearch.
 	webSearch bool
 
+	// toolHooks are the project's hooks around tool calls and at the end of a turn; see SetToolHooks.
+	toolHooks ToolHooks
+
 	// agentNotes are standing instructions from an agent definition, waiting for that agent's first
 	// message.
 	agentNotes map[string]string
@@ -925,6 +928,7 @@ func (e *Engine) run(
 		MaxSteps:  e.maxStepsSetting(),
 		Gate:      e.budgetGate(sessionID, id),
 		Tainted:   func() bool { return e.tainted(sessionID) },
+		Hooks:     e.toolHooksSet(),
 	}
 
 	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never
@@ -1302,7 +1306,41 @@ func (e *Engine) finish(
 
 	e.persistTurn(sessionID, ordinal, finished)
 	e.persistSession(saved)
+
+	// Told before the turn is published as finished, so a reader woken by that event finds the hooks
+	// started. The way out does not rely on this alone: it waits for them after the engine has
+	// closed, which is when every turn has ended and told them.
+	e.mu.Lock()
+	hooks := e.toolHooks
+	e.mu.Unlock()
+	if hooks != nil {
+		hooks.TurnEnded(sessionID, finished)
+	}
 	e.publishTurn(sessionID, turnID, true)
+}
+
+// ToolHooks are a project's hooks around each tool call and at the end of each turn.
+type ToolHooks interface {
+	agent.ToolHooks
+	// TurnEnded is told of every turn that ends, however it ended, and must not block.
+	TurnEnded(sessionID string, turn core.Turn)
+}
+
+// SetToolHooks gives every agent the project's tool hooks from its next turn on. Nil removes them.
+func (e *Engine) SetToolHooks(hooks ToolHooks) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.toolHooks = hooks
+}
+
+// toolHooksSet is the hooks for a new turn's loop, as an interface that is nil when there are none.
+func (e *Engine) toolHooksSet() agent.ToolHooks {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.toolHooks == nil {
+		return nil
+	}
+	return e.toolHooks
 }
 
 func indexOfLocked(session *core.Session, turnID string) int {

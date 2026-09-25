@@ -24,6 +24,7 @@ const keysUsage = `canopy keys - manage provider credentials
 
 usage:
   canopy keys add <name>     store a credential, read from a prompt or stdin
+  canopy keys import         store ANTHROPIC_API_KEY and OPENAI_API_KEY as named keys, after asking
   canopy keys signin <name>  sign in with a subscription instead of pasting a key
   canopy keys signout <name> end a sign-in and delete what it left behind
   canopy keys model <name> <model>   change which model this credential talks to
@@ -130,6 +131,8 @@ func runKeys(args []string, out io.Writer) error {
 		return err
 	case "add":
 		return runKeysAdd(rest, out)
+	case "import":
+		return runKeysImport(rest, os.Stdin, out)
 	case "signin", "login":
 		return runKeysSignIn(rest, out)
 	case "signout", "logout":

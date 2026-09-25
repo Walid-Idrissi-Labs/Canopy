@@ -23,6 +23,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/images"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
@@ -54,6 +55,10 @@ func runChat(resume string) error {
 	// grant is too old to send.
 	resolver.Renews(signInSources())
 	engine := session.New(resolver)
+	// Turn-end hooks are waited for after the engine has closed, which is when the last turn has
+	// ended and told them.
+	var toolHooks *hooks.ToolRunner
+	defer func() { toolHooks.Wait(hookShutdownLimit) }()
 	defer engine.Close()
 
 	// History is attached if it can be, and the program runs without it if it cannot. A disk
@@ -150,6 +155,13 @@ func runChat(resume string) error {
 	}
 	defer verification.Close()
 
+	// Failures are said on the way out with the other hooks'; a refusal is in the transcript.
+	report := func(hooks.Report) {}
+	if verification != nil {
+		report = verification.recordHook
+	}
+	toolHooks = attachToolHooks(engine, dir, project, report, os.Stderr)
+
 	// The worktree monitor reads the verifier, the same one the review screen reads. Outside a
 	// repository there is nothing to read and the screen says so, which is the honest answer and
 	// the one this used to lie about: it was handed four invented worktrees and a timer that
@@ -203,7 +215,7 @@ func runChat(resume string) error {
 	// somebody has stopped watching, so one that quietly stopped working is one they would go on not
 	// watching indefinitely.
 	for _, failure := range verification.HookFailures() {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", failure)
+		fmt.Fprintf(os.Stderr, "warning: %s\n", terminalText(failure))
 	}
 
 	if last != "" {

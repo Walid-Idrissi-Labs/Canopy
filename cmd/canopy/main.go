@@ -26,6 +26,8 @@ usage:
   canopy search        find a message across every saved conversation
   canopy report        run this repository's checks and print a markdown summary
   canopy land BRANCH   merge an agent's branch into yours only if the merged result passes the tests
+  canopy init          write a canopy.json with the tests this project's build files suggest
+  canopy doctor        check git, keys, the sandbox, this project and the terminal
   canopy trust         review what this repository's canopy.json runs, and allow it (revoke, list)
   canopy worktree      list the agent worktrees Canopy made here; gc removes the clean ones
   canopy serve         keep this project's agents running with no client attached
@@ -118,6 +120,12 @@ func run(args []string) error {
 	}
 	if command == "land" {
 		return runLand(args[1:], os.Stdin, os.Stdout)
+	}
+	if command == "init" {
+		return runInit(args[1:], os.Stdout)
+	}
+	if command == "doctor" {
+		os.Exit(runDoctor(os.Stdout))
 	}
 	if command == "trust" {
 		return runTrust(args[1:], os.Stdout)
