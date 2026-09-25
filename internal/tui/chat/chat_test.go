@@ -21,6 +21,7 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
+	retried         int
 	undoChanges     []string
 	undoState       string
 	previewErr      error
@@ -1006,6 +1007,11 @@ func (e *fakeEngine) Steer(_, guidance string) error {
 }
 
 func (e *fakeEngine) Steering(string) []string { return e.queuedSteering }
+
+func (e *fakeEngine) Retry(string) (string, error) {
+	e.retried++
+	return "turn", nil
+}
 
 // asides is what this conversation was asked on the side before the screen opened, which is the
 // half that used to be thrown away.

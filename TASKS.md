@@ -4682,7 +4682,7 @@ handle is a code printed on exit. The picker is also where A3-07's fork-point di
 gets its screen, which that task's notes deferred to exactly here.
 
 ### U-05 A failed turn can be retried
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/retry-failed-turn | depends: PG-M`
 `scope: internal/tui/chat/, internal/session/`
 
 Deliverable: recovery affordances for the failure taxonomy A2 built and nothing consumes. A

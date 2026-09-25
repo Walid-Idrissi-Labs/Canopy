@@ -1282,6 +1282,10 @@ func (e *Engine) finish(
 	}
 	if err != nil {
 		turn.Error = err.Error()
+		var provider *core.ProviderError
+		if errors.As(err, &provider) {
+			turn.ErrorKind, turn.RetryAfter = provider.Kind, provider.RetryAfter
+		}
 	}
 	// Validate requires a reason on a failed turn, and a turn that failed with no error attached
 	// would otherwise be an invalid state nobody could explain.
@@ -1730,4 +1734,48 @@ func (e *Engine) effortSetting() core.Effort {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.effort
+}
+
+// Retry tries a failed turn again as a new one, with the same question, and marks the
+// failed one so it is not sent to the model twice. Refused for a failure trying again cannot fix:
+// a credential that was refused, a request the provider called malformed, or a conversation too
+// long for the model, each of which needs something changed first.
+func (e *Engine) Retry(sessionID string) (string, error) {
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok || len(s.Turns) == 0 {
+		e.mu.Unlock()
+		return "", errors.New("there is nothing to retry")
+	}
+	last := &s.Turns[len(s.Turns)-1]
+	switch {
+	case last.State != core.TurnFailed:
+		e.mu.Unlock()
+		return "", errors.New("the last turn did not fail, so there is nothing to retry")
+	case last.ErrorKind != "" && !last.ErrorKind.Retryable():
+		e.mu.Unlock()
+		return "", fmt.Errorf("trying again will fail the same way: %s", retryAdvice(last.ErrorKind))
+	case last.RetryAfter > 0 && !last.EndedAt.IsZero() && time.Since(last.EndedAt) < last.RetryAfter:
+		wait := (last.RetryAfter - time.Since(last.EndedAt)).Round(time.Second)
+		e.mu.Unlock()
+		return "", fmt.Errorf("the provider asked for %s more before trying again", wait)
+	}
+	last.Retried = true
+	request, ordinal, failed := last.Request, len(s.Turns)-1, *last
+	e.mu.Unlock()
+	e.persistTurn(sessionID, ordinal, failed)
+	return e.Send(sessionID, request.Text)
+}
+
+// retryAdvice is what to do instead of retrying a failure of this kind.
+func retryAdvice(kind core.ProviderErrorKind) string {
+	switch kind {
+	case core.ErrAuthentication:
+		return "the credential was refused; check it with canopy keys test, or add a new one"
+	case core.ErrContextLength:
+		return "the conversation is too long for the model; compact it with /compact"
+	case core.ErrInvalidRequest:
+		return "the provider refused the request as malformed"
+	}
+	return "the provider's answer was not one trying again can fix"
 }

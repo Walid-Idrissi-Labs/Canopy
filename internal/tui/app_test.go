@@ -791,7 +791,8 @@ func (e *stubEngine) Aside(_ context.Context, _, question string) (string, error
 
 func (e *stubEngine) Asides(string) []session.Aside { return nil }
 
-func (e *stubEngine) Steering(string) []string { return nil }
+func (e *stubEngine) Steering(string) []string     { return nil }
+func (e *stubEngine) Retry(string) (string, error) { return "", nil }
 
 // RenameCredential records what the application asked for, and moves the sessions the stub is
 // holding so a test can assert that a conversation followed rather than only that the call was made.

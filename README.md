@@ -445,6 +445,13 @@ socket only you can reach, and speaks the same protocol as `canopy acp`. A quest
 while nobody is attached waits for the next `canopy attach`, and the server says which conversation
 is waiting.
 
+### When a turn fails
+
+Under a failed turn, with nothing typed, enter tries it again as a new turn, and the question is
+sent to the model once, not twice. A rate limit counts down the wait the provider asked for, a
+network failure is called one, and a failure trying again cannot fix, a refused credential or a
+conversation too long for the model, says what to change instead and is not retried.
+
 ## Where the tokens go
 
 Every request resends the conversation, so what it costs is decided by how much of that is read

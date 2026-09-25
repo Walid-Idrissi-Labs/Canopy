@@ -122,6 +122,9 @@ type Engine interface {
 	// swallowed, and somebody who thinks that types it again.
 	Steering(sessionID string) []string
 
+	// Retry tries a failed turn again as a new one, refusing a failure trying again cannot fix.
+	Retry(sessionID string) (string, error)
+
 	// Aside answers a question from this conversation's context without joining it. No turn is
 	// created, nothing joins the conversation's history, and a turn in flight is undisturbed, which
 	// is what separates asking something from saying something.
@@ -316,6 +319,10 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
+	// retryTicking and retryGeneration run the countdown under a failed turn; see retrycard.go.
+	retryTicking    bool
+	retryGeneration int
+
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
@@ -498,8 +505,18 @@ func (m *Model) SetSize(width, height int) {
 // Update handles one message.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case retryTickMsg:
+		if msg.generation != m.retryGeneration {
+			return m, nil
+		}
+		m.retryTicking = false
+		return m, m.retryCountdown()
+
 	case EventMsg:
 		m.refresh()
+		if countdown := m.retryCountdown(); countdown != nil {
+			return m, tea.Batch(m.subscribe(), countdown)
+		}
 		// The spinner only turns while something is running; an idle screen redrew itself eight
 		// times a second for nothing. An event that starts work starts it again.
 		if m.working && !m.ticking {
@@ -1191,6 +1208,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "enter":
+		if turn, ok := m.failedTurn(); ok && (turn.ErrorKind == "" || turn.ErrorKind.Retryable()) {
+			return m.retry()
+		}
 		return m.send()
 
 	case "tab":
@@ -1751,6 +1771,7 @@ func (m Model) transcriptHeight() int {
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+	h -= len(m.retryCard())
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
 	// same reason, and so does another agent's question.
@@ -1845,6 +1866,7 @@ func (m Model) Body() string {
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
+	rows = append(rows, m.retryCard()...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
 	// is about to type into. See jumpPill.
 	rows = append(rows, m.jumpPill(len(lines)-end)...)

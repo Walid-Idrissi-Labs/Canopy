@@ -209,6 +209,15 @@ type Turn struct {
 	// Error explains a failed turn in words a user can act on.
 	Error string
 
+	// ErrorKind classifies a provider failure, and RetryAfter is how long the provider asked for
+	// before trying again; both empty when the failure was not the provider's or it did not say.
+	ErrorKind  ProviderErrorKind `json:",omitempty"`
+	RetryAfter time.Duration     `json:",omitempty"`
+
+	// Retried marks a failed turn tried again as a new one. It stays in the transcript and is left
+	// out of what the model is sent, so the retry does not send the question twice.
+	Retried bool `json:",omitempty"`
+
 	// Checkpoint is the worktree state captured before this turn ran, empty when nothing was
 	// captured. Undoing a turn restores it.
 	//
@@ -424,6 +433,9 @@ func (s Session) History() []Message {
 	}
 
 	for _, turn := range turns {
+		if turn.Retried {
+			continue
+		}
 		messages = append(messages, turn.Request)
 
 		if len(turn.Steps) > 0 {
