@@ -59,3 +59,17 @@ func TestARenderedTurnCarriesNoRawEscapeSequence(t *testing.T) {
 		}
 	}
 }
+
+// A finished turn says which model answered, how much it read and wrote, and how much came from
+// the cache.
+func TestAFinishedTurnHasAFooter(t *testing.T) {
+	turn := core.Turn{ID: "t", State: core.TurnComplete, Model: "claude-opus-5", Text: "ok",
+		Request: core.Message{Text: "q"},
+		Usage:   core.Usage{InputTokens: 100, CacheReadTokens: 900, OutputTokens: 50, CostUSD: 0.0123, CostKnown: true}}
+	joined := strings.Join(renderTurn(turn, 100, "", nil, Detail{}), "\n")
+	for _, want := range []string{"claude-opus-5", "1.0k in, 50 out", "90% cached", "$0.0123"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the footer lacks %q:\n%s", want, joined)
+		}
+	}
+}
