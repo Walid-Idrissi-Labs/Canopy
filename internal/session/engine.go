@@ -91,6 +91,9 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// maxSteps bounds the model calls in one turn; zero means the loop's default.
+	maxSteps int
+
 	// instructions are the project's, added to the system prompt of every conversation this engine
 	// runs. Set once at startup, so the prompt stays the same for a conversation's whole life.
 	instructions string
@@ -870,6 +873,7 @@ func (e *Engine) run(
 		Approver:  approver,
 		AgentID:   sessionID,
 		SessionID: sessionID,
+		MaxSteps:  e.maxStepsSetting(),
 	}
 
 	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never
@@ -1423,4 +1427,17 @@ func (e *Engine) systemPrompt() string {
 		return core.SystemPrompt
 	}
 	return core.SystemPrompt + "\n\n" + core.InstructionsPreamble + "\n\n" + instructions
+}
+
+// SetMaxSteps bounds the model calls in each turn, for unattended runs.
+func (e *Engine) SetMaxSteps(n int) {
+	e.mu.Lock()
+	e.maxSteps = n
+	e.mu.Unlock()
+}
+
+func (e *Engine) maxStepsSetting() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.maxSteps
 }
