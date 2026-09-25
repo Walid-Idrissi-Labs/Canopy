@@ -26,6 +26,9 @@ type Skill struct {
 	// Dir is the skill's folder; Path its SKILL.md.
 	Dir  string
 	Path string
+	// real is Dir with every symlink resolved, fixed at load: a file read later must still be under
+	// it, so swapping the whole folder for a link after loading leads nowhere.
+	real string
 	// Project reports whether the skill came from the repository rather than the user's own folders.
 	Project bool
 }
@@ -90,7 +93,11 @@ func Load(dir string, includeProject bool) *Set {
 			if _, seen := set.byName[name]; !seen {
 				set.order = append(set.order, name)
 			}
-			set.byName[name] = Skill{Name: name, Description: desc, Dir: skillDir, Path: path, Project: root.project}
+			real, err := filepath.EvalSymlinks(skillDir)
+			if err != nil {
+				continue
+			}
+			set.byName[name] = Skill{Name: name, Description: desc, Dir: skillDir, Path: path, Project: root.project, real: real}
 		}
 	}
 	sort.Strings(set.order)
@@ -198,8 +205,7 @@ func (s *Set) Body(name, file string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	base, err := filepath.EvalSymlinks(sk.Dir)
-	if err != nil || !strings.HasPrefix(resolved, base+string(filepath.Separator)) {
+	if !strings.HasPrefix(resolved, sk.real+string(filepath.Separator)) {
 		return "", errors.New("that file is outside the skill's folder")
 	}
 	target = resolved

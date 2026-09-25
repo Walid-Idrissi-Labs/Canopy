@@ -103,3 +103,27 @@ func TestAFoldedDescriptionIsRead(t *testing.T) {
 		t.Fatalf("listing = %q", got)
 	}
 }
+
+// The whole skill folder swapped for a link to somewhere else after loading leads nowhere: the
+// folder a file must sit in is fixed when the skill is loaded, not looked up again at read time.
+func TestASkillFolderSwappedForALinkIsNotRead(t *testing.T) {
+	isolate(t)
+	project := t.TempDir()
+	dir := writeSkill(t, filepath.Join(project, ".claude", "skills"), "x", "d", "body")
+	set := Load(project, true)
+	outside := writeSkill(t, t.TempDir(), "x", "d", "body")
+	if err := os.WriteFile(filepath.Join(outside, "credentials"), []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"", "credentials"} {
+		if body, err := set.Body("x", file); err == nil || strings.Contains(body, "SECRET") {
+			t.Fatalf("%q was read through a swapped folder: %q %v", file, body, err)
+		}
+	}
+}
