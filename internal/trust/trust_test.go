@@ -116,3 +116,13 @@ func TestARemoteServerShowsWhatItSends(t *testing.T) {
 		t.Fatalf("the prompt hides what the server is sent:\n%s", text)
 	}
 }
+
+// A hook limited to some tools says which in the trust prompt: the same command guarding a
+// different tool is a different thing to agree to.
+func TestAHooksToolsAreShownForTrust(t *testing.T) {
+	req := Describe(t.TempDir(), config.Project{Hooks: []config.Hook{
+		{On: "pre-tool", Run: "./guard.sh", Tools: []string{"run_command", "write_file"}}}})
+	if !strings.Contains(req.Text(), "on pre-tool (run_command, write_file): ./guard.sh") {
+		t.Fatalf("the prompt says:\n%s", req.Text())
+	}
+}

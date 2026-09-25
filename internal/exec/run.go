@@ -64,6 +64,10 @@ type Result struct {
 
 	// Truncated is how many bytes of output were dropped, zero when none were.
 	Truncated int
+
+	// Stderr is what the command wrote to stderr, when Options.SplitStderr kept it apart; Output
+	// then holds stdout alone.
+	Stderr string
 }
 
 // Succeeded reports whether the command ran and exited zero.
@@ -86,6 +90,13 @@ type Options struct {
 
 	// Sandbox, when set, confines the command. A command that cannot be confined is not run.
 	Sandbox *sandbox.Policy
+
+	// Stdin is given to the command on its standard input. Nil gives it none.
+	Stdin []byte
+
+	// SplitStderr keeps stderr apart from stdout, for a command whose stdout is an answer to be
+	// read rather than output to be shown.
+	SplitStderr bool
 }
 
 // Run executes a command and waits for it.
@@ -126,6 +137,14 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 	output := &boundedBuffer{limit: limit}
 	cmd.Stdout = output
 	cmd.Stderr = output
+	var stderr *boundedBuffer
+	if opts.SplitStderr {
+		stderr = &boundedBuffer{limit: limit}
+		cmd.Stderr = stderr
+	}
+	if opts.Stdin != nil {
+		cmd.Stdin = bytes.NewReader(opts.Stdin)
+	}
 
 	// Its own process group, so children can be killed with it. Without this, killing the shell
 	// leaves whatever it started running.
@@ -153,7 +172,7 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 	var timedOut, cancelled bool
 	select {
 	case err := <-done:
-		return finish(output, cmd, err, started, timedOut, cancelled), nil
+		return withStderr(finish(output, cmd, err, started, timedOut, cancelled), stderr), nil
 
 	case <-runCtx.Done():
 		timedOut = errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
@@ -166,14 +185,21 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 		// would mean cancelling a session hung the program.
 		select {
 		case err := <-done:
-			return finish(output, cmd, err, started, timedOut, cancelled), nil
+			return withStderr(finish(output, cmd, err, started, timedOut, cancelled), stderr), nil
 		case <-time.After(2 * time.Second):
-			result := finish(output, cmd, nil, started, timedOut, cancelled)
+			result := withStderr(finish(output, cmd, nil, started, timedOut, cancelled), stderr)
 			result.Ran = false
 			result.Output += "\n(the command did not stop when asked and has been abandoned)"
 			return result, nil
 		}
 	}
+}
+
+func withStderr(result Result, stderr *boundedBuffer) Result {
+	if stderr != nil {
+		result.Stderr = stderr.String()
+	}
+	return result
 }
 
 func finish(

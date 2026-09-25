@@ -997,3 +997,17 @@ func TestRenameReportsAnOrphanWhenMetadataAndCleanupBothFail(t *testing.T) {
 		t.Errorf("the error claimed an orphan but none remained: %v", err)
 	}
 }
+
+type failingGet struct{ Backend }
+
+func (failingGet) Get(string) (string, error) { return "", errors.New("no Secret Service") }
+
+// A backend that answers "not found" is working; one that cannot answer is not.
+func TestProbeTellsAWorkingBackendFromABrokenOne(t *testing.T) {
+	if err := NewStore(NewMemoryBackend(), filepath.Join(t.TempDir(), "k.json")).Probe(); err != nil {
+		t.Fatalf("a working backend failed the probe: %v", err)
+	}
+	if err := NewStore(failingGet{NewMemoryBackend()}, filepath.Join(t.TempDir(), "k.json")).Probe(); err == nil {
+		t.Fatal("a backend that cannot answer passed the probe")
+	}
+}
