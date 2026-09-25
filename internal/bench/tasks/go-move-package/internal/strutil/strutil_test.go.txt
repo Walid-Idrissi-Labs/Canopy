@@ -1,0 +1,9 @@
+package strutil
+
+import "testing"
+
+func TestTitle(t *testing.T) {
+	if got := Title("hello there world"); got != "Hello There World" {
+		t.Errorf("Title = %q", got)
+	}
+}

@@ -1,0 +1,19 @@
+import unittest
+
+from slug import slugify
+
+
+class SlugifyTest(unittest.TestCase):
+    def test_slugify(self):
+        cases = {
+            "Hello World": "hello-world",
+            "  Many   spaces  ": "many-spaces",
+            "Rock & Roll!": "rock-roll",
+            "v2.0 release": "v2-0-release",
+        }
+        for text, want in cases.items():
+            self.assertEqual(slugify(text), want, text)
+
+
+if __name__ == "__main__":
+    unittest.main()

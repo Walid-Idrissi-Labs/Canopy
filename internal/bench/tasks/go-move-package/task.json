@@ -1,0 +1,1 @@
+{"prompt": "Move the Title function out of main.go into a new package at internal/strutil, exported as strutil.Title, and make main.go use it. The tests describe the result.", "check": ["go", "test", "./..."], "kind": "refactor"}
