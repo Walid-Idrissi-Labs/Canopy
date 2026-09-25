@@ -804,8 +804,9 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   trail when the reply finishes, so a reply that is cancelled or fails part way loses the record of
   searches that were already billed.
 - The no-progress check stops a turn that repeats the same call with the same result five times
-  with nothing changing in between. A successful write resets it, so rewriting a file with the same
-  content over and over is caught only by the step limit.
+  with nothing changing in between. A successful write, or a command not run before in the turn,
+  resets it, so rewriting a file with the same content over and over is caught only by the step
+  limit.
 - The undo preview is taken on the first `/undo`; confirming within a minute restores without
   taking it again, so edits made between the two are not listed, though they are undone.
 - A skill's trust fingerprint covers the first 200 files in its folder.

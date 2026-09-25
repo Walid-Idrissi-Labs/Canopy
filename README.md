@@ -363,9 +363,9 @@ thinking only when the evidence says it was needed.
 ## Where the tokens go
 
 Every request resends the conversation, so what it costs is decided by how much of that is read
-from the provider's cache and how much is sent fresh. Canopy keeps the conversation append-only: a
-turn's messages, tool calls and the model's signed thinking are replayed exactly as they were
-exchanged, the system prompt and tools never change mid-conversation, and a test holds every request
+from the provider's cache and how much is sent fresh. Canopy keeps the conversation append-only
+until it is compacted, when a summary takes the place of the older part: a turn's messages, tool
+calls and the model's signed thinking are replayed exactly as they were exchanged, the system prompt and tools never change mid-conversation, and a test holds every request
 to beginning, byte for byte, with the one before it. What that buys is visible:
 
 - Under each finished turn, a quiet line gives the model, the time, the tokens read and written,
