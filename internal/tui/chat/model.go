@@ -728,17 +728,17 @@ func (m Model) promptLines() []string {
 	inner := m.width - promptChrome
 	switch {
 	case req.Opaque && req.Arguments != "":
-		for _, line := range wrap(req.Arguments, inner) {
+		for _, line := range wrap(terminalSafe(req.Arguments), inner) {
 			body = append(body, t.Body.Render(line))
 		}
 	default:
 		if req.Command != "" {
-			for _, line := range wrap(req.Command, inner) {
+			for _, line := range wrap(terminalSafe(req.Command), inner) {
 				body = append(body, t.Body.Render(line))
 			}
 		}
 		for _, path := range req.Paths {
-			body = append(body, t.Body.Render(path))
+			body = append(body, t.Body.Render(terminalSafe(path)))
 		}
 	}
 
