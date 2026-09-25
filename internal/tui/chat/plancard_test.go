@@ -31,7 +31,7 @@ func TestEnterCarriesOutAFinishedPlan(t *testing.T) {
 	if !strings.Contains(plain(m.Body()), "carries this plan out in build mode") {
 		t.Fatalf("no plan card:\n%s", plain(m.Body()))
 	}
-	m, _ = m.Update(keyCode(tea.KeyEnter))
+	_, _ = m.Update(keyCode(tea.KeyEnter))
 	if engine.mode.Name != core.ModeBuild || len(engine.sent) != 1 || !strings.HasPrefix(engine.sent[0], "That plan is approved") {
 		t.Fatalf("mode %q, sent %v", engine.mode.Name, engine.sent)
 	}
