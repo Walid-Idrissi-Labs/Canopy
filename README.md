@@ -462,7 +462,9 @@ the pass.
   by the operating system where it can: on macOS they can write only in the workspace, temporary
   directories and toolchain caches, and cannot read `~/.ssh`, `~/.aws`, keychains and the like; on
   Linux, Landlock confines writes the same way but cannot hide files from reading. Network access
-  is not restricted by default. Test commands, hooks and MCP servers are not sandboxed yet, and a
+  is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
+  package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
+  `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. Test commands, hooks and MCP servers are not sandboxed yet, and a
   worktree on its own is file isolation, not a security boundary. `CANOPY_SANDBOX=off` turns it
   off, and every command that runs unconfined says so in its result.
 - Windows is deferred until process group and terminal semantics are designed for it rather than

