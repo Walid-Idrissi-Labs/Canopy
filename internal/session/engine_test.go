@@ -29,6 +29,7 @@ type scriptedClient struct {
 	mu      sync.Mutex
 	history []core.Message
 	system  string
+	tools   []core.ToolDefinition
 }
 
 func (c *scriptedClient) Name() string { return c.name }
@@ -37,6 +38,7 @@ func (c *scriptedClient) Stream(ctx context.Context, req core.Request) (core.Str
 	c.mu.Lock()
 	c.history = req.Messages
 	c.system = req.System
+	c.tools = req.Tools
 	c.mu.Unlock()
 
 	if c.openErr != nil {
