@@ -468,8 +468,8 @@ the pass.
   is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
   package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
   `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. The project's test commands run in the same
-  sandbox; setup, hooks and MCP servers are not sandboxed yet, and a worktree on its own is file
-  isolation, not a security boundary. `CANOPY_SANDBOX=off` turns it off, and every command that runs
+  sandbox, and so do hooks; setup and MCP servers are not sandboxed yet, and a worktree on its own
+  is file isolation, not a security boundary. `CANOPY_SANDBOX=off` turns it off, and every command that runs
   unconfined says so in its result.
 - Windows is deferred until process group and terminal semantics are designed for it rather than
   approximated.

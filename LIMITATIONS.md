@@ -152,9 +152,9 @@ be rediscovered by getting burned by it.
   area and the caches fails there: Gradle (its wrapper and daemon directories, and its properties
   file, which is unreadable), SwiftPM's package cache, and browser downloads for Playwright or
   Cypress among them. In runway such a suite fails its gate and the turn is put back.
-  `CANOPY_SANDBOX=off` is the way out. Setup, hooks, MCP servers and delegated vendor agents still run
-  unconfined. A command that runs without the sandbox says so, and `CANOPY_SANDBOX=off` switches it
-  off.
+  `CANOPY_SANDBOX=off` is the way out. Hooks run in the sandbox as well. Setup, MCP servers and
+  delegated vendor agents still run unconfined. A command that runs without the sandbox says so,
+  and `CANOPY_SANDBOX=off` switches it off.
 
 - A freshly prepared worktree gets no isolated database, queue, cache, or OAuth callback. A named
   port is templated in, but a port does not isolate the service listening behind it. Only small,

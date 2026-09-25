@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"os"
 	"time"
 
@@ -306,7 +307,7 @@ func startVerification(
 		// The revision reader is what stops a committing hook from firing on its own commit. Read
 		// live from git rather than from the verifier's last poll, because the poller has not looked
 		// yet at the moment this matters. See Q-17 and the runner's code-interval guard.
-		v.runner = hooks.New(configured, dir, hooks.Shell, v.recordHook, verifier.Head)
+		v.runner = hooks.New(configured, dir, hooks.Confined(tools.Confinement), v.recordHook, verifier.Head)
 	}
 
 	v.follow(engine)
