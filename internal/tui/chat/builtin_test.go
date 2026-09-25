@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -19,11 +19,11 @@ import (
 
 // run types a command and sends it, returning the model and whatever command came back.
 func run(m chat.Model, typed string) (chat.Model, tea.Cmd) {
-	return press2(typeText(m, typed), tea.KeyEnter)
+	return press2(typeText(m, typed), keyCode(tea.KeyEnter))
 }
 
-func press2(m chat.Model, key tea.KeyType) (chat.Model, tea.Cmd) {
-	return m.Update(tea.KeyMsg{Type: key})
+func press2(m chat.Model, key tea.KeyPressMsg) (chat.Model, tea.Cmd) {
+	return m.Update(key)
 }
 
 // None of them reach a provider. They are answered before anything is expanded or sent, so they
@@ -371,7 +371,7 @@ func TestPreviousBtwsAreKeptAndABareBtwReopensThem(t *testing.T) {
 	}
 
 	// Esc folds it away and the questions leave the screen with it.
-	closed, _ := press2(next, tea.KeyEsc)
+	closed, _ := press2(next, keyCode(tea.KeyEsc))
 	if strings.Contains(plain(closed.Body()), "where is the parser") {
 		t.Errorf("esc did not close the panel:\n%s", plain(closed.Body()))
 	}
@@ -407,13 +407,13 @@ func TestTheBtwPanelScrollsAndStopsAtItsEnds(t *testing.T) {
 		t.Fatalf("the panel shows more than its window:\n%s", view)
 	}
 	for range 20 {
-		next, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+		next, _ = next.Update(keyCode(tea.KeyPgUp))
 	}
 	if view := plain(next.Body()); !strings.Contains(view, "? one") {
 		t.Errorf("scrolling up never reaches the first aside:\n%s", view)
 	}
 	for range 40 {
-		next, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		next, _ = next.Update(keyCode(tea.KeyPgDown))
 	}
 	if view := plain(next.Body()); !strings.Contains(view, "? six") {
 		t.Errorf("scrolling back down never returns to the newest aside:\n%s", view)

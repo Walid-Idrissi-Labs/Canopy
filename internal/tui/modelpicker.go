@@ -33,8 +33,8 @@ import (
 	"net/url"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -294,9 +294,9 @@ func (p *modelPicker) startTyping() bool {
 // Esc cancels the typing rather than leaving the screen, which is the more local meaning and the
 // rule the command menu and the btw panel already follow: the way out of the picker is still one
 // more press away.
-func (p *modelPicker) typeKey(msg tea.KeyMsg) (modelRow, bool) {
-	switch msg.Type {
-	case tea.KeyEnter:
+func (p *modelPicker) typeKey(msg tea.KeyPressMsg) (modelRow, bool) {
+	switch {
+	case msg.Code == tea.KeyEnter:
 		id := strings.TrimSpace(p.draft)
 		if id == "" {
 			// Nothing typed is nothing chosen. Applying an empty model would leave the conversation
@@ -307,19 +307,16 @@ func (p *modelPicker) typeKey(msg tea.KeyMsg) (modelRow, bool) {
 		p.typing, p.draft = false, ""
 		return modelRow{key: row.key, id: id, label: id}, true
 
-	case tea.KeyEsc:
+	case msg.Code == tea.KeyEsc:
 		p.typing, p.draft = false, ""
 
-	case tea.KeyBackspace:
+	case msg.Code == tea.KeyBackspace:
 		if runes := []rune(p.draft); len(runes) > 0 {
 			p.draft = string(runes[:len(runes)-1])
 		}
 
-	case tea.KeyRunes:
-		p.draft += string(msg.Runes)
-
-	case tea.KeySpace:
-		p.draft += " "
+	case msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0:
+		p.draft += msg.Text
 	}
 	return modelRow{}, false
 }

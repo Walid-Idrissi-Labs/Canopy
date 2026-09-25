@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -63,18 +63,18 @@ func (f *fakeReview) Patch(agent, path string) (string, error) {
 
 func press(m ReviewModel, keys ...string) ReviewModel {
 	for _, key := range keys {
-		var msg tea.KeyMsg
+		var msg tea.KeyPressMsg
 		switch key {
 		case "enter":
-			msg = tea.KeyMsg{Type: tea.KeyEnter}
+			msg = keyCode(tea.KeyEnter)
 		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
+			msg = keyCode(tea.KeyEsc)
 		case "tab":
-			msg = tea.KeyMsg{Type: tea.KeyTab}
+			msg = keyCode(tea.KeyTab)
 		case " ":
-			msg = tea.KeyMsg{Type: tea.KeySpace}
+			msg = keyCode(tea.KeySpace)
 		default:
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+			msg = keyText(key)
 		}
 		m, _ = m.Update(msg)
 	}
@@ -187,7 +187,7 @@ func TestOpeningAnAgentShowsItsFilesAndThenItsDiff(t *testing.T) {
 	if model.Pane() != "patch" {
 		t.Fatalf("enter on a file landed on %q", model.Pane())
 	}
-	body := model.Body()
+	body := stripANSI(model.Body())
 	if !strings.Contains(body, "return true") {
 		t.Errorf("the patch is missing its content:\n%s", body)
 	}
@@ -395,7 +395,7 @@ func TestCommittingNeedsASubjectAndAnExplicitKey(t *testing.T) {
 		t.Fatalf("enter committed %q", source.committed)
 	}
 
-	saving, _ := model.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	saving, _ := model.Update(keyCode('s', tea.ModCtrl))
 	if source.committed != "" {
 		t.Error("an empty subject was committed")
 	}
@@ -410,12 +410,12 @@ func TestAWrittenSubjectIsWhatGetsCommitted(t *testing.T) {
 
 	for _, r := range "stop refreshing an expired token" {
 		if r == ' ' {
-			model, _ = model.Update(tea.KeyMsg{Type: tea.KeySpace})
+			model, _ = model.Update(keyCode(tea.KeySpace))
 			continue
 		}
-		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		model, _ = model.Update(keyText(string([]rune{r})))
 	}
-	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
+	model, _ = model.Update(keyCode('s', tea.ModCtrl))
 
 	if !strings.HasPrefix(source.committed, "feat(auth): stop refreshing an expired token") {
 		t.Errorf("the message committed was %q", source.committed)

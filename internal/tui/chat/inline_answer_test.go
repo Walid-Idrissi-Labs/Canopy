@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 )
@@ -20,7 +20,7 @@ import (
 func TestEnterOnAnEmptyBoxApprovesTheVisitorOnce(t *testing.T) {
 	engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if len(engine.answered) != 1 {
 		t.Fatalf("enter gave %d answers, want one", len(engine.answered))
@@ -44,7 +44,7 @@ func TestEnterOnAnEmptyBoxApprovesTheVisitorOnce(t *testing.T) {
 func TestBackspaceOnAnEmptyBoxDeclinesTheVisitor(t *testing.T) {
 	engine, m := visited(waitingOn("worker-2", "s2", "rm -rf build"))
 
-	m = press(m, tea.KeyBackspace)
+	m = press(m, keyCode(tea.KeyBackspace))
 
 	if len(engine.answered) != 1 {
 		t.Fatalf("backspace gave %d answers, want one", len(engine.answered))
@@ -63,10 +63,10 @@ func TestBackspaceOnAnEmptyBoxDeclinesTheVisitor(t *testing.T) {
 func TestAVisitorThatStoppedWaitingIsNotClaimedAsAnswered(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		key  tea.KeyType
+		key  tea.KeyPressMsg
 	}{
-		{name: "approve", key: tea.KeyEnter},
-		{name: "decline", key: tea.KeyBackspace},
+		{name: "approve", key: keyCode(tea.KeyEnter)},
+		{name: "decline", key: keyCode(tea.KeyBackspace)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
@@ -95,8 +95,8 @@ func TestATypedMessageKeepsEnterAndBackspaceToItself(t *testing.T) {
 	engine, m := visited(waitingOn("worker-2", "s2", "npm test"))
 
 	m = typeText(m, "carry on")
-	m = press(m, tea.KeyBackspace)
-	_ = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyBackspace))
+	_ = press(m, keyCode(tea.KeyEnter))
 
 	if len(engine.answered) != 0 {
 		t.Errorf("typing answered somebody else's question: %+v", engine.answered)
@@ -114,7 +114,7 @@ func TestEnterAnswersTheOldestVisitorAndTheNextComesForward(t *testing.T) {
 		waitingOn("worker-2", "s3", "rm -rf build"),
 	)
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if len(engine.answered) != 1 || engine.answered[0].session != "s2" {
 		t.Fatalf("enter answered %+v, want the oldest question", engine.answered)
@@ -123,7 +123,7 @@ func TestEnterAnswersTheOldestVisitorAndTheNextComesForward(t *testing.T) {
 	if view := plain(m.Body()); !strings.Contains(view, "worker-2") {
 		t.Errorf("the next question did not come forward:\n%s", view)
 	}
-	_ = press(m, tea.KeyBackspace)
+	_ = press(m, keyCode(tea.KeyBackspace))
 	if len(engine.answered) != 2 || engine.answered[1].session != "s3" ||
 		engine.answered[1].approved {
 		t.Errorf("backspace gave %+v, want s3 declined", engine.answered)
@@ -137,7 +137,7 @@ func TestYourOwnPromptTakesEnterBeforeAnyVisitor(t *testing.T) {
 	engine.prompt = pendingPrompt("make test")
 	m, _ = m.Update(chat.EventMsg{})
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if len(engine.answered) != 1 {
 		t.Fatalf("enter gave %d answers, want one for the own prompt", len(engine.answered))

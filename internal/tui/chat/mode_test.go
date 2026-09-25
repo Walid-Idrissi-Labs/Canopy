@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -48,7 +48,7 @@ func TestTheKeyWalksTheLadderInOrder(t *testing.T) {
 		core.ModeRunway, core.ModeCruise, core.ModePlan, core.ModeConfined, core.ModeBuild,
 	}
 	for i, expected := range want {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 		got, selecting := m.Selecting()
 		if !selecting {
 			t.Fatalf("press %d left the key on nothing, want %q", i+1, expected)
@@ -124,7 +124,7 @@ func TestTheModeKeyCannotPromoteAConfinedAgent(t *testing.T) {
 		t.Fatalf("a read-only conversation opens in %q", got)
 	}
 	for range len(core.Modes()) + 1 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 		if got := engine.Mode("s1").Trust; got != core.TrustReadOnly {
 			t.Fatalf("a keystroke promoted a read-only agent to %q", got)
 		}
@@ -225,15 +225,15 @@ func TestTheKeySkipsModesThisAgentCannotEnter(t *testing.T) {
 		return got
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := landing(); got != core.ModePlan {
 		t.Errorf("the key landed on %q, want it to skip past what it cannot enter", got)
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := landing(); got != core.ModeConfined {
 		t.Errorf("the key landed on %q, want the confined posture between plan and build", got)
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := landing(); got != core.ModeBuild {
 		t.Errorf("the key landed on %q after confined, want build", got)
 	}

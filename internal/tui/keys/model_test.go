@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -106,18 +106,18 @@ func (s *stubStore) Identity(ref core.KeyRef) (Identity, error) {
 
 func typeRunes(m Model, text string) Model {
 	for _, r := range text {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
 	return m
 }
 
-func press(m Model, t tea.KeyType) Model {
-	m, _ = m.Update(tea.KeyMsg{Type: t})
+func press(m Model, t tea.KeyPressMsg) Model {
+	m, _ = m.Update(t)
 	return m
 }
 
 func key(m Model, s string) Model {
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+	m, _ = m.Update(keyText(s))
 	return m
 }
 
@@ -133,18 +133,18 @@ func TestAddACredentialWithoutLeavingTheInterface(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	// Provider list, anthropic is first.
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	// Now the secret, typed a character at a time. Every intermediate frame is checked, because
 	// the leak that matters is the one visible mid keystroke, not the one at the end.
 	for _, r := range canary {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 		assertNoCanary(t, "while typing", m.View())
 	}
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if store.lastPut.Ref.Name != "claude" {
 		t.Errorf("stored name = %q, want claude", store.lastPut.Ref.Name)
@@ -169,10 +169,10 @@ func TestTypedSecretIsClearedAfterStoring(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.draftSecret != "" {
 		t.Error("the typed credential is still held in the model after being stored")
@@ -187,10 +187,10 @@ func TestTypedSecretIsClearedEvenWhenStoringFails(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.draftSecret != "" {
 		t.Error("the typed credential survived a failed store")
@@ -206,10 +206,10 @@ func TestEscapeClearsTheDraft(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEsc)
+	m = press(m, keyCode(tea.KeyEsc))
 
 	if m.draftSecret != "" {
 		t.Error("cancelling left the typed credential in the model")
@@ -224,8 +224,8 @@ func TestOnlyTheLengthOfTheSecretIsShown(t *testing.T) {
 	m := New(&stubStore{})
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, "abcde")
 
 	view := plain(m.View())
@@ -242,7 +242,7 @@ func TestInvalidNameIsRejectedInPlace(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "Not A Valid Name")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.err == nil {
 		t.Fatal("an invalid name should be rejected")
@@ -259,7 +259,7 @@ func TestCredentialPastedIntoTheNameFieldIsRefusedWithoutEchoing(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.err == nil {
 		t.Fatal("a credential used as a name should be rejected")
@@ -277,24 +277,24 @@ func TestBaseURLRequestedOnlyWhenNeeded(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "kimi")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	// Move to openai-compatible, which needs an endpoint.
 	m = key(m, "j")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.mode != modeBaseURL {
 		t.Fatalf("openai-compatible should ask for a base URL, mode = %v", m.mode)
 	}
 
 	// An empty endpoint is refused rather than stored as blank.
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.err == nil {
 		t.Error("an empty base URL should be refused")
 	}
 
 	m = typeRunes(m, "https://example.invalid/v1")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.mode != modeModel {
 		t.Fatalf("mode after a base URL = %v, want the model prompt", m.mode)
 	}
@@ -302,7 +302,7 @@ func TestBaseURLRequestedOnlyWhenNeeded(t *testing.T) {
 	// A credential with no model on a provider that has no default cannot answer a single message,
 	// and the far end reports it as a bad request rather than as a missing setting. So it is refused
 	// here, where the person can still do something about it.
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.err == nil {
 		t.Error("an openai-compatible credential with no model should be refused")
 	}
@@ -311,13 +311,13 @@ func TestBaseURLRequestedOnlyWhenNeeded(t *testing.T) {
 	}
 
 	m = typeRunes(m, "some/model-v1")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.mode != modeSecret {
 		t.Fatalf("mode after a model = %v, want the secret prompt", m.mode)
 	}
 
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if store.lastPut.BaseURL != "https://example.invalid/v1" {
 		t.Errorf("BaseURL = %q", store.lastPut.BaseURL)
@@ -341,7 +341,7 @@ func TestACredentialCanBeChosenAndItsModelChanged(t *testing.T) {
 	}
 
 	m = key(m, "j")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	chosen, picked := m.Chosen()
 	if !picked || chosen != "nim" {
@@ -356,12 +356,12 @@ func TestACredentialCanBeChosenAndItsModelChanged(t *testing.T) {
 	}
 	// This key points at an endpoint nobody here has a lineup for, so the only row is the one that
 	// takes a typed id, and it is where the cursor already is.
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.mode != modeModel {
 		t.Fatalf("the typed row landed on mode %v", m.mode)
 	}
 	m = typeRunes(m, "new/model")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.mode != modeList {
 		t.Errorf("changing a model landed on mode %v, want back at the list", m.mode)
@@ -436,10 +436,10 @@ func TestListNeverShowsAValue(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	view := plain(m.View())
 	assertNoCanary(t, "list", view)
@@ -548,7 +548,7 @@ func TestTheModelKeyOffersTheCatalogBeforeTheKeyboard(t *testing.T) {
 
 	// It opens on what it is already set to, so moving one row and taking it is a deliberate change.
 	m = key(m, "j")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.mode != modeList {
 		t.Errorf("taking a model landed on mode %v, want back at the list", m.mode)
@@ -573,13 +573,13 @@ func TestAModelOnNoListCanStillBeTyped(t *testing.T) {
 	for range len(m.modelChoices) {
 		m = key(m, "j")
 	}
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.mode != modeModel {
 		t.Fatalf("the last row landed on mode %v, want the text field", m.mode)
 	}
 
 	m = typeRunes(m, "claude-something-unreleased")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if got := m.ModelFor("claude"); got != "claude-something-unreleased" {
 		t.Errorf("the typed model was not stored, the key talks to %q", got)
@@ -613,7 +613,7 @@ func TestAKeyOnAnUnknownEndpointOffersOnlyWhatItsOwnerAdded(t *testing.T) {
 	store.added = map[string][]catalog.Model{
 		"nim": {{ID: "minimaxai/minimax-m2.7", Name: "MiniMax M2.7"}},
 	}
-	m = press(m, tea.KeyEsc)
+	m = press(m, keyCode(tea.KeyEsc))
 	m = key(m, "m")
 
 	view := plain(m.View())
@@ -621,7 +621,7 @@ func TestAKeyOnAnUnknownEndpointOffersOnlyWhatItsOwnerAdded(t *testing.T) {
 		t.Errorf("the added model is not shown with both its name and its id:\n%s", view)
 	}
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if got := m.ModelFor("nim"); got != "minimaxai/minimax-m2.7" {
 		t.Errorf("picking the named entry stored %q, want the id", got)
 	}
@@ -636,23 +636,23 @@ func TestLeavingAModelEditDoesNotPoisonTheNextAdd(t *testing.T) {
 	m := New(store)
 
 	m = key(m, "m")
-	m = press(m, tea.KeyEsc)
+	m = press(m, keyCode(tea.KeyEsc))
 
 	m = key(m, "a")
 	m = typeRunes(m, "nim")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	m = key(m, "j")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, "https://api.moonshot.cn/v1")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, "moonshot-v1-8k")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if m.mode != modeSecret {
 		t.Fatalf("the add flow landed on mode %v after the model, want the secret prompt", m.mode)
 	}
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if store.lastPut.Ref.Name != "nim" {
 		t.Errorf("the credential was not stored, Put saw %q", store.lastPut.Ref.Name)
@@ -701,10 +701,10 @@ func TestAddingACredentialSelectsIt(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter) // provider list, anthropic is first
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter)) // provider list, anthropic is first
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	chosen, ok := m.Chosen()
 	if !ok {
@@ -736,10 +736,10 @@ func TestAddingASecondCredentialSelectsTheNewOne(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "kimi")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if chosen, _ := m.Chosen(); chosen != "kimi" {
 		t.Errorf("selected %q after adding kimi as a second credential", chosen)
@@ -754,10 +754,10 @@ func TestARefusedSelectionStaysStoredButIsNotRetriedOrClaimed(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
+	m = press(m, keyCode(tea.KeyEnter))
 	m = typeRunes(m, canary)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	m.SelectionRefused("claude", "this session is mid answer")
 
 	if _, chosen := m.Chosen(); chosen {
@@ -809,10 +809,10 @@ func TestRenamingACredentialNeverAsksForTheValueAgain(t *testing.T) {
 	}
 
 	for range len("kimi") {
-		m = press(m, tea.KeyBackspace)
+		m = press(m, keyCode(tea.KeyBackspace))
 	}
 	m = typeRunes(m, "moonshot")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if store.keys[1].Ref.Name != "moonshot" {
 		t.Fatalf("the store holds %v", store.keys)
@@ -841,10 +841,10 @@ func TestARenameIsReportedOnceForTheConversationsToFollow(t *testing.T) {
 
 	m = key(m, "e")
 	for range len("claude") {
-		m = press(m, tea.KeyBackspace)
+		m = press(m, keyCode(tea.KeyBackspace))
 	}
 	m = typeRunes(m, "anthropic")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	renamed, ok := m.TakeRename()
 	if !ok {
@@ -867,10 +867,10 @@ func TestARefusedRenameKeepsTheFieldOpen(t *testing.T) {
 
 	m = key(m, "e")
 	for range len("claude") {
-		m = press(m, tea.KeyBackspace)
+		m = press(m, keyCode(tea.KeyBackspace))
 	}
 	m = typeRunes(m, "kimi")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if !m.Adding() {
 		t.Fatal("the screen left the name field after refusing the name in it")
@@ -898,7 +898,7 @@ func TestACredentialPastedIntoTheRenameFieldIsNeverRendered(t *testing.T) {
 
 	m = key(m, "e")
 	for range len("claude") {
-		m = press(m, tea.KeyBackspace)
+		m = press(m, keyCode(tea.KeyBackspace))
 	}
 	// Checked every keystroke, because the leak that matters is the one visible mid paste rather
 	// than the one left on screen at the end.
@@ -907,7 +907,7 @@ func TestACredentialPastedIntoTheRenameFieldIsNeverRendered(t *testing.T) {
 		assertNoCanary(t, "while typing into the rename field", m.Body())
 	}
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.err == nil {
 		t.Fatal("a credential used as a name was accepted")
 	}

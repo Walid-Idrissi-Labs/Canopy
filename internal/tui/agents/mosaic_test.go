@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
@@ -84,7 +82,7 @@ func TestDigitsJumpAndThenOpen(t *testing.T) {
 		t.Fatalf("digit 3 selected %q, want the third pane", selected.Agent.Name)
 	}
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("3")})
+	_, cmd := m.Update(keyText("3"))
 	if cmd == nil {
 		t.Fatal("the digit of the selected pane should ask to open it")
 	}

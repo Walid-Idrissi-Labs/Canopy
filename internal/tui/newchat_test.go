@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -33,7 +33,7 @@ func TestTheApplicationOpensTheConversationItWasGiven(t *testing.T) {
 		"session-9": {ID: "session-9"},
 	}}
 
-	view := plain(launchSession(store, withOneKey(), engine, "session-9").(tui.App).View())
+	view := plain(launchSession(store, withOneKey(), engine, "session-9").(tui.App).View().Content)
 	if strings.Contains(view, "something asked last week") {
 		t.Errorf("opening session-9 landed in an older conversation:\n%s", view)
 	}
@@ -72,12 +72,12 @@ func TestANewConversationStartsEmptyAndKeepsTheCredential(t *testing.T) {
 	}}
 	app := launchWith(store, withOneKey(), engine)
 
-	before := plain(app.(tui.App).View())
+	before := plain(app.(tui.App).View().Content)
 	if !strings.Contains(before, "an earlier question") {
 		t.Fatalf("the conversation is not on screen to begin with:\n%s", before)
 	}
 
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	next, _ := app.(tui.App).Update(keyCode('n', tea.ModCtrl))
 
 	if engine.created != 1 {
 		t.Fatalf("%d conversations created, want one", engine.created)
@@ -88,7 +88,7 @@ func TestANewConversationStartsEmptyAndKeepsTheCredential(t *testing.T) {
 		t.Errorf("the new conversation is on credential %q", engine.session.KeyName)
 	}
 
-	after := plain(next.(tui.App).View())
+	after := plain(next.(tui.App).View().Content)
 	if strings.Contains(after, "an earlier question") {
 		t.Errorf("the previous conversation is still on screen:\n%s", after)
 	}
@@ -109,9 +109,9 @@ func TestANewConversationShowsTheMarkAgain(t *testing.T) {
 	}}
 	app := launchWith(store, withOneKey(), engine)
 
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	next, _ := app.(tui.App).Update(keyCode('n', tea.ModCtrl))
 
-	view := plain(next.(tui.App).View())
+	view := plain(next.(tui.App).View().Content)
 	if !strings.Contains(view, "█") {
 		t.Errorf("the new conversation has no mark on it:\n%s", view)
 	}
@@ -127,12 +127,12 @@ func TestANewConversationEmptiesTheBox(t *testing.T) {
 	defer store.Close()
 
 	app := launchWith(store, withOneKey(), &stubEngine{})
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("half written")})
+	next, _ := app.(tui.App).Update(keyText("half written"))
 	if next.(tui.App).ChatInput() == "" {
 		t.Fatal("nothing was typed, so this test is not testing anything")
 	}
 
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	next, _ = next.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	if got := next.(tui.App).ChatInput(); got != "" {
 		t.Errorf("the box carried %q into the new conversation", got)
 	}
@@ -150,11 +150,11 @@ func TestANewConversationWhileAReplyIsArrivingAsksFirst(t *testing.T) {
 	}}
 	app := launchWith(store, withOneKey(), engine)
 
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	next, _ := app.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	if engine.created != 0 {
 		t.Fatal("the conversation was replaced without asking, with a reply still arriving")
 	}
-	view := plain(next.(tui.App).View())
+	view := plain(next.(tui.App).View().Content)
 	if !strings.Contains(view, "ctrl+n again") {
 		t.Errorf("the screen does not say how to go through with it:\n%s", view)
 	}
@@ -164,7 +164,7 @@ func TestANewConversationWhileAReplyIsArrivingAsksFirst(t *testing.T) {
 		t.Errorf("the screen does not say the old conversation survives:\n%s", view)
 	}
 
-	next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	next.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	if engine.created != 1 {
 		t.Errorf("%d conversations created after confirming, want one", engine.created)
 	}
@@ -182,14 +182,14 @@ func TestTheConfirmationLapsesOnTheNextKey(t *testing.T) {
 	}}
 	app := launchWith(store, withOneKey(), engine)
 
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
+	next, _ := app.(tui.App).Update(keyCode('n', tea.ModCtrl))
+	next, _ = next.(tui.App).Update(keyText("x"))
 
-	if view := plain(next.(tui.App).View()); strings.Contains(view, "ctrl+n again") {
+	if view := plain(next.(tui.App).View().Content); strings.Contains(view, "ctrl+n again") {
 		t.Errorf("the question is still up after a keystroke answered it:\n%s", view)
 	}
 
-	next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	next.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	if engine.created != 0 {
 		t.Error("a lapsed confirmation was still honoured, so a stray key replaced the conversation")
 	}
@@ -206,7 +206,7 @@ func TestANewConversationIsAllowedWhileAQuestionIsUp(t *testing.T) {
 	engine := &stubEngine{session: core.Session{ID: "session-1"}, asking: true}
 	app := launchWith(store, withOneKey(), engine)
 
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	next, _ := app.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	if engine.created != 1 {
 		t.Errorf("%d conversations were started, want the one that was asked for", engine.created)
 	}
@@ -225,21 +225,21 @@ func TestTheWheelOnlyReachesTheScreenInFront(t *testing.T) {
 	engine := &stubEngine{session: manyTurns(40)}
 	app := launchWith(store, withOneKey(), engine)
 
-	if strings.Contains(plain(app.(tui.App).View()), "more below") {
+	if strings.Contains(plain(app.(tui.App).View().Content), "more below") {
 		t.Fatal("the conversation does not start at the tail, so this test proves nothing")
 	}
 
-	agents, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	agents, _ := app.(tui.App).Update(keyCode('d', tea.ModCtrl))
 	if agents.(tui.App).Screen() != "agents" {
 		t.Fatalf("ctrl+d landed on %q", agents.(tui.App).Screen())
 	}
 	for range 5 {
 		agents, _ = agents.(tui.App).Update(
-			tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+			tea.MouseWheelMsg{Button: tea.MouseWheelUp})
 	}
 
-	back, _ := agents.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if view := plain(back.(tui.App).View()); strings.Contains(view, "more below") {
+	back, _ := agents.(tui.App).Update(keyCode(tea.KeyEsc))
+	if view := plain(back.(tui.App).View().Content); strings.Contains(view, "more below") {
 		t.Errorf("scrolling on the agents view moved the conversation behind it:\n%s", view)
 	}
 }
@@ -254,8 +254,8 @@ func TestTheWheelScrollsTheConversationInFront(t *testing.T) {
 	app := launchWith(store, withOneKey(), engine)
 
 	scrolled, _ := app.(tui.App).Update(
-		tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
-	if view := plain(scrolled.(tui.App).View()); !strings.Contains(view, "more below") {
+		tea.MouseWheelMsg{Button: tea.MouseWheelUp})
+	if view := plain(scrolled.(tui.App).View().Content); !strings.Contains(view, "more below") {
 		t.Errorf("the wheel did not scroll the conversation:\n%s", view)
 	}
 }

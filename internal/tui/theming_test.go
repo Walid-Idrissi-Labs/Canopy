@@ -2,11 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
@@ -117,7 +118,7 @@ func TestTheFlameIsNotTheSameColourAsTheMark(t *testing.T) {
 	}
 }
 
-// The bare colours are the awkward case: lipgloss.TerminalColor cannot be implemented outside
+// The bare colours are the awkward case: color.Color cannot be implemented outside
 // lipgloss, so these cannot resolve lazily and are refreshed through a change hook instead. A hook
 // nobody fires is the failure mode, and it looks exactly like the bug that was just fixed.
 func TestTheBareColoursAreRefreshedWhenTheThemeChanges(t *testing.T) {
@@ -162,9 +163,21 @@ func TestEveryStateIsDistinguishableWithTheColourStripped(t *testing.T) {
 }
 
 // bare makes one of the loose colours comparable, for the same reason as colourKey.
-func bare(c lipgloss.TerminalColor) string {
+func bare(c color.Color) string {
 	if c == nil {
 		return "none"
 	}
 	return fmt.Sprintf("%#v", c)
+}
+
+// An adaptive colour follows what the terminal says about its background.
+func TestAdaptiveColoursFollowTheBackground(t *testing.T) {
+	c := theme.Adaptive{Light: "#000000", Dark: "#ffffff"}
+	theme.SetDark(false)
+	r, _, _, _ := c.RGBA()
+	theme.SetDark(true)
+	r2, _, _, _ := c.RGBA()
+	if r != 0 || r2 == 0 {
+		t.Fatalf("light gave %d, dark gave %d", r, r2)
+	}
 }

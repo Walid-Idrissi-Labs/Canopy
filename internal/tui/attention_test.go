@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -41,24 +41,24 @@ func TestTheHeaderSaysWhoNeedsYouFromEveryScreen(t *testing.T) {
 	}
 	app := launchWith(store, withOneKey(), engine).(tui.App)
 
-	if view := plain(app.View()); !strings.Contains(view, "2 need you") {
+	if view := plain(app.View().Content); !strings.Contains(view, "2 need you") {
 		t.Errorf("the conversation does not say who is waiting:\n%s", view)
 	}
 
 	// And every screen a key reaches from it, in turn.
 	for _, run := range []struct {
 		screen string
-		key    tea.KeyMsg
+		key    tea.KeyPressMsg
 	}{
-		{"agents", tea.KeyMsg{Type: tea.KeyCtrlD}},
-		{"keys", tea.KeyMsg{Type: tea.KeyCtrlK}},
-		{"help", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")}},
+		{"agents", keyCode('d', tea.ModCtrl)},
+		{"keys", keyCode('k', tea.ModCtrl)},
+		{"help", keyText("?")},
 	} {
 		next, _ := app.Update(run.key)
 		if next.(tui.App).Screen() != run.screen {
 			t.Fatalf("the key for %s landed on %q", run.screen, next.(tui.App).Screen())
 		}
-		if view := plain(next.(tui.App).View()); !strings.Contains(view, "2 need you") {
+		if view := plain(next.(tui.App).View().Content); !strings.Contains(view, "2 need you") {
 			t.Errorf("the %s screen does not say who is waiting:\n%s", run.screen, view)
 		}
 	}
@@ -83,7 +83,7 @@ func TestTheCountIsQuestionsAndFailedAgentsWithoutCountingOneTwice(t *testing.T)
 	}
 	app := launchWith(store, withOneKey(), engine).(tui.App)
 
-	if view := plain(app.View()); !strings.Contains(view, "2 need you") {
+	if view := plain(app.View().Content); !strings.Contains(view, "2 need you") {
 		t.Errorf("the count is not the union of the two ways of needing somebody:\n%s", view)
 	}
 }
@@ -150,11 +150,11 @@ func TestNavigationLeavesAConversationThatHasAQuestionWaiting(t *testing.T) {
 	defer store.Close()
 
 	for _, run := range []struct {
-		key    tea.KeyMsg
+		key    tea.KeyPressMsg
 		screen string
 	}{
-		{tea.KeyMsg{Type: tea.KeyCtrlD}, "agents"},
-		{tea.KeyMsg{Type: tea.KeyCtrlK}, "keys"},
+		{keyCode('d', tea.ModCtrl), "agents"},
+		{keyCode('k', tea.ModCtrl), "keys"},
 	} {
 		engine := &stubEngine{session: core.Session{ID: "session-1"}, asking: true}
 		app := launchWith(store, withOneKey(), engine).(tui.App)
@@ -178,16 +178,16 @@ func TestAQuestionIsStillWaitingWhenYouComeBack(t *testing.T) {
 	engine := &stubEngine{session: core.Session{ID: "session-1"}, asking: true}
 	app := launchWith(store, withOneKey(), engine).(tui.App)
 
-	away, _ := app.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	away, _ := app.Update(keyCode('d', tea.ModCtrl))
 	if away.(tui.App).Screen() != "agents" {
 		t.Fatalf("ctrl+d landed on %q with a question up", away.(tui.App).Screen())
 	}
-	back, _ := away.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	back, _ := away.(tui.App).Update(keyCode(tea.KeyEsc))
 
 	if !back.(tui.App).ChatAwaiting() {
 		t.Error("the question was answered by walking away from it")
 	}
-	if view := plain(back.(tui.App).View()); !strings.Contains(view, "needs you") {
+	if view := plain(back.(tui.App).View().Content); !strings.Contains(view, "needs you") {
 		t.Errorf("the question did not survive the trip:\n%s", view)
 	}
 }

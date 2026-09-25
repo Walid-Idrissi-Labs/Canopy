@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
@@ -19,8 +19,8 @@ import (
 // The table is written for people, so a row can say "1 to 8" or "any other key" or "mouse drag".
 // Those are descriptions of a class of key rather than a key, and the ones that are keys are the
 // tokens with no space in them.
-func pressable(entry string) []tea.KeyMsg {
-	var keys []tea.KeyMsg
+func pressable(entry string) []tea.KeyPressMsg {
+	var keys []tea.KeyPressMsg
 	for _, token := range strings.Split(entry, " / ") {
 		token = strings.TrimSpace(token)
 		if token == "" || strings.Contains(token, " ") {
@@ -32,20 +32,20 @@ func pressable(entry string) []tea.KeyMsg {
 }
 
 // keyFor is one key by the name the help table prints.
-func keyFor(name string) tea.KeyMsg {
-	named := map[string]tea.KeyType{
-		"enter": tea.KeyEnter, "esc": tea.KeyEsc, "tab": tea.KeyTab, "shift+tab": tea.KeyShiftTab,
-		"space": tea.KeySpace, "up": tea.KeyUp, "down": tea.KeyDown, "pgup": tea.KeyPgUp,
-		"pgdown": tea.KeyPgDown, "home": tea.KeyHome, "end": tea.KeyEnd,
-		"alt+enter": tea.KeyEnter, "arrows": tea.KeyUp, "backspace": tea.KeyBackspace,
-		"ctrl+c": tea.KeyCtrlC, "ctrl+d": tea.KeyCtrlD, "ctrl+g": tea.KeyCtrlG,
-		"ctrl+k": tea.KeyCtrlK, "ctrl+n": tea.KeyCtrlN, "ctrl+r": tea.KeyCtrlR,
-		"ctrl+s": tea.KeyCtrlS, "ctrl+home": tea.KeyCtrlHome, "ctrl+end": tea.KeyCtrlEnd,
+func keyFor(name string) tea.KeyPressMsg {
+	named := map[string]tea.KeyPressMsg{
+		"enter": keyCode(tea.KeyEnter), "esc": keyCode(tea.KeyEsc), "tab": keyCode(tea.KeyTab), "shift+tab": keyCode(tea.KeyTab, tea.ModShift),
+		"space": keyCode(tea.KeySpace), "up": keyCode(tea.KeyUp), "down": keyCode(tea.KeyDown), "pgup": keyCode(tea.KeyPgUp),
+		"pgdown": keyCode(tea.KeyPgDown), "home": keyCode(tea.KeyHome), "end": keyCode(tea.KeyEnd),
+		"alt+enter": keyCode(tea.KeyEnter), "arrows": keyCode(tea.KeyUp), "backspace": keyCode(tea.KeyBackspace),
+		"ctrl+c": keyCode('c', tea.ModCtrl), "ctrl+d": keyCode('d', tea.ModCtrl), "ctrl+g": keyCode('g', tea.ModCtrl),
+		"ctrl+k": keyCode('k', tea.ModCtrl), "ctrl+n": keyCode('n', tea.ModCtrl), "ctrl+r": keyCode('r', tea.ModCtrl),
+		"ctrl+s": keyCode('s', tea.ModCtrl), "ctrl+home": keyCode(tea.KeyHome, tea.ModCtrl), "ctrl+end": keyCode(tea.KeyEnd, tea.ModCtrl),
 	}
 	if key, ok := named[name]; ok {
-		return tea.KeyMsg{Type: key}
+		return key
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+	return keyText(name)
 }
 
 // Every binding the program advertises, pressed on a conversation, none of them reaching a
@@ -91,20 +91,20 @@ func TestAnExplicitSendStillSendsAndAConfirmedCompactionStillRuns(t *testing.T) 
 	engine := &stubEngine{session: manyTurns(12)}
 	app := launchWith(store, withOneKey(), engine)
 
-	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("carry on")})
-	sent, _ := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed, _ := app.(tui.App).Update(keyText("carry on"))
+	sent, _ := typed.(tui.App).Update(keyCode(tea.KeyEnter))
 	if len(engine.sent) != 1 {
 		t.Fatalf("enter with a message in the box sent %+v", engine.sent)
 	}
 
-	offered, _ := sent.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	if view := plain(offered.(tui.App).View()); !strings.Contains(view, "ctrl+r again") {
+	offered, _ := sent.(tui.App).Update(keyCode('r', tea.ModCtrl))
+	if view := plain(offered.(tui.App).View().Content); !strings.Contains(view, "ctrl+r again") {
 		t.Fatalf("the first press did not offer anything:\n%s", view)
 	}
 
 	// The command that goes with the second press runs off the update loop, so the call is made by
 	// running it rather than by pressing the key.
-	_, cmd := offered.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	_, cmd := offered.(tui.App).Update(keyCode('r', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatal("the second press asked for nothing")
 	}
@@ -124,9 +124,9 @@ func TestAnUnansweredCompactionOfferLapses(t *testing.T) {
 	engine := &stubEngine{session: manyTurns(12)}
 	app := launchWith(store, withOneKey(), engine)
 
-	offered, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	elsewhere, _ := offered.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
-	again, cmd := elsewhere.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	offered, _ := app.(tui.App).Update(keyCode('r', tea.ModCtrl))
+	elsewhere, _ := offered.(tui.App).Update(keyText("x"))
+	again, cmd := elsewhere.(tui.App).Update(keyCode('r', tea.ModCtrl))
 	if cmd != nil {
 		cmd()
 	}
@@ -135,7 +135,7 @@ func TestAnUnansweredCompactionOfferLapses(t *testing.T) {
 		t.Errorf("a lapsed offer was taken up by the next ctrl+r, which spent %d times",
 			engine.compacted)
 	}
-	if view := plain(again.(tui.App).View()); !strings.Contains(view, "ctrl+r again") {
+	if view := plain(again.(tui.App).View().Content); !strings.Contains(view, "ctrl+r again") {
 		t.Errorf("the fresh press did not offer again:\n%s", view)
 	}
 }

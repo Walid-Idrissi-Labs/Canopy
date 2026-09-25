@@ -1,6 +1,7 @@
 package keys
 
 import (
+	"charm.land/lipgloss/v2"
 	"fmt"
 	"strings"
 	"time"
@@ -100,8 +101,10 @@ func (m Model) viewList() string {
 			chosen = "*"
 		}
 
-		line := fmt.Sprintf("%-1s %-14s %-18s %-34s %s",
-			chosen, key.Ref.Name, key.Ref.Provider, model, key.Fingerprint)
+		// Padded by what shows rather than by bytes: the model is styled, and fmt would count its
+		// colour codes as width and leave the next column crooked.
+		line := fmt.Sprintf("%-1s %-14s %-18s %s %s",
+			chosen, key.Ref.Name, key.Ref.Provider, padTo(model, 34), key.Fingerprint)
 		if i == m.cursor {
 			marker = "> "
 			line = styleSelect.Render(line)
@@ -423,4 +426,12 @@ func (m Model) footer() string {
 	default:
 		return "enter continue   esc cancel"
 	}
+}
+
+// padTo pads a possibly styled string to width columns, measured as displayed.
+func padTo(s string, width int) string {
+	if gap := width - lipgloss.Width(s); gap > 0 {
+		return s + strings.Repeat(" ", gap)
+	}
+	return s
 }

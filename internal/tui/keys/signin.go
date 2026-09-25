@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 // Signing in, and why none of it is a secret.
@@ -270,8 +270,8 @@ func (m *Model) abandonAttempt() tea.Cmd {
 //
 // Nothing is typed here, which is the entire point of the step, so every key except the one that
 // leaves would be a key that does nothing. Escape is the one that leaves.
-func (m *Model) handleSignInKey(msg tea.KeyMsg) tea.Cmd {
-	if msg.Type != tea.KeyEsc {
+func (m *Model) handleSignInKey(msg tea.KeyPressMsg) tea.Cmd {
+	if msg.Code != tea.KeyEsc {
 		return nil
 	}
 	cancel := m.abandonAttempt()

@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -300,9 +300,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		cmd := m.handleKey(msg)
 		return m, cmd
+
+	case tea.PasteMsg:
+		// A pasted key arrives whole, as its own message, in a terminal that brackets pastes, which
+		// is how almost everyone enters a secret. One line: a trailing newline copied with it is not
+		// part of the key.
+		m.paste(strings.TrimSpace(strings.ReplaceAll(msg.Content, "\n", "")))
+		return m, nil
 
 	// A sign-in waits on a browser, a device code or another process, which is minutes rather than
 	// milliseconds. Bubble Tea runs one goroutine, so waiting for any of that inside a handler would
@@ -316,7 +323,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
+func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch m.mode {
 	case modeList:
 		m.handleListKey(msg)
@@ -342,7 +349,21 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) handleListKey(msg tea.KeyMsg) {
+// paste adds pasted text to whichever field is being typed into, if any.
+func (m *Model) paste(text string) {
+	switch m.mode {
+	case modeName, modeRename:
+		m.draftName += text
+	case modeBaseURL:
+		m.draftBaseURL += text
+	case modeModel:
+		m.draftModel += text
+	case modeSecret:
+		m.draftSecret += text
+	}
+}
+
+func (m *Model) handleListKey(msg tea.KeyPressMsg) {
 	switch msg.String() {
 	case "a", "n":
 		m.mode = modeName
@@ -539,7 +560,7 @@ func Offered(store Store, key core.KeyMetadata) ([]catalog.Model, error) {
 }
 
 // handleModelPickKey moves through the offered models and takes one.
-func (m *Model) handleModelPickKey(msg tea.KeyMsg) {
+func (m *Model) handleModelPickKey(msg tea.KeyPressMsg) {
 	// One row past the end is the way out of the list. It is a row rather than a separate key
 	// because a key that is not on screen is a key nobody finds, and this is the escape the whole
 	// catalog depends on being there.
@@ -593,20 +614,18 @@ func (m *Model) selectModel(model string, remember bool) {
 
 // handleTextKey edits a text field, shared by every prompt including the secret one, so typed
 // input is handled in one place rather than once per field.
-func (m *Model) handleTextKey(msg tea.KeyMsg, field *string, commit func(*Model)) {
-	switch msg.Type {
-	case tea.KeyEnter:
+func (m *Model) handleTextKey(msg tea.KeyPressMsg, field *string, commit func(*Model)) {
+	switch {
+	case msg.Code == tea.KeyEnter:
 		commit(m)
-	case tea.KeyEsc:
+	case msg.Code == tea.KeyEsc:
 		m.cancelDraft()
-	case tea.KeyBackspace:
+	case msg.Code == tea.KeyBackspace:
 		if runes := []rune(*field); len(runes) > 0 {
 			*field = string(runes[:len(runes)-1])
 		}
-	case tea.KeyRunes:
-		*field += string(msg.Runes)
-	case tea.KeySpace:
-		*field += " "
+	case msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0:
+		*field += msg.Text
 	}
 }
 
@@ -746,7 +765,7 @@ func (m Model) providerRows() []providerRow {
 	return rows
 }
 
-func (m *Model) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
+func (m *Model) handleProviderKey(msg tea.KeyPressMsg) tea.Cmd {
 	rows := m.providerRows()
 	switch msg.String() {
 	case "j", "down":
@@ -784,7 +803,7 @@ func (m *Model) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) handleConfirmKey(msg tea.KeyMsg) {
+func (m *Model) handleConfirmKey(msg tea.KeyPressMsg) {
 	switch msg.String() {
 	case "y", "enter":
 		if m.cursor < len(m.keys) {

@@ -1,7 +1,8 @@
 package tui
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
+	"image/color"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
@@ -41,13 +42,13 @@ func (t themed) Render(strs ...string) string { return t().Render(strs...) }
 //
 // A diff line is the honest example: it wants a green plus sign in front of syntax highlighted
 // source, so it composes its own style and cannot use a ready made one. These follow the theme
-// through the change hook rather than by being read lazily, because lipgloss.TerminalColor has an
+// through the change hook rather than by being read lazily, because color.Color has an
 // unexported method and cannot be implemented outside lipgloss.
 var (
-	colorPass    lipgloss.TerminalColor
-	colorFail    lipgloss.TerminalColor
-	colorStale   lipgloss.TerminalColor
-	colorPending lipgloss.TerminalColor
+	colorPass    color.Color
+	colorFail    color.Color
+	colorStale   color.Color
+	colorPending color.Color
 )
 
 func init() { theme.OnChange(refreshColours) }

@@ -1,7 +1,7 @@
 package chat
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"encoding/json"
 	"fmt"

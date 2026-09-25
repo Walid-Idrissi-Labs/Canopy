@@ -1,7 +1,8 @@
 package tui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 	"os"
 	"os/signal"
 	"syscall"
@@ -251,7 +252,8 @@ func (a *App) resize(dim Dimensions) {
 }
 
 func (a App) Init() tea.Cmd {
-	return tea.Batch(a.dashboard.Init(), a.chat.Init())
+	// The terminal is asked for its background, so the light and dark palettes follow it.
+	return tea.Batch(a.dashboard.Init(), a.chat.Init(), tea.RequestBackgroundColor)
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -273,6 +275,23 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.agents.SetVisible(false)
 		return a, cmd
 
+	case tea.BackgroundColorMsg:
+		theme.SetDark(m.IsDark())
+		return a, nil
+
+	case tea.PasteMsg:
+		// To the screen in front and nowhere else, like a keystroke. Broadcast, a key pasted into
+		// the credential screen also landed in the conversation's message box, one enter from being
+		// sent to the model.
+		var cmd tea.Cmd
+		switch a.screen {
+		case screenChat:
+			a.chat, cmd = a.chat.Update(m)
+		case screenKeys:
+			a.keys, cmd = a.keys.Update(m)
+		}
+		return a, cmd
+
 	case chat.ActionMsg:
 		// A slash command that named something only the application can do. The chat says what was
 		// asked for and owns none of it, which is what keeps "which screen is showing" in one place.
@@ -291,9 +310,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// draws below the header and knows nothing about how tall the header is. Without this a
 			// drag would select the row a header's height above the pointer, and a press on the
 			// header itself would read as a press on the first line of the conversation.
-			m.Y -= a.dim.HeaderHeight()
 			var cmd tea.Cmd
-			a.chat, cmd = a.chat.Update(m)
+			a.chat, cmd = a.chat.Update(shiftMouse(m, -a.dim.HeaderHeight()))
 			return a, cmd
 		}
 		return a, nil
@@ -302,7 +320,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.resize(Dimensions{Width: m.Width, Height: m.Height})
 	}
 
-	if key, ok := msg.(tea.KeyMsg); ok {
+	if key, ok := msg.(tea.KeyPressMsg); ok {
 		// Help is answered before anything else, and any key leaves it except the ones that scroll
 		// it. Somebody who opened it by accident should not have to find the one key that closes it,
 		// and somebody reading it should not be thrown out for trying to see the rest.
@@ -312,7 +330,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.helpScroll++
 			case "k", "up":
 				a.helpScroll--
-			case "pgdown", " ":
+			case "pgdown", " ", "space":
 				a.helpScroll += a.dim.BodyHeight() / 2
 			case "pgup":
 				a.helpScroll -= a.dim.BodyHeight() / 2
@@ -597,7 +615,7 @@ func named(who []string, id string) bool {
 // Chat is the awkward case and it is worth saying why. Every printable key belongs to the message
 // box, so navigation away from chat has to be on keys that are not printable. Anything else would
 // mean the letter that opens the dashboard could never be typed in a message.
-func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
+func (a App) routeKey(msg tea.KeyPressMsg) (bool, App, tea.Cmd) {
 	switch a.screen {
 	case screenChat:
 		switch msg.String() {
@@ -611,7 +629,7 @@ func (a App) routeKey(msg tea.KeyMsg) (bool, App, tea.Cmd) {
 			// turn, because that is what somebody hitting it during a long reply almost always
 			// means, and quitting instead would throw the conversation away.
 			if a.chat.Working() {
-				a.chat, _ = a.chat.Update(tea.KeyMsg{Type: tea.KeyEsc})
+				a.chat, _ = a.chat.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 				return true, a, nil
 			}
 			// And even then it asks to be pressed again. The same finger that just stopped a turn
@@ -934,7 +952,17 @@ func (a App) typing() bool {
 	}
 }
 
-func (a App) View() string {
+// View is the frame, in the alternate screen and with the mouse reported, which is what lets the
+// wheel scroll the conversation rather than arrive as arrow keys.
+func (a App) View() tea.View {
+	view := tea.NewView(a.render())
+	view.AltScreen = true
+	view.MouseMode = tea.MouseModeCellMotion
+	return view
+}
+
+// render is the frame as text.
+func (a App) render() string {
 	if !a.dim.Usable() {
 		return TooSmall(a.dim)
 	}
@@ -1136,9 +1164,7 @@ func RunAppConfigured(
 	// dragging: option on macOS terminals, shift on most others. That is the standard price every
 	// full screen program pays for the wheel, and the trade is worth making in the direction that
 	// does not silently eat what somebody was typing.
-	program := tea.NewProgram(
-		NewAppConfigured(store, keyStore, engine, dir, keyName, options),
-		tea.WithAltScreen(), tea.WithMouseCellMotion())
+	program := tea.NewProgram(NewAppConfigured(store, keyStore, engine, dir, keyName, options))
 
 	// Closing the terminal window sends SIGHUP, which by default ends the process on the spot and
 	// skips every deferred cleanup: vendor agents, MCP servers and their children were left running
@@ -1157,4 +1183,22 @@ func RunAppConfigured(
 		return app.ChatSession(), err
 	}
 	return "", err
+}
+
+// shiftMouse moves a mouse event by dy rows, keeping its kind: the chat draws below the header and
+// knows nothing of how tall the header is.
+func shiftMouse(msg tea.MouseMsg, dy int) tea.Msg {
+	mouse := msg.Mouse()
+	mouse.Y += dy
+	switch msg.(type) {
+	case tea.MouseClickMsg:
+		return tea.MouseClickMsg(mouse)
+	case tea.MouseReleaseMsg:
+		return tea.MouseReleaseMsg(mouse)
+	case tea.MouseWheelMsg:
+		return tea.MouseWheelMsg(mouse)
+	case tea.MouseMotionMsg:
+		return tea.MouseMotionMsg(mouse)
+	}
+	return msg
 }

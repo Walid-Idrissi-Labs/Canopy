@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -41,7 +41,7 @@ func TestCyclingPastAModeNeverPutsTheAgentInIt(t *testing.T) {
 	// cruise to build is three rungs, and the first of them is the read-only one.
 	var cmd tea.Cmd
 	for press := range 3 {
-		m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		m, cmd = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 		if got := engine.Mode("s1").Name; got != core.ModeCruise {
 			t.Fatalf("press %d put the agent in %q on the way past it", press+1, got)
 		}
@@ -66,7 +66,7 @@ func TestTheModeTheKeyStopsOnArrivesByItself(t *testing.T) {
 	engine := inMode(core.ModeCruise)
 	m := boxed(engine)
 
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, cmd := m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := engine.Mode("s1").Name; got != core.ModeCruise {
 		t.Fatalf("the mode changed on the keystroke itself, leaving the agent in %q", got)
 	}
@@ -87,8 +87,8 @@ func TestTheTimerFromAModeWalkedPastIsDropped(t *testing.T) {
 	engine := inMode(core.ModeCruise)
 	m := boxed(engine)
 
-	m, abandoned := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
-	m, kept := m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, abandoned := m.Update(keyCode(tea.KeyTab, tea.ModShift))
+	m, kept := m.Update(keyCode(tea.KeyTab, tea.ModShift))
 
 	m, _ = m.Update(abandoned())
 	if got := engine.Mode("s1").Name; got != core.ModeCruise {
@@ -108,7 +108,7 @@ func TestSendingAMessageAppliesTheSelectionFirst(t *testing.T) {
 	engine := inMode(core.ModeCruise)
 	m := boxed(engine)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	_, _ = run(m, "work out what to do")
 
 	if len(engine.sentIn) != 1 {
@@ -127,7 +127,7 @@ func TestLeavingTheConversationAppliesTheSelection(t *testing.T) {
 	engine := inMode(core.ModeCruise)
 	m := boxed(engine)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	m.SetSession("s2", "other")
 
 	if got := engine.Mode("s1").Name; got != core.ModePlan {
@@ -144,7 +144,7 @@ func TestNamingAModeSupersedesASelection(t *testing.T) {
 	engine := inMode(core.ModeCruise)
 	m := boxed(engine)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	m, _ = run(m, "/mode confined")
 
 	if got := engine.Mode("s1").Name; got != core.ModeConfined {
@@ -166,7 +166,7 @@ func TestNamingAModeSupersedesASelection(t *testing.T) {
 func TestTheBoxSaysWhatIsEnforcedWhileTheKeyIsSettling(t *testing.T) {
 	m := boxed(inMode(core.ModeCruise))
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 
 	// The top edge alone. The notice under the wordmark names the mode too, and this is about what
 	// the edge of the message box says, which is the part that is on screen at all times.

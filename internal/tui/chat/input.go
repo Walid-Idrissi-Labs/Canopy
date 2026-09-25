@@ -3,7 +3,7 @@ package chat
 import (
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -168,17 +168,13 @@ func (i *Input) edited() { i.release() }
 //
 // Returning "not consumed" is what lets the model above decide what an unhandled key means, rather
 // than the input silently swallowing every keystroke that reaches it.
-func (i *Input) Update(msg tea.KeyMsg) bool {
-	switch msg.Type {
-	case tea.KeyRunes:
-		i.insert(msg.Runes)
-		return true
-
-	case tea.KeySpace:
+func (i *Input) Update(msg tea.KeyPressMsg) bool {
+	switch msg.String() {
+	case "space":
 		i.insert([]rune{' '})
 		return true
 
-	case tea.KeyBackspace:
+	case "backspace":
 		if i.cursor > 0 {
 			i.runes = append(i.runes[:i.cursor-1], i.runes[i.cursor:]...)
 			i.cursor--
@@ -186,40 +182,40 @@ func (i *Input) Update(msg tea.KeyMsg) bool {
 		}
 		return true
 
-	case tea.KeyDelete:
+	case "delete":
 		if i.cursor < len(i.runes) {
 			i.runes = append(i.runes[:i.cursor], i.runes[i.cursor+1:]...)
 			i.edited()
 		}
 		return true
 
-	case tea.KeyUp:
+	case "up":
 		return i.older()
 
-	case tea.KeyDown:
+	case "down":
 		return i.newer()
 
-	case tea.KeyLeft:
+	case "left":
 		if i.cursor > 0 {
 			i.cursor--
 		}
 		return true
 
-	case tea.KeyRight:
+	case "right":
 		if i.cursor < len(i.runes) {
 			i.cursor++
 		}
 		return true
 
-	case tea.KeyHome, tea.KeyCtrlA:
+	case "home", "ctrl+a":
 		i.cursor = 0
 		return true
 
-	case tea.KeyEnd, tea.KeyCtrlE:
+	case "end", "ctrl+e":
 		i.cursor = len(i.runes)
 		return true
 
-	case tea.KeyCtrlU:
+	case "ctrl+u":
 		// Everything before the cursor, which is the shell habit and the one people reach for when
 		// they have changed their mind about a whole message.
 		i.runes = append([]rune(nil), i.runes[i.cursor:]...)
@@ -227,14 +223,20 @@ func (i *Input) Update(msg tea.KeyMsg) bool {
 		i.edited()
 		return true
 
-	case tea.KeyCtrlW:
+	case "ctrl+w":
 		i.deleteWord()
+		return true
+	}
+
+	// Printable text, a character or several at once from an input method.
+	if msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
+		i.insert([]rune(msg.Text))
 		return true
 	}
 
 	// A literal newline, for a message with a blank line in it. Enter sends, so there has to be
 	// some way to type one, and every comparable tool uses this pair.
-	if msg.String() == "alt+enter" || msg.String() == "ctrl+j" {
+	if msg.String() == "alt+enter" || msg.String() == "ctrl+j" || msg.String() == "shift+enter" {
 		i.insert([]rune{'\n'})
 		return true
 	}
@@ -319,4 +321,19 @@ func (i Input) Lines() []string {
 func (i Input) Height() int {
 	const border = 2
 	return len(i.Lines()) + border
+}
+
+// Paste inserts pasted text as typed, all at once. A terminal that brackets its pastes sends them as
+// their own message rather than as keystrokes, so an enter inside a paste is a newline, not a send.
+func (i *Input) Paste(text string) {
+	// Terminals send a pasted line break as a carriage return, which drawn raw would send the cursor
+	// back over the start of the line; every control but newline and tab is dropped for the same
+	// reason.
+	text = strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(text)
+	i.insert([]rune(strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || (r >= 0x20 && r != 0x7f && (r < 0x80 || r > 0x9f)) {
+			return r
+		}
+		return -1
+	}, text)))
 }

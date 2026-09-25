@@ -5,8 +5,8 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -85,7 +85,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
 	case eventMsg:
@@ -106,7 +106,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c", "esc":
 		return m, tea.Quit
@@ -220,7 +220,15 @@ func (m Model) Context() string {
 
 // View renders the screen standalone, with its own chrome. Used when the dashboard is driven
 // directly rather than inside the application frame.
-func (m Model) View() string {
+// View is the dashboard as a program's frame, in the alternate screen.
+func (m Model) View() tea.View {
+	view := tea.NewView(m.Render())
+	view.AltScreen = true
+	return view
+}
+
+// Render is the dashboard as text, for the application that shows it as one of its screens.
+func (m Model) Render() string {
 	var b strings.Builder
 
 	b.WriteString(m.renderTitle())
@@ -447,7 +455,7 @@ func (m Model) Snapshot() core.ProjectSnapshot { return m.snapshot }
 
 // Run starts the dashboard as a full screen program.
 func Run(store core.SnapshotStore) error {
-	program := tea.NewProgram(New(store), tea.WithAltScreen())
+	program := tea.NewProgram(New(store))
 	_, err := program.Run()
 	return err
 }
