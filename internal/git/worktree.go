@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -198,14 +199,22 @@ func (r *Repo) Create(ctx context.Context, name, branch string) (core.WorkspaceS
 		return core.WorkspaceSnapshot{}, err
 	}
 
-	// Beside the repository rather than inside it. A worktree nested in the primary checkout appears
-	// in every glob, every grep and every build, and the first thing anybody notices is their test
-	// suite running twice.
+	// Outside the repository, and not beside it either. A worktree nested in the primary checkout
+	// appears in every glob, every grep and every build; one beside it fills the folder that holds
+	// the user's projects with directories they did not make and nothing ever removes. Canopy's own
+	// data directory holds them instead, one folder per repository.
 	root, err := r.run(ctx, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return core.WorkspaceSnapshot{}, fmt.Errorf("finding the repository root: %w", err)
 	}
-	path := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+name)
+	home, err := WorktreeHome(root)
+	if err != nil {
+		return core.WorkspaceSnapshot{}, err
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return core.WorkspaceSnapshot{}, fmt.Errorf("creating %s: %w", home, err)
+	}
+	path := filepath.Join(home, name)
 
 	if _, err := os.Stat(path); err == nil {
 		return core.WorkspaceSnapshot{}, fmt.Errorf(
@@ -476,4 +485,38 @@ func (r *Repo) runRaw(ctx context.Context, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w (%d bytes dropped)", args[0], ErrOutputTruncated, result.Truncated)
 	}
 	return result.Output, nil
+}
+
+// WorktreeHomeEnvVar overrides where agent worktrees are created.
+const WorktreeHomeEnvVar = "CANOPY_WORKTREES"
+
+// WorktreeHome is the directory that holds the agent worktrees of the repository at root:
+// <data>/canopy/worktrees/<repository name>-<short hash of its path>. Hashed so two repositories
+// with the same name do not share a folder, and named so a person looking in it can tell which is
+// which.
+func WorktreeHome(root string) (string, error) {
+	base := os.Getenv(WorktreeHomeEnvVar)
+	if base == "" && testing.Testing() {
+		// A test binary never writes into the user's own data directory, whichever package's test
+		// happens to create a worktree.
+		base = filepath.Join(os.TempDir(), "canopy-test-worktrees")
+	}
+	if base == "" {
+		data := os.Getenv("XDG_DATA_HOME")
+		if data == "" {
+			config, err := os.UserConfigDir()
+			if err != nil {
+				return "", fmt.Errorf("finding Canopy's data directory: %w", err)
+			}
+			data = config
+		}
+		base = filepath.Join(data, "canopy", "worktrees")
+	}
+	// Resolved, so the same repository reached through a symlink has one home, as it has one
+	// toplevel in git's own answer.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	sum := sha256.Sum256([]byte(root))
+	return filepath.Join(base, filepath.Base(root)+"-"+hex.EncodeToString(sum[:4])), nil
 }
