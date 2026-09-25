@@ -320,3 +320,71 @@ func TestNotificationsAreOffUnlessAskedFor(t *testing.T) {
 		t.Fatalf("a notification nobody asked for: %q", heard.String())
 	}
 }
+
+// A question in the conversation on screen asks in place; it is announced only once the terminal
+// is behind another window. Coming back to it ends that, and a turn that stops to wait is waiting,
+// not finished.
+func TestNotificationsAreForWhatCannotBeSeen(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	var heard bytes.Buffer
+	defer tui.NotificationsHeard(&heard)()
+	defer tui.PlayTerminal(map[string]string{tui.NotifyEnv: "1", "TERM": "xterm-256color"})()
+
+	engine := &stubEngine{session: core.Session{ID: "session-1"}}
+	app := launchWith(store, withOneKey(), engine).(tui.App)
+	engine.waiting = []session.Waiting{waitingOn("", "session-1")}
+	app = event(app)
+	if heard.Len() != 0 {
+		t.Fatalf("the question on screen was announced: %q", heard.String())
+	}
+	engine.waiting = nil
+	app = event(app)
+	next, _ := app.Update(tea.BlurMsg{})
+	app = next.(tui.App)
+	engine.waiting = []session.Waiting{waitingOn("", "session-1")}
+	app = event(app)
+	if !strings.Contains(heard.String(), "your conversation asks to run npm test") {
+		t.Fatalf("a question while away was not announced: %q", heard.String())
+	}
+
+	// Back in front: a finish is seen, so it is not announced.
+	heard.Reset()
+	engine.waiting = nil
+	next, _ = app.Update(tea.FocusMsg{})
+	app = next.(tui.App)
+	engine.agents = []session.AgentStatus{{Agent: session.Agent{Name: "refactor", SessionID: "s3"}, State: core.AgentWorking}}
+	app = event(app)
+	engine.agents[0].State = core.AgentIdle
+	app = event(app)
+	if heard.Len() != 0 {
+		t.Fatalf("a finish in front of the person was announced: %q", heard.String())
+	}
+
+	// Away again: an agent that stops to ask is announced as asking, not as finished.
+	next, _ = app.Update(tea.BlurMsg{})
+	app = next.(tui.App)
+	engine.agents[0].State = core.AgentWorking
+	app = event(app)
+	engine.agents[0].State = core.AgentAwaitingPermission
+	engine.waiting = []session.Waiting{waitingOn("refactor", "s3")}
+	event(app)
+	if strings.Contains(heard.String(), "finished") || !strings.Contains(heard.String(), "refactor asks to run") {
+		t.Fatalf("heard %q", heard.String())
+	}
+}
+
+// Progress is drawn only where the terminal is known to show it.
+func TestProgressIsLeftOutWhereItIsNotUnderstood(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	defer tui.PlayTerminal(map[string]string{"TERM_PROGRAM": "iTerm.app"})()
+	app := launchWith(store, withOneKey(), &stubEngine{session: core.Session{ID: "session-1"}}).(tui.App)
+	if app.View().ProgressBar != nil {
+		t.Fatal("progress drawn on a terminal that shows OSC 9 as a notification")
+	}
+	defer tui.PlayTerminal(map[string]string{"TERM_PROGRAM": "ghostty"})()
+	if app.View().ProgressBar == nil {
+		t.Fatal("no progress on a terminal that draws it")
+	}
+}

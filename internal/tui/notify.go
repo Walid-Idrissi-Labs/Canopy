@@ -47,7 +47,8 @@ func notification(title, body string) string {
 	term := getenv("TERM")
 	switch {
 	case getenv("KITTY_WINDOW_ID") != "" || strings.Contains(term, "kitty"):
-		seq = "\x1b]99;i=1:d=0;" + title + ": " + body + "\x1b\\"
+		// No metadata: one notification, complete in this sequence (kitty's default is done=1).
+		seq = "\x1b]99;;" + title + ": " + body + "\x1b\\"
 	case strings.HasPrefix(term, "foot") || strings.HasPrefix(term, "rxvt"):
 		seq = "\x1b]777;notify;" + title + ";" + body + "\x1b\\"
 	default:

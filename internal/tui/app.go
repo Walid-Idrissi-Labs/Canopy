@@ -632,8 +632,12 @@ func (a *App) noticeAttention() {
 
 	if len(fresh) > 0 {
 		ring()
+		// Announced when it cannot be seen: the terminal is behind another window, or the question
+		// belongs to a conversation other than the one on screen, which asks it in place already.
 		for _, id := range fresh {
-			notify(a.whyWaiting(id))
+			if a.blurred || id != a.chat.SessionID() {
+				notify(a.whyWaiting(id))
+			}
 		}
 	}
 
@@ -674,7 +678,7 @@ func (a App) nameOf(id string) string {
 			return status.Agent.Name
 		}
 	}
-	return id
+	return "an agent"
 }
 
 // whyWaiting says who needs a person and for what, as a notification.

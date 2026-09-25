@@ -29,7 +29,7 @@ func TestANotificationSuitsTheTerminal(t *testing.T) {
 		want string
 	}{
 		{"iTerm2, WezTerm, Ghostty", map[string]string{"TERM": "xterm-256color"}, "\x1b]9;Canopy: done\x07"},
-		{"kitty", map[string]string{"TERM": "xterm-kitty"}, "\x1b]99;i=1:d=0;Canopy: done\x1b\\"},
+		{"kitty", map[string]string{"TERM": "xterm-kitty"}, "\x1b]99;;Canopy: done\x1b\\"},
 		{"foot", map[string]string{"TERM": "foot"}, "\x1b]777;notify;Canopy;done\x1b\\"},
 		{"inside tmux", map[string]string{"TERM": "screen", "TMUX": "/tmp/t"},
 			"\x1bPtmux;\x1b\x1b]9;Canopy: done\x07\x1b\\"},
