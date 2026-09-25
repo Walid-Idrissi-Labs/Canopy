@@ -610,7 +610,7 @@ func TestAFileAtTheOlderSchemaMigratesForward(t *testing.T) {
 	}
 	if _, err := storage.db.Exec(
 		`ALTER TABLE turns DROP COLUMN steps; ALTER TABLE turns DROP COLUMN context_tokens;
-		DROP TABLE asides; PRAGMA user_version = 7`); err != nil {
+		ALTER TABLE sessions DROP COLUMN tainted; DROP TABLE asides; PRAGMA user_version = 7`); err != nil {
 		t.Fatalf("winding the file back: %v", err)
 	}
 	if err := storage.Close(); err != nil {

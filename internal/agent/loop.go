@@ -135,6 +135,9 @@ type Loop struct {
 	// MaxTokens bounds the whole turn. Zero means no token bound, which is only appropriate when
 	// something above is enforcing one.
 	MaxTokens int
+	// Tainted says whether the conversation has taken in content from outside, asked before every
+	// tool call; see permission.Request.Tainted. Nil means never.
+	Tainted func() bool
 	// Gate is asked before every model call after the first, with what the turn has used so far,
 	// and a reason stops the turn there. It is how a spending cap holds inside a long turn: the
 	// request in flight finishes, and the next one is not made.
@@ -463,6 +466,7 @@ func (l *Loop) invoke(
 		Command:   commandIn(call.Input),
 		Arguments: canonicalArguments(call.Input),
 		Opaque:    externalArguments(tool),
+		Tainted:   l.Tainted != nil && l.Tainted(),
 	}
 
 	decision := permission.Decide(req, l.TrustNow(), l.Grants)
@@ -490,6 +494,9 @@ func (l *Loop) invoke(
 		entry.Outcome = permission.Allow
 	}
 
+	if req.Tainted {
+		ctx = core.WithTainted(ctx)
+	}
 	result, err := tool.Run(ctx, call.Input)
 	if err != nil {
 		// A Go error from a tool means it could not run at all, which is different from it running

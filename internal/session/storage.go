@@ -35,7 +35,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 9
+const schemaVersion = 10
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -212,6 +212,11 @@ var migrations = []string{
 	ALTER TABLE turns ADD COLUMN steps TEXT NOT NULL DEFAULT '[]';
 	ALTER TABLE turns ADD COLUMN context_tokens INTEGER NOT NULL DEFAULT 0;
 	`,
+
+	// Added with taint-aware approvals (D-57). A conversation that took in outside content stays
+	// tainted after a restart and a pickup, including one tainted only because the agent that
+	// started it was, which nothing in its own turns would show.
+	`ALTER TABLE sessions ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -377,6 +382,32 @@ func (s *Storage) SaveSessionMode(sessionID, mode string) error {
 		return fmt.Errorf("saving the mode for session %s: %w", sessionID, err)
 	}
 	return nil
+}
+
+// SaveSessionTaint records that a conversation has taken in outside content. It is never cleared.
+func (s *Storage) SaveSessionTaint(sessionID string) error {
+	if _, err := s.db.Exec(`UPDATE sessions SET tainted = 1 WHERE id = ?`, sessionID); err != nil {
+		return fmt.Errorf("saving the taint for session %s: %w", sessionID, err)
+	}
+	return nil
+}
+
+// taintedSessions reads back every conversation recorded as tainted.
+func (s *Storage) taintedSessions() ([]string, error) {
+	rows, err := s.db.Query(`SELECT id FROM sessions WHERE tainted <> 0`)
+	if err != nil {
+		return nil, fmt.Errorf("loading tainted sessions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // sessionModes reads back every recorded mode, by session.

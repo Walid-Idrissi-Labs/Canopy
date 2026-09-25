@@ -120,8 +120,10 @@ type Engine struct {
 
 	mu       sync.Mutex
 	sessions map[string]*core.Session
-	order    []string
-	cancels  map[string]context.CancelFunc
+	// taint marks conversations known to have taken in outside content; see tainted.
+	taint   map[string]bool
+	order   []string
+	cancels map[string]context.CancelFunc
 
 	resolver Resolver
 	events   *store.Broker
@@ -449,7 +451,17 @@ func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
 	if err != nil {
 		return err
 	}
+	tainted, err := storage.taintedSessions()
+	if err != nil {
+		return err
+	}
 	e.mu.Lock()
+	for _, sessionID := range tainted {
+		if e.taint == nil {
+			e.taint = map[string]bool{}
+		}
+		e.taint[sessionID] = true
+	}
 	for sessionID, projectID := range projects {
 		e.projects[sessionID] = projectID
 	}
@@ -901,6 +913,7 @@ func (e *Engine) run(
 		SessionID: sessionID,
 		MaxSteps:  e.maxStepsSetting(),
 		Gate:      e.budgetGate(sessionID, id),
+		Tainted:   func() bool { return e.tainted(sessionID) },
 	}
 
 	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never
@@ -1109,8 +1122,10 @@ func (o *turnObserver) Text(chunk string) {
 
 func (o *turnObserver) Notice(text string) {
 	// A search the provider ran is recorded in the audit trail like any tool call, marked as run by
-	// the provider, since no approval prompt saw it.
+	// the provider, since no approval prompt saw it. It taints the conversation now, and the taint is
+	// saved now: the notice itself is not kept across a restart.
 	if query, ok := strings.CutPrefix(text, anthropic.WebSearchNotice); ok {
+		o.engine.markTainted(o.sessionID)
 		o.engine.mu.Lock()
 		trail := o.engine.trail
 		o.engine.mu.Unlock()
@@ -1139,11 +1154,20 @@ func (o *turnObserver) ToolRequested(call core.ToolCall) {
 	})
 }
 
-func (o *turnObserver) ToolFinished(_ core.ToolCall, result core.ToolResult) {
+func (o *turnObserver) ToolFinished(call core.ToolCall, result core.ToolResult) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
 		t.ToolResults = append(t.ToolResults, result)
 		t.State = core.TurnStreaming
 	})
+	// Outside content taints the conversation when it arrives, and the taint is saved then, rather
+	// than worked out later from a record that may not show it after a restart (an MCP server not
+	// started again, for one).
+	o.engine.mu.Lock()
+	tools, _ := o.engine.toolsForLocked(o.sessionID)
+	o.engine.mu.Unlock()
+	if taintSource(tools, call.Name) {
+		o.engine.markTainted(o.sessionID)
+	}
 	o.engine.refreshTasks(o.sessionID)
 }
 
@@ -1520,6 +1544,7 @@ func (e *Engine) noteJoin(sessionID string) {
 	if parent == "" {
 		return
 	}
+	e.taintParent(sessionID, parent)
 	s, ok := e.Session(sessionID)
 	if !ok || len(s.Turns) == 0 {
 		return

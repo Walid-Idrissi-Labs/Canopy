@@ -78,3 +78,7 @@ func RunTrampoline([]string) error { return ErrUnavailable }
 
 // NetworkEnforced reports whether this machine can limit a command's network; Seatbelt always can.
 func NetworkEnforced() bool { return true }
+
+// LoopbackKept reports whether a network limited to the proxy still reaches the loopback address;
+// Seatbelt limits by address, so it does.
+func LoopbackKept() bool { return true }
