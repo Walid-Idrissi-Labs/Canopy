@@ -1,0 +1,40 @@
+╭─ 1 alpha · idle ─────────────────────╮╭─ 2 bravo · idle ─────────────────────╮╭─ 3 carol · idle ─────────────────────╮
+│ > what is happening                  ││ > what is happening                  ││ > what is happening                  │
+│                                      ││                                      ││                                      │
+│ a reply from alpha                   ││ a reply from bravo                   ││ a reply from carol                   │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+╰─ $0.01 · 0% cached ─────────  ▄▄▀▄▄  ╯╰─ $0.01 · 0% cached ─────────  ▄▄▀▄▄  ╯╰─ $0.01 · 0% cached ─────────  ▄▄▀▄▄  ╯
+╭─ 4 delta · idle ─────────────────────╮╭─ 5 echo · idle ──────────────────────╮╭─ 6 fox · idle ───────────────────────╮
+│ > what is happening                  ││ > what is happening                  ││ > what is happening                  │
+│                                      ││                                      ││                                      │
+│ a reply from delta                   ││ a reply from echo                    ││ a reply from fox                     │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+│                                      ││                                      ││                                      │
+╰─ $0.01 · 0% cached ─────────  ▄▄▀▄▄  ╯╰─ $0.01 · 0% cached ─────────  ▄▄▀▄▄  ╯╰─ $0.01 · 0% cached ─────────  ▄▄▀▄▄  ╯
+  page 1/2 · 2 more off screen  [ and ] to page

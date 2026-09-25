@@ -844,3 +844,6 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   internet, and where the network cannot be limited the word list is the only guard, which a
   determined script can get around. Files in the workspace do not taint a conversation, though they
   can carry instructions too.
+- At most half the machine's CPUs worth of test runs execute at once, across every agent; the rest
+  wait, shown as queued. `CANOPY_MAX_TESTS` changes the number. Agents' own shell commands are not
+  limited this way.

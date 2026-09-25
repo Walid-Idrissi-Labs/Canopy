@@ -1,0 +1,24 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ▲ canopy  credentials                                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+     NAME           PROVIDER           MODEL                              FINGERPRINT
+>   claude         anthropic          provider default                   abc123def456
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  enter use   m model   e rename   a add   d remove   j/k move   esc back
