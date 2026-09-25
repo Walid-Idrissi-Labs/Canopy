@@ -155,6 +155,10 @@ func (s Session) ContextUse() ContextUse {
 	// is the conversation so far. Later turns only add to it.
 	for i := len(s.Turns) - 1; i >= 0; i-- {
 		turn := s.Turns[i]
+		if turn.Context > 0 {
+			use.Tokens = turn.Context + estimateTokens(s.textAfter(i))
+			return use
+		}
 		if turn.Usage.InputTokens > 0 {
 			// Plus what has been said since, so a long question does not read as free until after
 			// it has been answered.
@@ -194,3 +198,18 @@ func (s Session) allText() int {
 const bytesPerToken = 4
 
 func estimateTokens(bytes int) int { return bytes / bytesPerToken }
+
+// AutoCompactTokens is where a conversation is compacted without being asked: 80 percent of its
+// window, but never more than AutoCompactCeiling. Every request resends the whole conversation, so a
+// million-token window used to its edge is paid for on every step, and long contexts also answer
+// worse; the ceiling keeps a long session both cheap and sharp.
+func AutoCompactTokens(window ContextWindow) int {
+	at := int(float64(window) * CompactionThreshold)
+	if at > AutoCompactCeiling {
+		at = AutoCompactCeiling
+	}
+	return at
+}
+
+// AutoCompactCeiling bounds AutoCompactTokens.
+const AutoCompactCeiling = 160_000

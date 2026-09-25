@@ -42,7 +42,14 @@ Keep, in this order of priority:
   - anything that was tried and did not work, so it is not tried again
 
 Leave out pleasantries and restatements. Write it as notes for yourself, not as a report for ` +
-	`somebody else. Be specific: a summary that says "discussed the API" is worse than no summary.`
+	`somebody else. Be specific: a summary that says "discussed the API" is worse than no summary.
+
+Do not call any tools. Answer with the summary only.`
+
+// summaryMaxTokens bounds what a summary may spend. A compaction exists to save money, and without a
+// bound it inherited the default for an agent turn, 32 thousand output tokens, for text that has to
+// fit in a few thousand to be worth having.
+const summaryMaxTokens = 8000
 
 // CompactionResult describes what a compaction did.
 type CompactionResult struct {
@@ -100,8 +107,18 @@ func (e *Engine) Compact(ctx context.Context, sessionID string) (CompactionResul
 		return CompactionResult{}, ErrBusy
 	}
 	session := copySession(*s)
+	tools, _ := e.toolsForLocked(sessionID)
 	e.mu.Unlock()
 
+	return e.summarise(ctx, session, tools)
+}
+
+// summarise produces the compaction of a conversation without applying it. The caller has checked
+// the conversation may be compacted; an automatic compaction during a turn relies on the in-flight
+// turn being among the ones kept verbatim.
+func (e *Engine) summarise(
+	ctx context.Context, session core.Session, tools *core.ToolRegistry,
+) (CompactionResult, error) {
 	older, kept := splitForCompaction(session.Turns)
 	if len(older) == 0 {
 		return CompactionResult{}, fmt.Errorf(
@@ -120,10 +137,20 @@ func (e *Engine) Compact(ctx context.Context, sessionID string) (CompactionResul
 	history := core.Session{Turns: older}.History()
 	history = append(history, core.Message{Role: core.RoleUser, Text: compactionPrompt})
 
-	stream, err := client.Stream(ctx, core.Request{
-		Model:    session.Model,
-		Messages: history,
-	})
+	// The same system prompt and tool list as the conversation, so the request starts with exactly
+	// the prefix the conversation already cached and reads the older turns back at the cache rate.
+	// A summary request with neither, as before, wrote the whole conversation to cache again and
+	// sent tool calls with no tools defined.
+	request := core.Request{
+		Model:     session.Model,
+		System:    core.SystemPrompt,
+		Messages:  history,
+		MaxTokens: summaryMaxTokens,
+	}
+	if tools != nil {
+		request.Tools = tools.Definitions()
+	}
+	stream, err := client.Stream(ctx, request)
 	if err != nil {
 		return CompactionResult{}, err
 	}
@@ -239,4 +266,41 @@ func splitForCompaction(turns []core.Turn) (older, kept []core.Turn) {
 		return nil, turns
 	}
 	return turns[:cut], turns[cut:]
+}
+
+// autoCompact compacts a conversation that has grown past its budget, and says so in the transcript
+// like any other compaction. Best effort: a conversation that is busy, too short, or whose summary
+// fails is left as it was, and the manual command still works.
+func (e *Engine) autoCompact(ctx context.Context, sessionID string) bool {
+	if e.autoCompactOff {
+		return false
+	}
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok {
+		e.mu.Unlock()
+		return false
+	}
+	session := copySession(*s)
+	tools, _ := e.toolsForLocked(sessionID)
+	e.mu.Unlock()
+
+	if session.ContextUse().Tokens < core.AutoCompactTokens(core.WindowFor(session.Model)) {
+		return false
+	}
+	if !PlanCompaction(session).Possible() {
+		return false
+	}
+	result, err := e.summarise(ctx, session, tools)
+	if err != nil {
+		return false
+	}
+	return e.Apply(sessionID, result) == nil
+}
+
+// SetAutoCompact turns automatic compaction on or off; it is on unless configured otherwise.
+func (e *Engine) SetAutoCompact(on bool) {
+	e.mu.Lock()
+	e.autoCompactOff = !on
+	e.mu.Unlock()
 }

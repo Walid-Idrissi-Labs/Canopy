@@ -187,6 +187,12 @@ type Turn struct {
 	// before it existed, which History rebuilds the old way.
 	Steps []Message
 
+	// Context is the size of the last request this turn sent, cached and uncached input together,
+	// plus what came back. It is what the conversation measures on the provider's own count, which
+	// the turn's Usage cannot say: Usage adds up every step, so a ten step turn reports roughly ten
+	// times the conversation.
+	Context int
+
 	// Usage is what the turn consumed. Meaningful only once the turn is terminal; before that it
 	// is whatever the provider has reported so far, which is usually nothing.
 	Usage Usage

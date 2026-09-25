@@ -91,6 +91,9 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// autoCompactOff disables compaction past the context budget; see autoCompact.
+	autoCompactOff bool
+
 	mu       sync.Mutex
 	sessions map[string]*core.Session
 	order    []string
@@ -942,6 +945,12 @@ func (e *Engine) run(
 	if held {
 		e.keepGreen(context.WithoutCancel(ctx), sessionID, turnID)
 	}
+
+	// At the turn boundary, never mid-turn: a conversation past its budget is compacted now, so
+	// the next request is small again. Announced in the transcript like any compaction.
+	if state == core.TurnComplete {
+		e.autoCompact(context.WithoutCancel(ctx), sessionID)
+	}
 }
 
 // resolveFor asks for the client this conversation's next turn runs on.
@@ -1106,6 +1115,10 @@ func (o *turnObserver) StepFinished(usage core.Usage) {
 	// rather than only afterwards.
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
 		t.Usage = t.Usage.Add(usage)
+		if size := usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens +
+			usage.OutputTokens; size > 0 {
+			t.Context = size
+		}
 	})
 }
 
