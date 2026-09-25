@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
 
 // Definition is one agent definition.
@@ -20,6 +22,10 @@ type Definition struct {
 	Model       string
 	Body        string
 	Project     bool
+	// Ceiling is the most an agent started from this definition may do, from a Claude Code tools
+	// list: a reviewer given only Read and Grep does not run with an editor and a shell. Empty when
+	// the definition names no tools.
+	Ceiling core.TrustLevel
 }
 
 // Set is the definitions available, by name.
@@ -82,12 +88,12 @@ func parse(path string) (Definition, error) {
 	if !scanner.Scan() || strings.TrimSpace(scanner.Text()) != "---" {
 		return Definition{}, fmt.Errorf("%s has no frontmatter", path)
 	}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "---" {
-			break
-		}
-		key, value, ok := strings.Cut(line, ":")
+	var lines []string
+	for scanner.Scan() && strings.TrimSpace(scanner.Text()) != "---" {
+		lines = append(lines, scanner.Text())
+	}
+	for i := 0; i < len(lines); i++ {
+		key, value, ok := strings.Cut(lines[i], ":")
 		if !ok {
 			continue
 		}
@@ -98,9 +104,21 @@ func parse(path string) (Definition, error) {
 		case "description":
 			def.Description = value
 		case "model":
-			if value != "inherit" {
+			// Claude Code's family names, and inherit, mean the model already in use here: the
+			// family alone is ambiguous between generations and would fail the dispatch.
+			switch strings.ToLower(value) {
+			case "", "inherit", "sonnet", "opus", "haiku", "fable":
+			default:
 				def.Model = value
 			}
+		case "tools":
+			tools := strings.Split(strings.Trim(value, "[]"), ",")
+			// Or a block list on the lines that follow.
+			for value == "" && i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "- ") {
+				i++
+				tools = append(tools, strings.TrimSpace(lines[i])[2:])
+			}
+			def.Ceiling = ceiling(tools)
 		}
 	}
 	var body strings.Builder
@@ -110,6 +128,33 @@ func parse(path string) (Definition, error) {
 	}
 	def.Body = strings.TrimSpace(body.String())
 	return def, scanner.Err()
+}
+
+// ceiling maps a Claude Code tools list to the trust that covers it and no more: no shell and no
+// editing tool is read-only, editing without a shell is confined, and a shell is standard.
+func ceiling(tools []string) core.TrustLevel {
+	var named, writes, shell bool
+	for _, tool := range tools {
+		switch name := strings.TrimSpace(strings.Trim(strings.TrimSpace(tool), `"'`)); name {
+		case "":
+			continue
+		case "Write", "Edit", "MultiEdit", "NotebookEdit":
+			named, writes = true, true
+		case "Bash":
+			named, shell = true, true
+		default:
+			named = true
+		}
+	}
+	switch {
+	case !named:
+		return ""
+	case shell:
+		return core.TrustStandard
+	case writes:
+		return core.TrustConfined
+	}
+	return core.TrustReadOnly
 }
 
 // Get returns a definition by name.

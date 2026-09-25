@@ -117,6 +117,9 @@ type Dispatch struct {
 	Instructions string
 	// Definition names the agent definition used, for the confirmation.
 	Definition string
+	// Ceiling caps each agent's trust below the profile's, from the definition's tools. Empty
+	// leaves the profile's trust alone.
+	Ceiling core.TrustLevel
 }
 
 // Estimate is what a dispatch is expected to cost.
@@ -181,6 +184,14 @@ func (c Confirmation) Question() string {
 	on := c.Dispatch.Profile
 	if c.Dispatch.Model != "" {
 		on += " running " + c.Dispatch.Model
+	}
+	// A definition brings standing instructions and perhaps a lower trust, and the person saying
+	// yes should know both are part of what they are agreeing to.
+	if c.Dispatch.Definition != "" {
+		agents += " as " + c.Dispatch.Definition
+		if c.Dispatch.Ceiling != "" {
+			agents += " (" + string(c.Dispatch.Ceiling) + ")"
+		}
 	}
 	return fmt.Sprintf("start %s on %s, %s, for: %s", agents, on, where, c.Dispatch.Task)
 }
@@ -373,7 +384,7 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		if !ok {
 			return core.ToolResult{Content: fmt.Sprintf("there is no agent definition called %q", name), IsError: true}, nil
 		}
-		request.Definition, request.Instructions = def.Name, def.Body
+		request.Definition, request.Instructions, request.Ceiling = def.Name, def.Body, def.Ceiling
 		if strings.TrimSpace(args.Model) == "" && def.Model != "" {
 			args.Model = def.Model
 		}
@@ -830,6 +841,9 @@ func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
 		return nil, err
 	}
 
+	if request.Ceiling.Valid() && (!template.Trust.Valid() || template.Trust.AtLeast(request.Ceiling)) {
+		template.Trust = request.Ceiling
+	}
 	created := make([]Agent, 0, request.Count)
 	for i := range request.Count {
 		agent := template
