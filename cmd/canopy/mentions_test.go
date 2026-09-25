@@ -144,3 +144,35 @@ func TestANoteRefusesAHardLinkedAgentsFile(t *testing.T) {
 		t.Fatal("the linked file was written")
 	}
 }
+
+// Something appended to AGENTS.md between the note's read and its write is kept, not overwritten,
+// and not blessed.
+func TestANoteKeepsAnAppendMadeMeanwhile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CANOPY_TRUST_FILE", filepath.Join(t.TempDir(), "trust.json"))
+	agents := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agents, []byte("be careful\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project := config.Project{Trusted: true}
+	store, _ := trust.Open()
+	if err := store.Grant(trust.Describe(dir, project)); err != nil {
+		t.Fatal(err)
+	}
+	defer func(was func()) { noteRead = was }(noteRead)
+	noteRead = func() {
+		f, _ := os.OpenFile(agents, os.O_WRONLY|os.O_APPEND, 0)
+		_, _ = f.WriteString("- an agent's line\n")
+		_ = f.Close()
+	}
+	if _, err := rememberIn(dir, project)("mine"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(agents)
+	if !strings.Contains(string(data), "an agent's line") || !strings.Contains(string(data), "- mine") {
+		t.Fatalf("AGENTS.md is %q", data)
+	}
+	if store.Trusted(trust.Describe(dir, project)) {
+		t.Fatal("an append made meanwhile was trusted with the note")
+	}
+}

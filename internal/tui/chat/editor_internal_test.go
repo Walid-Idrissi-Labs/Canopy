@@ -10,8 +10,11 @@ import (
 
 // What was written comes back, and the file is removed either way.
 func TestTheEditedFileIsReadAndRemoved(t *testing.T) {
-	dir := t.TempDir()
 	for _, runErr := range []error{nil, errors.New("editor exited 1")} {
+		dir, err := os.MkdirTemp(t.TempDir(), "canopy-message-")
+		if err != nil {
+			t.Fatal(err)
+		}
 		path := filepath.Join(dir, "message.md")
 		if err := os.WriteFile(path, []byte("a longer message\n\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -23,8 +26,8 @@ func TestTheEditedFileIsReadAndRemoved(t *testing.T) {
 		if runErr != nil && msg.err == nil {
 			t.Fatal("a failed editor was taken as an edit")
 		}
-		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("the edited file was left behind")
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("the edited file's directory was left behind")
 		}
 	}
 }

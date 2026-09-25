@@ -67,6 +67,9 @@ func projectFiles(dir string) func() []string {
 // it to change the repository in that moment.
 var noteWritten = func() {}
 
+// noteRead runs between reading AGENTS.md and writing the note, for the same kind of test.
+var noteRead = func() {}
+
 // rememberIn keeps a "# note" in the project's AGENTS.md, which is read into every conversation
 // started from then on.
 //
@@ -81,7 +84,9 @@ func rememberIn(dir string, project config.Project) func(note string) (string, e
 
 		// Opened without following a link, and checked as opened: a regular file with one name, so
 		// the note cannot be steered into a file somewhere else.
-		file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW, 0o644)
+		// Appended, so an append made by anything else between reading and writing is kept, and
+		// then shows up as a difference from what was expected below.
+		file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o644)
 		if err != nil {
 			return "", errors.New("AGENTS.md could not be opened as a plain file here, so nothing was written")
 		}
@@ -103,11 +108,23 @@ func rememberIn(dir string, project config.Project) func(note string) (string, e
 		// note only if the repository was trusted before it and is, afterwards, exactly that: anything
 		// else that changed meanwhile, an agent's edit to any instruction file among them, is left for
 		// the next start to ask about.
+		// Every instruction file read once, so the check of what was trusted and the expectation of
+		// what will be are made from the same reading; AGENTS.md as it was opened.
+		snapshot := map[string][]byte{}
+		for _, rel := range config.InstructionFiles(dir) {
+			if data, err := os.ReadFile(filepath.Join(dir, rel)); err == nil {
+				snapshot[rel] = data
+			}
+		}
+		snapshot["AGENTS.md"] = before
 		store, storeErr := trust.Open()
 		existed := len(before) > 0 || info.Size() > 0
-		trusted := storeErr == nil && project.Trusted && existed && store.Trusted(trust.Describe(dir, project))
-		expected := trust.DescribeWith(dir, project, map[string][]byte{"AGENTS.md": append(append([]byte(nil), before...), line...)})
+		trusted := storeErr == nil && project.Trusted && existed &&
+			store.Trusted(trust.DescribeWith(dir, project, snapshot))
+		snapshot["AGENTS.md"] = append(append([]byte(nil), before...), line...)
+		expected := trust.DescribeWith(dir, project, snapshot)
 
+		noteRead()
 		if _, err := file.WriteString(line); err != nil {
 			return "", err
 		}

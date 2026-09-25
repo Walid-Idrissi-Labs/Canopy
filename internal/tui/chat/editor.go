@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -31,27 +30,12 @@ func editorShell(path string) *exec.Cmd {
 	return exec.Command("/bin/sh", "-c", editor+` "$1"`, "canopy-editor", path)
 }
 
-// messagesDir holds the files messages are edited in, only this user's, and emptied of any left
-// behind by a Canopy that did not get to remove its own.
-func messagesDir() (string, error) {
-	dir := filepath.Join(os.TempDir(), "canopy-messages-"+itoa(os.Getuid()))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, entry := range entries {
-			if info, err := entry.Info(); err == nil && time.Since(info.ModTime()) > 24*time.Hour {
-				_ = os.Remove(filepath.Join(dir, entry.Name()))
-			}
-		}
-	}
-	return dir, nil
-}
-
 // openEditor writes the box to a file only this user can read, hands the terminal to the editor on
 // it, and reads it back when the editor exits.
 func openEditor(text string) tea.Cmd {
-	dir, err := messagesDir()
+	// A directory of its own, made fresh with a name nobody could have guessed and only this user
+	// able to open, so on a shared /tmp nobody else can put a file, or a link, where it goes.
+	dir, err := os.MkdirTemp("", "canopy-message-")
 	if err != nil {
 		return func() tea.Msg { return editedMsg{err: err} }
 	}
@@ -65,7 +49,7 @@ func openEditor(text string) tea.Cmd {
 		err = closeErr
 	}
 	if err != nil {
-		_ = os.Remove(path)
+		_ = os.RemoveAll(dir)
 		return func() tea.Msg { return editedMsg{err: err} }
 	}
 	return tea.ExecProcess(editorShell(path), editorFinished(path))
@@ -74,7 +58,7 @@ func openEditor(text string) tea.Cmd {
 // editorFinished reads the edited file back and removes it, whether or not the editor succeeded.
 func editorFinished(path string) func(error) tea.Msg {
 	return func(runErr error) tea.Msg {
-		defer func() { _ = os.Remove(path) }()
+		defer func() { _ = os.RemoveAll(filepath.Dir(path)) }()
 		if runErr != nil {
 			return editedMsg{err: runErr}
 		}
