@@ -76,10 +76,13 @@ func (c *Client) buildResponsesRequest(ctx context.Context, req core.Request) re
 		// Nothing is kept on OpenAI's side; the reasoning comes back encrypted instead and travels
 		// with the conversation, which keeps it as Canopy's own record rather than theirs.
 		Store:          false,
-		Include:        []string{"reasoning.encrypted_content"},
 		PromptCacheKey: core.SessionFrom(ctx),
 	}
-	out.Reasoning = &reasoningOptions{Summary: "auto", Effort: responsesEffort(req.Effort)}
+	// Reasoning settings only for the models that reason; the others refuse them outright.
+	if reasons(req.Model) {
+		out.Include = []string{"reasoning.encrypted_content"}
+		out.Reasoning = &reasoningOptions{Summary: "auto", Effort: responsesEffort(req.Effort)}
+	}
 	for _, msg := range req.Messages {
 		for _, result := range msg.ToolResults {
 			output := result.Content
@@ -335,4 +338,14 @@ func streamErrorKind(code string) core.ProviderErrorKind {
 		return core.ErrAuthentication
 	}
 	return core.ErrUnknown
+}
+
+// reasons reports whether a model is one of OpenAI's reasoning families, which take reasoning
+// settings; gpt-4o and gpt-4.1 are refused with them.
+func reasons(model string) bool {
+	m := strings.ToLower(model)
+	if strings.HasPrefix(m, "gpt-5") || strings.Contains(m, "codex") {
+		return true
+	}
+	return len(m) > 1 && m[0] == 'o' && m[1] >= '0' && m[1] <= '9'
 }

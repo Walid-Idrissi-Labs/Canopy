@@ -186,3 +186,15 @@ func TestResponsesEffort(t *testing.T) {
 		}
 	}
 }
+
+// Reasoning settings go only to the models that reason.
+func TestOnlyReasoningModelsGetReasoningSettings(t *testing.T) {
+	for model, want := range map[string]bool{"gpt-5": true, "gpt-5.1-codex": true, "o3": true, "o4-mini": true,
+		"gpt-4o": false, "gpt-4.1": false, "omni-moderation": false} {
+		req := New("https://api.openai.com/v1", core.NewSecret("k"), WithResponses()).
+			buildResponsesRequest(context.Background(), core.Request{Model: model})
+		if got := req.Reasoning != nil && len(req.Include) == 1; got != want {
+			t.Errorf("%s: reasoning settings %v", model, got)
+		}
+	}
+}
