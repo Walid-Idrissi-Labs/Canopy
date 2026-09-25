@@ -879,7 +879,10 @@ func (e *Engine) run(
 	// believes it was told earlier.
 	request := core.Request{Model: model, Messages: history, System: e.systemPrompt()}
 
-	outcome, err := loop.Run(ctx, request,
+	// Tools learn which conversation epoch they serve, so a repeated read can be answered with a
+	// reference to what this conversation was already sent. A compaction starts a new epoch.
+	epoch := fmt.Sprintf("%s#%d", sessionID, len(e.snapshot(sessionID).Compactions))
+	outcome, err := loop.Run(core.WithConversation(ctx, epoch), request,
 		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
 
 	// Every message the loop added, exactly as exchanged, is what the next turn replays. Recorded
