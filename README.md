@@ -369,6 +369,24 @@ file never holds it; the trust prompt shows which variables go to which url, a s
 is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
 cloud's) is never sent to a server a repository names.
 
+A hook runs on something that happened: `tests-passed`, `tests-failed`, `verified`, `agent-idle` and
+`agent-blocked` for the project's state, and `pre-tool`, `post-tool` and `turn-end` around an agent's
+work. The last three are given what happened as JSON on stdin. A `pre-tool` hook can refuse a call,
+by answering `{"decision": "deny", "reason": "..."}` or exiting 2 with the reason on stderr, and the
+model is told why; it can never approve one, since it runs only after the permission layer has said
+yes. One that cannot answer, by crashing, timing out or saying something else, refuses the call too.
+A `post-tool` hook can answer `{"note": "..."}`, which is added to what the model is told of the
+result. `"tools": ["run_command"]` narrows either to some tools. Every hook runs in the sandbox, in
+the directory of the agent the call belongs to, which its input names as `workspace`.
+
+```json
+{"hooks": [
+  {"on": "pre-tool", "tools": ["run_command"], "run": "./scripts/guard.sh", "timeout": "10s"},
+  {"on": "post-tool", "tools": ["write_file", "edit_file"], "run": "./scripts/lint-note.sh"},
+  {"on": "turn-end", "run": "osascript -e 'display notification \"turn done\"'"}
+]}
+```
+
 ## Landing an agent's work
 
 ```sh

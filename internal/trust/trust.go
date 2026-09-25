@@ -68,7 +68,11 @@ func Describe(dir string, project config.Project) Request {
 		req.Tests = append(req.Tests, t.Name+": "+describeCommand(t.Command))
 	}
 	for _, h := range project.Hooks {
-		req.Hooks = append(req.Hooks, "on "+h.On+": "+h.Run)
+		on := h.On
+		if len(h.Tools) > 0 {
+			on += " (" + strings.Join(h.Tools, ", ") + ")"
+		}
+		req.Hooks = append(req.Hooks, "on "+on+": "+h.Run)
 	}
 	for _, m := range project.MCP {
 		if m.URL != "" {
