@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -10,7 +11,13 @@ import (
 // instructions together are the request's system, its tools are the request's tools, and its
 // history is the next request's messages less the new one.
 func TestTheInventoryMatchesTheWire(t *testing.T) {
-	client := &scriptedClient{name: "claude", events: reply("an answer of some length")}
+	// The reply carries signed thinking in its native form, as Anthropic's does, so the inventory
+	// has replayed reasoning to find.
+	events := reply("an answer of some length")
+	events[len(events)-1].Native = &core.Native{Provider: "anthropic", Data: []byte(`{"role":"assistant",` +
+		`"content":[{"type":"thinking","thinking":"` + strings.Repeat("considering ", 400) + `","signature":"s"},` +
+		`{"type":"text","text":"an answer of some length"}]}`)}
+	client := &scriptedClient{name: "claude", events: events}
 	e := New(fixedResolver{client: client, id: anthropicID()})
 	t.Cleanup(e.Close)
 	registry := core.NewToolRegistry()
@@ -47,6 +54,10 @@ func TestTheInventoryMatchesTheWire(t *testing.T) {
 	}
 	if inv.Messages != len(history)-1 {
 		t.Errorf("%d messages in the inventory, %d sent before the new one", inv.Messages, len(history)-1)
+	}
+	// About 4800 bytes of thinking, about 1200 tokens; the signature and framing add nothing.
+	if inv.Reasoning < 1100 || inv.Reasoning > 1300 {
+		t.Errorf("the replayed thinking measures %d tokens; about 1200 were sent", inv.Reasoning)
 	}
 	if inv.Asked == 0 || inv.Answered == 0 || inv.Total() <= inv.System {
 		t.Errorf("the conversation is missing from the inventory: %+v", inv)

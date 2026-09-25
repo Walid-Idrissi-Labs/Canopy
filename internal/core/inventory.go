@@ -1,6 +1,9 @@
 package core
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // SummaryHeading opens the message that stands in for compacted turns.
 const SummaryHeading = "Summary of the earlier part of this conversation:\n\n"
@@ -13,7 +16,8 @@ type Inventory struct {
 	Tools        int
 	ToolCount    int
 	Summary      int
-	// Asked is what the person wrote, and Canopy's notes on it; Answered the model's replies.
+	// Asked is what the person wrote, with Canopy's notes and other agents' reports on it;
+	// Answered the model's replies.
 	Asked    int
 	Answered int
 	// Reasoning is the model's thinking replayed as the provider sent it, signatures included.
@@ -60,16 +64,44 @@ func TakeInventory(system, instructions string, tools []ToolDefinition, history 
 		calls += callBytes
 		if m.Role == RoleAssistant {
 			answered += len(m.Text)
-			// A reply replayed natively is sent as the provider's own JSON: what it holds beyond the
-			// text and calls is thinking, signatures and framing.
-			if m.Native != nil && len(m.Native.Data) > len(m.Text)+callBytes {
-				reasoning += len(m.Native.Data) - len(m.Text) - callBytes
-			}
+			reasoning += m.reasoningBytes()
 			continue
 		}
 		asked += len(m.Text) + len(m.Note)
+		for _, report := range m.Reports {
+			asked += len(report)
+		}
 	}
 	inv.Asked, inv.Answered = estimateTokens(asked), estimateTokens(answered)
 	inv.Reasoning, inv.Calls, inv.Results = estimateTokens(reasoning), estimateTokens(calls), estimateTokens(results)
 	return inv
+}
+
+// reasoningBytes is the thinking a natively replayed reply carries: the text of its thinking
+// blocks and the data of redacted ones. Signatures, escaping and framing are left out, since they
+// are not what the model reads back.
+func (m Message) reasoningBytes() int {
+	if m.Native == nil {
+		return 0
+	}
+	var msg struct {
+		Content []struct {
+			Type     string `json:"type"`
+			Thinking string `json:"thinking"`
+			Data     string `json:"data"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(m.Native.Data, &msg) != nil {
+		return 0
+	}
+	var n int
+	for _, block := range msg.Content {
+		switch block.Type {
+		case "thinking":
+			n += len(block.Thinking)
+		case "redacted_thinking":
+			n += len(block.Data)
+		}
+	}
+	return n
 }
