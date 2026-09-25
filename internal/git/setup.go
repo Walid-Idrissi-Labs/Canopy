@@ -430,6 +430,11 @@ func copyTree(source, target string) error {
 // left to the open flags, because those only apply when the file is created and the tracked file
 // case writes over something that already exists.
 func copyFile(source, target string, mode fs.FileMode) error {
+	// A clone where the filesystem offers one: a dependency tree copied into every agent's worktree
+	// is otherwise paid for in disk and time once per agent (Q-14).
+	if cloneFile(source, target) {
+		return os.Chmod(target, mode.Perm())
+	}
 	in, err := os.Open(source)
 	if err != nil {
 		return err

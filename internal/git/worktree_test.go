@@ -179,7 +179,11 @@ func TestAFailedCreationLeavesNothingBehind(t *testing.T) {
 	ctx := context.Background()
 
 	// A path that is already occupied, which is the realistic collision.
-	occupied := filepath.Join(filepath.Dir(dir), filepath.Base(dir)+"-taken")
+	home, err := WorktreeHome(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	occupied := filepath.Join(home, "taken")
 	if err := os.MkdirAll(occupied, 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -210,7 +214,7 @@ func TestBadNamesAreRefused(t *testing.T) {
 
 // A worktree nested in the primary checkout appears in every glob, every grep and every build, and
 // the first thing anybody notices is their test suite running twice.
-func TestAWorktreeIsCreatedBesideTheRepositoryNotInsideIt(t *testing.T) {
+func TestAWorktreeIsCreatedOutsideTheRepositoryAndNotBesideIt(t *testing.T) {
 	dir := repo_(t)
 	r, err := OpenRepo(dir)
 	if err != nil {
@@ -233,8 +237,9 @@ func TestAWorktreeIsCreatedBesideTheRepositoryNotInsideIt(t *testing.T) {
 	if strings.HasPrefix(created.Path, resolvedRepo+string(filepath.Separator)) {
 		t.Errorf("the worktree was created inside the repository at %s", created.Path)
 	}
-	if filepath.Dir(created.Path) != filepath.Dir(resolvedRepo) {
-		t.Errorf("the worktree is at %s, want it beside %s", created.Path, resolvedRepo)
+	// Nor beside it: the folder holding somebody's projects is not Canopy's to fill.
+	if filepath.Dir(created.Path) == filepath.Dir(resolvedRepo) {
+		t.Errorf("the worktree was created beside the repository at %s", created.Path)
 	}
 }
 

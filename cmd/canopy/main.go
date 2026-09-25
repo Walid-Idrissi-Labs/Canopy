@@ -24,6 +24,7 @@ usage:
   canopy search        find a message across every saved conversation
   canopy report        run this repository's checks and print a markdown summary
   canopy trust         review what this repository's canopy.json runs, and allow it (revoke, list)
+  canopy worktree      list the agent worktrees Canopy made here; gc removes the clean ones
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
   canopy demo          drive the stale flip and show it happening
@@ -81,6 +82,9 @@ func run(args []string) error {
 	}
 	// report reads the repository it is run in and takes no options, so it is dispatched before the
 	// shared flag set, whose only flag is about the fake project this has nothing to do with.
+	if command == "worktree" || command == "worktrees" {
+		return runWorktree(args[1:], os.Stdout)
+	}
 	if command == "trust" {
 		return runTrust(args[1:], os.Stdout)
 	}
