@@ -17,6 +17,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -247,6 +250,22 @@ type Runner struct {
 	live   map[string]*liveRun
 	done   map[string]core.TestRun
 	output map[string]string
+
+	// slots bounds how many runs execute at once. Eight agents each starting a suite would otherwise
+	// run eight suites together, each slower than running them in turn, on a machine a person is
+	// also trying to use. A run waiting for a slot stays queued.
+	slots chan struct{}
+}
+
+// MaxTestsEnvVar sets how many test runs may execute at once; half the CPUs when unset.
+const MaxTestsEnvVar = "CANOPY_MAX_TESTS"
+
+// testSlots is how many runs may execute at once.
+func testSlots() int {
+	if n, err := strconv.Atoi(os.Getenv(MaxTestsEnvVar)); err == nil && n > 0 {
+		return n
+	}
+	return max(1, runtime.NumCPU()/2)
 }
 
 // shutdownGrace bounds how long CancelAll waits for the runs it stopped.
@@ -271,6 +290,7 @@ func NewRunner(onUpdate func(core.TestRun)) *Runner {
 		live:     make(map[string]*liveRun),
 		done:     make(map[string]core.TestRun),
 		output:   make(map[string]string),
+		slots:    make(chan struct{}, testSlots()),
 	}
 }
 
@@ -312,6 +332,21 @@ func (r *Runner) Start(ctx context.Context, test Test, target Target) (string, e
 		// waits for the whole run to have unwound rather than for its last observable step.
 		defer r.running.Done()
 		defer cancel()
+
+		// Queued until a slot is free; stopped while waiting, it ends cancelled without running.
+		select {
+		case r.slots <- struct{}{}:
+			defer func() { <-r.slots }()
+		case <-runCtx.Done():
+			outcome := finishTest(queued, "", core.TestCancelled, nil, "stopped before it started")
+			r.mu.Lock()
+			delete(r.live, runID)
+			r.done[runID] = outcome.Run
+			r.output[runID] = outcome.Output
+			r.mu.Unlock()
+			r.onUpdate(outcome.Run)
+			return
+		}
 
 		running := queued
 		running.State = core.TestRunning
