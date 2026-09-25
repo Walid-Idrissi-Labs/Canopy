@@ -403,6 +403,20 @@ are asked in the editor, and its mode menu offers Canopy's five modes. In Zed, a
 { "agent_servers": { "Canopy": { "command": "canopy", "args": ["acp"] } } }
 ```
 
+### In the background
+
+```sh
+canopy serve &           # keeps this project's agents running
+canopy attach new        # start a conversation; ctrl+d leaves it working
+canopy attach            # what is running, and what is waiting on you
+canopy attach 12         # pick one up: what happened, then what is happening
+```
+
+`canopy serve` keeps agents working after the client that started them has gone. It listens on a
+socket only you can reach, and speaks the same protocol as `canopy acp`. A question an agent asks
+while nobody is attached waits for the next `canopy attach`, and the server says which conversation
+is waiting.
+
 ## Where the tokens go
 
 Every request resends the conversation, so what it costs is decided by how much of that is read

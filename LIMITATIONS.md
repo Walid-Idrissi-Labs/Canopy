@@ -862,3 +862,10 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   sees them only when it reloads. Approvals from the editor are once only. MCP servers the editor
   names are ignored; the project's own canopy.json servers are used. It has been tested against a
   scripted client, not against an editor.
+- `canopy serve` and `canopy attach` (D-63) keep agents working with no client attached, but the
+  interface (`canopy`) is not a client of the server: a conversation the server is running is
+  picked up with `canopy attach`, which is a line-based client with no screen, not in the chat.
+  A running `canopy` and a running `canopy serve` in one project are two engines working in the same
+  checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
+  service manager. A question waiting for a client is announced on the server's error output only,
+  with no desktop notification.
