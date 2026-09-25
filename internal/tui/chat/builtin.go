@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -435,7 +436,14 @@ func (m *Model) undoLastTurn() tea.Cmd {
 	if m.undoArmed == turnID && time.Since(m.undoArmedAt) < time.Minute {
 		m.undoArmed = ""
 		m.notice = "putting the workspace back"
+		shown := m.undoShown
 		return func() tea.Msg {
+			// Taken again first: anything edited between the preview and the confirmation would be
+			// undone without having been listed, so a different list is shown and asked about anew.
+			changes, err := engine.UndoPreview(context.Background(), sessionID, turnID)
+			if err == nil && !slices.Equal(changes, shown) {
+				return undoPreviewMsg{turnID: turnID, changes: changes, moved: true}
+			}
 			return undoneMsg{err: engine.Undo(context.Background(), sessionID, turnID)}
 		}
 	}
@@ -454,6 +462,8 @@ type undoPreviewMsg struct {
 	turnID  string
 	changes []string
 	err     error
+	// moved is set when a confirmation found the workspace changed since the preview it confirmed.
+	moved bool
 }
 
 // describeUndo is the preview shown before an undo is confirmed.

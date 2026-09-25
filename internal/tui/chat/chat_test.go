@@ -21,6 +21,7 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
+	undoChanges     []string
 	budget, overall session.Budget
 	tools           *core.ToolRegistry
 	inventory       core.Inventory
@@ -224,6 +225,9 @@ func (e *fakeEngine) Undo(_ context.Context, _, turnID string) error {
 func (e *fakeEngine) UndoPreview(_ context.Context, _, _ string) ([]string, error) {
 	if e.undoErr != nil {
 		return nil, e.undoErr
+	}
+	if e.undoChanges != nil {
+		return e.undoChanges, nil
 	}
 	return []string{"M main.go"}, nil
 }

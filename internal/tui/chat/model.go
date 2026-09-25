@@ -328,6 +328,7 @@ type Model struct {
 	// turn within a minute performs it.
 	undoArmed   string
 	undoArmedAt time.Time
+	undoShown   []string
 
 	// ticking says the spinner's timer is scheduled; tickGeneration retires stale timers.
 	ticking        bool
@@ -572,8 +573,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = describeUndo(msg.changes)
+		if msg.moved {
+			m.notice = "the workspace changed since that preview, so nothing was undone; " + m.notice
+		}
 		if len(msg.changes) > 0 {
-			m.undoArmed, m.undoArmedAt = msg.turnID, time.Now()
+			m.undoArmed, m.undoArmedAt, m.undoShown = msg.turnID, time.Now(), msg.changes
 		}
 		return m, nil
 

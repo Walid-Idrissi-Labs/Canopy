@@ -534,3 +534,30 @@ func TestBudgetSetsAndShowsTheCaps(t *testing.T) {
 		t.Fatalf("a bad amount was not explained:\n%s", view)
 	}
 }
+
+// Confirming takes the preview again: a file edited between the two /undo commands would be undone
+// without having been listed, so the new list is shown and nothing is restored until it is confirmed.
+func TestUndoAsksAgainWhenTheWorkspaceMovedSinceThePreview(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "first"}, State: core.TurnComplete},
+	}}, undoChanges: []string{"restore main.go"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+	next, cmd := run(m, "/undo")
+	next, _ = next.Update(cmd())
+
+	engine.undoChanges = []string{"restore main.go", "remove notes.txt"}
+	next, cmd = run(next, "/undo")
+	next, _ = next.Update(cmd())
+	if len(engine.undone) != 0 {
+		t.Fatal("the workspace was restored over a change the preview never listed")
+	}
+	if view := plain(next.Body()); !strings.Contains(view, "changed since that preview") || !strings.Contains(view, "notes.txt") {
+		t.Fatalf("the new list was not shown:\n%s", view)
+	}
+	next, cmd = run(next, "/undo")
+	_, _ = next.Update(cmd())
+	if len(engine.undone) != 1 {
+		t.Fatal("confirming the new list did not restore")
+	}
+}
