@@ -224,10 +224,18 @@ func (s *stream) handleLine(line string) {
 	}
 
 	if chunk.Usage != nil {
+		// prompt_tokens includes the cached tokens in this API family, whereas Canopy's InputTokens
+		// means the uncached remainder, as Anthropic reports it. Recording both as reported billed
+		// every cached token twice: once at the input rate and once more at the cache rate.
 		s.usage.InputTokens = chunk.Usage.PromptTokens
 		s.usage.OutputTokens = chunk.Usage.CompletionTokens
 		if chunk.Usage.PromptDetails != nil {
-			s.usage.CacheReadTokens = chunk.Usage.PromptDetails.CachedTokens
+			cached := chunk.Usage.PromptDetails.CachedTokens
+			if cached > s.usage.InputTokens {
+				cached = s.usage.InputTokens
+			}
+			s.usage.CacheReadTokens = cached
+			s.usage.InputTokens -= cached
 		}
 	}
 

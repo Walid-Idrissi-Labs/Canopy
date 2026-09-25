@@ -236,6 +236,13 @@ func OpenStorage(path string) (*Storage, error) {
 		}
 	}
 
+	// Transcripts hold whatever an agent read, which is sometimes a .env. Owner only, for the
+	// database and the two files WAL keeps beside it; the directory is already 0700, and this holds
+	// the line where somebody points the store somewhere else.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		_ = os.Chmod(path+suffix, 0o600)
+	}
+
 	s := &Storage{db: db}
 	if err := s.migrate(); err != nil {
 		_ = db.Close()

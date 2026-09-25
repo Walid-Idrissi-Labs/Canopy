@@ -528,6 +528,26 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   shell tool, where it appears as a plain command rather than a named, separately governed git
   action (A4-06).
 
+- Processes Canopy starts (shell commands, tests, setup, hooks, MCP servers and vendor agents) do not
+  inherit secrets from Canopy's own environment. Variables that look like credentials, provider keys,
+  `GITHUB_TOKEN`, anything ending in `_API_KEY`, `_TOKEN`, `_SECRET` or `_PASSWORD`, are removed by name;
+  the rest of the shell environment passes through, because build tooling needs it. A vendor agent keeps
+  only its own vendor's variables. The match is by name, so a secret stored under an unremarkable name
+  still passes, and a test suite that needs a token exported in the shell will not see it.
+
+- File tools refuse every path inside a `.git` directory, in any letter case, for reading and writing.
+  Git executes parts of its own configuration (`core.fsmonitor` on every status, hooks on commit), so
+  an edit there would have been a command that runs on Canopy's next git call without a prompt. Every
+  git process Canopy starts itself also runs with fsmonitor, hooks, external diff and textconv
+  switched off, and filter drivers defined in the repository's own configuration are replaced with
+  a pass-through for those calls; your global filters, Git LFS included, keep working. This relies
+  on git 2.31 or newer, and Canopy warns at startup when the installed git is older. The
+  commit and push you confirm yourself from the review screen also run with the repository's hooks
+  off, which includes your own pre-commit checks; signing (`commit.gpgSign`, `gpg.program`) and a
+  remote's `receivepack` still come from git configuration, so a hostile repository's config can run
+  a program at that moment. The shell tool can still reach `.git` like any other path when shell is
+  allowed.
+
 - Canopy cannot redact a secret that a child process prints to its own stdout. Redaction only covers
   what Canopy itself formats: the trust screen, service detail, and its own log rendering. Anything
   a spawned command chooses to print is captured into the logs verbatim (D-20). The TUI does escape
@@ -579,6 +599,11 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   its output and its error, and there is nowhere on screen to show it yet, so a long session can hide
   a broken hook for hours. That is the exact failure automation invites, since the point of it is
   that somebody stops watching. A8-05 stays claimed for this reason alone.
+
+- Repository trust is recorded per directory and per exact configuration, in the user config
+  directory. Until a repository is trusted, its test commands do not run either, so verification says
+  nothing is configured there. Trust is a statement about the configuration, not about the code: a
+  trusted test command still runs whatever the repository's tests do.
 
 - MCP servers are started when a conversation opens and stopped when it closes, and their tools are
   governed exactly as Canopy's own are: every one of them counts as running a command, whatever the

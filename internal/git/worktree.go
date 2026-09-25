@@ -451,7 +451,7 @@ func (r *Repo) runRaw(ctx context.Context, args ...string) (string, error) {
 
 	result, err := exec.Run(ctx, "git", args, exec.Options{
 		Dir:       r.dir,
-		Env:       environ(),
+		Env:       environ(r.dir),
 		Timeout:   60 * time.Second,
 		MaxOutput: limit,
 	})

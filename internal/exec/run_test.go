@@ -203,3 +203,20 @@ func TestProcessListingWorksHere(t *testing.T) {
 		t.Skip("no shell available")
 	}
 }
+
+// A command a model wrote runs through here, and the developer's shell usually has provider keys
+// exported. They must not reach it.
+func TestAChildDoesNotInheritProviderKeys(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-canary")
+	t.Setenv("GITHUB_TOKEN", "ghp-canary")
+	result, err := Run(context.Background(), "/bin/sh", []string{"-c", "env"}, Options{Dir: t.TempDir()})
+	if err != nil || !result.Succeeded() {
+		t.Fatalf("env did not run: %v %+v", err, result)
+	}
+	if strings.Contains(result.Output, "canary") {
+		t.Fatalf("a secret reached the child environment:\n%s", result.Output)
+	}
+	if !strings.Contains(result.Output, "PATH=") {
+		t.Fatal("PATH was removed; ordinary commands need it")
+	}
+}

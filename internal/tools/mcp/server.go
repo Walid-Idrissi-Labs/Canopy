@@ -12,7 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os/exec"
 	"strings"
 	"sync"
@@ -137,9 +137,8 @@ func Connect(ctx context.Context, spec Spec) (*Session, error) {
 	// which is about to expire. Close is what ends it.
 	cmd := exec.Command(spec.Command, spec.Args...)
 	cmd.Dir = spec.Dir
-	if len(spec.Env) > 0 {
-		cmd.Env = append(os.Environ(), spec.Env...)
-	}
+	// Always set: a nil Env inherits the whole environment, provider keys included.
+	cmd.Env = append(childenv.Inherited(), spec.Env...)
 	// Without this, a server that keeps its stdout open after being asked to stop makes Wait block
 	// forever and the shutdown path never returns.
 	cmd.WaitDelay = 5 * time.Second

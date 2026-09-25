@@ -102,7 +102,7 @@ func refusal(format string, args ...any) core.ToolResult {
 }
 
 func pathFailure(err error) core.ToolResult {
-	if errors.Is(err, ErrOutsideWorkspace) {
+	if errors.Is(err, ErrOutsideWorkspace) || errors.Is(err, ErrGitDirectory) {
 		return refusal("%v", err)
 	}
 	return failure("%v", err)

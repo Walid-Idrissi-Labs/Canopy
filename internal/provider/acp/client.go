@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"io"
 	"os"
 	"os/exec"
@@ -365,14 +366,16 @@ func (c *Client) openingNotice() string {
 		return fmt.Sprintf(
 			"this turn runs on your own Claude Code, signed in as %s, and draws on that plan's usage "+
 				"limits rather than on an API bill. Claude Code runs its own tools under its own "+
-				"permissions: Canopy's tools, its trust levels and its approval prompts are not in the "+
-				"path", who)
+				"permissions and applies its own settings from this directory, including any hooks the "+
+				"repository committed: Canopy's tools, its trust levels and its approval prompts are not "+
+				"in the path", who)
 	}
 	return fmt.Sprintf(
 		"this turn runs on your own Claude Code, signed in as %s through %s rather than a Claude "+
 			"subscription, so it is billed to that account per token. Claude Code runs its own tools "+
-			"under its own permissions: Canopy's tools, its trust levels and its approval prompts are "+
-			"not in the path", who, c.install.Account.Method)
+			"under its own permissions and applies its own settings from this directory, including any "+
+			"hooks the repository committed: Canopy's tools, its trust levels and its approval prompts "+
+			"are not in the path", who, c.install.Account.Method)
 }
 
 // prompt flattens a Canopy request into the blocks ACP accepts.
@@ -475,6 +478,10 @@ type process struct {
 func (c *Client) spawn(ctx context.Context) (*process, error) {
 	cmd := exec.Command(c.install.Bridge)
 	cmd.Dir = c.workspace
+	// Claude Code keeps the credentials it signs in with; everything else secret in Canopy's
+	// environment, another vendor's key or a GitHub token, is not its business.
+	cmd.Env = childenv.Inherited("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+		"CLAUDE_CODE_OAUTH_TOKEN")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

@@ -23,6 +23,8 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 type fakeEngine struct {
 	tools *core.ToolRegistry
 
+	subscriptions int
+
 	usingKey   string
 	usingModel string
 
@@ -96,7 +98,10 @@ func (e *fakeEngine) Send(_, prompt string) (string, error) {
 
 func (e *fakeEngine) Cancel(string) { e.cancelled++ }
 
-func (e *fakeEngine) Events(uint64) <-chan core.Event { return make(chan core.Event) }
+func (e *fakeEngine) Events(uint64) <-chan core.Event {
+	e.subscriptions++
+	return make(chan core.Event)
+}
 
 func (e *fakeEngine) Compact(context.Context, string) (session.CompactionResult, error) {
 	e.compacted++
@@ -1018,5 +1023,18 @@ func TestAFailedTurnShowsTheWholeError(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Errorf("the failed turn lost %q:\n%s", want, view)
 		}
+	}
+}
+
+// Every event used to open a fresh subscription, each with its own goroutine and queue, while the
+// previous one was abandoned but kept receiving. A thousand events is a thousand leaked pumps.
+func TestEventsReuseOneSubscription(t *testing.T) {
+	engine := &fakeEngine{}
+	m := chat.New(engine, "s1", t.TempDir(), "")
+	for i := 0; i < 1000; i++ {
+		m, _ = m.Update(chat.EventMsg{})
+	}
+	if engine.subscriptions != 1 {
+		t.Fatalf("the chat subscribed %d times across 1000 events; every extra one is a goroutine and an unread queue that grows for the rest of the session", engine.subscriptions)
 	}
 }

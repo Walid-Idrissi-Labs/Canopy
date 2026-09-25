@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -11,6 +13,9 @@ import (
 
 func fetcher(t *testing.T) core.Tool {
 	t.Helper()
+	// The servers in these tests listen on loopback, which the real tool refuses.
+	allowPrivateAddresses = true
+	t.Cleanup(func() { allowPrivateAddresses = false })
 
 	tools := WebTools()
 	if len(tools) != 1 {
@@ -193,5 +198,36 @@ func TestBlankLinesAreCollapsed(t *testing.T) {
 	}
 	if !strings.Contains(got, "one") || !strings.Contains(got, "three") {
 		t.Errorf("content was lost: %q", got)
+	}
+}
+
+// fetch_url must not reach this machine or a private network, whatever the URL's host is called,
+// because a page can tell a model to fetch the local admin panel or the cloud metadata service.
+func TestPrivateAddressesAreNotFetched(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("internal secret"))
+	}))
+	defer srv.Close()
+
+	tool := WebTools()[0]
+	for _, target := range []string{srv.URL, "http://localhost" + srv.URL[len("http://127.0.0.1"):]} {
+		result, err := tool.Run(context.Background(), []byte(`{"url": "`+target+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(result.Content, "internal secret") || !result.IsError {
+			t.Fatalf("%s was fetched: %q", target, result.Content)
+		}
+	}
+	for _, ip := range []string{"127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254",
+		"100.64.0.1", "0.0.0.0", "::1", "fe80::1", "fc00::1", "::ffff:127.0.0.1"} {
+		if publicAddress(netip.MustParseAddr(ip)) {
+			t.Errorf("%s was treated as public", ip)
+		}
+	}
+	for _, ip := range []string{"1.1.1.1", "140.82.112.3", "2606:4700:4700::1111"} {
+		if !publicAddress(netip.MustParseAddr(ip)) {
+			t.Errorf("%s was treated as private", ip)
+		}
 	}
 }

@@ -223,3 +223,30 @@ func TestAnEmptyPathIsRefused(t *testing.T) {
 		t.Error("an empty path should be refused rather than resolving to the root")
 	}
 }
+
+// Writing .git/config or a hook is code execution on the next git call, so every spelling of the
+// directory is refused, including the case variants a case-insensitive filesystem treats as equal.
+func TestTheGitDirectoryIsRefused(t *testing.T) {
+	w := testWorkspace(t)
+	if err := os.MkdirAll(filepath.Join(w.Root(), ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		".git/config",
+		".git/hooks/pre-commit",
+		"./.git/config",
+		"internal/../.git/config",
+		".GIT/config",
+		".Git/hooks/post-commit",
+		"sub/.git/config",
+	} {
+		if _, err := w.Resolve(path); !errors.Is(err, ErrGitDirectory) {
+			t.Errorf("Resolve(%q) = %v, want ErrGitDirectory; a write there runs as code on the next git call", path, err)
+		}
+	}
+	for _, path := range []string{".gitignore", ".github/workflows/ci.yml", "docs/.gitkeep"} {
+		if _, err := w.Resolve(path); err != nil {
+			t.Errorf("Resolve(%q) = %v; only the .git directory itself is off limits", path, err)
+		}
+	}
+}

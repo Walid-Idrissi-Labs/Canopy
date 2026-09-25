@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"io"
 	"os/exec"
 	"strings"
@@ -264,6 +265,8 @@ func spawn(install Installation, workspace string) launcher {
 	return func(ctx context.Context) (*process, error) {
 		cmd := exec.Command(install.Binary, "app-server")
 		cmd.Dir = workspace
+		// Codex keeps the key it may be configured with; nothing else secret passes.
+		cmd.Env = childenv.Inherited("OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_API_KEY")
 
 		stdin, err := cmd.StdinPipe()
 		if err != nil {

@@ -102,7 +102,7 @@ func compactionMarker(compaction core.Compaction, width int) []string {
 		compaction.Through, saved)
 
 	lines := []string{t.Warning.Render(headline)}
-	for _, line := range wrap(compaction.Summary, width-2) {
+	for _, line := range wrap(terminalSafe(compaction.Summary), width-2) {
 		lines = append(lines, t.Muted.Render("  "+line))
 	}
 	// Said explicitly, because the obvious fear on reading the line above is that the conversation
@@ -120,6 +120,17 @@ func shortCount(n int) string {
 }
 
 func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail Detail) []string {
+	// Everything the model wrote, and everything pasted into the question, is text from somewhere
+	// Canopy does not control. A reply can carry escape sequences copied out of a file it read or a
+	// page it fetched, and a terminal given those raw would act on them: set the clipboard, rewrite
+	// the title, move the cursor over what is on screen. Tool output was already escaped; the reply,
+	// the thinking and the error were not.
+	turn.Request.Text = terminalSafe(turn.Request.Text)
+	turn.Thinking = terminalSafe(turn.Thinking)
+	turn.Text = terminalSafe(turn.Text)
+	turn.Error = terminalSafe(turn.Error)
+	turn.Model = terminalSafe(turn.Model)
+	turn.Provider = terminalSafe(turn.Provider)
 	t := theme.Current()
 	var lines []string
 

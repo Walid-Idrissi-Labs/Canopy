@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -189,7 +190,10 @@ func Open(ctx context.Context, conversation Conversation) (Agent, error) {
 		// environment from the system message, and forces file hooks, host git operations, the
 		// cross-session store, skills and memory off. Without it Canopy would be handing somebody
 		// else's agent a shell in the user's repository and calling it a provider.
-		Mode:          sdk.ModeEmpty,
+		Mode: sdk.ModeEmpty,
+		// The SDK would otherwise hand the Copilot CLI Canopy's whole environment. Its token travels
+		// separately, below.
+		Env:           childenv.Inherited(),
 		BaseDirectory: state,
 		// Both, rather than only the token. UseLoggedInUser already defaults to false when a token is
 		// given, and saying it out loud is what stops a future SDK default from quietly falling back

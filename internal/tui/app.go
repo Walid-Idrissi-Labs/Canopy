@@ -2,6 +2,9 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	agentsui "github.com/Walid-Idrissi-Labs/Canopy/internal/tui/agents"
@@ -1136,6 +1139,18 @@ func RunAppConfigured(
 	program := tea.NewProgram(
 		NewAppConfigured(store, keyStore, engine, dir, keyName, options),
 		tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+	// Closing the terminal window sends SIGHUP, which by default ends the process on the spot and
+	// skips every deferred cleanup: vendor agents, MCP servers and their children were left running
+	// with nobody to stop them. Treated as a quit instead, so the shutdown path runs.
+	hangup := make(chan os.Signal, 1)
+	signal.Notify(hangup, syscall.SIGHUP)
+	defer signal.Stop(hangup)
+	go func() {
+		if _, ok := <-hangup; ok {
+			program.Quit()
+		}
+	}()
 
 	final, err := program.Run()
 	if app, ok := final.(App); ok {

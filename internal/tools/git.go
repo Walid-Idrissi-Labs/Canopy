@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"strings"
 	"time"
 
@@ -135,6 +136,10 @@ func (t *gitTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResu
 
 	result, err := exec.Run(ctx, "git", args, exec.Options{
 		Dir: t.w.Root(),
+		// The user's environment, for their identity and credentials, with the repository's own
+		// command-valued configuration switched off. A hook or fsmonitor written into .git/config is
+		// otherwise a shell command nobody approved.
+		Env: gitsafe.InheritedFor(t.w.Root()),
 		// Short. Every operation here is local and finishes in milliseconds; one that does not has
 		// hit an interactive prompt, which is the case a timeout exists for.
 		Timeout: 30 * time.Second,
@@ -172,7 +177,8 @@ func buildDiff(input json.RawMessage) ([]string, error) {
 		return nil, fmt.Errorf("could not read the arguments: %w", err)
 	}
 
-	out := []string{"diff"}
+	// External diff programs and textconv drivers are commands the repository configures.
+	out := []string{"diff", "--no-ext-diff", "--no-textconv"}
 	if args.Staged {
 		out = append(out, "--staged")
 	}

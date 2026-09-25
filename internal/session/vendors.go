@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/trust"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -100,6 +101,13 @@ func (v *Vendors) Delegated(
 	// model is carried through so the client can ask for it if the delegated agent offers a choice.
 	// Neither of them prices anything, because Delegated is checked first.
 	id := pricing.ModelID{Provider: meta.Ref.Provider, Model: model, Delegated: true}
+
+	// The vendor applies its own project settings from the workspace, hooks included, and none of it
+	// passes through Canopy's gate. Committed vendor settings in an untrusted repository are
+	// therefore refused before the vendor is started rather than described afterwards.
+	if err := trust.DelegationAllowed(workspace); err != nil {
+		return nil, pricing.ModelID{}, fmt.Errorf("key %q: %w", meta.Ref.Name, err)
+	}
 
 	if in.Route == codex.Route {
 		found, err := delegatedCodex.Find()

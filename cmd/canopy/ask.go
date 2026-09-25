@@ -136,15 +136,17 @@ func pricer(id pricing.ModelID) func(core.Usage) (core.Usage, string) {
 		if reason != "" {
 			return usage, reason
 		}
-		if note := pricing.StalenessNote(time.Now()); note != "" {
-			return usage, note
-		}
 		// Caching is invisible unless it is reported, and an invisible saving is one nobody
-		// notices has stopped happening.
+		// notices has stopped happening. An old price table qualifies the figure rather than
+		// replacing it, since a hidden saving is worse than an approximate one.
+		var notes []string
 		if saving, ok := pricing.Saving(id, usage); ok {
-			return usage, cacheNote(saving)
+			notes = append(notes, cacheNote(saving))
 		}
-		return usage, ""
+		if stale := pricing.StalenessNote(time.Now()); stale != "" {
+			notes = append(notes, stale)
+		}
+		return usage, strings.Join(notes, "; ")
 	}
 }
 
@@ -174,7 +176,7 @@ func drain(stream core.Stream, out io.Writer, price func(core.Usage) (core.Usage
 		event := stream.Event()
 		switch event.Kind {
 		case core.EventText:
-			w.printf("%s", event.Text)
+			w.printf("%s", terminalText(event.Text))
 			wroteText = true
 
 		case core.EventToolCall:
@@ -396,4 +398,18 @@ func resolveKey(store *keys.Store, name string) (core.KeyMetadata, error) {
 				"Choosing which key gets billed is not a decision to make silently",
 			strings.Join(names, ", "))
 	}
+}
+
+// terminalText drops control characters other than newline and tab from model output before it is
+// printed, so a reply cannot drive the terminal it is shown in.
+func terminalText(s string) string {
+	return strings.Map(func(c rune) rune {
+		if c == '\n' || c == '\t' {
+			return c
+		}
+		if c < 0x20 || c == 0x7f || (c >= 0x80 && c <= 0x9f) {
+			return -1
+		}
+		return c
+	}, s)
 }

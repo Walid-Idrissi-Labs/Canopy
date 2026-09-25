@@ -64,6 +64,7 @@ func reportRepo(t *testing.T, test string) string {
 	// History goes to a temporary file, or the test would read and write the real one on this
 	// machine. The report only reads it for cost, and a missing one is a normal outcome there.
 	t.Setenv(session.PathEnvVar, filepath.Join(t.TempDir(), "history.db"))
+	trustForTest(t, dir)
 	return dir
 }
 

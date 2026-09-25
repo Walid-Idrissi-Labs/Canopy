@@ -170,6 +170,7 @@ func (m Model) viewSignIn() string {
 	b.WriteString(styleOK.Render("  Nothing is typed here and nothing is pasted."))
 	b.WriteString("\n\n")
 
+	m.prompt = m.prompt.Safe()
 	switch {
 	case m.prompt.URL != "" || m.prompt.Code != "":
 		if m.prompt.URL != "" {

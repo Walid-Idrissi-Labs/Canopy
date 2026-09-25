@@ -119,7 +119,7 @@ func (r *Repo) Patch(ctx context.Context, dir, base, path string) (string, error
 
 	// The -- separator matters: without it a path that happens to look like a revision is read as
 	// one, and "main" as a filename is not a hypothetical in a repository full of branches.
-	patch, err := worktree.run(ctx, "diff", from, "--", path)
+	patch, err := worktree.run(ctx, "diff", "--no-ext-diff", "--no-textconv", from, "--", path)
 	if err != nil {
 		return "", fmt.Errorf("reading the changes to %s: %w", path, err)
 	}
@@ -129,8 +129,8 @@ func (r *Repo) Patch(ctx context.Context, dir, base, path string) (string, error
 		// would have looked like. It answers through its exit code the way check-ignore does, one
 		// meaning differences exist, so its output cannot be read through run.
 		result, runErr := exec.Run(ctx, "git",
-			[]string{"diff", "--no-index", "--", os.DevNull, path},
-			exec.Options{Dir: dir, Env: environ(), Timeout: 60 * time.Second})
+			[]string{"diff", "--no-ext-diff", "--no-textconv", "--no-index", "--", os.DevNull, path},
+			exec.Options{Dir: dir, Env: environ(dir), Timeout: 60 * time.Second})
 		if runErr != nil || !result.Ran {
 			return "", nil
 		}
