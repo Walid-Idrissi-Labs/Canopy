@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -80,5 +81,42 @@ func requireSandbox(t *testing.T) {
 			t.Fatalf("CI requires a sandbox and there is none: %v", err)
 		}
 		t.Skip(err)
+	}
+}
+
+// A repository nested in the workspace is as dangerous as the workspace's own: added as a gitlink,
+// the user's git status runs a git inside it that obeys its config. None can be made, and an
+// existing one's config and hooks cannot be written, while ordinary files stay writable.
+func TestNestedRepositoriesCannotBeArmed(t *testing.T) {
+	requireSandbox(t)
+	if runtime.GOOS != "darwin" {
+		t.Skip("carving paths out of a writable tree is enforced on macOS")
+	}
+	ws, _ := filepath.EvalSymlinks(t.TempDir())
+	for _, d := range []string{"old/.git/hooks", "old/.git/modules/m/hooks"} {
+		if err := os.MkdirAll(filepath.Join(ws, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := Policy{Writable: []string{ws}, Network: NetworkOpen}.WithGitDirs(filepath.Join(ws, ".git"))
+	for _, attempt := range []string{
+		"mkdir new && mkdir new/.git",
+		"echo 'gitdir: /tmp/x' > .git",
+		"echo x > old/.git/config",
+		"echo x > old/.git/config.worktree",
+		"echo x > old/.git/hooks/pre-commit",
+		"echo x > old/.git/modules/m/config",
+		"mv old/.git old/moved",
+	} {
+		_, _ = run(t, p, "cd "+ws+" && "+attempt)
+	}
+	for _, armed := range []string{"new/.git", ".git", "old/.git/config", "old/.git/config.worktree",
+		"old/.git/hooks/pre-commit", "old/.git/modules/m/config", "old/moved"} {
+		if _, err := os.Lstat(filepath.Join(ws, armed)); err == nil {
+			t.Errorf("%s was written from inside the sandbox", armed)
+		}
+	}
+	if out, err := run(t, p, "cd "+ws+" && echo ok > notes.git && echo ok > old/.git/HEAD && mkdir -p a/b"); err != nil {
+		t.Fatalf("an ordinary write was refused: %v %s", err, out)
 	}
 }

@@ -39,13 +39,16 @@ func (p Policy) profile() string {
 		fmt.Fprintf(&b, "  (literal %s)\n", quote(dev))
 	}
 	b.WriteString("  (literal \"/dev/stdout\") (literal \"/dev/stderr\") (regex #\"^/dev/fd/\"))\n")
-	if len(p.DenyWrite)+len(p.DenyWriteExact) > 0 {
+	if len(p.DenyWrite)+len(p.DenyWriteExact)+len(p.DenyWriteMatching) > 0 {
 		b.WriteString("(deny file-write*\n")
 		for _, path := range p.DenyWrite {
 			fmt.Fprintf(&b, "  (subpath %s)\n", quote(path))
 		}
 		for _, path := range p.DenyWriteExact {
 			fmt.Fprintf(&b, "  (literal %s)\n", quote(path))
+		}
+		for _, pattern := range p.DenyWriteMatching {
+			fmt.Fprintf(&b, "  (regex #%s)\n", quote(pattern))
 		}
 		b.WriteString(")\n")
 	}

@@ -45,6 +45,9 @@ type Policy struct {
 	// DenyWriteExact are single paths, a directory entry or a file, that may not be written,
 	// renamed or removed, while what is inside a directory stays as writable as it was.
 	DenyWriteExact []string
+	// DenyWriteMatching are regular expressions over whole paths that may not be written, for the
+	// places whose names are known but whose locations are not.
+	DenyWriteMatching []string
 	// Devices are device files that may be written: null, tty and the like, and not the whole of
 	// /dev, which holds other terminals.
 	Devices []string
@@ -136,7 +139,20 @@ func (p Policy) WithGitDirs(dirs ...string) Policy {
 	}
 	p.DenyWrite = clean(p.DenyWrite)
 	p.DenyWriteExact = clean(p.DenyWriteExact)
+	// Any other repository beneath the workspace is as dangerous as the workspace's own: once it is
+	// added as a gitlink, the user's plain git status runs a git inside it, which obeys its config.
+	// So no new .git may be made, and no git config or hooks written, anywhere a command can reach.
+	p.DenyWriteMatching = append(p.DenyWriteMatching, nestedGit...)
 	return p
+}
+
+// nestedGit are the paths inside any repository that git runs or obeys: a .git entry itself, so
+// none can be made or moved into place, and config, per-worktree config and hooks, in a repository
+// or in one of its submodules or worktrees. Written without backslashes, which Seatbelt's regex
+// literals take raw.
+var nestedGit = []string{
+	`/[.]git/?$`,
+	`/[.]git/((modules|worktrees)/.+/)?(config|config[.]worktree|hooks)(/|$)`,
 }
 
 func clean(paths []string) []string {
