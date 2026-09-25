@@ -316,6 +316,14 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
+	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
+	// SetRemember.
+	files    func() []string
+	remember func(note string) (string, error)
+
+	// chordX is set by ctrl+x, the first half of ctrl+x ctrl+e, which opens the box in $EDITOR.
+	chordX bool
+
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
@@ -616,6 +624,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case editedMsg:
+		if msg.err != nil {
+			m.err = "the editor did not finish: " + msg.err.Error()
+			return m, nil
+		}
+		m.input.SetValue(msg.text)
+		m.err = ""
+		m.refreshMenu()
+		return m, nil
 
 	case tea.PasteMsg:
 		// Pasted text goes into the message box whole: an enter inside a paste is a line break in
@@ -1083,6 +1101,22 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.notice = ""
 	}
 
+	// ctrl+x ctrl+e opens the box in $EDITOR, the chord shells use. The first half only waits for
+	// the second; any other key after it is itself, so ctrl+x never eats a keystroke.
+	if !m.awaiting {
+		if m.chordX {
+			m.chordX = false
+			if msg.String() == "ctrl+e" {
+				m.notice = ""
+				return m, openEditor(m.input.Value())
+			}
+		} else if msg.String() == "ctrl+x" {
+			m.chordX = true
+			m.notice = "ctrl+e opens the message in your editor"
+			return m, nil
+		}
+	}
+
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
 	// into the message box, and typing an answer to a yes or no question into a text field and
 	// wondering why nothing happens is a bad minute to give somebody.
@@ -1163,7 +1197,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			// not. Without the second half, typing a command out in full and pressing enter would
 			// put the name you already typed back in the box and do nothing, which reads as the
 			// key having stopped working.
-			if chosen, ok := m.menu.chosen(); ok && m.input.Value() != "/"+chosen.name {
+			if chosen, ok := m.menu.chosen(); ok && m.menu.sigil == "@" {
+				m.acceptFromMenu()
+				return m, nil
+			} else if ok && m.input.Value() != "/"+chosen.name {
 				m.acceptFromMenu()
 				return m, nil
 			}
@@ -1262,6 +1299,15 @@ func (m *Model) acceptFromMenu() bool {
 	if !ok {
 		return false
 	}
+	if m.menu.sigil == "@" {
+		// The mention being typed is replaced by the whole path, and the rest of the box kept.
+		value := m.input.Value()
+		at := strings.LastIndexAny(value, " \t\n")
+		m.input.SetValue(value[:at+1] + "@" + chosen.name + " ")
+		m.menu = menu{}
+		m.err = ""
+		return true
+	}
 	m.input.SetValue("/" + chosen.name + " ")
 	m.menu = menu{}
 	m.notice = chosen.description
@@ -1276,6 +1322,21 @@ func (m Model) send() (Model, tea.Cmd) {
 
 	typed := m.input.Value()
 	trimmed := strings.TrimSpace(typed)
+
+	// "# note" is kept in the project's instructions rather than sent: the quick way to tell every
+	// later conversation something once.
+	if note, ok := strings.CutPrefix(trimmed, "# "); ok && m.remember != nil && strings.TrimSpace(note) != "" {
+		path, err := m.remember(strings.TrimSpace(note))
+		if err != nil {
+			m.err = "the note was not kept: " + err.Error()
+			return m, nil
+		}
+		m.input.Remember(typed)
+		m.input.Clear()
+		m.menu = menu{}
+		m.notice = "kept in " + path + " for every conversation in this project"
+		return m, nil
+	}
 
 	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
 	// and never cost anything, so they are decided before the path that does either.
@@ -1472,6 +1533,13 @@ func (m *Model) SetNotice(text string) { m.notice = text }
 
 // SetCommands installs the already resolved global and project command catalog.
 func (m *Model) SetCommands(commands config.CommandSet) { m.commands = commands }
+
+// SetFiles gives the box the project's files, for completing an @ mention. Nil turns mentions off.
+func (m *Model) SetFiles(files func() []string) { m.files = files }
+
+// SetRemember gives the box somewhere to keep a "# note": the note is written, and the returned
+// path named. Nil makes "#" an ordinary message.
+func (m *Model) SetRemember(remember func(note string) (string, error)) { m.remember = remember }
 
 // Notice is what is currently being said. For tests.
 func (m Model) Notice() string { return m.notice }

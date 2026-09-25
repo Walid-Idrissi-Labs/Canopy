@@ -44,6 +44,9 @@ type menuItem struct {
 type menu struct {
 	open bool
 
+	// sigil is what the list is completing: "/" for a command, "@" for a file.
+	sigil string
+
 	// matches are the commands the current input selects, in the order they are offered.
 	matches []menuItem
 
@@ -60,9 +63,14 @@ type menu struct {
 // does not notice a backspace.
 func (m *Model) refreshMenu() {
 	prefix, wanted := commandPrefix(m.input.Value())
+	sigil := "/"
 	if !wanted {
-		m.menu = menu{}
-		return
+		fragment, mentioning := mentionPrefix(m.input.Value())
+		if !mentioning || m.files == nil {
+			m.menu = menu{}
+			return
+		}
+		prefix, sigil = fragment, "@"
 	}
 
 	previous := ""
@@ -71,7 +79,12 @@ func (m *Model) refreshMenu() {
 	}
 
 	m.menu.open = true
-	m.menu.matches = matching(prefix, m.commands)
+	m.menu.sigil = sigil
+	if sigil == "@" {
+		m.menu.matches = matchingFiles(prefix, m.files())
+	} else {
+		m.menu.matches = matching(prefix, m.commands)
+	}
 
 	// The selection follows the command it was on where that command is still in the list, rather
 	// than following the index. Typing another letter usually removes entries above the one somebody
@@ -214,6 +227,9 @@ func (m menu) lines(width int, filter string) []string {
 	t := theme.Current()
 
 	if len(m.matches) == 0 {
+		if m.sigil == "@" {
+			return []string{t.Muted.Render("  no file matches")}
+		}
 		return []string{t.Muted.Render("  no command matches")}
 	}
 
@@ -251,7 +267,11 @@ func (m menu) row(item menuItem, selected bool, width int, filter string) string
 	// The letters the filter matched are drawn in the secondary colour, so the list shows why each
 	// row is in it: type "pa" and the pa in compact lights up. The slash stays in the row's own
 	// style, because it is punctuation rather than part of what matched.
-	name := base.Render("/")
+	sigil := m.sigil
+	if sigil == "" {
+		sigil = "/"
+	}
+	name := base.Render(sigil)
 	if at := strings.Index(item.name, filter); filter != "" && at >= 0 {
 		name += base.Render(item.name[:at]) +
 			t.Success.Render(item.name[at:at+len(filter)]) +
@@ -266,7 +286,7 @@ func (m menu) row(item menuItem, selected bool, width int, filter string) string
 	}
 	// The description is what gets cut, never the name. A truncated command name is a command
 	// somebody cannot type.
-	room := width - 2 - lipgloss.Width("/"+item.name) - 4
+	room := width - 2 - lipgloss.Width(sigil+item.name) - 4
 	if room < 4 {
 		return marker + name
 	}
@@ -283,4 +303,71 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// mentionPrefix reads a file mention being typed at the end of the box: an @ at the start of a word,
+// and what follows it up to the end. A space ends it, as it ends a command name.
+func mentionPrefix(value string) (string, bool) {
+	at := strings.LastIndexAny(value, " \t\n")
+	word := value[at+1:]
+	if !strings.HasPrefix(word, "@") {
+		return "", false
+	}
+	return strings.TrimPrefix(word, "@"), true
+}
+
+// maxFileMatches is how many files the list offers; past that, typing more narrows it.
+const maxFileMatches = 50
+
+// matchingFiles is every file the fragment selects, best first: the fragment in the file's name,
+// then anywhere in its path, then its letters in order, and within each the shorter path first,
+// since the file somebody means is more often near the top of the tree.
+func matchingFiles(fragment string, files []string) []menuItem {
+	fragment = strings.ToLower(fragment)
+	type ranked struct {
+		path string
+		rank int
+	}
+	var found []ranked
+	for _, path := range files {
+		lower := strings.ToLower(path)
+		base := lower[strings.LastIndex(lower, "/")+1:]
+		switch {
+		case fragment == "" || strings.Contains(base, fragment):
+			found = append(found, ranked{path, 0})
+		case strings.Contains(lower, fragment):
+			found = append(found, ranked{path, 1})
+		case inOrder(lower, fragment):
+			found = append(found, ranked{path, 2})
+		}
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		if found[i].rank != found[j].rank {
+			return found[i].rank < found[j].rank
+		}
+		if len(found[i].path) != len(found[j].path) {
+			return len(found[i].path) < len(found[j].path)
+		}
+		return found[i].path < found[j].path
+	})
+	if len(found) > maxFileMatches {
+		found = found[:maxFileMatches]
+	}
+	items := make([]menuItem, 0, len(found))
+	for _, f := range found {
+		items = append(items, menuItem{name: f.path})
+	}
+	return items
+}
+
+// inOrder reports whether every letter of fragment appears in s, in order.
+func inOrder(s, fragment string) bool {
+	for _, r := range fragment {
+		at := strings.IndexRune(s, r)
+		if at < 0 {
+			return false
+		}
+		s = s[at+len(string(r)):]
+	}
+	return true
 }
