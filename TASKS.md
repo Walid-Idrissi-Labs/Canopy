@@ -8017,6 +8017,21 @@ mutation testing, fixes, re-review, then into the integration branch that lands 
 - Z-R14 `repo_map`. PR #80.
 - Z-R15 Golden screen snapshots. PR #82.
 - Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+### Z-V07 Desktop notifications, the window title and tab progress (part of V-07)
+`status: review | owner: Claude | branch: feat/notifications`
+
+`CANOPY_NOTIFY=1` posts a desktop notification when an agent starts needing a person (who, and the
+command it asks to run) and when a turn finishes while the terminal is not in front, which focus
+reporting tells. The sequence suits the terminal: OSC 9 by default, kitty's OSC 99, OSC 777 for foot
+and urxvt, wrapped for tmux passthrough; its text has every control character removed and field
+separators replaced, so a name or command a model wrote cannot end it early. The window title says
+how many are working and waiting. OSC 9;4 progress is drawn only on Ghostty, WezTerm, Windows
+Terminal and ConEmu, since an older iTerm2 shows any OSC 9 as a notification. Tests cover each
+sequence, the escaping, the title, where progress is drawn, and the app announcing who waits once
+and a finish only while blurred; off unless asked for. Mutation-checked.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 

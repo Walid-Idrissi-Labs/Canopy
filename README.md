@@ -229,7 +229,12 @@ screen, not only on the one that lists agents, and no screen is ever locked beca
 waiting: leaving a conversation is not answering it, and the question is still there when you come
 back. Scrolling a permission prompt to read what is above it does not answer it either. Set
 `CANOPY_BELL=1` to have the terminal beep the moment an agent starts needing you, which is off
-unless you ask for it.
+unless you ask for it. `CANOPY_NOTIFY=1` posts a desktop notification instead, saying which agent
+wants what, and another when a turn finishes while the terminal is behind another window; it uses
+the sequence your terminal understands (iTerm2, WezTerm, Ghostty, kitty, foot and Windows Terminal
+among them) and passes through tmux when `allow-passthrough` is on. The window title always says how
+many agents are working and how many are waiting on you, and Ghostty, WezTerm and Windows Terminal
+show the same as a progress indicator on the tab.
 
 ## Git as a real tool, not a shell string
 
