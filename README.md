@@ -504,7 +504,9 @@ absent, arguments are appended under an `Arguments:` heading.
 
 ## Writing a message
 
-`@` at the start of a word offers the project's files as git lists them, ignored ones left out,
+ctrl+p opens a palette of every command, mode, theme and file, narrowed as you type (letters in
+order are enough: `thn` finds `theme nord`); enter runs a built-in, puts one of the project's own
+commands in the box to be sent, and mentions a file. `@` at the start of a word offers the project's files as git lists them, ignored ones left out,
 best match first; tab or enter puts the path in. ctrl+x ctrl+e opens the message in `$VISUAL` or
 `$EDITOR` and takes back what you wrote. A single typed line that begins with `# ` is kept, after a
 second enter, as a line in AGENTS.md, which every conversation started afterwards reads; a paste, or
