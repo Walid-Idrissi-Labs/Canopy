@@ -149,3 +149,18 @@ func TestLandingRefusesACheckoutThatMovedDuringTheTests(t *testing.T) {
 		t.Fatal("the test command did not move the checkout, so this proves nothing")
 	}
 }
+
+// A setup that fails stops the landing: tests run on an unprepared tree would decide nothing.
+func TestAFailingSetupStopsTheLanding(t *testing.T) {
+	dir := landRepoWith(t, `{"setup":"exit 7",`+
+		`"tests":[{"name":"has-ok","command":{"argv":["test","-f","ok.txt"]},"required":true}]}`)
+	start := head(t, dir)
+	var out bytes.Buffer
+	err := runLand([]string{"good"}, strings.NewReader(""), &out)
+	if err == nil || !strings.Contains(err.Error(), "setup failed") {
+		t.Fatalf("a failed setup did not stop the landing: %v\n%s", err, out.String())
+	}
+	if head(t, dir) != start {
+		t.Fatal("main moved after a failed setup")
+	}
+}
