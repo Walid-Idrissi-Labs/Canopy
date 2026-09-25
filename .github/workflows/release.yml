@@ -24,13 +24,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Require the Canopy GitHub app registration
+      # Without the app id a release still builds and ships; only Copilot sign-in is unavailable in
+      # it, and it says so in words when somebody tries. Blocking every release on one route's
+      # registration held back fixes that have nothing to do with it.
+      - name: Note whether the Canopy GitHub app is registered
         env:
           CANOPY_GITHUB_CLIENT_ID: ${{ vars.CANOPY_GITHUB_CLIENT_ID }}
         run: |
           if [ -z "$CANOPY_GITHUB_CLIENT_ID" ]; then
-            echo "Set the public repository variable CANOPY_GITHUB_CLIENT_ID before releasing." >&2
-            exit 1
+            echo "::warning::CANOPY_GITHUB_CLIENT_ID is not set, so this release cannot sign in to GitHub Copilot."
           fi
 
       - uses: goreleaser/goreleaser-action@v7

@@ -412,7 +412,8 @@ own app rather than reusing another editor's client id or version headers.
   for a Copilot session.
 
 - **Canopy needs a GitHub app of its own.** Release builds require the public repository variable
-  `CANOPY_GITHUB_CLIENT_ID` and compile it in; the workflow refuses to publish without it. For a
+  `CANOPY_GITHUB_CLIENT_ID` to compile it in; a release built without it ships with Copilot sign-in
+  unavailable, and says so when somebody tries. For a
   local build, register an **OAuth app** with the device flow enabled and set that variable to its client id,
   which is not a secret. An OAuth app rather than a GitHub app for one specific reason: its user
   tokens do not expire, so Canopy never has to renew one, and renewing needs a client secret that a
