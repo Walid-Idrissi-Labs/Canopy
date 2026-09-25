@@ -445,6 +445,12 @@ socket only you can reach, and speaks the same protocol as `canopy acp`. A quest
 while nobody is attached waits for the next `canopy attach`, and the server says which conversation
 is waiting.
 
+### Running a command yourself
+
+`!go test ./...` in the box runs the command in the project through your shell, as your terminal
+would, with the provider keys Canopy holds kept out of its environment. What it printed is shown,
+and goes with your next message, marked as command output, so "why does this fail" needs no pasting.
+
 ## Where the tokens go
 
 Every request resends the conversation, so what it costs is decided by how much of that is read

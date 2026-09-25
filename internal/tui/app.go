@@ -170,6 +170,9 @@ type AppOptions struct {
 	// "session-1" is the oldest chat in the database. Every launch opened it, while the agent that
 	// had just been created sat in a conversation nobody could see.
 	Session string
+
+	// Shell runs a "!command" typed in the box.
+	Shell func(ctx context.Context, command string) chat.ShellResult
 }
 
 // NewApp builds the application.
@@ -229,6 +232,7 @@ func NewAppConfigured(
 		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
+	app.chat.SetShell(options.Shell)
 	app.chat.SetAgent(options.Agent)
 	app.review.SetCostOutcomes(options.Costs)
 	app.review.SetJudge(engine.Judge)

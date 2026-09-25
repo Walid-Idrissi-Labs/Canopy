@@ -316,6 +316,11 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
+	// shell runs "!command" in the project, and shellContext is what those commands said since the
+	// last message, which goes with the next one. See shell.go.
+	shell        func(ctx context.Context, command string) ShellResult
+	shellContext []shellRun
+
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
@@ -616,6 +621,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case shellDoneMsg:
+		return m.shellDone(msg), nil
 
 	case tea.PasteMsg:
 		// Pasted text goes into the message box whole: an enter inside a paste is a line break in
@@ -1277,6 +1285,14 @@ func (m Model) send() (Model, tea.Cmd) {
 	typed := m.input.Value()
 	trimmed := strings.TrimSpace(typed)
 
+	// "!command" runs in the project, like a terminal, and costs nothing.
+	if command, ok := strings.CutPrefix(trimmed, "!"); ok && m.shell != nil && strings.TrimSpace(command) != "" {
+		m.input.Remember(typed)
+		m.input.Clear()
+		m.menu = menu{}
+		return m.runShell(strings.TrimSpace(command))
+	}
+
 	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
 	// and never cost anything, so they are decided before the path that does either.
 	if name, arguments, ok := builtinInvocation(trimmed); ok {
@@ -1307,12 +1323,13 @@ func (m Model) send() (Model, tea.Cmd) {
 	// seconds into it. Pressing shift+tab and then enter is somebody who has chosen.
 	m.applyPendingMode()
 
-	if _, err := m.engine.Send(m.sessionID, prompt); err != nil {
+	if _, err := m.engine.Send(m.sessionID, m.withShellContext(prompt)); err != nil {
 		// The message stays in the box. Clearing it on a failure would mean somebody has to retype
 		// what they just wrote because a provider was busy.
 		m.err = err.Error()
 		return m, nil
 	}
+	m.shellContext = nil
 
 	// Filed only once the engine has accepted it, so a message that was refused is still in the box
 	// rather than in the box and in the history, which is one message showing up twice.

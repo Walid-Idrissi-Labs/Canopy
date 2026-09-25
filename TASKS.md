@@ -8069,6 +8069,18 @@ through theme styles and a rewrite needs its own golden review.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-V05b `!command` in the box (part of V-05)
+`status: review | owner: Claude | branch: feat/shell-passthrough`
+
+"!command" runs through the person's shell in the project, unconfined as their terminal would be,
+with childenv's inherited environment so provider keys are left out, two minutes and 64 KB bounded.
+Its output (control characters removed) is shown and goes with the next message inside a
+<shell-output> frame whose closing tag cannot be forged from the output, then is dropped. Without a
+shell attached, "!" is an ordinary message. Tests cover the run, the frame, the one-message lifetime,
+a command that cannot finish, and the keys being withheld. Mutation-checked.
+
+`verify: claude [x] 2026-09-26   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 
