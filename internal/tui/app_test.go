@@ -82,6 +82,7 @@ func (f *fakeKeyStore) Identity(ref core.KeyRef) (keysui.Identity, error) {
 // not about conversations, so it answers with an empty session and records nothing.
 type stubEngine struct {
 	judged          []core.JudgeCandidate
+	judgedFor       string
 	budget, overall session.Budget
 	session         core.Session
 	// sessions is for the few tests that need more than one, and so need the stub to be able to
@@ -1416,7 +1417,53 @@ func (e *stubEngine) SetBudget(_ string, limit float64) error { e.budget.Limit =
 func (e *stubEngine) OverallBudget() session.Budget           { return e.overall }
 func (e *stubEngine) SetOverallBudget(limit float64) error    { e.overall.Limit = limit; return nil }
 
-func (e *stubEngine) Judge(_ context.Context, _ string, candidates []core.JudgeCandidate) (string, error) {
-	e.judged = candidates
-	return "bravo special-cases the test input", nil
+func (e *stubEngine) Judge(_ context.Context, sessionID string, candidates []core.JudgeCandidate) (string, error) {
+	e.judged, e.judgedFor = candidates, sessionID
+	return "bravo special-cases the test input \x1b]52;c;cHduZWQ=\x07", nil
+}
+
+// rankedReview is a review source with two ranked attempts, for driving the review screen whole.
+type rankedReview struct{}
+
+func (rankedReview) Rank() core.Ranking {
+	return core.Ranking{Ranked: []core.Placement{
+		{Agent: "alpha", Rank: 1, Tests: core.TestPassing}, {Agent: "bravo", Rank: 2, Tests: core.TestPassing}}}
+}
+func (rankedReview) ReadyToReview() []core.ReadyForReview { return nil }
+func (rankedReview) Changes(agent string) ([]core.FileChange, error) {
+	return []core.FileChange{{Path: agent + ".go", Status: 'M'}}, nil
+}
+func (rankedReview) Patch(agent, _ string) (string, error) { return "+changed by " + agent, nil }
+func (rankedReview) Overlaps() ([]core.Overlap, error)     { return nil, nil }
+func (rankedReview) Draft(string) (core.CommitDraft, error) {
+	return core.CommitDraft{}, nil
+}
+func (rankedReview) Commit(string, string) error { return nil }
+
+// From the chat, through the agent list, to the review ranking: o asks the reviewer about the
+// attempts for the conversation on screen, the answer comes back through the application, and it is
+// shown as an opinion with its terminal controls made visible rather than obeyed.
+func TestTheReviewScreenAsksForAnOpinionThroughTheApp(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{}
+	var model tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Review: rankedReview{}})
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyTab})
+	model, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	if cmd == nil {
+		t.Fatal("o on the ranking asked nothing")
+	}
+	model, _ = model.Update(cmd())
+	if engine.judgedFor != "session-1" || len(engine.judged) != 2 || !strings.Contains(engine.judged[1].Diff, "changed by bravo") {
+		t.Fatalf("the reviewer was asked for %q about %+v", engine.judgedFor, engine.judged)
+	}
+	view := model.View()
+	if !strings.Contains(plain(view), "a reviewer's opinion, not verification") || !strings.Contains(view, `\x1b]52`) ||
+		strings.Contains(view, "\x1b]52") {
+		t.Fatalf("the opinion was not shown safely:\n%s", plain(view))
+	}
 }

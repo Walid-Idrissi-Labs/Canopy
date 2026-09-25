@@ -489,3 +489,20 @@ func TestTheRankingCanAskForAnOpinion(t *testing.T) {
 		t.Fatalf("the opinion is not shown as one:\n%s", body)
 	}
 }
+
+// An opinion about one ranking is not shown under another: new results hide it until asked again.
+func TestAnOpinionOnAnOldRankingIsHidden(t *testing.T) {
+	model, source := loaded(t)
+	model.SetJudge(func(context.Context, string, []core.JudgeCandidate) (string, error) { return "alpha is fine", nil })
+	model = press(model, "tab")
+	next, cmd := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	next = next.judged(cmd().(judgedMsg))
+	if !strings.Contains(stripANSI(next.Body()), "alpha is fine") {
+		t.Fatal("the opinion was not shown")
+	}
+	source.ranking.Ranked[0].Tests = core.TestFailing
+	body := stripANSI(next.Body())
+	if strings.Contains(body, "alpha is fine") || !strings.Contains(body, "ranking changed since") {
+		t.Fatalf("an opinion about an old ranking is still shown:\n%s", body)
+	}
+}

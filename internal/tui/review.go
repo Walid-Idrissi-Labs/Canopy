@@ -86,6 +86,21 @@ type ReviewModel struct {
 	session string
 	opinion string
 	judging bool
+	// judgedRanking is the ranking the opinion was given about; a changed ranking hides it.
+	judgedRanking string
+}
+
+// rankingKey identifies a ranking's state: who is in it, how their tests stand and how much each
+// changed. An opinion about one state is not shown under another.
+func rankingKey(source ReviewSource) string {
+	if source == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range source.Rank().All() {
+		fmt.Fprintf(&b, "%s:%d:%s:%s;", p.Agent, p.Rank, p.Tests, p.Diff.Summary())
+	}
+	return b.String()
 }
 
 // Judge asks a model for an opinion of several agents' attempts; see session.Engine.Judge.
@@ -107,7 +122,9 @@ func (m ReviewModel) judged(msg judgedMsg) ReviewModel {
 		m.failure = "the reviewer could not answer: " + msg.err.Error()
 		return m
 	}
-	m.opinion, m.failure = msg.text, ""
+	// Model text steered by diffs the agents under review wrote: shown as text, never as controls.
+	m.opinion, m.failure = chat.TerminalSafe(msg.text), ""
+	m.judgedRanking = rankingKey(m.source)
 	return m
 }
 
@@ -426,7 +443,8 @@ func (m ReviewModel) open() ReviewModel {
 			m.failure = err.Error()
 			return m
 		}
-		m.file, m.patch, m.offset, m.pane = file.Path, strings.Split(patch, "\n"), 0, panePatch
+		// An agent wrote this diff and may have put terminal controls in it; they are shown, not run.
+		m.file, m.patch, m.offset, m.pane = chat.TerminalSafe(file.Path), strings.Split(chat.TerminalSafe(patch), "\n"), 0, panePatch
 		return m
 	}
 	return m
@@ -627,7 +645,9 @@ func (m ReviewModel) rankingLines() []string {
 				testStatus(placement.Tests).render(), name, styleMuted.Render(placement.Diff.Summary())),
 			"      "+styleReason.Render(truncate(placement.Reason, m.width-6)))
 	}
-	if m.opinion != "" {
+	if m.opinion != "" && m.judgedRanking != rankingKey(m.source) {
+		lines = append(lines, "", styleMuted.Render("the ranking changed since the reviewer's opinion; o asks again"))
+	} else if m.opinion != "" {
 		// Beside the evidence and never in its place: a model reading diffs can be wrong in ways a
 		// test run cannot, and the heading says which of the two this is.
 		lines = append(lines, "", styleHeader.Render("a reviewer's opinion, not verification"))
@@ -668,9 +688,9 @@ func (m ReviewModel) fileLines() []string {
 	lines := []string{styleHeader.Render(fmt.Sprintf("%d changed", len(m.files)))}
 	for i, file := range m.files {
 		marker := "  "
-		name := file.Path
+		name := chat.TerminalSafe(file.Path)
 		if i == m.cursor {
-			marker, name = "> ", styleSelected.Render(file.Path)
+			marker, name = "> ", styleSelected.Render(chat.TerminalSafe(file.Path))
 		}
 		if file.Old != "" {
 			name += styleMuted.Render(" was " + file.Old)
