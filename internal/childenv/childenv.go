@@ -53,7 +53,7 @@ func Secret(name string) bool {
 // general are credentials that open far more than any one server needs: clouds, CI, registries,
 // chat and payment services, and the URLs that carry passwords.
 var general = map[string]bool{
-	"AWS_ACCESS_KEY_ID": true, "AZURE_CLIENT_SECRET": true, "ARM_CLIENT_SECRET": true,
+	"AWS_ACCESS_KEY_ID":    true,
 	"CLOUDFLARE_API_TOKEN": true, "CLOUDFLARE_API_KEY": true, "DIGITALOCEAN_ACCESS_TOKEN": true,
 	"HEROKU_API_KEY": true, "VAULT_TOKEN": true, "DOCKER_PASSWORD": true, "DOCKERHUB_TOKEN": true,
 	"SLACK_BOT_TOKEN": true, "SLACK_TOKEN": true, "STRIPE_SECRET_KEY": true, "STRIPE_API_KEY": true,
