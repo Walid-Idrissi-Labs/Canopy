@@ -191,3 +191,22 @@ func TestProjectTestsFollowTheNetworkSetting(t *testing.T) {
 		t.Fatalf("registries: %+v %v", policy, env)
 	}
 }
+
+// The proxy's variables reach a test command in registries mode, and a setting nobody can read is
+// the strictest rather than open.
+func TestATestGetsTheProxyAndBadSettingsCloseTheNetwork(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	w := testWorkspace(t)
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "registries")
+	policy, env := Confinement(w.Root())
+	test := exec.Test{Name: "env", Command: exec.Invocation{Shell: `test -n "$HTTPS_PROXY"`}}
+	if outcome := exec.RunTest(context.Background(), test, exec.Target{Dir: w.Root(), Sandbox: policy, Env: env}, "r1"); outcome.Run.State != core.TestPassing {
+		t.Fatalf("the test did not see the proxy: %s %s", outcome.Run.State, outcome.Output)
+	}
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "everything")
+	if policy, _ := Confinement(w.Root()); policy == nil || policy.Network != sandbox.NetworkNone {
+		t.Fatalf("an unreadable setting left the network %v", policy)
+	}
+}

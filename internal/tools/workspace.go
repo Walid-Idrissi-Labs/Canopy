@@ -263,14 +263,23 @@ func Confinement(dir string) (*sandbox.Policy, []string) {
 	}
 	policy := w.SandboxPolicy()
 	var env []string
-	switch mode, _ := egress.ParseMode(os.Getenv(egress.ModeEnvVar)); mode {
+	mode, err := egress.ParseMode(os.Getenv(egress.ModeEnvVar))
+	if err != nil {
+		// A setting that cannot be read is taken as the strictest, never as open.
+		mode = egress.ModeOff
+	}
+	switch mode {
 	case egress.ModeOff:
 		policy.Network = sandbox.NetworkNone
 	case egress.ModeRegistries:
-		if proxy, err := egress.Shared(egress.ExtraHosts(os.Getenv(egress.AllowEnvVar))); err == nil {
-			policy.Network, policy.ProxyPort = sandbox.NetworkProxy, proxy.Port()
-			env = append(childenv.Inherited(), proxy.Env()...)
+		proxy, err := egress.Shared(egress.ExtraHosts(os.Getenv(egress.AllowEnvVar)))
+		if err != nil {
+			// No proxy to go through, so no network, rather than all of it.
+			policy.Network = sandbox.NetworkNone
+			break
 		}
+		policy.Network, policy.ProxyPort = sandbox.NetworkProxy, proxy.Port()
+		env = append(childenv.Inherited(), proxy.Env()...)
 	}
 	return &policy, env
 }
