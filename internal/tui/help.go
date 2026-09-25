@@ -89,6 +89,7 @@ func bindings() []section {
 			{"enter", "open the changes, then a file"},
 			{"tab", "cycle the queue, ranking, cost outcome and overlap"},
 			{"c", "commit, from the file list"},
+			{"o", "a reviewer's opinion, from the ranking"},
 			{"K", "credentials"},
 			{"esc", "back one level"},
 		}},

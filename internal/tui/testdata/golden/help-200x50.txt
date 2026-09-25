@@ -8,43 +8,43 @@ anywhere                                                                        
   ctrl+c                quit, asked twice in a conversation                          enter                 open the changes, then a file
                                                                                      tab                   cycle the queue, ranking, cost outcome and overlap
 chat                                                                                 c                     commit, from the file list
-  enter                 send                                                         K                     credentials
-  shift+tab             plan or build, which is what the agent may change            esc                   back one level
-  /                     the command list, which narrows as you type
-  up / down             move the command list, or otherwise your sent history      a diff
-  tab                   take the highlighted command                                 j / k                 scroll a line
-  //                    send a literal prompt beginning with slash                   space                 scroll a page
-  esc                   interrupt the turn, or clear a half written message          g / G                 top and end
-  ctrl+c                stop the turn, then twice to quit                            esc                   back to the file list
-  ctrl+n                a new conversation, keeping this one
-  ctrl+d                agents, and it works with a question waiting here          writing a commit
-  ctrl+k                credentials                                                  ctrl+s                commit. nothing is staged until then
-  ctrl+r                compact the conversation, asked twice because it spends      esc                   cancel, throwing the message away
-  ctrl+o                show tool output and diffs in full, and fold them back
-  pgup / pgdown         scroll the conversation, or the btw panel while it is up   worktrees
-  mouse drag            select conversation text, copied when you let go             j / k                 move
-  ctrl+home / ctrl+end  the top, and back to following                               g / G                 top and end, as do home and end
-  alt+enter             a line break instead of sending                              r                     refresh
-  enter / y             allow a tool call once, while a question is up               K                     credentials
-  a                     allow it for the rest of the session                         esc / tab / q         agents
-  arrows / pgup         read on with a question up, deciding nothing
-  any other key         refuse it                                                  the model picker, on /model
-                                                                                     j / k                 move, across credentials as well as within one
-another agent's question, above the box                                              enter                 run this conversation on it from the next message
-  enter                 approve it once, while the box is empty                      ctrl+k                credentials, to change what a key defaults to
-  backspace             decline it, while the box is empty                           any other key         back, with nothing changed
-  ctrl+g                open its conversation and full request
-  a                     always is answered on that full prompt only                credentials
-                                                                                     j / k                 move
-agents                                                                               enter                 use this one for the conversation
-  1 to 8                jump to that pane, and again to open it                      m                     set which model it talks to
-  enter                 open the selected agent, or approve its question once        e                     rename it. the value is not asked for again
-  backspace             decline the selected agent's question                        a / n                 add one
-  h / j / k / l         move around the grid, as do the arrows                       d / x                 remove one
-  v                     cycle list, mosaic, hero and focus                           r                     reload the list
-  [ / ]                 page, when there are more agents than panes                  esc / tab             back to where you were
-  tab                   next agent, or into the mosaic from the list                 q                     quit
-  n                     new agent
+  enter                 send                                                         o                     a reviewer's opinion, from the ranking
+  shift+tab             plan or build, which is what the agent may change            K                     credentials
+  /                     the command list, which narrows as you type                  esc                   back one level
+  up / down             move the command list, or otherwise your sent history
+  tab                   take the highlighted command                               a diff
+  //                    send a literal prompt beginning with slash                   j / k                 scroll a line
+  esc                   interrupt the turn, or clear a half written message          space                 scroll a page
+  ctrl+c                stop the turn, then twice to quit                            g / G                 top and end
+  ctrl+n                a new conversation, keeping this one                         esc                   back to the file list
+  ctrl+d                agents, and it works with a question waiting here
+  ctrl+k                credentials                                                writing a commit
+  ctrl+r                compact the conversation, asked twice because it spends      ctrl+s                commit. nothing is staged until then
+  ctrl+o                show tool output and diffs in full, and fold them back       esc                   cancel, throwing the message away
+  pgup / pgdown         scroll the conversation, or the btw panel while it is up
+  mouse drag            select conversation text, copied when you let go           worktrees
+  ctrl+home / ctrl+end  the top, and back to following                               j / k                 move
+  alt+enter             a line break instead of sending                              g / G                 top and end, as do home and end
+  enter / y             allow a tool call once, while a question is up               r                     refresh
+  a                     allow it for the rest of the session                         K                     credentials
+  arrows / pgup         read on with a question up, deciding nothing                 esc / tab / q         agents
+  any other key         refuse it
+                                                                                   the model picker, on /model
+another agent's question, above the box                                              j / k                 move, across credentials as well as within one
+  enter                 approve it once, while the box is empty                      enter                 run this conversation on it from the next message
+  backspace             decline it, while the box is empty                           ctrl+k                credentials, to change what a key defaults to
+  ctrl+g                open its conversation and full request                       any other key         back, with nothing changed
+  a                     always is answered on that full prompt only
+                                                                                   credentials
+agents                                                                               j / k                 move
+  1 to 8                jump to that pane, and again to open it                      enter                 use this one for the conversation
+  enter                 open the selected agent, or approve its question once        m                     set which model it talks to
+  backspace             decline the selected agent's question                        e                     rename it. the value is not asked for again
+  h / j / k / l         move around the grid, as do the arrows                       a / n                 add one
+  v                     cycle list, mosaic, hero and focus                           d / x                 remove one
+  [ / ]                 page, when there are more agents than panes                  r                     reload the list
+  tab                   next agent, or into the mosaic from the list                 esc / tab             back to where you were
+  n                     new agent                                                    q                     quit
   y                     create it, on the direct mode confirmation
   w                     worktree monitor
   j/k scroll   any other key back

@@ -81,6 +81,7 @@ func (f *fakeKeyStore) Identity(ref core.KeyRef) (keysui.Identity, error) {
 // stubEngine stands in for the session engine. The app level tests are about routing and chrome,
 // not about conversations, so it answers with an empty session and records nothing.
 type stubEngine struct {
+	judged          []core.JudgeCandidate
 	budget, overall session.Budget
 	session         core.Session
 	// sessions is for the few tests that need more than one, and so need the stub to be able to
@@ -1414,3 +1415,8 @@ func (e *stubEngine) Budget(string) session.Budget            { return e.budget 
 func (e *stubEngine) SetBudget(_ string, limit float64) error { e.budget.Limit = limit; return nil }
 func (e *stubEngine) OverallBudget() session.Budget           { return e.overall }
 func (e *stubEngine) SetOverallBudget(limit float64) error    { e.overall.Limit = limit; return nil }
+
+func (e *stubEngine) Judge(_ context.Context, _ string, candidates []core.JudgeCandidate) (string, error) {
+	e.judged = candidates
+	return "bravo special-cases the test input", nil
+}

@@ -301,6 +301,11 @@ unknown provider costs, names the sample size, and refuses a conclusion until at
 have three exact samples each. The result is an association in local history, not a claim that the
 model caused the outcome.
 
+On the ranking, `o` asks a model for a second look at the attempts: whether any of them passes its
+tests without doing the work (a test edited, an input special-cased, a failure silenced), and which
+it would choose among those that pass. It is shown under the ranking as an opinion, never in the
+ranking's place, and it costs one request.
+
 ## Project instructions
 
 Canopy sends a project's standing instructions with every request: your own
