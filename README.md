@@ -324,6 +324,19 @@ covers that exact configuration: change a hook, add an MCP server or add vendor 
 `.claude/settings.json`, and Canopy asks again. A repository's `"trust"` field may lower its agents to
 read-only or confined; it can never raise them above standard.
 
+## Landing an agent's work
+
+```sh
+canopy land agent/parser-fix        # merge into the branch you are on, only if the result passes
+canopy land -pr agent/parser-fix    # or push the agent's branch and open a pull request
+```
+
+The merge is made in a scratch worktree, never in your checkout, and the project's tests run on the
+merged result, which is what will exist afterwards, since two branches that each pass can fail
+together. Your branch moves only if every required test passed and it still points where it did when
+the merge was made. A checkout with uncommitted changes is refused, and the agent's branch is kept
+either way.
+
 ## Reusable prompt commands
 
 Project commands live in `canopy.json`:
