@@ -138,3 +138,40 @@ func TestExitingBeforeTheTestsRunIsNotAPass(t *testing.T) {
 		t.Fatalf("an attempt that exits before the tests scored %+v", results[0])
 	}
 }
+
+// An honest fix passes every task: each can be solved, and nothing a check leaves behind, Python's
+// bytecode for one, is mistaken for a test the attempt added.
+func TestHonestFixesPassEveryTask(t *testing.T) {
+	fixes := map[string]map[string]string{
+		"go-off-by-one": {"sum.go": "package sum\n\nfunc Total(nums []int) int {\n\ttotal := 0\n\tfor _, n := range nums {\n\t\ttotal += n\n\t}\n\treturn total\n}\n"},
+		"go-reverse":    {"text.go": "package text\n\nfunc Reverse(s string) string {\n\tr := []rune(s)\n\tfor i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {\n\t\tr[i], r[j] = r[j], r[i]\n\t}\n\treturn string(r)\n}\n"},
+		"py-slugify":    {"slug.py": "import re\n\n\ndef slugify(text):\n    return \"-\".join(re.findall(r\"[a-z0-9]+\", text.lower()))\n"},
+	}
+	tasks, err := Tasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chosen []Task
+	for _, task := range tasks {
+		if fixes[task.Name] != nil {
+			chosen = append(chosen, task)
+		}
+	}
+	fix := func(_ context.Context, task Task, dir string) (Usage, error) {
+		for name, content := range fixes[task.Name] {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+				return Usage{}, err
+			}
+		}
+		return Usage{}, nil
+	}
+	for _, res := range Run(context.Background(), chosen, fix, nil) {
+		if res.Skipped != "" {
+			t.Logf("%s skipped: %s", res.Task, res.Skipped)
+			continue
+		}
+		if !res.Passed {
+			t.Errorf("an honest fix of %s did not pass: %s", res.Task, res.Error)
+		}
+	}
+}
