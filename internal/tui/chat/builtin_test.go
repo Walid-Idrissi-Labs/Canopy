@@ -511,3 +511,26 @@ func TestContextShowsWhereTheTokensGo(t *testing.T) {
 		t.Errorf("an empty part was listed:\n%s", view)
 	}
 }
+
+// /budget sets this agent's cap, or with all the cap across every agent, and shows both when asked.
+func TestBudgetSetsAndShowsTheCaps(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	next, _ := run(m, "/budget 2.50")
+	if engine.budget.Limit != 2.50 {
+		t.Fatalf("the agent's cap is %v", engine.budget.Limit)
+	}
+	next, _ = run(next, "/budget all $10")
+	if engine.overall.Limit != 10 {
+		t.Fatalf("the overall cap is %v", engine.overall.Limit)
+	}
+	next, _ = run(next, "/budget")
+	if view := plain(next.Body()); !strings.Contains(view, "$0.00 of $2.50") || !strings.Contains(view, "$0.00 of $10.00") {
+		t.Fatalf("/budget does not show both caps:\n%s", view)
+	}
+	next, _ = run(next, "/budget lots")
+	if view := plain(next.Body()); !strings.Contains(view, "amount in dollars") {
+		t.Fatalf("a bad amount was not explained:\n%s", view)
+	}
+}

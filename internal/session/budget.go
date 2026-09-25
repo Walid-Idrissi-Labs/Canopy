@@ -14,6 +14,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/pricing"
 	"sync"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -196,4 +197,30 @@ func (e *Engine) recordSpend(sessionID string, usage core.Usage) {
 	}
 	budget.Spent += usage.CostUSD
 	e.budgets.overall.Spent += usage.CostUSD
+}
+
+// budgetGate stops a turn between steps once what it has spent so far, added to what the session
+// and the whole run had spent before it, reaches a cap. Priced with the turn's model; a model with
+// no known rate cannot be held to a cap in money and is left to the step and token bounds.
+func (e *Engine) budgetGate(sessionID string, id pricing.ModelID) func(core.Usage) string {
+	return func(used core.Usage) string {
+		priced, _ := pricing.Apply(id, used)
+		if !priced.CostKnown {
+			return ""
+		}
+		cost := priced.CostUSD
+		e.budgets.mu.Lock()
+		defer e.budgets.mu.Unlock()
+		if budget, ok := e.budgets.session[sessionID]; ok && budget.Capped() && budget.Spent+cost >= budget.Limit {
+			budget.Paused = true
+			return fmt.Sprintf("stopped at this agent's spending cap: $%.2f of $%.2f. Raise it with /budget "+
+				"to carry on", budget.Spent+cost, budget.Limit)
+		}
+		if overall := &e.budgets.overall; overall.Capped() && overall.Spent+cost >= overall.Limit {
+			overall.Paused = true
+			return fmt.Sprintf("stopped at the spending cap across every agent: $%.2f of $%.2f. Raise it "+
+				"with /budget all to carry on", overall.Spent+cost, overall.Limit)
+		}
+		return ""
+	}
 }

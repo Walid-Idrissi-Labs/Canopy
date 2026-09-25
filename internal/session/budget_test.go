@@ -241,3 +241,41 @@ func TestRemovingACapLetsAPausedAgentGoAgain(t *testing.T) {
 		t.Errorf("removing the cap did not resume the session: %v", err)
 	}
 }
+
+// A cap holds inside a long turn: the request in flight finishes, and the next step is not made
+// once the turn's own spend reaches the cap. Checking only between turns let one turn of fifty
+// steps spend fifty times what was allowed.
+func TestACapStopsALongTurnBetweenSteps(t *testing.T) {
+	step := []core.StreamEvent{
+		{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: "c", Name: "reader", Input: []byte(`{}`)}},
+		{Kind: core.EventDone, StopReason: core.StopToolUse, Usage: core.Usage{OutputTokens: 12000}},
+	}
+	client := &scriptedClient{name: "claude", events: step}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	reader := &kindTool{name: "reader", kind: core.ToolRead}
+	registry := core.NewToolRegistry()
+	registry.MustRegister(reader)
+	e.WithTools(registry, core.TrustStandard, nil)
+	e.SetMaxSteps(10)
+
+	session := e.Create("claude", "claude-opus-5")
+	if err := e.SetBudget(session.ID, 1.00); err != nil {
+		t.Fatal(err)
+	}
+	turnID, err := e.Send(session.ID, "keep reading")
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := waitForTurn(t, e, session.ID, turnID)
+	// $0.30 a step: after the fourth, $1.20 has been spent and the fifth is not made.
+	if runs := reader.runs.Load(); runs != 4 {
+		t.Fatalf("%d steps ran against a $1.00 cap at $0.30 each; want 4", runs)
+	}
+	if turn.State != core.TurnFailed || !strings.Contains(turn.Error, "spending cap") {
+		t.Fatalf("the turn ended %s: %q", turn.State, turn.Error)
+	}
+	if !e.Budget(session.ID).Paused {
+		t.Error("the agent is not marked paused")
+	}
+}

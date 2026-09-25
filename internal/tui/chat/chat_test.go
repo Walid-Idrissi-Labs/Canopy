@@ -21,8 +21,9 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
-	tools     *core.ToolRegistry
-	inventory core.Inventory
+	budget, overall session.Budget
+	tools           *core.ToolRegistry
+	inventory       core.Inventory
 
 	subscriptions int
 
@@ -1048,3 +1049,8 @@ func TestEventsReuseOneSubscription(t *testing.T) {
 }
 
 func (e *fakeEngine) Inventory(string) core.Inventory { return e.inventory }
+
+func (e *fakeEngine) Budget(string) session.Budget            { return e.budget }
+func (e *fakeEngine) SetBudget(_ string, limit float64) error { e.budget.Limit = limit; return nil }
+func (e *fakeEngine) OverallBudget() session.Budget           { return e.overall }
+func (e *fakeEngine) SetOverallBudget(limit float64) error    { e.overall.Limit = limit; return nil }

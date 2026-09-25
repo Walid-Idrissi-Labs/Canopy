@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,6 +102,9 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 
 	case "trail":
 		m.notice = m.toolTrail()
+
+	case "budget":
+		m.notice, m.err = m.budget(arguments)
 
 	case "tasks":
 		m.notice = m.taskSummary()
@@ -504,4 +508,32 @@ func tokenCount(n int) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1_000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+// budget shows or sets a spending cap: this agent's, or with "all" the one across every agent. A
+// cap of 0 removes it. The cap is checked between steps, so a long turn stops at it too.
+func (m Model) budget(arguments string) (string, string) {
+	fields := strings.Fields(arguments)
+	overall := len(fields) > 0 && fields[0] == "all"
+	if overall {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return "this agent: " + m.engine.Budget(m.sessionID).Status() +
+			"\nevery agent: " + m.engine.OverallBudget().Status(), ""
+	}
+	limit, err := strconv.ParseFloat(strings.TrimPrefix(fields[0], "$"), 64)
+	if err != nil || limit < 0 {
+		return "", "a cap is an amount in dollars, such as /budget 2.50, or 0 to remove it"
+	}
+	if overall {
+		if err := m.engine.SetOverallBudget(limit); err != nil {
+			return "", err.Error()
+		}
+		return "every agent: " + m.engine.OverallBudget().Status(), ""
+	}
+	if err := m.engine.SetBudget(m.sessionID, limit); err != nil {
+		return "", err.Error()
+	}
+	return "this agent: " + m.engine.Budget(m.sessionID).Status(), ""
 }
