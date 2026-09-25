@@ -46,7 +46,8 @@ func RenderMarkdown(s string, width int) []string {
 		switch {
 		case isFence(line):
 			lang, code, consumed := extractFence(lines[i:])
-			out = append(out, renderCodeBlock(lang, code, width)...)
+			closed := consumed == len(code)+2
+			out = append(out, renderCodeBlockClosed(lang, code, width, closed)...)
 			i += consumed
 
 		case strings.TrimSpace(line) == "":
@@ -442,7 +443,10 @@ func extractFence(lines []string) (lang string, code []string, consumed int) {
 // A line too long to fit is wrapped rather than truncated. Truncating would silently drop source
 // text, which is exactly the kind of quiet loss this project refuses to make elsewhere (see D-08 on
 // bounded log buffers), and a continuation marker costs one glyph a line to avoid it.
-func renderCodeBlock(lang string, code []string, width int) []string {
+// renderCodeBlockClosed is renderCodeBlock knowing whether the block's closing fence has arrived.
+// Only a finished block of reasonable size is given to the full lexer: one still streaming changes
+// on every frame and would be lexed again each time.
+func renderCodeBlockClosed(lang string, code []string, width int, closed bool) []string {
 	t := theme.Current()
 
 	fenceLabel := "```"
@@ -459,12 +463,22 @@ func renderCodeBlock(lang string, code []string, width int) []string {
 	}
 
 	rules, highlighted := languageRules(lang)
+	var body []string
+	chroma := false
+	if closed && len(code) <= maxChromaLines {
+		body, chroma = cachedChromaBlock(lang, code, width)
+	}
 
 	// Wrapped rather than assumed short: the language tag comes from whatever the model wrote after
 	// the fence, and nothing stops that being longer than the terminal.
 	var out []string
 	for _, wrapped := range wrap(fenceLabel, width) {
 		out = append(out, t.Muted.Render(wrapped))
+	}
+	if chroma {
+		out = append(out, body...)
+		out = append(out, t.Muted.Render("```"))
+		return out
 	}
 	for _, raw := range code {
 		raw = expandTabs(raw)
