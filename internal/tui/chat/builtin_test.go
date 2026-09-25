@@ -580,7 +580,9 @@ func TestUndoComparesTheWorkspaceNotTheList(t *testing.T) {
 	if len(engine.undone) != 0 || !strings.Contains(plain(next.Body()), "changed since that preview") {
 		t.Fatalf("an edit to a listed file went unnoticed: undone %v\n%s", engine.undone, plain(next.Body()))
 	}
-	engine.undoErr = errors.New("git is not answering")
+	// Armed again with the new list. Only the preview fails now: the restore itself would succeed,
+	// so nothing undone means the confirmation refused to go ahead blind.
+	engine.previewErr = errors.New("git is not answering")
 	next, cmd = run(next, "/undo")
 	_, _ = next.Update(cmd())
 	if len(engine.undone) != 0 {
