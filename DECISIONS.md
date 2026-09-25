@@ -1444,7 +1444,8 @@ Extends D-56. A test command is code in the repository, which an agent may have 
 runs it after every turn without asking; leaving it unconfined made the shell's boundary one step
 deep. The project's tests now run in the same sandbox as an agent's shell commands, wherever that
 sandbox is available, for the verification the interface runs, `canopy run -verify` and `canopy
-land`. A suite that writes outside the workspace, the temporary area and the toolchain caches fails
+land`, with the network narrowed as `CANOPY_SANDBOX_NETWORK` narrows the shell's; a taint (D-57)
+does not narrow it, since a verification belongs to no one conversation. A suite that writes outside the workspace, the temporary area and the toolchain caches fails
 there and says why; `CANOPY_SANDBOX=off` is the way out, for everything at once. Setup, hooks and
 MCP servers remain unconfined for now, each named in LIMITATIONS.
 

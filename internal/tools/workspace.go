@@ -10,6 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/egress"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"os"
@@ -249,15 +251,26 @@ func (w *Workspace) SandboxPolicy() sandbox.Policy {
 }
 
 // Confinement is the sandbox for commands run in dir other than the agent's own, the project's tests
-// first: nil where there is no sandbox or it was switched off, so the caller runs them as before.
-func Confinement(dir string) *sandbox.Policy {
+// first, with the network narrowed as CANOPY_SANDBOX_NETWORK narrows the shell's and the environment
+// that needs: nil where there is no sandbox or it was switched off, so the caller runs them as before.
+func Confinement(dir string) (*sandbox.Policy, []string) {
 	if sandbox.Disabled() || sandbox.Available() != nil {
-		return nil
+		return nil, nil
 	}
 	w, err := OpenWorkspace(dir)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	policy := w.SandboxPolicy()
-	return &policy
+	var env []string
+	switch mode, _ := egress.ParseMode(os.Getenv(egress.ModeEnvVar)); mode {
+	case egress.ModeOff:
+		policy.Network = sandbox.NetworkNone
+	case egress.ModeRegistries:
+		if proxy, err := egress.Shared(egress.ExtraHosts(os.Getenv(egress.AllowEnvVar))); err == nil {
+			policy.Network, policy.ProxyPort = sandbox.NetworkProxy, proxy.Port()
+			env = append(childenv.Inherited(), proxy.Env()...)
+		}
+	}
+	return &policy, env
 }

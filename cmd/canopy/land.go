@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"io"
 	"os"
 	"os/exec"
@@ -138,7 +137,7 @@ func runLand(args []string, stdin io.Reader, out io.Writer) error {
 	}
 	failed := 0
 	for i, test := range tests {
-		outcome := execpkg.RunTest(ctx, test, execpkg.Target{Dir: scratch, Sandbox: tools.Confinement(scratch)}, fmt.Sprintf("land-%d", i))
+		outcome := execpkg.RunTest(ctx, test, confinedTarget(scratch), fmt.Sprintf("land-%d", i))
 		mark := "passed"
 		if outcome.Run.State != core.TestPassing {
 			mark = string(outcome.Run.State)

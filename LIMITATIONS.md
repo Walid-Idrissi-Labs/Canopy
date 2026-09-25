@@ -149,7 +149,10 @@ be rediscovered by getting burned by it.
   install`, global npm installs, version managers (nvm, pyenv, rbenv), Homebrew, and anything
   writing `~/.local/bin` or most of `~/.config`, and so do test commands that do: the project's
   tests run in the same sandbox (D-61), so a suite that writes outside the workspace, the temporary
-  area and the caches fails there. Setup, hooks, MCP servers and delegated vendor agents still run
+  area and the caches fails there: Gradle (its wrapper and daemon directories, and its properties
+  file, which is unreadable), SwiftPM's package cache, and browser downloads for Playwright or
+  Cypress among them. In runway such a suite fails its gate and the turn is put back.
+  `CANOPY_SANDBOX=off` is the way out. Setup, hooks, MCP servers and delegated vendor agents still run
   unconfined. A command that runs without the sandbox says so, and `CANOPY_SANDBOX=off` switches it
   off.
 

@@ -103,7 +103,15 @@ func TestProjectTestsAreConfined(t *testing.T) {
 	outside, _ = filepath.EvalSymlinks(outside)
 	test := exec.Test{Name: "sneaky", Command: exec.Invocation{
 		Shell: "echo ok > inside.txt && echo leaked > " + filepath.Join(outside, "leak.txt")}}
-	outcome := exec.RunTest(context.Background(), test, exec.Target{Dir: w.Root(), Sandbox: Confinement(w.Root())}, "r1")
+	policy, env := Confinement(w.Root())
+	// Where the checkout itself lies in a place the sandbox allows, the temporary area say, there is
+	// no outside to write to here, and the verifier's own test covers the wiring instead.
+	for _, dir := range policy.Writable {
+		if rel, err := filepath.Rel(dir, outside); err == nil && !strings.HasPrefix(rel, "..") {
+			t.Skipf("this checkout is under %s, which the sandbox allows", dir)
+		}
+	}
+	outcome := exec.RunTest(context.Background(), test, exec.Target{Dir: w.Root(), Sandbox: policy, Env: env}, "r1")
 	if _, err := os.Stat(filepath.Join(outside, "leak.txt")); err == nil {
 		t.Fatalf("a test command wrote outside the workspace: %+v", outcome.Run)
 	}
@@ -162,5 +170,24 @@ func TestATaintedCommandReachesOnlyRegistries(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "allow list refused: exfil.test") {
 		t.Fatalf("a tainted command reached past the registries:\n%s", result.Content)
+	}
+}
+
+// A project's tests follow the shell's network setting: cut off with off, and through the proxy,
+// with its variables, with registries.
+func TestProjectTestsFollowTheNetworkSetting(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	w := testWorkspace(t)
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "off")
+	if policy, _ := Confinement(w.Root()); policy == nil || policy.Network != sandbox.NetworkNone {
+		t.Fatalf("off: %+v", policy)
+	}
+	t.Setenv("CANOPY_SANDBOX_NETWORK", "registries")
+	policy, env := Confinement(w.Root())
+	if policy == nil || policy.Network != sandbox.NetworkProxy || policy.ProxyPort == 0 ||
+		!strings.Contains(strings.Join(env, " "), "HTTPS_PROXY=http://127.0.0.1:") {
+		t.Fatalf("registries: %+v %v", policy, env)
 	}
 }

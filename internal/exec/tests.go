@@ -103,6 +103,8 @@ type Target struct {
 	// Sandbox confines the test command, as an agent's shell commands are confined: a test is code
 	// in the repository, which an agent may have written. Nil runs it unconfined.
 	Sandbox *sandbox.Policy
+	// Env replaces the environment the command gets, when set; the network proxy's variables, for one.
+	Env []string
 }
 
 // Outcome is a finished run and what the command printed.
@@ -171,6 +173,7 @@ func runPreparedTest(ctx context.Context, test Test, target Target, run core.Tes
 		Dir:     target.Dir,
 		Timeout: timeout,
 		Sandbox: target.Sandbox,
+		Env:     target.Env,
 	})
 
 	switch {
