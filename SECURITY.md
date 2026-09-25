@@ -28,13 +28,17 @@ There is no bug bounty.
 
 This is the part worth reading before deciding whether something is a vulnerability.
 
-**Canopy is not a sandbox and does not claim to be.** It runs agent-generated commands under your
-own account with your own permissions. A git worktree gives an agent its own files; it is file
-isolation, not a security boundary. The same statement is in README under "What it will not do"
-and in LIMITATIONS.md, and it is not a caveat we intend to quietly grow out of. There is a
-permission model. It decides which tools an agent may call and when it has to ask. It is not an
-operating-system containment layer, and "confined" is the name of a trust level whose tool surface
-excludes shell, not a claim that an enabled child process is jailed.
+**The sandbox covers exactly this, and nothing more (D-56).** Shell commands an agent runs go
+through an operating-system sandbox where one is available. On macOS a Seatbelt profile lets them
+write only beneath the workspace, the repository's shared git directory, temporary directories and
+toolchain caches, and denies reading credential locations (`~/.ssh`, `~/.aws`, `~/.gnupg`,
+keychains, `gh` and cloud CLI configuration, Canopy's own keys, browser profiles). On Linux,
+Landlock confines writes the same way; it cannot deny reads beneath a readable tree, so credential
+files remain readable there. Network is not restricted by default on either. Test commands, setup,
+hooks, MCP servers and delegated vendor agents do not run in the sandbox yet. A bypass of the
+confinement described here is in scope; a command doing what the list above permits is not.
+Commands run under your own account, and a worktree on its own is file isolation, not a security
+boundary. "Confined" is also the name of a trust level whose tool surface excludes shell.
 
 **A credential is one of three things now, and they are not equally exposed.** Canopy used to hold
 only pasted secrets. Since subscription sign-in it holds three shapes, and it is worth knowing which

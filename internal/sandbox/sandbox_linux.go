@@ -14,9 +14,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// TrampolineArg is the first argument Canopy recognises as "confine yourself, then run this".
-const TrampolineArg = "__canopy-sandbox"
-
 func abi() int {
 	v, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, 0, 0, unix.LANDLOCK_CREATE_RULESET_VERSION)
 	if errno != 0 {

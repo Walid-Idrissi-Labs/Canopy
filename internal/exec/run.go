@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"os/exec"
 	"strings"
 	"sync"
@@ -82,6 +83,9 @@ type Options struct {
 
 	// MaxOutput defaults to MaxOutputBytes.
 	MaxOutput int
+
+	// Sandbox, when set, confines the command. A command that cannot be confined is not run.
+	Sandbox *sandbox.Policy
 }
 
 // Run executes a command and waits for it.
@@ -102,6 +106,14 @@ func Run(ctx context.Context, name string, args []string, opts Options) (Result,
 	// "The command took too long" and "you pressed escape" lead somewhere different.
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if opts.Sandbox != nil {
+		wrapped, wrappedArgs, err := opts.Sandbox.Wrap(name, args)
+		if err != nil {
+			return Result{Output: fmt.Sprintf("not run: %v", err)}, nil
+		}
+		name, args = wrapped, wrappedArgs
+	}
 
 	cmd := exec.Command(name, args...)
 	cmd.Dir = opts.Dir

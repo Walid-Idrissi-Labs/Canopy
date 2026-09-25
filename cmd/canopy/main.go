@@ -10,6 +10,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"io"
 	"os"
 )
@@ -44,6 +45,15 @@ func main() {
 }
 
 func run(args []string) error {
+	// Canopy re-run as the sandbox trampoline: confine this process, then become the command.
+	if len(args) > 0 && args[0] == sandbox.TrampolineArg {
+		if err := sandbox.RunTrampoline(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "canopy sandbox: %v\n", err)
+			os.Exit(126)
+		}
+		return nil
+	}
+
 	// No arguments opens the dashboard, since that is what someone typing "canopy" wants.
 	//
 	// Unless there is no terminal to open it in. Piped output, CI and cron all end up here, and

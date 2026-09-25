@@ -120,10 +120,11 @@ be rediscovered by getting burned by it.
   shell a containment boundary: an allowed shell command can invoke Git anywhere the user's account
   can reach (D-33).
 
-- There is no sandboxing anywhere in this design and there will not be one implied. Agent-run
-  commands execute under your own account with your own permissions. A worktree gives an agent its
-  own files; it is not a security boundary, and claiming otherwise would be the same kind of error
-  as a false green (README, "What it will not do").
+- The sandbox covers shell commands an agent runs and nothing else yet (D-56). On macOS it confines
+  writes and hides credential locations; on Linux it confines writes only, since Landlock cannot
+  hide a file inside a readable tree, and only on kernels with Landlock. Network is open by default.
+  Test commands, setup, hooks, MCP servers and delegated vendor agents still run unconfined under
+  your account. A command that runs without the sandbox says so in its result.
 
 - A freshly prepared worktree gets no isolated database, queue, cache, or OAuth callback. A named
   port is templated in, but a port does not isolate the service listening behind it. Only small,

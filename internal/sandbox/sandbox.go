@@ -49,6 +49,10 @@ var ErrUnavailable = errors.New("no sandbox is available here")
 // and somebody decides the prompt is protection enough.
 const DisableEnvVar = "CANOPY_SANDBOX"
 
+// TrampolineArg is the first argument Canopy recognises as "confine yourself, then run this", on
+// platforms that confine by re-running Canopy.
+const TrampolineArg = "__canopy-sandbox"
+
 // Disabled reports whether the user switched sandboxing off.
 func Disabled() bool { return strings.EqualFold(os.Getenv(DisableEnvVar), "off") }
 
@@ -58,7 +62,13 @@ func Disabled() bool { return strings.EqualFold(os.Getenv(DisableEnvVar), "off")
 func ForWorkspace(workspace string, extra ...string) Policy {
 	home, _ := os.UserHomeDir()
 	writable := append([]string{workspace}, extra...)
-	writable = append(writable, os.TempDir(), "/tmp", "/private/tmp", "/private/var/folders", "/dev")
+	// The per-user temporary area, which on macOS is a directory holding both T (temporary) and C
+	// (caches) that toolchains write into.
+	temp := filepath.Clean(os.TempDir())
+	if filepath.Base(temp) == "T" {
+		temp = filepath.Dir(temp)
+	}
+	writable = append(writable, temp, "/tmp", "/private/tmp", "/dev")
 	if home != "" {
 		for _, rel := range []string{
 			".cache", "Library/Caches", "go", ".npm", ".yarn", ".pnpm-store", ".cargo", ".rustup",
