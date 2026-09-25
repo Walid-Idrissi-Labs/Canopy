@@ -380,6 +380,9 @@ to beginning, byte for byte, with the one before it. What that buys is visible:
   definitions, summary, messages, replies, replayed thinking, tool calls and results) and says how
   much of the last turn came from the cache, with a plain warning when a later turn got nothing
   from it.
+- On Anthropic's current models, once MCP servers bring more than about five thousand tokens of
+  tool definitions, those are held back and the model finds the ones it needs through a tool
+  search, so a request does not carry forty tools to use one.
 - A read of a file already sent and unchanged is answered with a short reference instead of the
   file again, and long tool output is kept aside with its head and tail shown and the rest one
   `read_output` away.

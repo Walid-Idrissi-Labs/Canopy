@@ -596,3 +596,37 @@ func TestASearchIsReportedBeforeTheReplyEnds(t *testing.T) {
 		t.Fatalf("the search was reported %d times", n)
 	}
 }
+
+// MCP tools past a size are held back behind a tool search, and Canopy's own tools never are; below
+// the size, or on a model without tool search, everything is sent as before.
+func TestManyMCPToolsAreDeferredBehindASearch(t *testing.T) {
+	own := core.ToolDefinition{Name: "read_file", Description: "reads", InputSchema: []byte(`{"type":"object"}`)}
+	var many []core.ToolDefinition
+	for i := 0; i < 40; i++ {
+		many = append(many, core.ToolDefinition{Name: fmt.Sprintf("mcp__srv__tool%d", i), External: true,
+			Description: strings.Repeat("does a thing ", 60), InputSchema: []byte(`{"type":"object"}`)})
+	}
+	encode := func(tools []sdk.ToolUnionParam) string {
+		b, err := json.Marshal(tools)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	deferred := encode(buildTools(append([]core.ToolDefinition{own}, many...), true))
+	if strings.Count(deferred, `"defer_loading":true`) != 40 || !strings.Contains(deferred, "tool_search_tool_bm25") {
+		t.Fatalf("forty large MCP tools were not deferred behind a search: %.300s", deferred)
+	}
+	var first []map[string]any
+	_ = json.Unmarshal([]byte(deferred), &first)
+	if _, held := first[0]["defer_loading"]; held {
+		t.Fatal("Canopy's own tool was held back")
+	}
+	if few := encode(buildTools(append([]core.ToolDefinition{own}, many[:2]...), true)); strings.Contains(few, "defer_loading") ||
+		strings.Contains(few, "tool_search") {
+		t.Fatalf("two small MCP tools were deferred: %s", few)
+	}
+	if old := encode(buildTools(append([]core.ToolDefinition{own}, many...), false)); strings.Contains(old, "defer_loading") {
+		t.Fatal("tools were deferred on a model without tool search")
+	}
+}
