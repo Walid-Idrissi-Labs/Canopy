@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/agentdefs"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/skills"
 	"io"
@@ -647,6 +648,9 @@ func projectTrust(project config.Project) core.TrustLevel {
 // repository's own skills are only offered when it is trusted.
 var projectSkills *skills.Set
 
+// projectAgents are the agent definitions dispatch can start by name.
+var projectAgents *agentdefs.Set
+
 // projectInstructions gathers what the system prompt carries beyond the core prompt: the project's
 // instructions when it is trusted, and the list of skills.
 func projectInstructions(dir string, project config.Project, warn io.Writer) string {
@@ -662,6 +666,10 @@ func projectInstructions(dir string, project config.Project, warn io.Writer) str
 		}
 	}
 	if listing := projectSkills.Listing(); listing != "" {
+		parts = append(parts, listing)
+	}
+	projectAgents = agentdefs.Load(dir, project.Trusted)
+	if listing := projectAgents.Listing(); listing != "" {
 		parts = append(parts, listing)
 	}
 	return strings.Join(parts, "\n\n")

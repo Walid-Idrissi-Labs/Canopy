@@ -129,6 +129,26 @@ func Describe(dir string, project config.Project) Request {
 			}
 		}
 	}
+	// Agent definitions are standing instructions for the agents started from them.
+	for _, pattern := range []string{".claude/agents/*.md", ".canopy/agents/*.md"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		sort.Strings(matches)
+		for _, path := range matches {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			rel, _ := filepath.Rel(dir, path)
+			req.Instructions = true
+			req.InstructionFiles = append(req.InstructionFiles, filepath.ToSlash(rel))
+			_, _ = fmt.Fprintf(h, "\x00%s\x00", rel)
+			h.Write(data)
+		}
+	}
 	for _, rel := range vendorSettings {
 		data, err := os.ReadFile(filepath.Join(dir, rel))
 		if err != nil {
