@@ -923,3 +923,20 @@ func (t *cancellingTool) Run(context.Context, json.RawMessage) (core.ToolResult,
 	t.cancel()
 	return core.ToolResult{Content: "ran"}, nil
 }
+
+// A step cut off by the length cap can carry a call whose input is incomplete; it is not recorded,
+// because a recorded call must be answered and this one was never going to run.
+func TestACallCutOffByTheLengthCapIsNotRecorded(t *testing.T) {
+	client := &scriptedClient{turns: [][]core.StreamEvent{{
+		{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: "a", Name: "write_file", Input: []byte(`{"path":"a`)}},
+		{Kind: core.EventDone, StopReason: core.StopMaxTokens},
+	}}}
+	loop := &Loop{Client: client, Tools: core.NewToolRegistry(), Trust: core.TrustStandard}
+	outcome, _ := loop.Run(context.Background(), core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "go"}}}, nil)
+	for _, m := range outcome.Messages {
+		if len(m.ToolCalls) > 0 {
+			t.Fatalf("a cut-off call was recorded without a result: %+v", m)
+		}
+	}
+}
