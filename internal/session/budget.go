@@ -86,10 +86,22 @@ type budgets struct {
 	mu      sync.Mutex
 	session map[string]*Budget
 	overall Budget
+	// inFlight is what each running turn has spent so far and not yet recorded, so the cap across
+	// every agent sees the others' turns while they run, not only once they end.
+	inFlight map[string]float64
+}
+
+// runningLocked is what every turn still running has spent.
+func (b *budgets) runningLocked() float64 {
+	var total float64
+	for _, cost := range b.inFlight {
+		total += cost
+	}
+	return total
 }
 
 func newBudgets() *budgets {
-	return &budgets{session: make(map[string]*Budget)}
+	return &budgets{session: make(map[string]*Budget), inFlight: make(map[string]float64)}
 }
 
 // SetBudget puts a cap on one session. A limit of zero removes it.
@@ -169,7 +181,7 @@ func (e *Engine) checkBudget(sessionID string) error {
 		return fmt.Errorf("%w: $%.2f of a $%.2f cap. Raise the cap to carry on",
 			ErrPaused, budget.Spent, budget.Limit)
 	}
-	if e.budgets.overall.Capped() && e.budgets.overall.Spent >= e.budgets.overall.Limit {
+	if e.budgets.overall.Capped() && e.budgets.overall.Spent+e.budgets.runningLocked() >= e.budgets.overall.Limit {
 		e.budgets.overall.Paused = true
 		return fmt.Errorf("%w: $%.2f of a $%.2f cap across every agent. Raise the cap to carry on",
 			ErrPaused, e.budgets.overall.Spent, e.budgets.overall.Limit)
@@ -182,6 +194,8 @@ func (e *Engine) recordSpend(sessionID string, usage core.Usage) {
 	e.budgets.mu.Lock()
 	defer e.budgets.mu.Unlock()
 
+	// The turn has ended, so what it spent moves from running to recorded.
+	delete(e.budgets.inFlight, sessionID)
 	budget, ok := e.budgets.session[sessionID]
 	if !ok {
 		budget = &Budget{}
@@ -211,15 +225,16 @@ func (e *Engine) budgetGate(sessionID string, id pricing.ModelID) func(core.Usag
 		cost := priced.CostUSD
 		e.budgets.mu.Lock()
 		defer e.budgets.mu.Unlock()
+		e.budgets.inFlight[sessionID] = cost
 		if budget, ok := e.budgets.session[sessionID]; ok && budget.Capped() && budget.Spent+cost >= budget.Limit {
 			budget.Paused = true
 			return fmt.Sprintf("stopped at this agent's spending cap: $%.2f of $%.2f. Raise it with /budget "+
 				"to carry on", budget.Spent+cost, budget.Limit)
 		}
-		if overall := &e.budgets.overall; overall.Capped() && overall.Spent+cost >= overall.Limit {
+		if overall := &e.budgets.overall; overall.Capped() && overall.Spent+e.budgets.runningLocked() >= overall.Limit {
 			overall.Paused = true
 			return fmt.Sprintf("stopped at the spending cap across every agent: $%.2f of $%.2f. Raise it "+
-				"with /budget all to carry on", overall.Spent+cost, overall.Limit)
+				"with /budget all to carry on", overall.Spent+e.budgets.runningLocked(), overall.Limit)
 		}
 		return ""
 	}

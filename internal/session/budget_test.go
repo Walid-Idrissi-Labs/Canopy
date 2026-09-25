@@ -279,3 +279,32 @@ func TestACapStopsALongTurnBetweenSteps(t *testing.T) {
 		t.Error("the agent is not marked paused")
 	}
 }
+
+// The cap across every agent counts what the others' running turns have spent, not only finished
+// turns: otherwise each of several agents at once could spend the whole remainder.
+func TestTheOverallCapSeesTurnsStillRunning(t *testing.T) {
+	e := New(nil)
+	t.Cleanup(e.Close)
+	if err := e.SetOverallBudget(1.00); err != nil {
+		t.Fatal(err)
+	}
+	sixty := core.Usage{OutputTokens: 24000} // $0.60 on Opus 5
+	a, b := e.budgetGate("a", anthropicID()), e.budgetGate("b", anthropicID())
+	if reason := a(sixty); reason != "" {
+		t.Fatalf("one agent at $0.60 of $1.00 was stopped: %s", reason)
+	}
+	if reason := b(sixty); !strings.Contains(reason, "across every agent") {
+		t.Fatalf("a second agent took the total to $1.20 and was not stopped: %q", reason)
+	}
+	// Once a turn ends its spend is recorded and no longer counted as running.
+	e.recordSpend("a", core.Usage{CostUSD: 0.60, CostKnown: true})
+	if got := e.OverallBudget().Spent; got != 0.60 {
+		t.Fatalf("spent %v after one turn ended", got)
+	}
+	e.budgets.mu.Lock()
+	running := e.budgets.runningLocked()
+	e.budgets.mu.Unlock()
+	if running != 0.60 {
+		t.Fatalf("running spend is %v; only b's turn is still going", running)
+	}
+}
