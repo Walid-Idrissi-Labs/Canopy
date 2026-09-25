@@ -229,7 +229,8 @@ func (c *Client) threadError(err error) error {
 func (c *Client) openingNotice() string {
 	return "this turn runs on the Codex you signed in to through Canopy, and draws on that ChatGPT " +
 		"plan's limits rather than on an API bill. Codex runs its own tools inside its own sandbox " +
-		"and under its own permissions: Canopy's tools, its trust levels and its approval prompts " +
+		"and under its own permissions, and may apply its own project settings from this directory: " +
+		"Canopy's tools, its trust levels and its approval prompts " +
 		"are not in the path, and Canopy declines every approval Codex asks it for"
 }
 

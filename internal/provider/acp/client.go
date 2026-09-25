@@ -366,14 +366,16 @@ func (c *Client) openingNotice() string {
 		return fmt.Sprintf(
 			"this turn runs on your own Claude Code, signed in as %s, and draws on that plan's usage "+
 				"limits rather than on an API bill. Claude Code runs its own tools under its own "+
-				"permissions: Canopy's tools, its trust levels and its approval prompts are not in the "+
-				"path", who)
+				"permissions and applies its own settings from this directory, including any hooks the "+
+				"repository committed: Canopy's tools, its trust levels and its approval prompts are not "+
+				"in the path", who)
 	}
 	return fmt.Sprintf(
 		"this turn runs on your own Claude Code, signed in as %s through %s rather than a Claude "+
 			"subscription, so it is billed to that account per token. Claude Code runs its own tools "+
-			"under its own permissions: Canopy's tools, its trust levels and its approval prompts are "+
-			"not in the path", who, c.install.Account.Method)
+			"under its own permissions and applies its own settings from this directory, including any "+
+			"hooks the repository committed: Canopy's tools, its trust levels and its approval prompts "+
+			"are not in the path", who, c.install.Account.Method)
 }
 
 // prompt flattens a Canopy request into the blocks ACP accepts.

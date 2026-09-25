@@ -252,3 +252,33 @@ func describeCommand(c config.TestCommand) string {
 	}
 	return strings.Join(c.Argv, " ")
 }
+
+// ErrVendorSettingsUntrusted refuses a delegated agent in a directory whose vendor settings nobody
+// has agreed to.
+var ErrVendorSettingsUntrusted = errors.New("this repository has vendor agent settings that have not been trusted")
+
+// DelegationAllowed reports whether a vendor agent may be started in dir. A delegated agent applies
+// its own project settings from the directory it starts in, and those can include hooks the
+// repository committed, which run without passing through Canopy at all. So a directory with such
+// settings must have been trusted first; a directory without them needs nothing.
+func DelegationAllowed(dir string) error {
+	if dir == "" {
+		if wd, err := os.Getwd(); err == nil {
+			dir = wd
+		}
+	}
+	project, _, err := config.Load(dir)
+	if err != nil {
+		project = config.Project{}
+	}
+	req := Describe(dir, project)
+	if len(req.VendorFiles) == 0 {
+		return nil
+	}
+	store, err := Open()
+	if err == nil && store.Trusted(req) {
+		return nil
+	}
+	return fmt.Errorf("%w (%s); review it with `canopy trust` in %s",
+		ErrVendorSettingsUntrusted, strings.Join(req.VendorFiles, ", "), dir)
+}

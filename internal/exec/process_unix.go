@@ -25,6 +25,7 @@ func setProcessGroup(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Setpgid = true
+	dieWithParent(cmd)
 }
 
 // signalFunc is syscall.Kill under another name, so the escalation can be driven in a test without
