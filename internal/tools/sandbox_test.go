@@ -16,6 +16,9 @@ import (
 // live. Write confinement itself is tested in the sandbox package.
 func TestShellCommandsAreConfined(t *testing.T) {
 	if err := sandbox.Available(); err != nil {
+		if os.Getenv("CANOPY_REQUIRE_SANDBOX") == "1" {
+			t.Fatalf("CI requires a sandbox and there is none: %v", err)
+		}
 		t.Skipf("no sandbox here: %v", err)
 	}
 	home := t.TempDir()
@@ -46,5 +49,24 @@ func TestShellCommandsAreConfined(t *testing.T) {
 		if got := run("cat " + filepath.Join(home, ".ssh", "id_test")); strings.Contains(got, "PRIVATE-KEY") {
 			t.Fatal("a sandboxed command read a private key")
 		}
+		// A command must not leave a program for the user's next ordinary command to run
+		// unconfined: a git hook, or a binary in a toolchain directory on PATH.
+		run("git init -q . && mkdir -p .git/hooks && echo evil > .git/hooks/pre-commit")
+		if data, err := os.ReadFile(filepath.Join(w.Root(), ".git", "hooks", "pre-commit")); err == nil && strings.Contains(string(data), "evil") {
+			t.Fatal("a sandboxed command wrote a git hook")
+		}
+	}
+}
+
+// A command that ran without the sandbox says so in its result.
+func TestAnUnsandboxedCommandSaysSo(t *testing.T) {
+	t.Setenv(sandbox.DisableEnvVar, "off")
+	input, _ := json.Marshal(map[string]string{"command": "echo hi"})
+	result, err := ShellTool(testWorkspace(t)).Run(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, "without a sandbox") {
+		t.Fatalf("an unconfined command did not say so: %q", result.Content)
 	}
 }

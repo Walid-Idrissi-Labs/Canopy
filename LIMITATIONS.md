@@ -126,10 +126,15 @@ be rediscovered by getting burned by it.
   can reach (D-33).
 
 - The sandbox covers shell commands an agent runs and nothing else yet (D-56). On macOS it confines
-  writes and hides credential locations; on Linux it confines writes only, since Landlock cannot
-  hide a file inside a readable tree, and only on kernels with Landlock. Network is open by default.
-  Test commands, setup, hooks, MCP servers and delegated vendor agents still run unconfined under
-  your account. A command that runs without the sandbox says so in its result.
+  writes to the workspace, temporary directories and toolchain download caches, keeps git hooks and
+  git config unwritable, and hides credential locations; on Linux it confines writes the same way
+  but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since
+  Landlock cannot carve a path out of an allowed tree. Network is open by default. Commands that
+  install into your home break inside it: `pip install --user`, `gem install`, global npm installs,
+  version managers (nvm, pyenv, rbenv), Homebrew, and anything writing `~/.local/bin` or most of
+  `~/.config`. Test commands, setup, hooks, MCP servers and delegated vendor agents still run
+  unconfined. A command that runs without the sandbox says so, and `CANOPY_SANDBOX=off` switches it
+  off.
 
 - A freshly prepared worktree gets no isolated database, queue, cache, or OAuth callback. A named
   port is templated in, but a port does not isolate the service listening behind it. Only small,

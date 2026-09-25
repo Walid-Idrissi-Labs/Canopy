@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"syscall"
 	"unsafe"
 
@@ -56,6 +57,9 @@ func RunTrampoline(args []string) error {
 	if err := json.Unmarshal([]byte(args[0]), &p); err != nil {
 		return fmt.Errorf("sandbox trampoline: %w", err)
 	}
+	// Landlock and no_new_privs bind the calling thread. Locked from here to exec, or the runtime
+	// could exec from another thread and the command would run unconfined without any error.
+	runtime.LockOSThread()
 	if err := p.restrict(); err != nil {
 		return err
 	}
@@ -98,12 +102,23 @@ func (p Policy) restrict() error {
 	ruleset := int(fd)
 	defer func() { _ = unix.Close(ruleset) }()
 
-	for _, dir := range p.Writable {
+	fileAccess := uint64(unix.LANDLOCK_ACCESS_FS_WRITE_FILE)
+	if version >= 3 {
+		fileAccess |= unix.LANDLOCK_ACCESS_FS_TRUNCATE
+	}
+	paths := append(append([]string(nil), p.Writable...), p.Devices...)
+	for _, dir := range paths {
 		f, err := unix.Open(dir, unix.O_PATH|unix.O_CLOEXEC, 0)
 		if err != nil {
 			continue
 		}
-		rule := unix.LandlockPathBeneathAttr{Allowed_access: handled, Parent_fd: int32(f)}
+		access := handled
+		var st unix.Stat_t
+		if unix.Fstat(f, &st) == nil && st.Mode&unix.S_IFMT != unix.S_IFDIR {
+			// A rule on a file may only grant rights that make sense for a file.
+			access = fileAccess
+		}
+		rule := unix.LandlockPathBeneathAttr{Allowed_access: access, Parent_fd: int32(f)}
 		_, _, errno := unix.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, uintptr(ruleset),
 			unix.LANDLOCK_RULE_PATH_BENEATH, uintptr(unsafe.Pointer(&rule)), 0, 0, 0)
 		_ = unix.Close(f)

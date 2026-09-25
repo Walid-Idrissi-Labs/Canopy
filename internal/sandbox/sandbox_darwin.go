@@ -35,7 +35,17 @@ func (p Policy) profile() string {
 	for _, dir := range p.Writable {
 		fmt.Fprintf(&b, "  (subpath %s)\n", quote(dir))
 	}
-	b.WriteString("  (literal \"/dev/null\") (literal \"/dev/tty\") (literal \"/dev/stdout\") (literal \"/dev/stderr\"))\n")
+	for _, dev := range p.Devices {
+		fmt.Fprintf(&b, "  (literal %s)\n", quote(dev))
+	}
+	b.WriteString("  (literal \"/dev/stdout\") (literal \"/dev/stderr\") (regex #\"^/dev/fd/\"))\n")
+	if len(p.DenyWrite) > 0 {
+		b.WriteString("(deny file-write*\n")
+		for _, path := range p.DenyWrite {
+			fmt.Fprintf(&b, "  (subpath %s)\n", quote(path))
+		}
+		b.WriteString(")\n")
+	}
 	if len(p.DenyRead) > 0 {
 		b.WriteString("(deny file-read*\n")
 		for _, path := range p.DenyRead {

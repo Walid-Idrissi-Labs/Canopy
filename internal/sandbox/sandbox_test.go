@@ -56,6 +56,15 @@ func TestTheDefaultPolicy(t *testing.T) {
 		t.Errorf("the workspace is not writable: %v", p.Writable)
 	}
 	resolvedHome, _ := filepath.EvalSymlinks(home)
+	// Caches only: a toolchain directory on PATH, or one whose scripts every build runs, is a place
+	// to leave a program for the user's next command.
+	for _, planted := range []string{"go", "go/bin", ".cargo", ".cargo/bin", ".gradle", ".gradle/init.d", ".m2"} {
+		for _, w := range p.Writable {
+			if w == filepath.Join(resolvedHome, planted) || w == filepath.Join(home, planted) {
+				t.Errorf("%s is writable", planted)
+			}
+		}
+	}
 	if !strings.Contains(strings.Join(p.DenyRead, "\n"), filepath.Join(resolvedHome, ".ssh")) &&
 		!strings.Contains(strings.Join(p.DenyRead, "\n"), filepath.Join(home, ".ssh")) {
 		t.Errorf("~/.ssh is readable: %v", p.DenyRead)

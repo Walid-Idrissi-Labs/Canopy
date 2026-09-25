@@ -39,7 +39,13 @@ type Policy struct {
 	Writable []string
 	// DenyRead are paths the command may not read at all, where the platform can say so.
 	DenyRead []string
-	Network  Network
+	// DenyWrite are paths inside writable directories that still may not be written, where the
+	// platform can say so.
+	DenyWrite []string
+	// Devices are device files that may be written: null, tty and the like, and not the whole of
+	// /dev, which holds other terminals.
+	Devices []string
+	Network Network
 }
 
 // ErrUnavailable means this platform or machine cannot confine a command.
@@ -58,7 +64,12 @@ func Disabled() bool { return strings.EqualFold(os.Getenv(DisableEnvVar), "off")
 
 // ForWorkspace is the default policy for commands an agent runs in workspace: write the workspace,
 // any extra directories given (a worktree's shared git directory, for instance), temporary
-// directories and toolchain caches; never read credentials.
+// directories and the download caches toolchains keep; never read credentials; never write a git
+// directory's hooks or config, which later git commands run.
+//
+// Caches only, and not the toolchain homes around them: ~/go/bin, ~/.cargo/bin and the like are on
+// PATH and ~/.gradle/init.d runs on every build, so a writable home is a way to leave a program for
+// the user's next ordinary command to run outside the sandbox.
 func ForWorkspace(workspace string, extra ...string) Policy {
 	home, _ := os.UserHomeDir()
 	writable := append([]string{workspace}, extra...)
@@ -68,17 +79,18 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 	if filepath.Base(temp) == "T" {
 		temp = filepath.Dir(temp)
 	}
-	writable = append(writable, temp, "/tmp", "/private/tmp", "/dev")
+	writable = append(writable, temp, "/tmp", "/private/tmp", "/dev/fd")
 	if home != "" {
 		for _, rel := range []string{
-			".cache", "Library/Caches", "go", ".npm", ".yarn", ".pnpm-store", ".cargo", ".rustup",
-			".gradle", ".m2", ".local/share/pnpm", ".bun", ".deno", ".nuget", ".pub-cache",
-			"Library/pnpm", ".config/yarn",
+			".cache", "Library/Caches", "go/pkg/mod", ".npm/_cacache", ".npm/_logs", ".pnpm-store",
+			".yarn/berry/cache", ".cargo/registry", ".cargo/git", ".gradle/caches", ".gradle/wrapper",
+			".m2/repository", ".nuget/packages", ".bun/install/cache", ".pub-cache/hosted",
+			"Library/Developer/Xcode/DerivedData",
 		} {
 			writable = append(writable, filepath.Join(home, rel))
 		}
 	}
-	for _, env := range []string{"GOCACHE", "GOMODCACHE", "GOPATH", "npm_config_cache", "CARGO_HOME", "PIP_CACHE_DIR"} {
+	for _, env := range []string{"GOCACHE", "GOMODCACHE", "npm_config_cache", "PIP_CACHE_DIR"} {
 		if v := os.Getenv(env); v != "" {
 			writable = append(writable, v)
 		}
@@ -87,14 +99,32 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 	if home != "" {
 		for _, rel := range []string{
 			".ssh", ".aws", ".gnupg", ".azure", ".kube", ".docker/config.json", ".netrc", ".git-credentials",
-			".config/gh", ".config/gcloud", ".config/canopy", "Library/Keychains",
+			".config/gh", ".config/gcloud", ".config/canopy", ".config/op", "Library/Keychains",
 			"Library/Application Support/canopy", "Library/Application Support/Google/Chrome",
 			"Library/Application Support/Firefox", "Library/Cookies", ".password-store",
+			".npmrc", ".pypirc", ".cargo/credentials", ".cargo/credentials.toml", ".gem/credentials",
+			".m2/settings.xml", ".gradle/gradle.properties", ".terraform.d/credentials.tfrc.json",
+			".vault-token",
 		} {
 			deny = append(deny, filepath.Join(home, rel))
 		}
 	}
-	return Policy{Writable: clean(writable), DenyRead: clean(deny), Network: NetworkOpen}
+	return Policy{Writable: clean(writable), DenyRead: clean(deny), Network: NetworkOpen,
+		Devices: []string{"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"}}
+}
+
+// WithGitDirs forbids writing the hooks and config of the given git directories, which git runs or
+// obeys on the user's next command. Enforced where the platform can carve a path out of a writable
+// tree (macOS); recorded otherwise.
+func (p Policy) WithGitDirs(dirs ...string) Policy {
+	for _, d := range dirs {
+		if d == "" {
+			continue
+		}
+		p.DenyWrite = append(p.DenyWrite, filepath.Join(d, "hooks"), filepath.Join(d, "config"))
+	}
+	p.DenyWrite = clean(p.DenyWrite)
+	return p
 }
 
 func clean(paths []string) []string {

@@ -7,6 +7,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -162,14 +163,25 @@ func outcome(command string, result exec.Result) string {
 // toolchain caches.
 func (t *shellTool) sandboxPolicy() sandbox.Policy {
 	t.policyOnce.Do(func() {
-		var extra []string
-		cmd := osexec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
-		cmd.Dir = t.w.Root()
-		cmd.Env = gitsafe.InheritedFor(t.w.Root())
-		if out, err := cmd.Output(); err == nil {
-			extra = append(extra, strings.TrimSpace(string(out)))
+		gitPath := func(flag string) string {
+			cmd := osexec.Command("git", "rev-parse", "--path-format=absolute", flag)
+			cmd.Dir = t.w.Root()
+			cmd.Env = gitsafe.InheritedFor(t.w.Root())
+			out, err := cmd.Output()
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(out))
 		}
-		t.policy = sandbox.ForWorkspace(t.w.Root(), extra...)
+		gitDir, common := gitPath("--git-dir"), gitPath("--git-common-dir")
+		var extra []string
+		if common != "" {
+			extra = append(extra, common)
+		}
+		// The workspace's own .git is named whether or not it exists yet, so a repository the agent
+		// creates is covered from its first command.
+		t.policy = sandbox.ForWorkspace(t.w.Root(), extra...).
+			WithGitDirs(gitDir, common, filepath.Join(t.w.Root(), ".git"))
 	})
 	return t.policy
 }
