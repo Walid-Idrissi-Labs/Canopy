@@ -1453,6 +1453,22 @@ new agent worktree and MCP servers remain unconfined for now: that setup runs fr
 configuration before any agent has touched the worktree, and servers commonly need to write where
 the sandbox does not allow.
 
+## D-62 An editor can drive Canopy over ACP, and answers its questions. Decided 2026-09-25.
+
+`canopy acp` serves the project it is started in to an editor over the Agent Client Protocol, the
+reverse of D-51's delegation: there Canopy is the client of someone else's agent, here Canopy is the
+agent and the editor is the client. Everything behind a turn is Canopy's own, the key, the mode, the
+permission layer, the sandbox and the language servers, so an editor gets the same boundaries the
+interface has. A question the permission layer would ask a person in the interface is sent to the
+editor as `session/request_permission`, with allow once and reject as the only answers; only an
+explicit allow runs the call, and a cancelled or unreadable answer refuses it. No standing approval
+can be given from the editor, since ACP's allow-always has no scope Canopy could hold it to. A
+session starts in build, the interface's default, and the editor can switch among Canopy's five
+modes, each refused where it would be refused in the interface. The trust gate cannot prompt,
+because the editor owns stdin, so an untrusted repository's configuration is withheld exactly as
+for `canopy run`. One process serves one project: a session asked for in another directory is
+refused, since the tools are rooted in the first.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

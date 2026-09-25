@@ -28,6 +28,7 @@ usage:
   canopy land BRANCH   merge an agent's branch into yours only if the merged result passes the tests
   canopy trust         review what this repository's canopy.json runs, and allow it (revoke, list)
   canopy worktree      list the agent worktrees Canopy made here; gc removes the clean ones
+  canopy acp           serve this project to an editor over the Agent Client Protocol (stdio)
   canopy bench         measure cost and pass rate on built-in tasks (calls the model; billed)
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
@@ -97,6 +98,9 @@ func run(args []string) error {
 	// shared flag set, whose only flag is about the fake project this has nothing to do with.
 	if command == "run" {
 		os.Exit(runHeadless(args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if command == "acp" {
+		os.Exit(runACP(args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	if command == "bench" {
 		os.Exit(runBench(args[1:], os.Stdout, os.Stderr))

@@ -8017,6 +8017,20 @@ mutation testing, fixes, re-review, then into the integration branch that lands 
 - Z-R14 `repo_map`. PR #80.
 - Z-R15 Golden screen snapshots. PR #82.
 - Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
+`status: review | owner: Claude | branch: feat/acp-server`
+
+`internal/acpserver` serves the Agent Client Protocol over stdio: initialize, session/new with
+Canopy's modes, session/set_mode, session/prompt streamed as thought, message, tool call and tool
+result updates, session/cancel, and permission questions sent to the editor as
+session/request_permission. Tests drive it with a scripted client: each chunk is sent once across
+several passes, cancel ends a prompt as cancelled, only an explicit allow approves, an unanswered
+question refuses when its call is cancelled and is forgotten, unknown methods are errors and unknown
+notifications get no reply. Smoke-tested as a binary with an isolated HOME: initialize and
+session/new answer, and a session in another directory is refused.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-T1 Outside content taints a conversation (D-57)
 `status: review | owner: Claude | branch: feat/taint`
 
