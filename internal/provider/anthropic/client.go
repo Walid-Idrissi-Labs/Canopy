@@ -117,7 +117,7 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 		params.System = []sdk.TextBlockParam{{Text: req.System}}
 	}
 
-	if effort := mapEffort(req.Effort); effort != "" {
+	if effort := mapEffort(req.Effort); effort != "" && effortSupported(model) {
 		params.OutputConfig = sdk.OutputConfigParam{Effort: effort}
 	}
 
@@ -512,3 +512,8 @@ func webSearchTool(model string) sdk.ToolUnionParam {
 // WebSearchNotice begins the notice a completed server-side search is reported with; the query
 // follows it.
 const WebSearchNotice = "searched the web for: "
+
+// effortSupported reports whether a model takes the effort setting; older models reject it.
+func effortSupported(model string) bool {
+	return adaptiveThinking(model) || strings.HasPrefix(model, "claude-opus-4-5")
+}

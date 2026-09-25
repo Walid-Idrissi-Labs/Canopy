@@ -347,6 +347,18 @@ together. Your branch moves only if every required test passed and it still poin
 the merge was made. A checkout with uncommitted changes is refused, and the agent's branch is kept
 either way.
 
+## Headless runs, and escalating on red
+
+```sh
+canopy run -p "fix the flaky parser test" -output stream-json
+canopy run -p "..." -effort low -verify -escalate 2
+```
+
+`canopy run` is the full agent without the interface, for scripts and CI. With `-verify` the
+project's own tests decide the exit code (3 when they fail). `-escalate N` retries a red result up to
+N times, one effort level higher each time, with the failing output: run cheap, and pay for more
+thinking only when the evidence says it was needed.
+
 ## Reusable prompt commands
 
 Project commands live in `canopy.json`:
