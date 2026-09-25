@@ -8017,6 +8017,22 @@ mutation testing, fixes, re-review, then into the integration branch that lands 
 - Z-R14 `repo_map`. PR #80.
 - Z-R15 Golden screen snapshots. PR #82.
 - Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+### Z-X11 Hooks around tool calls: pre-tool, post-tool, turn-end (X-11, D-64)
+`status: review | owner: Claude | branch: feat/tool-hooks`
+
+Three hook events, given JSON on stdin and run in the sandbox: pre-tool can refuse a call (a deny
+answer, or exit 2 with the reason on stderr) and fails closed; post-tool can add a note to the
+result; turn-end runs in the background. `"tools"` narrows the first two, is refused on any other
+event, and shows in the trust prompt. exec.Run gained stdin and a separate stderr. Tests: the answer
+is read strictly (silence, allow, deny, exit 2, other exits, no answer, not JSON, unknown words);
+hooks run in order for their tools and the first refusal stands; post-tool notes gather and failures
+report; turn-end runs in the background; a real shell hook reads stdin and answers; in the loop, a
+refusal stops the call, reaches the model and is audited as denied, a note reaches the model, and a
+call refused by the level or not approved never reaches a hook; the engine tells turn-end hooks of
+every turn. Mutation-checked.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 

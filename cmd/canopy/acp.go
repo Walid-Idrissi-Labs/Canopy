@@ -17,6 +17,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/agent"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
 
@@ -106,6 +107,12 @@ func openHost(name string, args []string, errOut io.Writer) (*host, int) {
 		engine.WithTools(registry, projectTrust(project), agent.ApproverFunc(hub.Approve))
 	}
 	closers = append(closers, attachMCP(engine, dir, project))
+	toolHooks := attachToolHooks(engine, dir, project, func(r hooks.Report) {
+		if r.Failed() {
+			_, _ = fmt.Fprintln(errOut, "warning: "+r.Summary())
+		}
+	})
+	closers = append(closers, toolHooks.Wait)
 	return &host{hub: hub, dir: dir, close: closeAll}, exitOK
 }
 

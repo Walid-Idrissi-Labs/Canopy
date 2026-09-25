@@ -870,3 +870,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
   service manager. A question waiting for a client is announced on the server's error output only,
   with no desktop notification.
+- A pre-tool hook (D-64) runs for every call it matches, so a slow one slows every such call; the
+  default timeout is 30 seconds, after which the call is refused. It sees a call's arguments as the
+  model wrote them, and the result it is given by post-tool is cut at 16 KB. A turn-end hook's
+  failure is reported on the way out in the interface and as a warning in `canopy run`, `acp` and
+  `serve`, not on screen as it happens.

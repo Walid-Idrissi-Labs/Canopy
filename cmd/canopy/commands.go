@@ -23,6 +23,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -148,6 +149,13 @@ func runChat(resume string) error {
 		fmt.Fprintf(os.Stderr, "warning: verification is not running: %v\n", err)
 	}
 	defer verification.Close()
+
+	// Failures are said on the way out with the other hooks'; a refusal is in the transcript.
+	report := func(hooks.Report) {}
+	if verification != nil {
+		report = verification.recordHook
+	}
+	defer attachToolHooks(engine, dir, project, report).Wait()
 
 	// The worktree monitor reads the verifier, the same one the review screen reads. Outside a
 	// repository there is nothing to read and the screen says so, which is the honest answer and

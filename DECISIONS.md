@@ -1487,6 +1487,20 @@ it. `canopy attach` is the terminal client: it lists, picks up with a replay of
 what happened, prompts, and answers y or n. The interface is not yet a client of the server, so a
 conversation started in `canopy` and one started under `canopy serve` are not live in each other.
 
+## D-64 A project's hooks can refuse a tool call, and never approve one. Decided 2026-09-25.
+
+Hooks gain three events around an agent's work: `pre-tool` before each call the permission layer
+has let through, `post-tool` after it, and `turn-end`. They are given the call or the turn as JSON on
+stdin and run in the sandbox, like every hook since D-61. A pre-tool hook can only take a yes away:
+it runs after the permission layer has decided and after a person has answered, so it never sees a
+call that was refused or not approved, and nothing it answers can approve anything. It fails closed,
+refusing the call when it crashes, times out, exits with anything but 0 or 2, or answers something
+other than allow or deny, because a guard that fails open stops guarding without anybody noticing.
+A refusal is returned to the model with its reason and audited as a denial. A post-tool hook can add
+a note to the result the model is told; a turn-end hook changes nothing and nothing waits on it.
+Their failures are reported the way the other hooks' are. They arrive through canopy.json, so they
+are part of what a person trusts, the tools each is limited to included.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

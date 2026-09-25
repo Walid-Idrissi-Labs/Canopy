@@ -19,6 +19,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
@@ -132,6 +133,11 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	}
 	stopServers := attachMCP(engine, dir, project)
 	defer stopServers()
+	defer attachToolHooks(engine, dir, project, func(r hooks.Report) {
+		if r.Failed() {
+			_, _ = fmt.Fprintln(errOut, "warning: "+r.Summary())
+		}
+	}).Wait()
 
 	if *keyName == "" {
 		*keyName = resolver.DefaultKeyName()
