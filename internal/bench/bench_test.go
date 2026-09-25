@@ -102,3 +102,21 @@ func TestATaskThatAlreadyPassesIsRefused(t *testing.T) {
 		t.Fatalf("an already-passing task was attempted or scored: ran=%v %+v", ran, results[0])
 	}
 }
+
+// Adding a test file games the check as surely as editing one: a TestMain that exits at once makes
+// go test pass without running anything.
+func TestAddingATestFileIsNotAPass(t *testing.T) {
+	tasks, err := Tasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ = Select(tasks, []string{"go-off-by-one"})
+	cheat := func(_ context.Context, _ Task, dir string) (Usage, error) {
+		return Usage{}, os.WriteFile(filepath.Join(dir, "zz_test.go"),
+			[]byte("package sum\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\nfunc TestMain(m *testing.M) { os.Exit(0) }\n"), 0o644)
+	}
+	results := Run(context.Background(), tasks, cheat, nil)
+	if results[0].Passed || !strings.Contains(results[0].Error, "zz_test.go") {
+		t.Fatalf("an attempt that added a test file scored %+v", results[0])
+	}
+}
