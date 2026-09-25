@@ -579,3 +579,38 @@ func TestGrepOptionsOnBothPaths(t *testing.T) {
 		})
 	}
 }
+
+type fixedDiagnoser struct{ paths []string }
+
+func (d *fixedDiagnoser) Check(_ context.Context, path, content string) string {
+	d.paths = append(d.paths, path)
+	if strings.Contains(content, "BROKEN") {
+		return "fakels reports:\nx.go:1:1: error: undefined: BROKEN"
+	}
+	return ""
+}
+
+// What a language server says about an edit comes back with the edit, so a type error is heard in
+// the step that made it.
+func TestEditsCarryTheLanguageServersReport(t *testing.T) {
+	dir := t.TempDir()
+	w, err := OpenWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &fixedDiagnoser{}
+	w.SetDiagnoser(d)
+	tools := FileTools(w)
+	write, edit := tools[2], tools[1]
+	res, _ := write.Run(context.Background(), []byte(`{"path":"x.go","content":"package x\n"}`))
+	if res.IsError || strings.Contains(res.Content, "reports") {
+		t.Fatalf("a clean write: %+v", res)
+	}
+	res, _ = edit.Run(context.Background(), []byte(`{"path":"x.go","old_text":"package x","new_text":"package x // BROKEN"}`))
+	if res.IsError || !strings.Contains(res.Content, "undefined: BROKEN") || !strings.HasPrefix(res.Content, "Edited x.go.") {
+		t.Fatalf("the edit's result lacks the report: %+v", res)
+	}
+	if len(d.paths) != 2 || filepath.Base(d.paths[1]) != "x.go" || !filepath.IsAbs(d.paths[1]) {
+		t.Fatalf("checked %v", d.paths)
+	}
+}

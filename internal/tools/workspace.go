@@ -7,6 +7,7 @@
 package tools
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -38,6 +39,30 @@ type Workspace struct {
 	// swapped underneath between the check and the use would change what "inside" means, which is
 	// the classic shape of this bug.
 	root string
+
+	// diagnoser, when set, checks each file the edit and write tools change and its report is
+	// added to their result.
+	diagnoser Diagnoser
+}
+
+// Diagnoser checks a file just written and says what is wrong with it, or "" when it has nothing
+// to add. A language server behind it is the usual case.
+type Diagnoser interface {
+	Check(ctx context.Context, path, content string) string
+}
+
+// SetDiagnoser has the edit and write tools report problems in what they wrote.
+func (w *Workspace) SetDiagnoser(d Diagnoser) { w.diagnoser = d }
+
+// diagnose is what the diagnoser says about a file, set off from the tool's own result.
+func (w *Workspace) diagnose(ctx context.Context, path, content string) string {
+	if w.diagnoser == nil {
+		return ""
+	}
+	if report := w.diagnoser.Check(ctx, path, content); report != "" {
+		return "\n\n" + report
+	}
+	return ""
 }
 
 // OpenWorkspace resolves a directory and returns a workspace confined to it.

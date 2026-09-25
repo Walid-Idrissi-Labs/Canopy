@@ -793,3 +793,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - A Windows stub already exists in the process-handling code, and it says plainly that it is
   incomplete rather than pretending to be finished: Windows has no process-group equivalent in
   place, so a cancelled command there can leave children running behind it (A4-03).
+- Language servers run only in a trusted repository, and outside the sandbox, since they run the
+  repository's own toolchain; `CANOPY_LSP=off` turns them off. Only servers already on PATH are
+  used, one per language per worktree, and a server that fails to answer twice in a row, such as
+  one still indexing a large project, is left alone for the rest of the session. Only errors and
+  warnings for the file just written are shown, up to twenty.

@@ -92,6 +92,8 @@ func runChat(resume string) error {
 	project := loadProject(dir)
 	commands := loadCommands(project.Commands)
 	engine.WithInstructions(projectInstructions(dir, project, os.Stderr))
+	enableLanguageServers(project)
+	defer closeLanguageServers()
 	engine.SetWebSearch(webSearchWanted())
 
 	if err := attachTools(engine, dir, project); err != nil {
@@ -279,6 +281,7 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
+	attachLanguageServers(workspace)
 
 	registry := core.NewToolRegistry()
 	for _, tool := range tools.FileTools(workspace) {
