@@ -486,3 +486,28 @@ func TestABareBtwWithNoHistoryStillSaysWhatItWants(t *testing.T) {
 		t.Errorf("a bare /btw with no history does not say what it wants:\n%s", view)
 	}
 }
+
+// /context says where the tokens go, part by part, and what the last turn took from the cache,
+// and says in words when the cache stopped working.
+func TestContextShowsWhereTheTokensGo(t *testing.T) {
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: []core.Turn{
+			{ID: "a", State: core.TurnComplete, Usage: core.Usage{InputTokens: 900, CacheReadTokens: 9000}},
+			{ID: "b", State: core.TurnComplete, Usage: core.Usage{InputTokens: 12000, CacheWriteTokens: 500}},
+		}},
+		inventory: core.Inventory{System: 2000, Tools: 3000, ToolCount: 14, Results: 15000, Messages: 6},
+	}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(120, 40)
+	next, _ := run(m, "/context")
+	view := plain(next.Body())
+	for _, want := range []string{"system prompt", "2.0k", "14 tools", "tool results", "15.0k", "75%",
+		"20.0k", "6 messages", "0% of it from the cache", "nothing came from the cache"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("/context lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "reasoning") {
+		t.Errorf("an empty part was listed:\n%s", view)
+	}
+}

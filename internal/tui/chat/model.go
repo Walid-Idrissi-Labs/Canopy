@@ -68,6 +68,9 @@ type Engine interface {
 	Undo(ctx context.Context, sessionID, turnID string) error
 	UndoPreview(ctx context.Context, sessionID, turnID string) ([]string, error)
 
+	// Inventory is what the next request will carry, part by part, for /context.
+	Inventory(sessionID string) core.Inventory
+
 	// Mode is what this conversation's agent is doing, and SetMode changes it. This pair is what a
 	// mode is made of: the permission layer decides against the mode's level and the tool list the
 	// model is shown is filtered by it, so an agent that is planning cannot edit a file by ignoring

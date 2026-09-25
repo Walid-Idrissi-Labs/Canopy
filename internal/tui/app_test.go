@@ -1406,3 +1406,5 @@ func TestARenameIsNotRefusedByARunningTurn(t *testing.T) {
 		t.Errorf("the rename went through the credential switch as %v", engine.using)
 	}
 }
+
+func (e *stubEngine) Inventory(string) core.Inventory { return core.Inventory{} }

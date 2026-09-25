@@ -21,7 +21,8 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
-	tools *core.ToolRegistry
+	tools     *core.ToolRegistry
+	inventory core.Inventory
 
 	subscriptions int
 
@@ -1045,3 +1046,5 @@ func TestEventsReuseOneSubscription(t *testing.T) {
 		t.Fatalf("the chat subscribed %d times across 1000 events; every extra one is a goroutine and an unread queue that grows for the rest of the session", engine.subscriptions)
 	}
 }
+
+func (e *fakeEngine) Inventory(string) core.Inventory { return e.inventory }

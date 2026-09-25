@@ -245,10 +245,65 @@ func (m Model) contextUse() string {
 	if len(m.session.Turns) == 0 {
 		return "nothing said yet, so the whole window is free"
 	}
+	verdict := "with room to keep going"
 	if use.NeedsCompaction() {
-		return use.String() + " used, worth running /compact before the next long turn"
+		verdict = "worth running /compact before the next long turn"
 	}
-	return use.String() + " used, with room to keep going"
+	lines := []string{use.String() + " used, " + verdict, "", "the next request, estimated:"}
+
+	inv := m.engine.Inventory(m.sessionID)
+	parts := []struct {
+		name   string
+		tokens int
+		note   string
+	}{
+		{"system prompt", inv.System, ""},
+		{"instructions", inv.Instructions, "AGENTS.md, CLAUDE.md and the like"},
+		{"tool definitions", inv.Tools, fmt.Sprintf("%d tools", inv.ToolCount)},
+		{"summary", inv.Summary, "of the compacted part"},
+		{"your messages", inv.Asked, ""},
+		{"replies", inv.Answered, ""},
+		{"reasoning", inv.Reasoning, "replayed thinking"},
+		{"tool calls", inv.Calls, ""},
+		{"tool results", inv.Results, ""},
+	}
+	total := inv.Total()
+	for _, part := range parts {
+		if part.tokens == 0 {
+			continue
+		}
+		line := fmt.Sprintf("  %-17s %7s  %3d%%", part.name, tokenCount(part.tokens), percent(part.tokens, total))
+		if part.note != "" {
+			line += "  " + part.note
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, fmt.Sprintf("  %-17s %7s  in %d messages", "total", tokenCount(total), inv.Messages))
+
+	// The last request as the provider measured it, which is what was actually paid for.
+	for i := len(m.session.Turns) - 1; i >= 0; i-- {
+		usage := m.session.Turns[i].Usage
+		if in := usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens; in > 0 {
+			lines = append(lines, "", fmt.Sprintf("the last turn read %s, %d%% of it from the cache, and wrote %s to it",
+				tokenCount(in), percent(usage.CacheReadTokens, in), tokenCount(usage.CacheWriteTokens)))
+			if usage.CacheReadTokens == 0 && i > 0 {
+				// Words, not a number to interpret: a conversation that stopped hitting the cache
+				// costs several times more per turn, and the usual cause is something that changed.
+				lines = append(lines, "nothing came from the cache: the start of the conversation changed, "+
+					"or it sat idle longer than the cache keeps it")
+			}
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// percent is part of whole, rounded down, and zero of nothing.
+func percent(part, whole int) int {
+	if whole <= 0 {
+		return 0
+	}
+	return part * 100 / whole
 }
 
 // toolTrail is what this agent actually did, and what it was not allowed to do.
@@ -438,4 +493,15 @@ func commandListing(commands config.CommandSet) string {
 			command.Name, command.Description, command.Scope))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// tokenCount is a token figure short enough for a column: 812, 4.3k, 1.2M.
+func tokenCount(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
 }
