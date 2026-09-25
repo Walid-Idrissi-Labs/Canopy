@@ -316,8 +316,9 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
-	// loadPictures finds and loads the pictures a message names; see SetPictures.
-	loadPictures func(prompt string) ([]core.Image, error)
+	// findPictures and loadPictures find and read the pictures a message names; see SetPictures.
+	findPictures func(prompt string) []string
+	loadPictures func(paths []string) ([]core.Image, error)
 
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
@@ -619,6 +620,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case picturesReadyMsg:
+		return m.picturesReady(msg)
 
 	case tea.PasteMsg:
 		// Pasted text goes into the message box whole: an enter inside a paste is a line break in
@@ -1311,11 +1315,28 @@ func (m Model) send() (Model, tea.Cmd) {
 	m.applyPendingMode()
 
 	// A picture named in the message, a screenshot dropped on the terminal for one, goes with it.
-	attached, err := m.pictures(prompt)
-	if err != nil {
-		m.err = err.Error()
-		return m, nil
+	// Read off the update loop, since a large one takes a moment; the message is sent once it is.
+	if paths := m.picturePaths(prompt); len(paths) > 0 {
+		m.notice = "reading " + pictureCount(len(paths))
+		load := m.loadPictures
+		return m, func() tea.Msg {
+			images, err := load(paths)
+			return picturesReadyMsg{typed: typed, prompt: prompt, images: images, err: err}
+		}
 	}
+	return m.deliver(typed, prompt, nil)
+}
+
+// picturesReadyMsg carries the pictures a message named, read and ready to send with it.
+type picturesReadyMsg struct {
+	typed, prompt string
+	images        []core.Image
+	err           error
+}
+
+// deliver sends a message, with any pictures already read, and tidies the box after it.
+func (m Model) deliver(typed, prompt string, attached []core.Image) (Model, tea.Cmd) {
+	var err error
 	if len(attached) > 0 {
 		_, err = m.engine.(imageSender).SendWithImages(m.sessionID, prompt, attached)
 	} else {
@@ -1332,8 +1353,12 @@ func (m Model) send() (Model, tea.Cmd) {
 	// rather than in the box and in the history, which is one message showing up twice.
 	// History remembers what the person typed, not the expanded body. Pressing up should offer
 	// `/review auth` again rather than a page of generated prompt text.
-	m.input.Remember(typed)
-	m.input.Clear()
+	// Only when the box still holds what was sent: pictures are read off the update loop, and
+	// somebody may have gone on typing meanwhile.
+	if m.input.Value() == typed {
+		m.input.Remember(typed)
+		m.input.Clear()
+	}
 	// Sending returns to the tail. Someone who scrolled up to read something old and then asked a
 	// question is asking about now.
 	m.scroll = 0
@@ -2671,17 +2696,33 @@ type imageSender interface {
 	SendWithImages(sessionID, prompt string, images []core.Image) (string, error)
 }
 
-// SetPictures gives the box a way to find and load the pictures a message names. Nil sends every
-// message as words alone.
-func (m *Model) SetPictures(load func(prompt string) ([]core.Image, error)) { m.loadPictures = load }
+// SetPictures gives the box a way to find the pictures a message names, which is quick, and to read
+// them, which may not be. Nil for either sends every message as words alone.
+func (m *Model) SetPictures(find func(prompt string) []string, load func(paths []string) ([]core.Image, error)) {
+	m.findPictures, m.loadPictures = find, load
+}
 
-// pictures loads the pictures a message names, when the engine can send them. A picture that cannot
-// be read stops the message, so nobody sends "look at this" with nothing attached.
-func (m Model) pictures(prompt string) ([]core.Image, error) {
-	if _, ok := m.engine.(imageSender); !ok || m.loadPictures == nil {
-		return nil, nil
+// picturePaths are the pictures a message names, when the engine can send them.
+func (m Model) picturePaths(prompt string) []string {
+	if _, ok := m.engine.(imageSender); !ok || m.findPictures == nil || m.loadPictures == nil {
+		return nil
 	}
-	return m.loadPictures(prompt)
+	return m.findPictures(prompt)
+}
+
+// picturesReady sends a message once its pictures are read. A picture that cannot be read stops the
+// message, so nobody sends "look at this" with nothing attached; the box keeps it.
+func (m Model) picturesReady(msg picturesReadyMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		m.err = msg.err.Error()
+		m.notice = ""
+		return m, nil
+	}
+	if m.input.Value() != msg.typed {
+		// The box changed while the pictures were read; what was typed then is what is sent.
+		m.notice = ""
+	}
+	return m.deliver(msg.typed, msg.prompt, msg.images)
 }
 
 // pictureCount says how many pictures, in the singular for one.

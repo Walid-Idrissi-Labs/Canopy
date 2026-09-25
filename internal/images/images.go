@@ -22,10 +22,12 @@ import (
 // MaxSide is the longest side a picture is sent at. Larger costs more and tells a model no more.
 const MaxSide = 1280
 
-// maxFile is the largest picture file read, and maxSent the largest one sent as it is.
+// maxFile is the largest picture file read, maxSent the largest one sent as it is, and maxPixels
+// the largest canvas decoded.
 const (
-	maxFile = 20 << 20
-	maxSent = 3 << 20
+	maxFile   = 20 << 20
+	maxSent   = 3 << 20
+	maxPixels = 40_000_000
 )
 
 var extensions = map[string]string{
@@ -112,28 +114,34 @@ func Load(path string) (core.Image, error) {
 		return core.Image{}, fmt.Errorf("%s is larger than 20 MB", filepath.Base(path))
 	}
 	if mediaType == "image/webp" {
+		// Checked by content, since the name is only a name.
+		if len(data) < 12 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+			return core.Image{}, fmt.Errorf("%s is not a WebP picture", filepath.Base(path))
+		}
 		if len(data) > maxSent {
 			return core.Image{}, fmt.Errorf("%s is a WebP larger than 3 MB; save it as PNG or JPEG to have it scaled", filepath.Base(path))
 		}
 		return core.Image{MediaType: mediaType, Data: data}, nil
 	}
-	return Prepare(data, mediaType)
+	return Prepare(data)
 }
 
 // Prepare scales a PNG, JPEG or GIF so its long side is at most MaxSide, and encodes it again: JPEG
 // stays JPEG, anything else becomes PNG. A picture already small enough in size and on disk is sent
 // as it came.
-func Prepare(data []byte, mediaType string) (core.Image, error) {
+func Prepare(data []byte) (core.Image, error) {
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
 		return core.Image{}, errors.New("the picture could not be read")
 	}
-	// Checked before decoding, since a small file can declare an enormous canvas.
-	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 100_000_000 {
+	// Checked before decoding, since a small file can declare an enormous canvas. Forty megapixels
+	// is past any screenshot and past what a model is sent, and bounds what decoding can take.
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > maxPixels {
 		return core.Image{}, errors.New("the picture is too large to read")
 	}
+	// The media type is what the bytes are, whatever the file was called.
 	if config.Width <= MaxSide && config.Height <= MaxSide && len(data) <= maxSent && format != "gif" {
-		return core.Image{MediaType: mediaType, Data: data}, nil
+		return core.Image{MediaType: "image/" + format, Data: data}, nil
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -162,38 +170,44 @@ func Prepare(data []byte, mediaType string) (core.Image, error) {
 }
 
 // shrink scales img so its long side is at most side, averaging each block of source pixels into
-// one, which keeps text in a screenshot readable where sampling would lose strokes.
-func shrink(img image.Image, side int) image.Image {
+// one, which keeps text in a screenshot readable where sampling would lose strokes. The source is
+// read a row at a time, so a large picture costs one row of it on top of the decoded original.
+func shrink(img image.Image, side int) *image.RGBA {
 	b := img.Bounds()
 	w, h := b.Dx(), b.Dy()
-	if w <= side && h <= side {
-		rgba := image.NewRGBA(image.Rect(0, 0, w, h))
-		draw.Draw(rgba, rgba.Bounds(), img, b.Min, draw.Src)
-		return rgba
+	nw, nh := w, h
+	if w > side || h > side {
+		nw, nh = side, max(h*side/w, 1)
+		if h > w {
+			nw, nh = max(w*side/h, 1), side
+		}
 	}
-	nw, nh := side, h*side/w
-	if h > w {
-		nw, nh = w*side/h, side
-	}
-	nw, nh = max(nw, 1), max(nh, 1)
-	src := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.Draw(src, src.Bounds(), img, b.Min, draw.Src)
+	row := image.NewRGBA(image.Rect(0, 0, w, 1))
 	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
+	sums := make([]uint64, nw*4)
+	counts := make([]uint64, nw)
 	for y := 0; y < nh; y++ {
+		clear(sums)
+		clear(counts)
 		y0, y1 := y*h/nh, max((y+1)*h/nh, y*h/nh+1)
-		for x := 0; x < nw; x++ {
-			x0, x1 := x*w/nw, max((x+1)*w/nw, x*w/nw+1)
-			var r, g, bl, a, n uint64
-			for sy := y0; sy < y1; sy++ {
-				row := src.Pix[sy*src.Stride:]
+		for sy := y0; sy < y1; sy++ {
+			draw.Draw(row, row.Bounds(), img, image.Point{b.Min.X, b.Min.Y + sy}, draw.Src)
+			for x := 0; x < nw; x++ {
+				x0, x1 := x*w/nw, max((x+1)*w/nw, x*w/nw+1)
 				for sx := x0; sx < x1; sx++ {
-					p := row[sx*4 : sx*4+4]
-					r, g, bl, a = r+uint64(p[0]), g+uint64(p[1]), bl+uint64(p[2]), a+uint64(p[3])
-					n++
+					p := row.Pix[sx*4 : sx*4+4]
+					sums[x*4] += uint64(p[0])
+					sums[x*4+1] += uint64(p[1])
+					sums[x*4+2] += uint64(p[2])
+					sums[x*4+3] += uint64(p[3])
+					counts[x]++
 				}
 			}
+		}
+		for x := 0; x < nw; x++ {
 			o := dst.Pix[y*dst.Stride+x*4:]
-			o[0], o[1], o[2], o[3] = uint8(r/n), uint8(g/n), uint8(bl/n), uint8(a/n)
+			n := counts[x]
+			o[0], o[1], o[2], o[3] = uint8(sums[x*4]/n), uint8(sums[x*4+1]/n), uint8(sums[x*4+2]/n), uint8(sums[x*4+3]/n)
 		}
 	}
 	return dst
@@ -207,8 +221,10 @@ const MaxPerMessage = 5
 
 // ForMessage loads every picture a message names. One that cannot be read is an error, so a message
 // is never sent with its picture silently missing.
-func ForMessage(text string) ([]core.Image, error) {
-	paths := FindPaths(text)
+func ForMessage(text string) ([]core.Image, error) { return LoadAll(FindPaths(text)) }
+
+// LoadAll loads the pictures at paths, at most MaxPerMessage of them.
+func LoadAll(paths []string) ([]core.Image, error) {
 	if len(paths) > MaxPerMessage {
 		return nil, fmt.Errorf("a message carries at most %d pictures, and this one names %d", MaxPerMessage, len(paths))
 	}

@@ -198,7 +198,7 @@ func runChat(resume string) error {
 		monitor, signInAware{keyStore}, engine, filepath.Base(dir), keyName, tui.AppOptions{
 			Review: review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
-			SignIn: signInRoutes, Pictures: images.ForMessage,
+			SignIn: signInRoutes, FindPictures: images.FindPaths, LoadPictures: images.LoadAll,
 		})
 	if err != nil {
 		return err

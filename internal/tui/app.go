@@ -171,8 +171,9 @@ type AppOptions struct {
 	// had just been created sat in a conversation nobody could see.
 	Session string
 
-	// Pictures finds and loads the pictures a message names.
-	Pictures func(prompt string) ([]core.Image, error)
+	// FindPictures and LoadPictures find and read the pictures a message names.
+	FindPictures func(prompt string) []string
+	LoadPictures func(paths []string) ([]core.Image, error)
 }
 
 // NewApp builds the application.
@@ -232,7 +233,7 @@ func NewAppConfigured(
 		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
-	app.chat.SetPictures(options.Pictures)
+	app.chat.SetPictures(options.FindPictures, options.LoadPictures)
 	app.chat.SetAgent(options.Agent)
 	app.review.SetCostOutcomes(options.Costs)
 	app.review.SetJudge(engine.Judge)

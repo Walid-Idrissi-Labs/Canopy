@@ -835,7 +835,9 @@ func (e *Engine) SendWithImages(sessionID, prompt string, images []core.Image) (
 	s.Turns[len(s.Turns)-1].Request.Reports = e.joinNotes[sessionID]
 	delete(e.joinNotes, sessionID)
 
-	history := s.History()
+	// Pictures stay with the last few messages that carried them; older ones become a line saying
+	// they were there, so a conversation with pictures cannot outgrow what a request may be.
+	history := core.KeepRecentPictures(s.History())
 	keyName, model := s.KeyName, s.Model
 
 	ctx, cancel := context.WithCancel(context.Background())

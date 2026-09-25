@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -549,14 +550,43 @@ func (i Image) DataURL() string {
 	return "data:" + i.MediaType + ";base64," + base64.StdEncoding.EncodeToString(i.Data)
 }
 
-// HasImages reports whether any message in the request carries a picture.
+// HasImages reports whether the message being sent carries a picture. Only the last: the routes
+// that ask it send only the newest message, keeping the conversation on their own side.
 func (r Request) HasImages() bool {
-	for _, m := range r.Messages {
-		if len(m.Images) > 0 {
-			return true
+	return len(r.Messages) > 0 && len(r.Messages[len(r.Messages)-1].Images) > 0
+}
+
+// PicturesKept is how many of the most recent messages with pictures keep them when a conversation
+// is sent again, and PictureBytesKept how many bytes of pictures in all.
+const (
+	PicturesKept     = 3
+	PictureBytesKept = 16 << 20
+)
+
+// KeepRecentPictures is the conversation with the pictures of all but the most recent messages
+// replaced by a line saying one was there. Every request resends the whole conversation, and a
+// provider's request has a size limit, so without this a conversation that carried pictures would
+// grow until every turn failed. The messages given are not changed.
+func KeepRecentPictures(messages []Message) []Message {
+	out := append([]Message(nil), messages...)
+	kept, bytes := 0, 0
+	for i := len(out) - 1; i >= 0; i-- {
+		if len(out[i].Images) == 0 {
+			continue
 		}
+		size := 0
+		for _, image := range out[i].Images {
+			size += len(image.Data)
+		}
+		if kept < PicturesKept && bytes+size <= PictureBytesKept {
+			kept, bytes = kept+1, bytes+size
+			continue
+		}
+		out[i].Text = strings.TrimSpace(out[i].Text + "\n\n[" + strconv.Itoa(len(out[i].Images)) +
+			" picture(s) sent here earlier are no longer attached]")
+		out[i].Images = nil
 	}
-	return false
+	return out
 }
 
 // ErrNoImages is what a route that cannot pass pictures on says, rather than dropping them.
