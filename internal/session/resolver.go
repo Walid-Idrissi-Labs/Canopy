@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -138,7 +139,13 @@ func (r *KeyResolver) ResolveForWorkspace(
 			return nil, pricing.ModelID{}, fmt.Errorf(
 				"key %q needs a model named, since its endpoint has no default", meta.Ref.Name)
 		}
-		return openai.New(meta.BaseURL, secret, openai.WithName(meta.Ref.Name)), id, nil
+		options := []openai.Option{openai.WithName(meta.Ref.Name)}
+		// OpenAI's own endpoint, and only when asked for, until the Responses transport has been
+		// run against the real service.
+		if strings.Contains(meta.BaseURL, "api.openai.com") && strings.EqualFold(os.Getenv(openai.ResponsesEnvVar), "on") {
+			options = append(options, openai.WithResponses())
+		}
+		return openai.New(meta.BaseURL, secret, options...), id, nil
 
 	default:
 		return nil, pricing.ModelID{}, fmt.Errorf(
