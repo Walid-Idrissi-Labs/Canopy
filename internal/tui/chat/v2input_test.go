@@ -1,6 +1,7 @@
 package chat_test
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -64,6 +65,35 @@ func TestShiftEnterIsALineBreak(t *testing.T) {
 	}
 }
 
+// A paste is a keystroke as far as an offer or a complaint is concerned: it ends both.
+func TestAPasteEndsAnOfferAndAComplaint(t *testing.T) {
+	turns := make([]core.Turn, 8)
+	for i := range turns {
+		turns[i] = turn("t", "question", "answer", core.TurnComplete)
+	}
+	engine := &fakeEngine{session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: turns}}
+	m := model(engine)
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
+	m, _ = m.Update(tea.PasteMsg{Content: "x"})
+	if _, cmd := m.Update(keyCode('r', tea.ModCtrl)); cmd != nil {
+		t.Fatal("an offer to compact survived a paste and was taken up by the next ctrl+r")
+	}
+
+	short := &fakeEngine{session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: []core.Turn{
+		turn("t1", "hello", "hi", core.TurnComplete),
+	}}}
+	m = model(short)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
+	if !strings.Contains(plain(m.Body()), "not enough of this conversation") {
+		t.Fatal("no complaint is up, so this test proves nothing")
+	}
+	m, _ = m.Update(tea.PasteMsg{Content: "x"})
+	if strings.Contains(plain(m.Body()), "not enough of this conversation") {
+		t.Fatal("a complaint about the last key outlived a paste")
+	}
+}
+
 // Option on a Mac arrives as alt: option+delete removes a word and option+arrows move by one, the
 // habits every other text field there has taught.
 func TestAltEditsByWord(t *testing.T) {
@@ -79,8 +109,42 @@ func TestAltEditsByWord(t *testing.T) {
 	if m.InputValue() != "fix the Xparser" {
 		t.Fatalf("alt+left then X gave %q", m.InputValue())
 	}
-	m = typed(t, append(keys, keyCode(tea.KeyHome), keyCode(tea.KeyRight, tea.ModAlt), keyText("X"))...)
-	if m.InputValue() != "fixX the parser" {
-		t.Fatalf("home, alt+right then X gave %q", m.InputValue())
+	for _, tc := range []struct {
+		name string
+		keys []tea.KeyPressMsg
+		want string
+	}{
+		{"alt+right", []tea.KeyPressMsg{keyCode(tea.KeyHome), keyCode(tea.KeyRight, tea.ModAlt), keyText("X")}, "fixX the parser"},
+		{"ctrl+right", []tea.KeyPressMsg{keyCode(tea.KeyHome), keyCode(tea.KeyRight, tea.ModCtrl), keyText("X")}, "fixX the parser"},
+		{"alt+f", []tea.KeyPressMsg{keyCode(tea.KeyHome), keyCode('f', tea.ModAlt), keyText("X")}, "fixX the parser"},
+		{"ctrl+left", []tea.KeyPressMsg{keyCode(tea.KeyLeft, tea.ModCtrl), keyText("X")}, "fix the Xparser"},
+		{"alt+b", []tea.KeyPressMsg{keyCode('b', tea.ModAlt), keyText("X")}, "fix the Xparser"},
+		{"alt+delete", []tea.KeyPressMsg{keyCode(tea.KeyHome), keyCode(tea.KeyDelete, tea.ModAlt)}, "ix the parser"},
+	} {
+		if m := typed(t, append(append([]tea.KeyPressMsg(nil), keys...), tc.keys...)...); m.InputValue() != tc.want {
+			t.Errorf("%s gave %q, want %q", tc.name, m.InputValue(), tc.want)
+		}
+	}
+	// A line break ends a word, so option+delete after the first word of a line stops at the break.
+	m = typed(t, keyText("one"), keyCode(tea.KeyEnter, tea.ModShift), keyText("two"), keyCode(tea.KeyBackspace, tea.ModAlt))
+	if m.InputValue() != "one\n" {
+		t.Fatalf("option+delete across a line break left %q", m.InputValue())
+	}
+}
+
+// Alt with up or down still walks what was sent, as the plain arrows do.
+func TestAltArrowsWalkHistory(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	m, _ = m.Update(keyText("earlier"))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	m, _ = m.Update(keyCode(tea.KeyUp, tea.ModAlt))
+	if m.InputValue() != "earlier" {
+		t.Fatalf("alt+up recalled %q", m.InputValue())
+	}
+	m, _ = m.Update(keyCode(tea.KeyDown, tea.ModAlt))
+	if m.InputValue() != "" {
+		t.Fatalf("alt+down left %q", m.InputValue())
 	}
 }

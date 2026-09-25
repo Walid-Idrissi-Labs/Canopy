@@ -155,3 +155,23 @@ func TestLearningTheBackgroundEmptiesTheRenderCaches(t *testing.T) {
 		t.Fatal("a block highlighted for a light background was reused on a dark one")
 	}
 }
+
+// A reply still streaming keeps the lines it has drawn so far; learning the background drops them
+// too, or the rest of that reply would be drawn under a head in the other palette.
+func TestLearningTheBackgroundEmptiesTheStreamingRenders(t *testing.T) {
+	defer theme.SetDark(true)
+	theme.SetDark(true)
+	streamingMarkdown("s1|t1", "first paragraph\n\nsecond", 60)
+	streaming.Lock()
+	filled := len(streaming.byTurn)
+	streaming.Unlock()
+	if filled == 0 {
+		t.Fatal("nothing was kept for the streaming reply, so this test proves nothing")
+	}
+	theme.SetDark(false)
+	streaming.Lock()
+	defer streaming.Unlock()
+	if len(streaming.byTurn) != 0 {
+		t.Fatal("lines drawn for a dark background survived learning it is light")
+	}
+}

@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
-
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 // Model is the dashboard.

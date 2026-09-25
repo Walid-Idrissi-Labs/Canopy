@@ -934,3 +934,18 @@ func TestAPastedSecretIsStoredClean(t *testing.T) {
 		t.Error("the pasted secret was not stored as the key alone")
 	}
 }
+
+// The endpoint and a new name are one-line fields too, and take a paste the way the name does.
+func TestAPasteFillsTheEndpointAndARename(t *testing.T) {
+	m := New(&stubStore{})
+	m.mode = modeBaseURL
+	m, _ = m.Update(tea.PasteMsg{Content: "https://example.invalid/v1\n"})
+	if m.draftBaseURL != "https://example.invalid/v1" {
+		t.Errorf("the pasted endpoint is %q", m.draftBaseURL)
+	}
+	m.mode, m.draftName = modeRename, ""
+	m, _ = m.Update(tea.PasteMsg{Content: "work\r\n"})
+	if m.draftName != "work" {
+		t.Errorf("the pasted name is %q", m.draftName)
+	}
+}

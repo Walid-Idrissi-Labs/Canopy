@@ -118,3 +118,53 @@ func TestTheTerminalsBackgroundReachesTheTheme(t *testing.T) {
 		t.Fatal("a black background left the theme drawing for a light one")
 	}
 }
+
+// committingReview records the commit it is asked for.
+type committingReview struct {
+	rankedReview
+	message *string
+}
+
+func (committingReview) ReadyToReview() []core.ReadyForReview {
+	return []core.ReadyForReview{{Agent: "alpha", Branch: "canopy/alpha"}}
+}
+
+func (r committingReview) Commit(_ string, message string) error {
+	*r.message = message
+	return nil
+}
+
+// A subject pasted on the review screen reaches the commit, through the application.
+func TestAPastedSubjectIsCommitted(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	var message string
+	var model tea.Model = tui.NewAppConfigured(store, withOneKey(), &stubEngine{}, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Review: committingReview{message: &message}})
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	for _, k := range []tea.KeyPressMsg{keyCode('d', tea.ModCtrl), keyText("r"), keyCode(tea.KeyEnter), keyText("c")} {
+		model, _ = model.Update(k)
+	}
+	model, _ = model.Update(tea.PasteMsg{Content: "fix: tighten the parser\n"})
+	model.Update(keyCode('s', tea.ModCtrl))
+	if !strings.HasPrefix(message, "fix: tighten the parser") {
+		t.Fatalf("the commit was made with %q", message)
+	}
+}
+
+// A paste is also a change of mind about starting a new conversation while a reply arrives.
+func TestAPasteLapsesTheNewConversationQuestion(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{session: core.Session{
+		ID:    "session-1",
+		Turns: []core.Turn{{Request: core.Message{Text: "go"}, State: core.TurnStreaming}},
+	}}
+	app := launchWith(store, withOneKey(), engine)
+	next, _ := app.(tui.App).Update(keyCode('n', tea.ModCtrl))
+	next, _ = next.(tui.App).Update(tea.PasteMsg{Content: "more"})
+	next.(tui.App).Update(keyCode('n', tea.ModCtrl))
+	if engine.created != 0 {
+		t.Fatal("ctrl+n after a paste replaced the conversation, as if the paste had not happened")
+	}
+}

@@ -3,6 +3,8 @@ package chat
 import (
 	"strings"
 	"sync"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
 // The turn being streamed is the one part of the transcript that changes on every event, so it
@@ -56,6 +58,16 @@ func streamingMarkdown(key, text string, width int) []string {
 	streaming.Unlock()
 
 	return append(append([]string(nil), head...), RenderMarkdown(text[boundary:], width)...)
+}
+
+// A streaming render keeps the lines it has drawn, in the colours of the moment, so a theme or
+// background change drops them as it drops finished turns.
+func init() { theme.OnChange(forgetAllStreaming) }
+
+func forgetAllStreaming() {
+	streaming.Lock()
+	streaming.byTurn = map[string]*streamRender{}
+	streaming.Unlock()
 }
 
 // forgetStreaming drops the state for a turn once it has finished and is cached whole.

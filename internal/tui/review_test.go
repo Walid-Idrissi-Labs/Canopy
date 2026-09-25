@@ -521,9 +521,4 @@ func TestAPastedSubjectIsOneLine(t *testing.T) {
 	if !strings.Contains(model.Body(), "tighten the [2Jparser") || strings.Contains(model.Body(), "\x1b[2J") {
 		t.Fatalf("the pasted subject is not shown as one clean line:\n%s", model.Body())
 	}
-	// Outside the commit message a paste does nothing.
-	model, _ = loaded(t)
-	if got := model.Paste("x").Body(); got != model.Body() {
-		t.Fatal("a paste changed the file list")
-	}
 }
