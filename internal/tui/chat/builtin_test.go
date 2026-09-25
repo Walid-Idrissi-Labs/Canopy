@@ -2,6 +2,8 @@ package chat_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -217,10 +219,42 @@ func TestTheThemeCommandChangesThePaletteAndListsTheChoices(t *testing.T) {
 	// With no name it says what is on and what else there is, rather than doing nothing.
 	next, _ = run(next, "/theme")
 	view := plain(next.Body())
-	for _, want := range []string{"mono", "canopy"} {
+	for _, want := range []string{"mono", "canopy", "nord", "catppuccin"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the bare command does not mention %q:\n%s", want, view)
 		}
+	}
+}
+
+// A theme file somebody wrote is picked up by a bare /theme, without restarting, and one that does not
+// load is named there with the reason.
+func TestABareThemeCommandReadsThemeFilesAgain(t *testing.T) {
+	defer theme.Set(theme.Default)
+	dir := t.TempDir()
+	t.Setenv(theme.ThemesDirEnv, dir)
+	defer theme.Reload()
+	m := chat.New(&fakeEngine{session: core.Session{ID: "s1"}}, "s1", "canopy", "claude")
+	m.SetSize(200, 28)
+
+	data, err := os.ReadFile("../theme/themes/nord.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := strings.Replace(string(data), `"name": "nord"`, `"name": "mine"`, 1)
+	if err := os.WriteFile(filepath.Join(dir, "mine.json"), []byte(mine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{"name": "broken"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := run(m, "/theme")
+	view := plain(next.Body())
+	if !strings.Contains(view, "mine") || !strings.Contains(view, "broken.json") {
+		t.Fatalf("the new theme file, or the broken one, is not mentioned:\n%s", view)
+	}
+	next, _ = run(next, "/theme mine")
+	if got := theme.Current().Palette.Name; got != "mine" {
+		t.Fatalf("the palette is %q after asking for a theme written since the start", got)
 	}
 }
 

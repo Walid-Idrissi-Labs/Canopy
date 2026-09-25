@@ -8017,6 +8017,23 @@ mutation testing, fixes, re-review, then into the integration branch that lands 
 - Z-R14 `repo_map`. PR #80.
 - Z-R15 Golden screen snapshots. PR #82.
 - Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+### Z-V02 Themes as data, a person's own themes, and the colour gate (part of V-02)
+`status: review | owner: Claude | branch: feat/themes-as-data`
+
+Themes beyond canopy and mono are JSON files: catppuccin, dracula, gruvbox, nord, solarized and
+tokyonight ship embedded, each light and dark, and a person's own load from `canopy/themes` in the
+config directory. A file is checked colour by colour (every role present, each `#rrggbb`, no unknown
+keys, a plain name); one that fails, or takes a name already used, is skipped and named by a bare
+`/theme`, which also reads the files again. Tests: every shipped theme loads; each way a file can be
+wrong is refused and the missing colour named; a person's theme loads beside the shipped ones and
+cannot replace one; every palette clears WCAG contrast against the background it was made for (text
+4.5, outcomes and quiet text 3, comments 2.5), which moved seven light-variant colours a shade deeper;
+no file outside the theme package makes a colour, checked by planting one. Still open from V-02: the
+component set (Card, Badge, StatusPill, KeyHint and the rest), since the screens already draw these
+through theme styles and a rewrite needs its own golden review.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 

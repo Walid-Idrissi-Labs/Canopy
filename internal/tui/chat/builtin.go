@@ -375,8 +375,15 @@ func (m Model) taskSummary() string {
 // and a theme nobody can try is a theme that goes unmaintained.
 func (m Model) switchTheme(name string) string {
 	if name == "" {
-		return "the palette is " + theme.Current().Palette.Name +
+		// Read again, so a theme file written or fixed since the start is on the list.
+		theme.Reload()
+		said := "the palette is " + theme.Current().Palette.Name +
 			", and /theme takes one of: " + strings.Join(theme.Names(), ", ")
+		// A theme file somebody wrote that did not load is said here, where they will look for it.
+		if problems := theme.Problems(); len(problems) > 0 {
+			said += ". Not loaded: " + strings.Join(problems, "; ")
+		}
+		return said
 	}
 	palette, ok := theme.ByName(strings.ToLower(name))
 	if !ok {
