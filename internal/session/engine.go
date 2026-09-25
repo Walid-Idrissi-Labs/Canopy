@@ -91,6 +91,15 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// maxSteps bounds the model calls in one turn; zero means the loop's default.
+	maxSteps int
+
+	// dispatchParents maps an agent started by dispatch to the conversation that started it, and
+	// joinNotes holds, per conversation, what its agents reported when they finished, delivered
+	// with the next message the person sends there. See noteJoin.
+	dispatchParents map[string]string
+	joinNotes       map[string][]string
+
 	// instructions are the project's, added to the system prompt of every conversation this engine
 	// runs. Set once at startup, so the prompt stays the same for a conversation's whole life.
 	instructions string
@@ -779,6 +788,8 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 	// The mode travels as a note on the message where it took effect, never as a change to the
 	// system prompt. See core.SystemPrompt.
 	s.Turns[len(s.Turns)-1].Request.Note = pendingModeNote(*s, e.modeLocked(sessionID))
+	s.Turns[len(s.Turns)-1].Request.Reports = e.joinNotes[sessionID]
+	delete(e.joinNotes, sessionID)
 
 	history := s.History()
 	keyName, model := s.KeyName, s.Model
@@ -870,6 +881,7 @@ func (e *Engine) run(
 		Approver:  approver,
 		AgentID:   sessionID,
 		SessionID: sessionID,
+		MaxSteps:  e.maxStepsSetting(),
 	}
 
 	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never
@@ -882,7 +894,7 @@ func (e *Engine) run(
 	// Tools learn which conversation epoch they serve, so a repeated read can be answered with a
 	// reference to what this conversation was already sent. A compaction starts a new epoch.
 	epoch := fmt.Sprintf("%s#%d", sessionID, len(e.snapshot(sessionID).Compactions))
-	outcome, err := loop.Run(core.WithConversation(ctx, epoch), request,
+	outcome, err := loop.Run(core.WithSession(core.WithConversation(ctx, epoch), sessionID), request,
 		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
 
 	// Every message the loop added, exactly as exchanged, is what the next turn replays. Recorded
@@ -971,6 +983,7 @@ func (e *Engine) run(
 	if state == core.TurnComplete {
 		e.autoCompact(context.WithoutCancel(ctx), sessionID)
 	}
+	e.noteJoin(sessionID)
 }
 
 // resolveFor asks for the client this conversation's next turn runs on.
@@ -1423,4 +1436,71 @@ func (e *Engine) systemPrompt() string {
 		return core.SystemPrompt
 	}
 	return core.SystemPrompt + "\n\n" + core.InstructionsPreamble + "\n\n" + instructions
+}
+
+// SetMaxSteps bounds the model calls in each turn, for unattended runs.
+func (e *Engine) SetMaxSteps(n int) {
+	e.mu.Lock()
+	e.maxSteps = n
+	e.mu.Unlock()
+}
+
+func (e *Engine) maxStepsSetting() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.maxSteps
+}
+
+// joinExcerpt bounds how much of an agent's final message returns to its orchestrator. The whole
+// transcript stays readable in the agent's own conversation; what the orchestrator needs to decide
+// the next step is the conclusion.
+const joinExcerpt = 1200
+
+// noteJoin records, for the conversation that dispatched this one, how its latest turn ended. The
+// report travels with the next message the person sends there rather than starting a turn by
+// itself: no agent finishing is allowed to spend money on the orchestrator's key unasked.
+func (e *Engine) noteJoin(sessionID string) {
+	e.mu.Lock()
+	parent := e.dispatchParents[sessionID]
+	e.mu.Unlock()
+	if parent == "" {
+		return
+	}
+	s, ok := e.Session(sessionID)
+	if !ok || len(s.Turns) == 0 {
+		return
+	}
+	turn := s.Turns[len(s.Turns)-1]
+	name := sessionID
+	where := ""
+	if agent, found := e.AgentFor(sessionID); found {
+		name = agent.Name
+		if agent.Isolated {
+			where = " Its work is on its own branch in " + agent.Dir + "."
+		}
+	}
+	text := strings.TrimSpace(turn.Text)
+	if runes := []rune(text); len(runes) > joinExcerpt {
+		text = "..." + string(runes[len(runes)-joinExcerpt:])
+	}
+	if text == "" && turn.Error != "" {
+		text = "error: " + turn.Error
+	}
+	report := fmt.Sprintf("agent %s, state %s.%s\n%s", name, turn.State, where, text)
+
+	e.mu.Lock()
+	if e.joinNotes == nil {
+		e.joinNotes = map[string][]string{}
+	}
+	e.joinNotes[parent] = append(e.joinNotes[parent], report)
+	e.mu.Unlock()
+	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: parent})
+}
+
+// PendingJoins is how many dispatched agents' reports are waiting to go with the next message in a
+// conversation, for the screen to say so.
+func (e *Engine) PendingJoins(sessionID string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return len(e.joinNotes[sessionID])
 }

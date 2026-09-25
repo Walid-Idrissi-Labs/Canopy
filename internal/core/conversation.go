@@ -17,3 +17,17 @@ func ConversationFrom(ctx context.Context) string {
 	epoch, _ := ctx.Value(conversationKey{}).(string)
 	return epoch
 }
+
+type sessionKey struct{}
+
+// WithSession marks a context with the conversation a tool call was made in, so a tool that acts
+// on behalf of that conversation, dispatch above all, can say which one asked.
+func WithSession(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, sessionKey{}, sessionID)
+}
+
+// SessionFrom returns the conversation a context was marked with, or "".
+func SessionFrom(ctx context.Context) string {
+	id, _ := ctx.Value(sessionKey{}).(string)
+	return id
+}

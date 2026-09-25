@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -106,6 +107,9 @@ type Dispatch struct {
 	// three attempts is meaningless if all three are writing to one tree, and off for a single agent
 	// unless it was asked for, because an agent is not a branch.
 	Isolated bool
+
+	// Parent is the conversation that asked for the agents. Their results go back to it.
+	Parent string
 }
 
 // Estimate is what a dispatch is expected to cost.
@@ -376,6 +380,7 @@ func (t *spawnTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		}, nil
 	}
 
+	request.Parent = core.SessionFrom(ctx)
 	agents, err := t.dispatcher.Spawn(ctx, request)
 	if err != nil {
 		return core.ToolResult{Content: fmt.Sprintf("the agents could not be started: %v", err), IsError: true}, nil
@@ -810,12 +815,45 @@ func (e *Engine) Spawn(ctx context.Context, request Dispatch) ([]Agent, error) {
 			return created, fmt.Errorf("after creating %d of %d agents: %w", len(created), request.Count, err)
 		}
 		created = append(created, started)
+		if request.Parent != "" {
+			e.mu.Lock()
+			if e.dispatchParents == nil {
+				e.dispatchParents = map[string]string{}
+			}
+			e.dispatchParents[started.SessionID] = request.Parent
+			e.mu.Unlock()
+		}
 
 		if _, err := e.Send(started.SessionID, request.Task); err != nil {
 			return created, fmt.Errorf("%s was created but could not be given the task: %w", started.Name, err)
 		}
+
+		// The first agent is given a moment to start answering before the rest are sent. Agents
+		// with the same system prompt and tools share a cacheable prefix, and a cache entry becomes
+		// readable only once the request that writes it has begun streaming: sent together, every
+		// agent pays to write the same entry and none reads it.
+		if i == 0 && request.Count > 1 {
+			e.awaitFirstOutput(ctx, started.SessionID, 5*time.Second)
+		}
 	}
 	return created, nil
+}
+
+// awaitFirstOutput waits until a conversation's newest turn has produced something or finished,
+// or until the timeout.
+func (e *Engine) awaitFirstOutput(ctx context.Context, sessionID string, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		s, ok := e.Session(sessionID)
+		if !ok || len(s.Turns) == 0 {
+			return
+		}
+		turn := s.Turns[len(s.Turns)-1]
+		if turn.State.Terminal() || turn.Text != "" || turn.Thinking != "" || len(turn.ToolCalls) > 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // dispatchTemplate is the credential, model and trust a spawned agent starts from.

@@ -19,6 +19,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -146,10 +147,12 @@ func (e *Engine) toolsForLocked(sessionID string) (*core.ToolRegistry, core.Trus
 		// is where the dispatch tools were attached for the orchestrating conversation. Removed here
 		// rather than trusted to the description, because an agent that can spawn agents that can
 		// spawn agents would let one confirmation multiply, and nested dispatch is A8-01's design.
+		//
+		// Refused rather than removed: the tool stays listed with the same definition, so a
+		// dispatched agent's requests start with the same system prompt and tools as its
+		// orchestrator's and read the prefix that conversation already cached.
 		if e.dispatchedLocked(sessionID) {
-			tools = tools.Filter(func(tool core.Tool) bool {
-				return tool.Name() != spawnToolName && tool.Name() != profilesToolName
-			})
+			tools = withRefused(tools, spawnToolName, profilesToolName)
 		}
 	}
 	return tools, trust
@@ -330,4 +333,36 @@ func (e *Engine) EndAgent(ctx context.Context, name string, disposition Disposit
 	}
 
 	return e.RemoveAgent(name)
+}
+
+// withRefused is registry with the named tools replaced by ones that refuse every call and describe
+// themselves identically, so the definitions the model is sent do not change.
+func withRefused(registry *core.ToolRegistry, names ...string) *core.ToolRegistry {
+	refuse := map[string]bool{}
+	for _, n := range names {
+		refuse[n] = true
+	}
+	out := core.NewToolRegistry()
+	for _, tool := range registry.Tools() {
+		if refuse[tool.Name()] {
+			tool = refusedTool{Tool: tool}
+		}
+		out.MustRegister(tool)
+	}
+	return out
+}
+
+// refusedTool is a tool this agent may see and may not use.
+type refusedTool struct{ core.Tool }
+
+// Kind is a read, so the refusal is not preceded by an approval prompt for a call that cannot run.
+func (refusedTool) Kind() core.ToolKind { return core.ToolRead }
+
+func (refusedTool) Run(context.Context, json.RawMessage) (core.ToolResult, error) {
+	return core.ToolResult{
+		Content: "Agents started by dispatch cannot start agents of their own. Finish your task and " +
+			"say what you found; the conversation that started you will decide what happens next.",
+		IsError: true,
+		Refused: true,
+	}, nil
 }

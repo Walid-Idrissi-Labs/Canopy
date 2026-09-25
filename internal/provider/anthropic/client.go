@@ -182,6 +182,9 @@ func (c *Client) buildMessages(messages []core.Message) ([]sdk.MessageParam, err
 		if msg.Note != "" {
 			blocks = append(blocks, sdk.NewTextBlock(core.ReminderText(msg.Note)))
 		}
+		for _, report := range msg.Reports {
+			blocks = append(blocks, sdk.NewTextBlock(core.ReportText(report)))
+		}
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
 		}
