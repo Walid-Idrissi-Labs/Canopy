@@ -316,6 +316,9 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
+	// search is the find bar, on ctrl+f.
+	search search
+
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
@@ -1083,6 +1086,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.notice = ""
 	}
 
+	// The find bar takes every key while it is up; ctrl+f opens it on a conversation with one.
+	if m.search.open {
+		return m.searchKey(msg)
+	}
+	if msg.String() == "ctrl+f" && !m.awaiting && !m.blank() {
+		m.openSearch()
+		return m, nil
+	}
+	if msg.String() == "ctrl+y" && !m.awaiting {
+		return m.copyReply()
+	}
+
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
 	// into the message box, and typing an answer to a yes or no question into a text field and
 	// wondering why nothing happens is a bad minute to give somebody.
@@ -1751,6 +1766,7 @@ func (m Model) transcriptHeight() int {
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+	h -= m.search.height()
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
 	// same reason, and so does another agent's question.
@@ -1845,6 +1861,7 @@ func (m Model) Body() string {
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
+	rows = append(rows, m.search.line()...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
 	// is about to type into. See jumpPill.
 	rows = append(rows, m.jumpPill(len(lines)-end)...)
