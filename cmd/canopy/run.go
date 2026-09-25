@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	"io"
 	"os"
 	"os/signal"
@@ -26,6 +27,7 @@ const (
 	exitOK        = 0
 	exitFailed    = 1   // the turn failed, was refused, or was cut off
 	exitUsage     = 2   // the command line or configuration is wrong
+	exitRed       = 3   // the turn completed and the project's tests do not pass
 	exitTimeout   = 124 // what timeout(1) uses
 	exitCancelled = 130
 )
@@ -44,6 +46,9 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	yes := flags.Bool("yes", false, "approve the calls this mode would ask a person about")
 	maxSteps := flags.Int("max-steps", 0, "stop after this many model calls")
 	timeout := flags.Duration("timeout", 30*time.Minute, "stop after this long")
+	effortName := flags.String("effort", "", "low, medium, high, xhigh or max; the provider's default when omitted")
+	verify := flags.Bool("verify", false, "run the project's tests after the turn; exit 3 when they fail")
+	escalate := flags.Int("escalate", 0, "with -verify, retry up to this many times at a higher effort when the tests fail")
 	if err := flags.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -141,6 +146,12 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	if *maxSteps > 0 {
 		engine.SetMaxSteps(*maxSteps)
 	}
+	effort := core.Effort(*effortName)
+	if !effort.Valid() {
+		_, _ = fmt.Fprintf(errOut, "unknown effort %q\n", *effortName)
+		return exitUsage
+	}
+	engine.SetEffort(effort)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -154,14 +165,39 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 		return exitFailed
 	}
 	turn := follow(ctx, engine, events, main.SessionID, turnID, *format, out)
-	if ctx.Err() != nil && !turn.State.Terminal() {
-		engine.Cancel(main.SessionID)
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return exitTimeout
+	for attempt := 0; ; attempt++ {
+		if ctx.Err() != nil && !turn.State.Terminal() {
+			engine.Cancel(main.SessionID)
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return exitTimeout
+			}
+			return exitCancelled
 		}
-		return exitCancelled
+		if !*verify || turn.State != core.TurnComplete {
+			return reportRun(turn, main.SessionID, *format, out, errOut)
+		}
+		failures, ok := verifyWorkspace(ctx, dir, project, errOut)
+		if ok {
+			return reportRun(turn, main.SessionID, *format, out, errOut)
+		}
+		if attempt >= *escalate {
+			_ = reportRun(turn, main.SessionID, *format, out, errOut)
+			_, _ = fmt.Fprintln(errOut, "the project's tests do not pass")
+			return exitRed
+		}
+		// Escalate on red: the cheap attempt failed its own evidence, so the next one thinks harder.
+		// Running cheap first and paying for depth only on failure is where the saving comes from.
+		effort = nextEffort(effort)
+		engine.SetEffort(effort)
+		_, _ = fmt.Fprintf(errOut, "tests failed; trying again at %s effort\n", effort)
+		next, err := engine.Send(main.SessionID, "The project's tests fail after your change. What failed:\n\n"+
+			failures+"\n\nFix the cause, then say what you changed.")
+		if err != nil {
+			_, _ = fmt.Fprintf(errOut, "sending the retry: %v\n", err)
+			return exitFailed
+		}
+		turn = follow(ctx, engine, events, main.SessionID, next, *format, out)
 	}
-	return reportRun(turn, main.SessionID, *format, out, errOut)
 }
 
 // follow streams a turn as it happens and returns it once it has ended.
@@ -258,4 +294,41 @@ func loadProjectRaw(dir string, errOut io.Writer) config.Project {
 		return config.Project{}
 	}
 	return project
+}
+
+// verifyWorkspace runs the project's configured tests in dir and returns the tail of each failing
+// required test's output.
+func verifyWorkspace(ctx context.Context, dir string, project config.Project, errOut io.Writer) (string, bool) {
+	tests := testsFor(project)
+	if len(tests) == 0 {
+		_, _ = fmt.Fprintln(errOut, "warning: -verify was asked for but no tests are configured, or the repository is not trusted")
+		return "", true
+	}
+	var failures []string
+	for i, test := range tests {
+		outcome := execpkg.RunTest(ctx, test, execpkg.Target{Dir: dir}, fmt.Sprintf("verify-%d", i))
+		if outcome.Run.State == core.TestPassing || !test.Required {
+			continue
+		}
+		tail := outcome.Output
+		if len(tail) > 3000 {
+			tail = "..." + tail[len(tail)-3000:]
+		}
+		failures = append(failures, fmt.Sprintf("%s (%s):\n%s", test.Name, outcome.Run.State, tail))
+	}
+	return strings.Join(failures, "\n\n"), len(failures) == 0
+}
+
+// nextEffort is one step up the effort ladder, from the provider's default to high.
+func nextEffort(e core.Effort) core.Effort {
+	switch e {
+	case core.EffortLow:
+		return core.EffortMedium
+	case core.EffortMedium, core.EffortDefault:
+		return core.EffortHigh
+	case core.EffortHigh:
+		return core.EffortXHigh
+	default:
+		return core.EffortMax
+	}
 }

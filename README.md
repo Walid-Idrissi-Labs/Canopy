@@ -315,6 +315,18 @@ covers that exact configuration: change a hook, add an MCP server or add vendor 
 `.claude/settings.json`, and Canopy asks again. A repository's `"trust"` field may lower its agents to
 read-only or confined; it can never raise them above standard.
 
+## Headless runs, and escalating on red
+
+```sh
+canopy run -p "fix the flaky parser test" -output stream-json
+canopy run -p "..." -effort low -verify -escalate 2
+```
+
+`canopy run` is the full agent without the interface, for scripts and CI. With `-verify` the
+project's own tests decide the exit code (3 when they fail). `-escalate N` retries a red result up to
+N times, one effort level higher each time, with the failing output: run cheap, and pay for more
+thinking only when the evidence says it was needed.
+
 ## Reusable prompt commands
 
 Project commands live in `canopy.json`:

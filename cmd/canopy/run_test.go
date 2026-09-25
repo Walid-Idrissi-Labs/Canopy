@@ -101,3 +101,62 @@ func TestAHeadlessRunRefusesBadArguments(t *testing.T) {
 		t.Fatalf("an unknown mode gave exit %d", code)
 	}
 }
+
+// escalatingChat answers the first request with nothing useful, and a request saying the tests
+// fail by writing the file the test wants.
+func escalatingChat(t *testing.T) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		last := body.Messages[len(body.Messages)-1]
+		w.Header().Set("Content-Type", "text/event-stream")
+		send := func(v any) {
+			b, _ := json.Marshal(v)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		}
+		switch {
+		case last.Role == "user" && strings.Contains(last.Content, "tests fail"):
+			args, _ := json.Marshal(map[string]string{"path": "ok.txt", "content": "ok"})
+			send(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{
+				map[string]any{"index": 0, "id": "c1", "type": "function",
+					"function": map[string]any{"name": "write_file", "arguments": string(args)}}}}}}})
+			send(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "tool_calls"}}})
+		default:
+			send(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": "done"}, "finish_reason": "stop"}}})
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+}
+
+// With -verify the project's tests decide the exit code, and -escalate retries a red result at a
+// higher effort until it passes or the attempts run out.
+func TestARedRunIsEscalatedUntilItPasses(t *testing.T) {
+	srv := escalatingChat(t)
+	defer srv.Close()
+	work := headlessHome(t, srv)
+	config := `{"tests":[{"name":"has-ok","command":{"argv":["test","-f","ok.txt"]},"required":true}]}`
+	if err := os.WriteFile(filepath.Join(work, "canopy.json"), []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	trustForTest(t, work)
+
+	var out, errOut bytes.Buffer
+	if code := runHeadless([]string{"-p", "make it pass", "-key", "fake", "-verify"},
+		strings.NewReader(""), &out, &errOut); code != exitRed {
+		t.Fatalf("a red result without escalation exited %d:\n%s", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := runHeadless([]string{"-p", "make it pass", "-key", "fake", "-verify", "-escalate", "1", "-effort", "low"},
+		strings.NewReader(""), &out, &errOut); code != exitOK {
+		t.Fatalf("escalation did not reach a passing result, exit %d:\n%s", code, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "trying again at medium effort") {
+		t.Fatalf("the retry did not raise the effort:\n%s", errOut.String())
+	}
+}

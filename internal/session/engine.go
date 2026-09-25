@@ -91,6 +91,9 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// effort is the thinking depth every request asks for; empty leaves it to the provider.
+	effort core.Effort
+
 	// maxSteps bounds the model calls in one turn; zero means the loop's default.
 	maxSteps int
 
@@ -889,7 +892,7 @@ func (e *Engine) run(
 	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
 	// call, because a system prompt that changed mid conversation would rewrite what the model
 	// believes it was told earlier.
-	request := core.Request{Model: model, Messages: history, System: e.systemPrompt()}
+	request := core.Request{Model: model, Messages: history, System: e.systemPrompt(), Effort: e.effortSetting()}
 
 	// Tools learn which conversation epoch they serve, so a repeated read can be answered with a
 	// reference to what this conversation was already sent. A compaction starts a new epoch.
@@ -1503,4 +1506,19 @@ func (e *Engine) PendingJoins(sessionID string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.joinNotes[sessionID])
+}
+
+// SetEffort sets how hard the model thinks on every later request. A change invalidates the
+// provider's cache of the conversation from that point, so it is for deliberate steps, escalating
+// after a failure for instance, not for every turn.
+func (e *Engine) SetEffort(effort core.Effort) {
+	e.mu.Lock()
+	e.effort = effort
+	e.mu.Unlock()
+}
+
+func (e *Engine) effortSetting() core.Effort {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.effort
 }
