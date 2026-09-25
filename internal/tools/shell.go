@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
+	osexec "os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -23,6 +28,9 @@ import (
 type shellTool struct {
 	w       *Workspace
 	outputs *OutputStore
+
+	policyOnce sync.Once
+	policy     sandbox.Policy
 }
 
 // ShellTool builds the shell tool for a workspace.
@@ -82,6 +90,16 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	// something subtly different from what was asked for and approved, which is worse than running
 	// what was asked for.
 	options := exec.Options{Dir: t.w.Root(), Timeout: timeout}
+	var unconfined string
+	switch err := sandbox.Available(); {
+	case sandbox.Disabled():
+		unconfined = "sandboxing is switched off (" + sandbox.DisableEnvVar + "=off)"
+	case err != nil:
+		unconfined = err.Error()
+	default:
+		policy := t.sandboxPolicy()
+		options.Sandbox = &policy
+	}
 	if t.outputs != nil {
 		options.MaxOutput = capturedOutputBytes
 	}
@@ -94,6 +112,11 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	if t.outputs != nil {
 		content = strings.TrimSpace(offload(t.outputs, strings.TrimRight(result.Output, "\n")) +
 			"\n" + outcome(args.Command, result))
+	}
+	if unconfined != "" {
+		// Said on every result, because neither the model nor a person reading the transcript
+		// should assume a boundary that was not there for this command.
+		content += "\n(This ran without a sandbox: " + unconfined + ".)"
 	}
 	return core.ToolResult{Content: content, IsError: !result.Succeeded()}, nil
 }
@@ -133,4 +156,32 @@ func outcome(command string, result exec.Result) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// sandboxPolicy is the confinement for this workspace, worked out once: the workspace, the git
+// directory it shares with its repository when it is a worktree, temporary directories and
+// toolchain caches.
+func (t *shellTool) sandboxPolicy() sandbox.Policy {
+	t.policyOnce.Do(func() {
+		gitPath := func(flag string) string {
+			cmd := osexec.Command("git", "rev-parse", "--path-format=absolute", flag)
+			cmd.Dir = t.w.Root()
+			cmd.Env = gitsafe.InheritedFor(t.w.Root())
+			out, err := cmd.Output()
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(out))
+		}
+		gitDir, common := gitPath("--git-dir"), gitPath("--git-common-dir")
+		var extra []string
+		if common != "" {
+			extra = append(extra, common)
+		}
+		// The workspace's own .git is named whether or not it exists yet, so a repository the agent
+		// creates is covered from its first command.
+		t.policy = sandbox.ForWorkspace(t.w.Root(), extra...).
+			WithGitDirs(gitDir, common, filepath.Join(t.w.Root(), ".git"))
+	})
+	return t.policy
 }

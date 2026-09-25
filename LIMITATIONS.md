@@ -125,10 +125,21 @@ be rediscovered by getting burned by it.
   shell a containment boundary: an allowed shell command can invoke Git anywhere the user's account
   can reach (D-33).
 
-- There is no sandboxing anywhere in this design and there will not be one implied. Agent-run
-  commands execute under your own account with your own permissions. A worktree gives an agent its
-  own files; it is not a security boundary, and claiming otherwise would be the same kind of error
-  as a false green (README, "What it will not do").
+- The sandbox covers shell commands an agent runs and nothing else yet (D-56). On macOS it confines
+  writes to the workspace, temporary directories and toolchain download caches, keeps git hooks and
+  git config unwritable, and hides credential locations; on Linux it confines writes the same way
+  but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since
+  Landlock cannot carve a path out of an allowed tree. On macOS the `.git` entry itself cannot be
+  moved or replaced either, so `git init` in a directory that is not yet a repository fails inside
+  the sandbox. The writable download caches (the Go module cache, Cargo's registry, Gradle's caches,
+  npm's) are shared with your own builds, and a command can alter a file in them that a later build
+  uses; the sandbox narrows what can be planted, it does not verify caches. Network is open by
+  default. Commands that
+  install into your home break inside it: `pip install --user`, `gem install`, global npm installs,
+  version managers (nvm, pyenv, rbenv), Homebrew, and anything writing `~/.local/bin` or most of
+  `~/.config`. Test commands, setup, hooks, MCP servers and delegated vendor agents still run
+  unconfined. A command that runs without the sandbox says so, and `CANOPY_SANDBOX=off` switches it
+  off.
 
 - A freshly prepared worktree gets no isolated database, queue, cache, or OAuth callback. A named
   port is templated in, but a port does not isolate the service listening behind it. Only small,

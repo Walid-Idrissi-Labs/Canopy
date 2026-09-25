@@ -1359,6 +1359,19 @@ shortening now happens by compaction, by server-side context management, or by m
 results smaller. D-42's visibility rules stand. Supersedes the parts of D-41 and M-09 that sent a
 mode's prompt as the system prompt and hid tools a mode forbids.
 
+## D-56 Canopy sandboxes what it runs, and says exactly what the sandbox covers. Decided 2026-09-25.
+
+Supersedes the README and FEATURES stance that Canopy makes no sandboxing claims. That stance was
+right while nothing enforced a boundary; it stopped being a reason not to build one. Shell commands
+an agent runs now go through the operating system's sandbox where one exists: Seatbelt on macOS
+(writes confined to the workspace, shared git directory, temporary directories and toolchain
+caches; credential locations unreadable), Landlock on Linux (writes confined; reads not, which
+Landlock cannot express). Network is left open by default because package managers and fetches
+are ordinary work; an egress allowlist is the next step. A command that runs unconfined, because
+no sandbox is available or `CANOPY_SANDBOX=off`, says so in its result. D-33's direct and isolated
+contracts are unchanged; what changed is that the shell now has an enforced boundary on the two
+platforms Canopy supports, stated per platform rather than implied.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

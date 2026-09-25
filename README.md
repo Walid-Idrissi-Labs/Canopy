@@ -41,7 +41,7 @@ things follow from taking that seriously:
   tested, and three agents on one task are ranked by whose code passes rather than by which one
   sounded most confident. Fanning out is not new. Using test evidence to settle it appears to be.
 
-What Canopy does not have: a sandbox, a language server, web search, or agents that spawn agents.
+What Canopy does not have yet: a language server, web search, or agents that spawn agents.
 Those are stated plainly rather than deferred quietly, and
 [LIMITATIONS.md](LIMITATIONS.md) is the honest list.
 
@@ -384,9 +384,13 @@ the pass.
   the Copilot route Canopy obtains a token from github.com and hands it to GitHub's own runtime, and
   on the other two the vendor's program holds the grant. See "Sign in with a subscription".
 - No unattended merging. A human stays in the loop on anything destructive.
-- **No sandboxing claims.** Canopy runs agent-generated commands under your account. A worktree is
-  file isolation, not a security boundary, and pretending otherwise would be the same class of
-  error as a false green. There is a permission model. It is not a sandbox.
+- **No sandboxing claims beyond what the sandbox does.** Shell commands an agent runs are confined
+  by the operating system where it can: on macOS they can write only in the workspace, temporary
+  directories and toolchain caches, and cannot read `~/.ssh`, `~/.aws`, keychains and the like; on
+  Linux, Landlock confines writes the same way but cannot hide files from reading. Network access
+  is not restricted by default. Test commands, hooks and MCP servers are not sandboxed yet, and a
+  worktree on its own is file isolation, not a security boundary. `CANOPY_SANDBOX=off` turns it
+  off, and every command that runs unconfined says so in its result.
 - Windows is deferred until process group and terminal semantics are designed for it rather than
   approximated.
 
