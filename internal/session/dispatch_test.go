@@ -613,8 +613,11 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 	client.mu.Lock()
 	last := client.history[len(client.history)-1]
 	client.mu.Unlock()
-	if !strings.Contains(last.Note, "the migration works") {
-		t.Fatalf("the report did not travel with the next message: %q", last.Note)
+	if len(last.Reports) != 1 || !strings.Contains(last.Reports[0], "the migration works") {
+		t.Fatalf("the report did not travel with the next message: %+v", last.Reports)
+	}
+	if strings.Contains(last.Note, "the migration works") {
+		t.Fatal("an agent's report went out on Canopy's own instruction channel")
 	}
 	if e.PendingJoins(parent.ID) != 0 {
 		t.Fatal("a delivered report stayed pending")

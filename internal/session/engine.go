@@ -784,8 +784,8 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 
 	// The mode travels as a note on the message where it took effect, never as a change to the
 	// system prompt. See core.SystemPrompt.
-	s.Turns[len(s.Turns)-1].Request.Note = joinNote(
-		pendingModeNote(*s, e.modeLocked(sessionID)), e.joinNotes[sessionID])
+	s.Turns[len(s.Turns)-1].Request.Note = pendingModeNote(*s, e.modeLocked(sessionID))
+	s.Turns[len(s.Turns)-1].Request.Reports = e.joinNotes[sessionID]
 	delete(e.joinNotes, sessionID)
 
 	history := s.History()
@@ -1434,19 +1434,6 @@ func (e *Engine) systemPrompt() string {
 	return core.SystemPrompt + "\n\n" + core.InstructionsPreamble + "\n\n" + instructions
 }
 
-// joinNote combines a mode note with what dispatched agents reported.
-func joinNote(mode string, joins []string) string {
-	if len(joins) == 0 {
-		return mode
-	}
-	parts := []string{}
-	if mode != "" {
-		parts = append(parts, mode)
-	}
-	parts = append(parts, "Agents you dispatched have reported back:\n\n"+strings.Join(joins, "\n\n"))
-	return strings.Join(parts, "\n\n")
-}
-
 // joinExcerpt bounds how much of an agent's final message returns to its orchestrator. The whole
 // transcript stays readable in the agent's own conversation; what the orchestrator needs to decide
 // the next step is the conclusion.
@@ -1476,13 +1463,13 @@ func (e *Engine) noteJoin(sessionID string) {
 		}
 	}
 	text := strings.TrimSpace(turn.Text)
-	if len(text) > joinExcerpt {
-		text = "..." + text[len(text)-joinExcerpt:]
+	if runes := []rune(text); len(runes) > joinExcerpt {
+		text = "..." + string(runes[len(runes)-joinExcerpt:])
 	}
 	if text == "" && turn.Error != "" {
 		text = "error: " + turn.Error
 	}
-	report := fmt.Sprintf("<agent name=%q state=%q>%s\n%s\n</agent>", name, turn.State, where, text)
+	report := fmt.Sprintf("agent %s, state %s.%s\n%s", name, turn.State, where, text)
 
 	e.mu.Lock()
 	if e.joinNotes == nil {
