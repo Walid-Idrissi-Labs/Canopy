@@ -614,3 +614,34 @@ func TestEditsCarryTheLanguageServersReport(t *testing.T) {
 		t.Fatalf("checked %v", d.paths)
 	}
 }
+
+type fixedNavigator struct{ path, content string }
+
+func (n *fixedNavigator) Find(_ context.Context, kind, path, content string, line int, symbol string) (string, error) {
+	n.path, n.content = path, content
+	return kind + " of " + symbol, nil
+}
+
+// The navigation tools read the file through the workspace, so a path outside it is refused before
+// any language server hears of it.
+func TestNavigationStaysInTheWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := &fixedNavigator{}
+	def := NavigationTools(w, n)[0]
+	res, _ := def.Run(context.Background(), []byte(`{"path":"a.go","line":1,"symbol":"a"}`))
+	if res.IsError || res.Content != "definition of a" || n.content != "package a\n" {
+		t.Fatalf("result %+v, navigator saw %q", res, n.content)
+	}
+	n.path = ""
+	res, _ = def.Run(context.Background(), []byte(`{"path":"../outside.go","line":1,"symbol":"x"}`))
+	if !res.IsError || n.path != "" {
+		t.Fatalf("a path outside the workspace reached the navigator: %+v", res)
+	}
+}

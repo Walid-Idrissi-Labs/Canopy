@@ -54,6 +54,16 @@ func fakeServer() {
 			send(map[string]any{"jsonrpc": "2.0", "id": 900, "method": "workspace/configuration",
 				"params": map[string]any{"items": []any{}}})
 			send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"capabilities": map[string]any{}}})
+		case "textDocument/definition":
+			// The definition of anything is line 1 of the same file; a list of links, as some servers send.
+			send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": []any{map[string]any{
+				"targetUri": m.Params.TextDocument.URI,
+				"targetSelectionRange": map[string]any{"start": map[string]any{"line": 0, "character": 5}}}}})
+		case "textDocument/references":
+			send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": []any{
+				map[string]any{"uri": m.Params.TextDocument.URI, "range": map[string]any{"start": map[string]any{"line": 2, "character": 1}}},
+				map[string]any{"uri": "file:///usr/lib/elsewhere.fake", "range": map[string]any{"start": map[string]any{"line": 9, "character": 0}}},
+			}})
 		case "shutdown":
 			send(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": nil})
 		case "exit":
@@ -134,5 +144,31 @@ func TestASilentServerIsDroppedAfterTwoTimeouts(t *testing.T) {
 	_ = m.Check(context.Background(), path, "BROKEN")
 	if waited := time.Since(start); waited > 100*time.Millisecond {
 		t.Fatalf("the third edit waited %v on a server that never answers", waited)
+	}
+}
+
+// Definitions and references come back as places: inside the workspace with their line of code,
+// outside it by path only. A symbol not on the line given is said so rather than guessed.
+func TestFindingDefinitionsAndReferences(t *testing.T) {
+	m, root := fakeManager(t)
+	path := filepath.Join(root, "a.fake")
+	content := "func HandleThing()\n\n HandleThing()\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	def, err := m.Find(context.Background(), "definition", path, content, 3, "HandleThing")
+	if err != nil || def != "a.fake:1:6  func HandleThing()" {
+		t.Fatalf("definition = %q, %v", def, err)
+	}
+	refs, err := m.Find(context.Background(), "references", path, content, 1, "HandleThing")
+	outside := strings.Contains(refs, "/usr/lib/elsewhere.fake:10:1") && !strings.Contains(refs, "elsewhere.fake:10:1  ")
+	if err != nil || !strings.Contains(refs, "a.fake:3:2  HandleThing()") || !outside {
+		t.Fatalf("references = %q, %v", refs, err)
+	}
+	if _, err := m.Find(context.Background(), "definition", path, content, 2, "HandleThing"); err == nil {
+		t.Fatal("a symbol not on the line was looked up anyway")
+	}
+	if got := wordIndex("xHandleThing HandleThing", "HandleThing"); got != 13 {
+		t.Fatalf("wordIndex matched inside a longer word: %d", got)
 	}
 }

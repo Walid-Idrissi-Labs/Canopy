@@ -41,10 +41,10 @@ things follow from taking that seriously:
   tested, and three agents on one task are ranked by whose code passes rather than by which one
   sounded most confident. Fanning out is not new. Using test evidence to settle it appears to be.
 
-What Canopy does not have yet: agents that spawn agents, or language-server navigation (definitions
-and references); in a trusted repository a language server found on PATH (gopls,
-typescript-language-server, pyright, rust-analyzer, clangd) checks every file an agent edits, and
-the errors come back with the edit. Web search is
+What Canopy does not have yet: agents that spawn agents. In a trusted repository a language server
+found on PATH (gopls, typescript-language-server, pyright, rust-analyzer, clangd) checks every file
+an agent edits, the errors coming back with the edit, and answers `find_definition` and
+`find_references`. Web search is
 Anthropic's own server-side search, offered on Anthropic keys when `CANOPY_WEB_SEARCH=on`; other
 providers have `fetch_url` only.
 Those are stated plainly rather than deferred quietly, and
