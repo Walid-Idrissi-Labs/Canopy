@@ -87,6 +87,10 @@ func Parse(data []byte) (Palette, error) {
 	if p.About, err = text(fields, "about"); err != nil {
 		return Palette{}, err
 	}
+	// Shown in /theme, so held to what a line of text on screen can be.
+	if strings.IndexFunc(p.About, isControl) >= 0 || len(p.About) > 300 {
+		return Palette{}, errors.New("about is one line of text, up to 300 characters")
+	}
 	known := map[string]bool{"name": true, "about": true}
 	var problems []string
 	for _, role := range roles {
@@ -315,10 +319,22 @@ func userThemesDir() string {
 	return filepath.Join(base, "canopy", "themes")
 }
 
-// Problems are the theme files that could not be used, and why.
+// Problems are the theme files that could not be used, and why. Each is made safe to print: an
+// operating system's error names the file in full, whatever it is called.
 func Problems() []string {
 	load()
 	loadMu.Lock()
 	defer loadMu.Unlock()
-	return append([]string(nil), problems...)
+	out := make([]string, 0, len(problems))
+	for _, problem := range problems {
+		out = append(out, strings.Map(func(r rune) rune {
+			if isControl(r) {
+				return -1
+			}
+			return r
+		}, problem))
+	}
+	return out
 }
+
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) }

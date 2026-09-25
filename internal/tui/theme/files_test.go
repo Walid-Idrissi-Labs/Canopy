@@ -66,6 +66,9 @@ func TestAThemeFileIsCheckedColourByColour(t *testing.T) {
 		"a key given twice":   strings.Replace(minimal, `"text": "#111111"`, `"text": "#111111", "text": "#121212"`, 1),
 		"a key in capitals":   strings.Replace(minimal, `"text": "#111111"`, `"TEXT": "#111111"`, 1),
 		"something after it":  minimal + ` {"name": "second"}`,
+		"an about not text":   strings.Replace(minimal, `"name": "mine"`, `"name": "mine", "about": 5`, 1),
+		"an about with an escape": strings.Replace(minimal, `"name": "mine"`,
+			`"name": "mine", "about": "nice\u001b]52;c;aGk=\u0007"`, 1),
 	} {
 		if _, err := Parse([]byte(data)); err == nil {
 			t.Errorf("%s was accepted", name)
@@ -152,6 +155,10 @@ func TestAFileNameIsQuotedInProblems(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "x\x1b[2J.json"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// And a name that reaches the list only through the operating system's own error.
+	if err := os.Symlink(filepath.Join(dir, "gone"), filepath.Join(dir, "y\x1b]52;c;aGk=\x07.json")); err != nil {
+		t.Fatal(err)
+	}
 	reload(t, dir)
 	for _, problem := range Problems() {
 		if strings.Contains(problem, "\x1b") {
@@ -230,7 +237,9 @@ func TestNoColourIsMadeOutsideTheTheme(t *testing.T) {
 		`\b[A-Za-z_]+\.Color\("`, // lipgloss.Color("..."), under any import name
 		`color\.(N?RGBA(64)?|Gray(16)?|CMYK|Alpha(16)?)\{`,
 		`ansi\.(IndexedColor|BasicColor|TrueColor|RGBColor)`,
-		`lipgloss\.(Darken|Lighten|Complementary|Alpha|ANSIColor|RGBColor)\b`,
+		`\.(Darken|Lighten|Complementary|Alpha|ANSIColor|RGBColor|LightDark)\(`, // under any import name
+		`\b(lipgloss|ansi)\.(Black|Red|Green|Yellow|Blue|Magenta|Cyan|White|Bright[A-Z]\w*)\b`,
+		"`#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?`",
 		`"#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?"`,
 		`\\(x1b|033|u001b)\[[0-9;]*m`, // a colour escape written out
 	}, "|"))

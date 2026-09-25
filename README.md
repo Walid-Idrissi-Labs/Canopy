@@ -505,8 +505,8 @@ Canopy's own palette ships with catppuccin, dracula, gruvbox, nord, solarized an
 a light and a dark form that follow the terminal's background, and `mono`, which is what `NO_COLOR`
 gives. Every shipped palette is checked for contrast against the background it was made for (text
 4.5:1, outcomes and quiet text 3:1, code 2.5:1, borders just visible), which deepened a few of the
-upstream colours, as each theme's own description says. Nothing outside the theme package is allowed
-to pick a colour, so a theme changes all of the interface.
+upstream colours, as each theme's own description says. A test fails if a colour is made outside the
+theme package in any of the ways it knows to look for, so a theme reaches the whole interface.
 
 A theme of your own is a JSON file in `canopy/themes` under your config directory
 (`~/Library/Application Support` on macOS, `~/.config` on Linux, or `CANOPY_THEMES_DIR`), one colour
