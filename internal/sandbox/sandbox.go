@@ -31,6 +31,9 @@ const (
 	NetworkOpen Network = "open"
 	// NetworkNone refuses outbound connections.
 	NetworkNone Network = "none"
+	// NetworkProxy allows connections only to the loopback address, where Canopy's egress proxy
+	// forwards to the hosts on its allow list; see ProxyPort.
+	NetworkProxy Network = "proxy"
 )
 
 // Policy is one command's confinement.
@@ -52,6 +55,8 @@ type Policy struct {
 	// /dev, which holds other terminals.
 	Devices []string
 	Network Network
+	// ProxyPort is the egress proxy's port on 127.0.0.1, for NetworkProxy.
+	ProxyPort int
 	// Workspace is the directory the command works in, where a nested repository would be run
 	// by the user's own git. Empty means the rules about repositories apply everywhere writable.
 	Workspace string

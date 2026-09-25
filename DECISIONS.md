@@ -1398,6 +1398,21 @@ by repository trust. The distribution-format worry D-40 recorded is answered by 
 others already use rather than inventing one. A8-01's nested sub-agents, agents that spawn agents,
 remain out.
 
+## D-60 The sandbox's network can be narrowed to package registries. Decided 2026-09-25.
+
+Follows D-56, which left the network open and named an egress allow list as the next step. Open
+stays the default, since a build that cannot fetch its dependencies is a build that fails for
+reasons nobody can see. `CANOPY_SANDBOX_NETWORK=registries` confines a command to the loopback
+address, where Canopy runs an HTTP proxy that forwards only to package registries and GitHub, and
+to hosts named in `CANOPY_SANDBOX_ALLOW`; everything else is refused, and the command's result says
+which hosts. `off` allows no connections. The proxy decides by host name, so the list is readable,
+and reaches those hosts on ports 80 and 443 only. What a program that ignores the proxy variables
+can reach differs by platform and is stated as such: on macOS, Seatbelt allows the loopback address
+only, so it reaches local services and nothing beyond the machine; on Linux, Landlock names ports
+rather than addresses, so it can reach any address on the proxy's one port. The list includes
+general-purpose hosts, GitHub and Google's storage among them, because dependencies are fetched
+from them, which is why this narrows where data can go rather than stopping it.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

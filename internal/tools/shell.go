@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/egress"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
+	"os"
 	"strings"
 	"time"
 
@@ -84,6 +87,9 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	// what was asked for.
 	options := exec.Options{Dir: t.w.Root(), Timeout: timeout}
 	var unconfined string
+	var proxy *egress.Proxy
+	var networkNote string
+	started := time.Now()
 	switch err := sandbox.Available(); {
 	case sandbox.Disabled():
 		unconfined = "sandboxing is switched off (" + sandbox.DisableEnvVar + "=off)"
@@ -91,6 +97,24 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		unconfined = err.Error()
 	default:
 		policy := t.sandboxPolicy()
+		mode, err := egress.ParseMode(os.Getenv(egress.ModeEnvVar))
+		if err != nil {
+			return failure("%v", err), nil
+		}
+		if mode != egress.ModeOpen && !sandbox.NetworkEnforced() {
+			networkNote = "\n(The network was not limited: this kernel cannot, so " + egress.ModeEnvVar +
+				" has no effect here. Files were still confined.)"
+		}
+		switch mode {
+		case egress.ModeOff:
+			policy.Network = sandbox.NetworkNone
+		case egress.ModeRegistries:
+			if proxy, err = egress.Shared(egress.ExtraHosts(os.Getenv(egress.AllowEnvVar))); err != nil {
+				return failure("starting the network proxy: %v", err), nil
+			}
+			policy.Network, policy.ProxyPort = sandbox.NetworkProxy, proxy.Port()
+			options.Env = append(childenv.Inherited(), proxy.Env()...)
+		}
 		options.Sandbox = &policy
 	}
 	if t.outputs != nil {
@@ -106,6 +130,14 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 		content = strings.TrimSpace(offload(t.outputs, strings.TrimRight(result.Output, "\n")) +
 			"\n" + outcome(args.Command, result))
 	}
+	if proxy != nil {
+		if hosts := proxy.RefusedSince(started); len(hosts) > 0 {
+			// Said in the result, so the model neither retries blindly nor reports the network as down.
+			content += "\n(The sandbox's network allow list refused: " + strings.Join(hosts, ", ") +
+				". Only package registries and hosts in " + egress.AllowEnvVar + " can be reached.)"
+		}
+	}
+	content += networkNote
 	if unconfined != "" {
 		// Said on every result, because neither the model nor a person reading the transcript
 		// should assume a boundary that was not there for this command.

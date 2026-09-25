@@ -88,8 +88,13 @@ func (p Policy) restrict() error {
 		handled |= unix.LANDLOCK_ACCESS_FS_TRUNCATE
 	}
 	attr := unix.LandlockRulesetAttr{Access_fs: handled}
-	if version >= 4 && p.Network == NetworkNone {
+	switch {
+	case version >= 4 && p.Network == NetworkNone:
 		attr.Access_net = unix.LANDLOCK_ACCESS_NET_CONNECT_TCP | unix.LANDLOCK_ACCESS_NET_BIND_TCP
+	case version >= 4 && p.Network == NetworkProxy:
+		// Landlock names ports, not addresses: connecting is allowed to the proxy's port only,
+		// on any address, and a test's own servers on other ports cannot be reached.
+		attr.Access_net = unix.LANDLOCK_ACCESS_NET_CONNECT_TCP
 	}
 	size := unsafe.Sizeof(attr)
 	if version < 4 {
@@ -126,6 +131,14 @@ func (p Policy) restrict() error {
 			return fmt.Errorf("allowing %s: %w", dir, errno)
 		}
 	}
+	if attr.Access_net&unix.LANDLOCK_ACCESS_NET_CONNECT_TCP != 0 && p.Network == NetworkProxy {
+		rule := landlockNetPortAttr{AllowedAccess: unix.LANDLOCK_ACCESS_NET_CONNECT_TCP, Port: uint64(p.ProxyPort)}
+		_, _, errno := unix.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, uintptr(ruleset),
+			landlockRuleNetPort, uintptr(unsafe.Pointer(&rule)), 0, 0, 0)
+		if errno != 0 {
+			return fmt.Errorf("allowing the proxy's port: %w", errno)
+		}
+	}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return fmt.Errorf("setting no_new_privs: %w", err)
 	}
@@ -134,3 +147,16 @@ func (p Policy) restrict() error {
 	}
 	return nil
 }
+
+// landlockNetPortAttr is the kernel's struct landlock_net_port_attr, which x/sys does not define.
+type landlockNetPortAttr struct {
+	AllowedAccess uint64
+	Port          uint64
+}
+
+// landlockRuleNetPort is LANDLOCK_RULE_NET_PORT.
+const landlockRuleNetPort = 2
+
+// NetworkEnforced reports whether this machine can limit a command's network: Landlock ABI 4,
+// Linux 6.7 and later.
+func NetworkEnforced() bool { return abi() >= 4 }
