@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -41,9 +43,10 @@ func (e *servedEngine) Session(string) (core.Session, bool) {
 	defer e.mu.Unlock()
 	return core.Session{ID: "session-7", Turns: append([]core.Turn(nil), e.turns...)}, true
 }
-func (e *servedEngine) Cancel(string)                   {}
-func (e *servedEngine) SetMode(string, string) error    { return nil }
-func (e *servedEngine) Events(uint64) <-chan core.Event { return e.events }
+func (e *servedEngine) Cancel(string)                      {}
+func (e *servedEngine) SetMode(string, string) error       { return nil }
+func (e *servedEngine) Events(uint64) <-chan core.Event    { return e.events }
+func (e *servedEngine) Modes(string) (string, []core.Mode) { return core.ModeBuild, core.Modes() }
 func (e *servedEngine) Send(id, text string) (string, error) {
 	e.mu.Lock()
 	e.turns = append(e.turns, core.Turn{ID: "t1", State: core.TurnStreaming, Request: core.Message{Text: text}})
@@ -206,4 +209,140 @@ func TestTheServeSocketDirectoryIsPrivate(t *testing.T) {
 	if _, err := serveSocket("/some/project"); err == nil {
 		t.Fatal("a directory others can open was used")
 	}
+}
+
+// Picking up a conversation that has a question waiting shows the question, after the history,
+// and the answer typed reaches the tool that asked.
+func TestAttachAnswersAQuestionThatWasWaiting(t *testing.T) {
+	engine := &servedEngine{events: make(chan core.Event, 8)}
+	engine.hub = acpserver.NewHub(engine)
+	for i := range 200 {
+		engine.turns = append(engine.turns, core.Turn{ID: fmt.Sprintf("old-%d", i), State: core.TurnComplete,
+			Request: core.Message{Text: "ask"}, Text: "answer"})
+	}
+	engine.turns = append(engine.turns, core.Turn{ID: "t1", State: core.TurnStreaming,
+		Text: "working \x1b]52;c;cHduZWQ=\x07on it"})
+	answer := make(chan bool, 1)
+	go func() {
+		answer <- engine.hub.Approve(context.Background(), permission.Request{SessionID: "session-7", Tool: "shell",
+			Command: "make"}, permission.Decision{Reason: "runs a command"})
+	}()
+	client, server := net.Pipe()
+	go func() { _ = engine.hub.Serve(context.Background(), server, server) }()
+	stdinR, stdinW := io.Pipe()
+	var out, errOut syncBuffer
+	go func() { attachTo(client, t.TempDir(), "7", stdinR, &out, &errOut, make(chan os.Signal)) }()
+	out.waitFor(t, "Allow? [y/N]")
+	_, _ = io.WriteString(stdinW, "y\n")
+	select {
+	case ok := <-answer:
+		if !ok {
+			t.Fatal("y did not allow")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the waiting question was never answered:\n%s", out.String())
+	}
+	// What an agent streams is shown with its terminal controls taken out.
+	out.waitFor(t, "working ]52;c;cHduZWQ=on it")
+	if strings.Contains(out.String(), "\x1b") || strings.Contains(out.String(), "\x07") {
+		t.Fatal("a terminal control from the agent's text reached the terminal")
+	}
+	_ = stdinW.Close()
+}
+
+// attach finds the server from a directory inside the project, and through a link to it.
+func TestAttachFindsTheServerFromInsideTheProject(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "cs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	t.Setenv("XDG_RUNTIME_DIR", base)
+	project := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(project, "internal", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := serveSocket(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := listenServe(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	engine := &servedEngine{events: make(chan core.Event, 8)}
+	engine.hub = acpserver.NewHub(engine)
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() { _ = engine.hub.Serve(context.Background(), conn, conn) }()
+		}
+	}()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(project, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{filepath.Join(project, "internal", "deep"), link} {
+		t.Chdir(dir)
+		var out, errOut syncBuffer
+		if code := runAttach(nil, strings.NewReader(""), &out, &errOut); code != exitOK {
+			t.Fatalf("from %s: exit %d: %s", dir, code, errOut.String())
+		}
+		if !strings.Contains(out.String(), "working") {
+			t.Fatalf("from %s the list was %q", dir, out.String())
+		}
+	}
+}
+
+// Only a real directory, the user's own, that nobody else can open will do.
+func TestOnlyAPrivateDirectoryHoldsTheSocket(t *testing.T) {
+	dir := t.TempDir()
+	private := filepath.Join(dir, "private")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !privateDir(info, os.Getuid()) {
+		t.Fatal("the user's own 0700 directory was refused")
+	}
+	if privateDir(info, os.Getuid()+1) {
+		t.Fatal("a directory owned by someone else was accepted")
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(private, link); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(link); err != nil || privateDir(info, os.Getuid()) {
+		t.Fatal("a link to a private directory was accepted in place of one")
+	}
+}
+
+// Two servers started at the same moment both find no socket yet; the lock is what settles it.
+func TestTheLockKeepsASecondServerOut(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.sock")
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	if listener, err := listenServe(path); err == nil {
+		_ = listener.Close()
+		t.Fatal("a server started while another held the lock")
+	}
+	_ = lock.Close()
+	listener, err := listenServe(path)
+	if err != nil {
+		t.Fatalf("the lock was not given up: %v", err)
+	}
+	_ = listener.Close()
 }

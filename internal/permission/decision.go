@@ -62,9 +62,11 @@ type Request struct {
 	AgentID   string
 	SessionID string
 
-	// Tool is what was called.
-	Tool string
-	Kind core.ToolKind
+	// Tool is what was called, and CallID the model's id for this call of it, so a client showing
+	// the question can put it on the call it is about.
+	Tool   string
+	CallID string
+	Kind   core.ToolKind
 
 	// Paths are the path arguments the call touches. Empty for calls that touch none.
 	//

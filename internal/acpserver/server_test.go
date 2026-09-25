@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -78,6 +79,23 @@ func (f *fakeEngine) SetMode(_, mode string) error {
 }
 
 func (f *fakeEngine) Events(uint64) <-chan core.Event { return f.events }
+
+func (f *fakeEngine) Modes(string) (string, []core.Mode) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	current := f.mode
+	if current == "" {
+		current = core.ModeBuild
+	}
+	// Runway and cruise need what this engine does not have, as they do under canopy acp.
+	var usable []core.Mode
+	for _, mode := range core.Modes() {
+		if mode.Name != core.ModeRunway && mode.Name != core.ModeCruise {
+			usable = append(usable, mode)
+		}
+	}
+	return current, usable
+}
 
 // edit changes the turn and says so, the way the engine publishes an event.
 func (f *fakeEngine) edit(change func(*core.Turn)) {
@@ -197,8 +215,14 @@ func TestANewSessionOffersCanopysModes(t *testing.T) {
 		t.Fatalf("session %v", result["sessionId"])
 	}
 	modes := result["modes"].(map[string]any)
-	if modes["currentModeId"] != core.ModeBuild || len(modes["availableModes"].([]any)) != len(core.Modes()) {
+	// Only the modes this conversation could be switched to are offered.
+	if modes["currentModeId"] != core.ModeBuild || len(modes["availableModes"].([]any)) != 3 {
 		t.Fatalf("modes %v", modes)
+	}
+	for _, offered := range modes["availableModes"].([]any) {
+		if id := offered.(map[string]any)["id"]; id == core.ModeRunway || id == core.ModeCruise {
+			t.Fatalf("%v is offered where it cannot be used", id)
+		}
 	}
 
 	c.send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "session/set_mode",
@@ -346,6 +370,8 @@ func TestApprovalIsTheEditorsAnswer(t *testing.T) {
 		{"rejected", map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "reject"}}, false},
 		{"cancelled", map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}, false},
 		{"garbled", map[string]any{"outcome": "allow"}, false},
+		{"cancelled naming allow", map[string]any{"outcome": map[string]any{"outcome": "cancelled", "optionId": "allow"}}, false},
+		{"an option never offered", map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow_always"}}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,14 +381,15 @@ func TestApprovalIsTheEditorsAnswer(t *testing.T) {
 			got := make(chan bool, 1)
 			go func() {
 				got <- hub.Approve(context.Background(), permission.Request{SessionID: "s1", Tool: "shell",
-					Command: "rm -rf build"}, permission.Decision{Reason: "runs a command"})
+					CallID: "call-9", Command: "rm -rf build"}, permission.Decision{Reason: "runs a command"})
 			}()
 			ask := c.next()
 			if ask["method"] != "session/request_permission" {
 				t.Fatalf("asked %v", ask)
 			}
 			params := ask["params"].(map[string]any)
-			if params["sessionId"] != "s1" ||
+			// On the call it is about, so an editor draws the question on that call's card.
+			if params["sessionId"] != "s1" || params["toolCall"].(map[string]any)["toolCallId"] != "call-9" ||
 				!strings.Contains(params["toolCall"].(map[string]any)["title"].(string), "rm -rf build") {
 				t.Fatalf("the question does not say what would run: %v", params)
 			}
@@ -499,18 +526,31 @@ func TestAConversationOutlivesItsClient(t *testing.T) {
 		t.Fatalf("listed %v", listed)
 	}
 	engine.edit(func(t *core.Turn) { t.Text = "Working on it" })
+	engine.mu.Lock()
+	engine.mode = "plan"
+	engine.mu.Unlock()
 
 	second.send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "session/load",
 		"params": map[string]any{"sessionId": "s1", "cwd": "/x", "mcpServers": []any{}}})
+	// History comes before the reply to the load; the running turn and the waiting question after.
 	var replayed []map[string]any
 	var ask map[string]any
+	var text string
 	loaded := false
 	for !loaded || ask == nil {
 		m := second.next()
 		switch {
+		case m["method"] == "session/update" && loaded:
+			u := m["params"].(map[string]any)["update"].(map[string]any)
+			if u["sessionUpdate"] == "agent_message_chunk" {
+				text += u["content"].(map[string]any)["text"].(string)
+			}
 		case m["method"] == "session/update":
 			replayed = append(replayed, m["params"].(map[string]any)["update"].(map[string]any))
 		case m["method"] == "session/request_permission":
+			if !loaded {
+				t.Fatal("the waiting question arrived before the history it belongs to")
+			}
 			ask = m
 		case m["id"] == float64(2):
 			if m["error"] != nil {
@@ -540,7 +580,6 @@ func TestAConversationOutlivesItsClient(t *testing.T) {
 
 	// The turn still running streams on to the client that loaded it.
 	engine.edit(func(t *core.Turn) { t.Text = "Working on it. Done."; t.State = core.TurnComplete })
-	var text string
 	for !strings.HasSuffix(text, "Done.") {
 		m := second.next()
 		if m["method"] == "session/update" {
@@ -626,5 +665,140 @@ func TestAClientThatHasLeftIsNeverGivenAConversation(t *testing.T) {
 	defer cancel()
 	if hub.Approve(ctx, permission.Request{SessionID: "s1"}, permission.Decision{}) {
 		t.Fatal("a question with nobody to answer it was taken as yes")
+	}
+}
+
+// A conversation taken by another client takes its open question with it, even while the first
+// client is still connected: the person who just picked it up is the one who can answer.
+func TestAQuestionFollowsItsConversationToANewClient(t *testing.T) {
+	hub, first := start(t, newFakeEngine())
+	first.send(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": map[string]any{}})
+	_, _ = first.until(1)
+	answer := make(chan bool, 1)
+	go func() {
+		answer <- hub.Approve(context.Background(), permission.Request{SessionID: "s1", Tool: "shell"},
+			permission.Decision{})
+	}()
+	if m := first.next(); m["method"] != "session/request_permission" {
+		t.Fatalf("asked %v", m)
+	}
+	second := connect(t, hub)
+	second.send(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "session/load", "params": map[string]any{"sessionId": "s1"}})
+	for {
+		m := second.next()
+		if m["method"] == "session/request_permission" {
+			second.send(map[string]any{"jsonrpc": "2.0", "id": m["id"],
+				"result": map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow"}}})
+			break
+		}
+	}
+	select {
+	case ok := <-answer:
+		if !ok {
+			t.Fatal("the new client's allow was not taken")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the question stayed with the client that no longer holds the conversation")
+	}
+}
+
+// Stopping the server ends every connection, even one whose client is still there.
+func TestStoppingEndsAConnectedClient(t *testing.T) {
+	hub := NewHub(newFakeEngine())
+	inR, _ := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = hub.Serve(ctx, inR, io.Discard)
+		close(done)
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a connected client kept the server from stopping")
+	}
+}
+
+// A client that stops reading is let go rather than holding up the tool that wants to ask it.
+func TestAClientThatStopsReadingIsLetGo(t *testing.T) {
+	defer func(was time.Duration) { writeTimeout = was }(writeTimeout)
+	writeTimeout = 50 * time.Millisecond
+	hub := NewHub(newFakeEngine())
+	server, client := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		_ = hub.Serve(context.Background(), server, server)
+		close(done)
+	}()
+	// Start a session, then never read again: the reply to it is never taken off the pipe.
+	_, _ = client.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"session/new","params":{}}` + "\n"))
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a client that stopped reading was never let go")
+	}
+	_ = client.Close()
+}
+
+// A cancel sent straight after its prompt is not overtaken by it.
+func TestACancelRightAfterItsPromptCancelsIt(t *testing.T) {
+	engine := newFakeEngine()
+	_, c := start(t, engine)
+	prompt, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "session/prompt", "params": map[string]any{
+		"sessionId": "s1", "prompt": []any{map[string]any{"type": "text", "text": "go"}}}})
+	cancel, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": "s1"}})
+	if _, err := c.in.Write([]byte(string(prompt) + "\n" + string(cancel) + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	_, reply := c.until(1)
+	if got := reply["result"].(map[string]any)["stopReason"]; got != "cancelled" {
+		t.Fatalf("stop reason %v, want cancelled", got)
+	}
+}
+
+// A failed turn is an error with its reason, not an empty reply that looks finished; a turn cut
+// off at the output limit says so.
+func TestHowATurnEndedIsReported(t *testing.T) {
+	for _, tc := range []struct {
+		state core.TurnState
+		want  string
+	}{{core.TurnFailed, "error: the key was refused"}, {core.TurnTruncated, "max_tokens"}, {core.TurnRefused, "refusal"}} {
+		t.Run(string(tc.state), func(t *testing.T) {
+			engine := newFakeEngine()
+			_, c := start(t, engine)
+			c.send(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "session/prompt", "params": map[string]any{
+				"sessionId": "s1", "prompt": []any{map[string]any{"type": "resource_link", "uri": "file:///a.go", "name": "a.go"}}}})
+			waitSent(engine)
+			engine.edit(func(t *core.Turn) { t.State, t.Error = tc.state, "the key was refused" })
+			_, reply := c.until(1)
+			got := ""
+			if e, ok := reply["error"].(map[string]any); ok {
+				got = "error: " + e["message"].(string)
+			} else {
+				got = reply["result"].(map[string]any)["stopReason"].(string)
+			}
+			if got != tc.want {
+				t.Fatalf("reported %q, want %q", got, tc.want)
+			}
+			engine.mu.Lock()
+			sent := engine.sent[0]
+			engine.mu.Unlock()
+			if !strings.Contains(sent, `<context uri="file:///a.go" name="a.go" />`) {
+				t.Fatalf("a linked resource did not reach the model: %q", sent)
+			}
+		})
+	}
+}
+
+// A line that is not JSON gets an error whose id is null, as JSON-RPC requires.
+func TestALineThatIsNotJSONIsAnError(t *testing.T) {
+	_, c := start(t, newFakeEngine())
+	if _, err := c.in.Write([]byte("not json\n")); err != nil {
+		t.Fatal(err)
+	}
+	m := c.next()
+	if id, present := m["id"]; !present || id != nil || m["error"].(map[string]any)["code"] != float64(-32700) {
+		t.Fatalf("reply %v", m)
 	}
 }

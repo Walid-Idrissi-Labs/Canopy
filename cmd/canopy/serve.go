@@ -77,6 +77,10 @@ func serveSocket(dir string) (string, error) {
 		base = os.TempDir()
 	}
 	root := filepath.Join(base, fmt.Sprintf("canopy-%d", os.Getuid()))
+	// One project reached through a link and through its real path is one server.
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
+	}
 	path := filepath.Join(root, gitpkg.WorkspaceID(dir)+".sock")
 	if len(path) > 100 {
 		return "", fmt.Errorf("%s is too long for a unix socket; set XDG_RUNTIME_DIR to a shorter directory", path)
@@ -89,30 +93,65 @@ func serveSocket(dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.IsDir() || info.Mode().Perm() != 0o700 || !ok || int(stat.Uid) != os.Getuid() {
+	if !privateDir(info, os.Getuid()) {
 		return "", fmt.Errorf("%s is not a directory only you can open, so canopy serve will not use it", root)
 	}
 	return path, nil
 }
 
+// privateDir reports whether info, from Lstat, is a real directory owned by uid that nobody else
+// can open.
+func privateDir(info os.FileInfo, uid int) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && info.IsDir() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == 0o700 &&
+		int(stat.Uid) == uid
+}
+
+// errServing is a server already running for the project.
+var errServing = errors.New("canopy serve is already running for this project; canopy attach connects to it")
+
 // listenServe listens on path, clearing a socket left behind by a server that is gone and refusing
-// to start beside one that is still there.
+// to start beside one that is still there. A lock beside the socket, held for as long as the
+// listener is open, settles two servers started at the same moment.
 func listenServe(path string) (net.Listener, error) {
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lock.Close()
+		return nil, errServing
+	}
 	if conn, err := net.DialTimeout("unix", path, time.Second); err == nil {
 		_ = conn.Close()
-		return nil, errors.New("canopy serve is already running for this project; canopy attach connects to it")
+		_ = lock.Close()
+		return nil, errServing
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = lock.Close()
 		return nil, err
 	}
 	listener, err := net.Listen("unix", path)
 	if err != nil {
+		_ = lock.Close()
 		return nil, err
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = listener.Close()
+		_ = lock.Close()
 		return nil, err
 	}
-	return listener, nil
+	return lockedListener{Listener: listener, lock: lock}, nil
+}
+
+// lockedListener releases the lock when the listener closes.
+type lockedListener struct {
+	net.Listener
+	lock *os.File
+}
+
+func (l lockedListener) Close() error {
+	err := l.Listener.Close()
+	_ = l.lock.Close()
+	return err
 }

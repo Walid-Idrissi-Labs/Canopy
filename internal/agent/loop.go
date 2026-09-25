@@ -461,6 +461,7 @@ func (l *Loop) invoke(
 		AgentID:   l.AgentID,
 		SessionID: l.SessionID,
 		Tool:      call.Name,
+		CallID:    call.ID,
 		Kind:      tool.Kind(),
 		Paths:     pathsIn(call.Input),
 		Command:   commandIn(call.Input),

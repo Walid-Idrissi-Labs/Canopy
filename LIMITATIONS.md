@@ -856,12 +856,13 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   `CANOPY_OPENAI_RESPONSES=on`. It has been tested against a fake of the service, not the service
   itself, which is why it is not the default yet; every other OpenAI-compatible endpoint uses chat
   completions, where reasoning is not carried between requests.
-- `canopy acp` (D-62) serves one project per process, the one it is started in. It does not resume
-  conversations (`session/load`), take images, or use the editor's own file system or terminal:
-  edits are written to disk by Canopy's tools, and an editor with unsaved changes to the same file
-  sees them only when it reloads. Approvals from the editor are once only. MCP servers the editor
-  names are ignored; the project's own canopy.json servers are used. It has been tested against a
-  scripted client, not against an editor.
+- `canopy acp` (D-62) serves one project per process, the one it is started in. It does not take
+  images or use the editor's own file system or terminal: edits are written to disk by Canopy's
+  tools, and an editor with unsaved changes to the same file sees them only when it reloads.
+  Approvals from the editor are once only. Runway and cruise are not offered, since they need the
+  interface's checkpoints and verification. MCP servers the editor names are ignored; the project's
+  own canopy.json servers are used. A linked resource reaches the model as a reference it can read,
+  not as its contents. It has been tested against a scripted client, not against an editor.
 - `canopy serve` and `canopy attach` (D-63) keep agents working with no client attached, but the
   interface (`canopy`) is not a client of the server: a conversation the server is running is
   picked up with `canopy attach`, which is a line-based client with no screen, not in the chat.

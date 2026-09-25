@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -27,15 +28,24 @@ func runAttach(args []string, stdin io.Reader, out, errOut io.Writer) int {
 		_, _ = fmt.Fprintln(errOut, err)
 		return exitUsage
 	}
-	path, err := serveSocket(dir)
-	if err != nil {
-		_, _ = fmt.Fprintln(errOut, err)
-		return exitFailed
-	}
-	conn, err := net.Dial("unix", path)
-	if err != nil {
-		_, _ = fmt.Fprintln(errOut, "canopy serve is not running for this project; start it with canopy serve")
-		return exitFailed
+	// The server may have been started in a directory above this one.
+	var conn net.Conn
+	for at := dir; conn == nil; {
+		path, err := serveSocket(at)
+		if err != nil {
+			_, _ = fmt.Fprintln(errOut, err)
+			return exitFailed
+		}
+		if c, err := net.Dial("unix", path); err == nil {
+			conn, dir = c, at
+			break
+		}
+		parent := filepath.Dir(at)
+		if parent == at {
+			_, _ = fmt.Fprintln(errOut, "canopy serve is not running for this project; start it with canopy serve")
+			return exitFailed
+		}
+		at = parent
 	}
 	defer func() { _ = conn.Close() }()
 	target := ""
@@ -147,7 +157,7 @@ func attachTo(rw io.ReadWriter, dir, target string, stdin io.Reader, out, errOut
 	interrupt <-chan os.Signal) int {
 	client := newRPCClient(rw)
 	if err := client.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": map[string]any{}}, nil); err != nil {
-		_, _ = fmt.Fprintln(errOut, err)
+		_, _ = fmt.Fprintln(errOut, terminalText(err.Error()))
 		return exitFailed
 	}
 	if target == "" {
@@ -155,28 +165,34 @@ func attachTo(rw io.ReadWriter, dir, target string, stdin io.Reader, out, errOut
 	}
 
 	var sessionID string
+	var early []map[string]json.RawMessage
 	if target == "new" {
 		var created struct {
 			SessionID string `json:"sessionId"`
 		}
 		if err := client.call("session/new", map[string]any{"cwd": dir, "mcpServers": []any{}}, &created); err != nil {
-			_, _ = fmt.Fprintln(errOut, err)
+			_, _ = fmt.Fprintln(errOut, terminalText(err.Error()))
 			return exitFailed
 		}
 		sessionID = created.SessionID
 	} else {
 		sessionID = session.SessionID(target)
-		// The replay arrives as updates while this waits, so they are drawn as they come.
+		// The replay arrives as updates while this waits, so they are drawn as they come; a question
+		// that was waiting is kept for the prompt below.
 		loaded := client.start("session/load", map[string]any{"sessionId": sessionID, "cwd": dir, "mcpServers": []any{}})
 		for waiting := true; waiting; {
 			select {
 			case reply := <-loaded:
 				if reply.Error != nil {
-					_, _ = fmt.Fprintln(errOut, reply.Error.Message)
+					_, _ = fmt.Fprintln(errOut, terminalText(reply.Error.Message))
 					return exitFailed
 				}
 				waiting = false
 			case m := <-client.incoming:
+				if isQuestion(m) {
+					early = append(early, m)
+					continue
+				}
 				drawServed(m, out)
 			case <-client.closed:
 				_, _ = fmt.Fprintln(errOut, "canopy serve closed the connection")
@@ -196,7 +212,10 @@ func attachTo(rw io.ReadWriter, dir, target string, stdin io.Reader, out, errOut
 			lines <- scanner.Text()
 		}
 	}()
-	var questions []map[string]json.RawMessage
+	questions := early
+	if len(questions) > 0 {
+		askServed(questions[0], out)
+	}
 	var turn <-chan rpcReply
 	leave := func() int {
 		_, _ = fmt.Fprintf(out, "\nleft conversation %s running; canopy attach %s picks it up\n", code, code)
@@ -210,9 +229,7 @@ func attachTo(rw io.ReadWriter, dir, target string, stdin io.Reader, out, errOut
 			_, _ = fmt.Fprintln(errOut, "\ncanopy serve closed the connection")
 			return exitFailed
 		case m := <-client.incoming:
-			var method string
-			_ = json.Unmarshal(m["method"], &method)
-			if method == "session/request_permission" {
+			if isQuestion(m) {
 				questions = append(questions, m)
 				if len(questions) == 1 {
 					askServed(m, out)
@@ -272,6 +289,12 @@ func attachTo(rw io.ReadWriter, dir, target string, stdin io.Reader, out, errOut
 	}
 }
 
+func isQuestion(m map[string]json.RawMessage) bool {
+	var method string
+	_ = json.Unmarshal(m["method"], &method)
+	return method == "session/request_permission"
+}
+
 // listServed prints the conversations canopy serve is running.
 func listServed(client *rpcClient, out, errOut io.Writer) int {
 	var listed struct {
@@ -289,7 +312,7 @@ func listServed(client *rpcClient, out, errOut io.Writer) int {
 		} `json:"sessions"`
 	}
 	if err := client.call("session/list", map[string]any{}, &listed); err != nil {
-		_, _ = fmt.Fprintln(errOut, err)
+		_, _ = fmt.Fprintln(errOut, terminalText(err.Error()))
 		return exitFailed
 	}
 	if len(listed.Sessions) == 0 {
@@ -311,8 +334,8 @@ func listServed(client *rpcClient, out, errOut io.Writer) int {
 		if title == "" {
 			title = "(untitled)"
 		}
-		_, _ = fmt.Fprintf(out, "%-6s %-9s %-22s %s\n", session.Code(s.SessionID), s.Meta.Canopy.Mode, state,
-			terminalText(title))
+		_, _ = fmt.Fprintf(out, "%-6s %-9s %-22s %s\n", terminalText(session.Code(s.SessionID)),
+			terminalText(s.Meta.Canopy.Mode), state, terminalText(title))
 	}
 	return exitOK
 }

@@ -134,9 +134,13 @@ func (a *acpEngine) NewSession(ctx context.Context, cwd string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	mode, _ := core.ModeByName(core.ModeBuild)
-	if err := a.engine.SetMode(added.SessionID, mode); err != nil {
-		return "", err
+	// Build, the interface's default, where the project's trust allows it; a read-only project
+	// keeps the mode its trust gives, and the client is told which that is.
+	if mode, _ := core.ModeByName(core.ModeBuild); a.engine.ModeUnusable(added.SessionID, mode) == nil {
+		if err := a.engine.SetMode(added.SessionID, mode); err != nil {
+			_ = a.engine.RemoveAgent(added.Name)
+			return "", err
+		}
 	}
 	return added.SessionID, nil
 }
@@ -197,6 +201,16 @@ func (a *acpEngine) Session(sessionID string) (core.Session, bool) {
 func (a *acpEngine) Cancel(sessionID string) { a.engine.Cancel(sessionID) }
 
 func (a *acpEngine) Events(after uint64) <-chan core.Event { return a.engine.Events(after) }
+
+func (a *acpEngine) Modes(sessionID string) (string, []core.Mode) {
+	var usable []core.Mode
+	for _, mode := range core.Modes() {
+		if a.engine.ModeUnusable(sessionID, mode) == nil {
+			usable = append(usable, mode)
+		}
+	}
+	return a.engine.Mode(sessionID).Name, usable
+}
 
 func (a *acpEngine) SetMode(sessionID, name string) error {
 	mode, ok := core.ModeByName(name)

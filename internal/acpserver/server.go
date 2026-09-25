@@ -37,6 +37,8 @@ type Engine interface {
 	Cancel(sessionID string)
 	// SetMode switches a conversation to one of Canopy's modes, by name.
 	SetMode(sessionID, mode string) error
+	// Modes is the mode a conversation is in and the ones it could be switched to.
+	Modes(sessionID string) (current string, usable []core.Mode)
 	// Events tells the server something changed, so it looks again. It is subscribed to once.
 	Events(afterSequence uint64) <-chan core.Event
 }
@@ -80,6 +82,11 @@ type conn struct {
 	writeM sync.Mutex
 	ids    atomic.Int64
 	done   chan struct{}
+	// hangUp ends the connection from this side: a client that stops reading is let go rather than
+	// left holding a tool that is waiting to ask it something.
+	hangUp func()
+	// streams are the goroutines following turns for this client, waited for when it goes.
+	streams sync.WaitGroup
 	// gone is set, under the hub's lock, once the client has left, so a request still being handled
 	// cannot hand it a conversation afterwards.
 	gone bool
@@ -130,14 +137,31 @@ func (h *Hub) own(sessionID string, c *conn) {
 	h.attached = make(chan struct{})
 }
 
-// Serve reads one client's requests until in ends. Each request runs on its own goroutine, so a
-// cancel or a permission answer can arrive while a prompt streams. When the client goes, its
-// conversations carry on without it.
+// Serve reads one client's requests until in ends or ctx does. Requests are handled in the order
+// they arrive, so a cancel cannot overtake the prompt it cancels; what takes time, a turn streaming,
+// runs on beside the reading, so a cancel or a permission answer can arrive while it does. When
+// the client goes, its conversations carry on without it.
 func (h *Hub) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	h.watchOnce.Do(func() { go h.watch(h.engine.Events(0)) })
 	c := &conn{hub: h, out: out, done: make(chan struct{}), pending: map[int64]chan json.RawMessage{}}
-	var wg sync.WaitGroup
+	var closeOnce sync.Once
+	c.hangUp = func() {
+		closeOnce.Do(func() {
+			if closer, ok := in.(io.Closer); ok {
+				_ = closer.Close()
+			}
+		})
+	}
+	stop := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			c.hangUp()
+		case <-stop:
+		}
+	}()
 	defer func() {
+		close(stop)
 		h.mu.Lock()
 		c.gone = true
 		for id, owner := range h.owners {
@@ -147,7 +171,7 @@ func (h *Hub) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		}
 		h.mu.Unlock()
 		close(c.done)
-		wg.Wait()
+		c.streams.Wait()
 	}()
 	reader := bufio.NewReader(in)
 	for {
@@ -155,17 +179,13 @@ func (h *Hub) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		if len(strings.TrimSpace(string(line))) > 0 {
 			var m message
 			if json.Unmarshal(line, &m) != nil {
-				c.reply(nil, nil, &rpcError{Code: -32700, Message: "not a JSON-RPC message"})
+				c.reply(json.RawMessage("null"), nil, &rpcError{Code: -32700, Message: "not a JSON-RPC message"})
 			} else {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					c.handle(ctx, m)
-				}()
+				c.handle(ctx, m)
 			}
 		}
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			if errors.Is(err, io.EOF) || ctx.Err() != nil {
 				return nil
 			}
 			return err
@@ -217,7 +237,7 @@ func (c *conn) handle(ctx context.Context, m message) {
 			return
 		}
 		h.own(id, c)
-		c.reply(m.ID, map[string]any{"sessionId": id, "modes": modes(core.ModeBuild)}, nil)
+		c.reply(m.ID, map[string]any{"sessionId": id, "modes": h.modes(id)}, nil)
 	case "session/load":
 		c.load(ctx, m.ID, p.SessionID, p.Cwd)
 	case "session/list":
@@ -239,10 +259,11 @@ func (c *conn) handle(ctx context.Context, m message) {
 	}
 }
 
-// modes is the mode state a session reports, offering Canopy's five.
-func modes(current string) map[string]any {
-	var available []any
-	for _, mode := range core.Modes() {
+// modes is the mode state a session reports: the modes it can be switched to, and the one it is in.
+func (h *Hub) modes(sessionID string) map[string]any {
+	current, usable := h.engine.Modes(sessionID)
+	available := []any{}
+	for _, mode := range usable {
 		available = append(available, map[string]any{"id": mode.Name, "name": mode.Name, "description": mode.Description})
 	}
 	return map[string]any{"currentModeId": current, "availableModes": available}
@@ -261,7 +282,6 @@ func (c *conn) load(ctx context.Context, id json.RawMessage, sessionID, dir stri
 		c.reply(id, nil, &rpcError{Code: -32603, Message: "there is no conversation " + sessionID})
 		return
 	}
-	h.own(sessionID, c)
 	var running string
 	for _, turn := range session.Turns {
 		if !turn.State.Terminal() {
@@ -274,15 +294,16 @@ func (c *conn) load(ctx context.Context, id json.RawMessage, sessionID, dir stri
 		}
 		c.replay(sessionID, turn)
 	}
-	mode := core.ModeBuild
-	for _, s := range h.engine.ListSessions() {
-		if s.ID == sessionID && s.Mode != "" {
-			mode = s.Mode
-		}
-	}
-	c.reply(id, map[string]any{"modes": modes(mode)}, nil)
+	c.reply(id, map[string]any{"modes": h.modes(sessionID)}, nil)
+	// Taken only now, so a question that has been waiting for a client arrives after the history it
+	// belongs to rather than in the middle of it.
+	h.own(sessionID, c)
 	if running != "" {
-		go c.stream(ctx, sessionID, running)
+		c.streams.Add(1)
+		go func() {
+			defer c.streams.Done()
+			c.stream(ctx, sessionID, running)
+		}()
 	}
 }
 
@@ -320,13 +341,15 @@ func (c *conn) list(id json.RawMessage) {
 	c.reply(id, map[string]any{"sessions": sessions}, nil)
 }
 
-// prompt runs one turn and streams it to the client as it happens.
+// prompt starts one turn and streams it to the client as it happens, replying when it ends.
 func (c *conn) prompt(ctx context.Context, m message) {
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Prompt    []struct {
 			Type     string `json:"type"`
 			Text     string `json:"text"`
+			URI      string `json:"uri"`
+			Name     string `json:"name"`
 			Resource struct {
 				URI  string `json:"uri"`
 				Text string `json:"text"`
@@ -345,6 +368,9 @@ func (c *conn) prompt(ctx context.Context, m message) {
 		case "resource":
 			// Context the client attached, a file it has open for one, given to the model as such.
 			fmt.Fprintf(&text, "\n\n<context uri=%q>\n%s\n</context>", block.Resource.URI, block.Resource.Text)
+		case "resource_link":
+			// A reference without its contents: the model is told where it is and can read it.
+			fmt.Fprintf(&text, "\n\n<context uri=%q name=%q />", block.URI, block.Name)
 		}
 	}
 	// Whoever prompts a conversation is there to answer its questions.
@@ -354,10 +380,23 @@ func (c *conn) prompt(ctx context.Context, m message) {
 		c.reply(m.ID, nil, &rpcError{Code: -32603, Message: err.Error()})
 		return
 	}
-	turn, ended := c.stream(ctx, p.SessionID, turnID)
-	if ended {
-		c.reply(m.ID, map[string]any{"stopReason": stopReason(turn)}, nil)
-	}
+	c.streams.Add(1)
+	go func() {
+		defer c.streams.Done()
+		turn, ended := c.stream(ctx, p.SessionID, turnID)
+		switch {
+		case !ended:
+		case turn.State == core.TurnFailed:
+			// A failure is an error, with the reason, rather than an empty reply that looks finished.
+			reason := turn.Error
+			if reason == "" {
+				reason = "the turn failed"
+			}
+			c.reply(m.ID, nil, &rpcError{Code: -32603, Message: reason})
+		default:
+			c.reply(m.ID, map[string]any{"stopReason": stopReason(turn)}, nil)
+		}
+	}()
 }
 
 // stream sends what a turn adds, as it adds it, until the turn ends, reporting whether it did. A
@@ -459,48 +498,62 @@ func (h *Hub) Approve(ctx context.Context, req permission.Request, decision perm
 	}
 }
 
-// ask puts one question to this client, reporting whether it answered.
+// ask puts one question to this client, reporting whether it answered. A client that leaves, or
+// whose conversation is taken by another client, has not answered, and the question moves on.
 func (c *conn) ask(ctx context.Context, req permission.Request, decision permission.Decision) (allowed, answered bool) {
+	h := c.hub
 	id := c.ids.Add(1)
 	answer := make(chan json.RawMessage, 1)
 	c.mu.Lock()
 	c.pending[id] = answer
 	c.mu.Unlock()
-	forget := func() {
+	defer func() {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
-	}
+	}()
 	title := req.Tool
 	if req.Command != "" {
 		title += ": " + req.Command
 	}
+	callID := req.CallID
+	if callID == "" {
+		callID = fmt.Sprintf("ask-%d", id)
+	}
 	c.send(message{JSONRPC: "2.0", ID: json.RawMessage(fmt.Sprint(id)), Method: "session/request_permission"},
 		map[string]any{
 			"sessionId": req.SessionID,
-			"toolCall": map[string]any{"toolCallId": fmt.Sprintf("ask-%d", id), "title": title,
+			"toolCall": map[string]any{"toolCallId": callID, "title": title,
 				"kind": toolKind(req.Tool), "status": "pending", "rawInput": json.RawMessage(validJSON([]byte(req.Arguments)))},
 			"options": []any{
 				map[string]any{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
 				map[string]any{"optionId": "reject", "name": "Reject: " + decision.Reason, "kind": "reject_once"},
 			},
 		})
-	select {
-	case raw := <-answer:
-		var result struct {
-			Outcome struct {
-				Outcome  string `json:"outcome"`
-				OptionID string `json:"optionId"`
-			} `json:"outcome"`
+	for {
+		h.mu.Lock()
+		attached, still := h.attached, h.owners[req.SessionID] == c
+		h.mu.Unlock()
+		if !still {
+			return false, false
 		}
-		return json.Unmarshal(raw, &result) == nil && result.Outcome.Outcome == "selected" &&
-			result.Outcome.OptionID == "allow", true
-	case <-ctx.Done():
-		forget()
-		return false, false
-	case <-c.done:
-		forget()
-		return false, false
+		select {
+		case raw := <-answer:
+			var result struct {
+				Outcome struct {
+					Outcome  string `json:"outcome"`
+					OptionID string `json:"optionId"`
+				} `json:"outcome"`
+			}
+			return json.Unmarshal(raw, &result) == nil && result.Outcome.Outcome == "selected" &&
+				result.Outcome.OptionID == "allow", true
+		case <-ctx.Done():
+			return false, false
+		case <-c.done:
+			return false, false
+		case <-attached:
+			// Some conversation changed hands; if it was this one, the loop above lets it go.
+		}
 	}
 }
 
@@ -528,8 +581,16 @@ func (c *conn) send(m message, params any) {
 	}
 	c.writeM.Lock()
 	defer c.writeM.Unlock()
-	_, _ = c.out.Write(append(line, '\n'))
+	if d, ok := c.out.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		_ = d.SetWriteDeadline(time.Now().Add(writeTimeout))
+	}
+	if _, err := c.out.Write(append(line, '\n')); err != nil && c.hangUp != nil {
+		c.hangUp()
+	}
 }
+
+// writeTimeout is how long a client that has stopped reading is waited for before it is let go.
+var writeTimeout = 30 * time.Second
 
 // stopReason is how a turn ended, in the protocol's words.
 func stopReason(turn core.Turn) string {
@@ -538,8 +599,7 @@ func stopReason(turn core.Turn) string {
 		return "cancelled"
 	case core.TurnRefused:
 		return "refusal"
-	}
-	if strings.Contains(turn.Error, "tokens") {
+	case core.TurnTruncated:
 		return "max_tokens"
 	}
 	return "end_turn"
