@@ -528,3 +528,30 @@ func TestWebSearchIsOfferedOnlyWhenAsked(t *testing.T) {
 		t.Fatalf("web search was not offered:\n%s", body)
 	}
 }
+
+// A reply cut off while thinking has a thinking block with no signature. Sent back, it has the API
+// refuse every later request in the conversation, so it is never kept; signed thinking and big
+// numbers in a tool input come back exactly as received.
+func TestAnUnsignedThinkingBlockIsNeverReplayed(t *testing.T) {
+	var s stream
+	if err := json.Unmarshal([]byte(`{"id":"m","type":"message","role":"assistant","model":"x",
+		"content":[{"type":"thinking","thinking":"half a thou","signature":""}],
+		"stop_reason":"max_tokens"}`), &s.message); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.nativeMessage(); n != nil {
+		t.Fatalf("a reply holding only unsigned thinking was kept: %s", n.Data)
+	}
+
+	if err := json.Unmarshal([]byte(`{"id":"m","type":"message","role":"assistant","model":"x",
+		"content":[{"type":"thinking","thinking":"done","signature":"sig"},
+		{"type":"tool_use","id":"t","name":"f","input":{"n":12345678901234567890}}],
+		"stop_reason":"tool_use"}`), &s.message); err != nil {
+		t.Fatal(err)
+	}
+	n := s.nativeMessage()
+	if n == nil || !strings.Contains(string(n.Data), `"signature":"sig"`) ||
+		!strings.Contains(string(n.Data), "12345678901234567890") {
+		t.Fatalf("a signed reply was not replayed exactly: %v", n)
+	}
+}

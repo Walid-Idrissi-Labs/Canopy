@@ -960,3 +960,21 @@ func TestAPausedReplyWithOnlyProviderWorkIsKept(t *testing.T) {
 	}
 	_ = outcome
 }
+
+// A reply cut off by the length cap before it said anything is not recorded: what it holds is at
+// best an unsigned half-thought, and replaying that has every later request refused.
+func TestABareReplyCutOffIsNotKept(t *testing.T) {
+	native := &core.Native{Provider: "p", Data: []byte(`{"role":"assistant","content":[{"type":"thinking"}]}`)}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		{{Kind: core.EventDone, StopReason: core.StopMaxTokens, Native: native}},
+	}}
+	outcome, err := loop(client, registryWith(), core.TrustStandard).Run(context.Background(), ask("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range outcome.Messages {
+		if m.Native != nil {
+			t.Fatal("a bare cut-off reply was kept and will be replayed")
+		}
+	}
+}

@@ -159,6 +159,30 @@ func (s *stream) nativeMessage() *core.Native {
 	if err != nil {
 		return nil
 	}
+	// A reply cut off mid-thought carries a thinking block with no signature, and the API refuses
+	// every later request that sends one back. The unsigned block goes; the rest of the reply stays.
+	var message map[string]json.RawMessage
+	var blocks []json.RawMessage
+	if json.Unmarshal(data, &message) != nil || json.Unmarshal(message["content"], &blocks) != nil {
+		return nil
+	}
+	kept := blocks[:0]
+	for _, block := range blocks {
+		var head struct{ Type, Signature string }
+		if json.Unmarshal(block, &head) == nil && head.Type == "thinking" && head.Signature == "" {
+			continue
+		}
+		kept = append(kept, block)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	if message["content"], err = json.Marshal(kept); err != nil {
+		return nil
+	}
+	if data, err = json.Marshal(message); err != nil {
+		return nil
+	}
 	return &core.Native{Provider: providerName, Data: data}
 }
 
