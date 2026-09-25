@@ -341,7 +341,7 @@ func unseenTests(task Task, output string) string {
 			}
 		}
 		for _, m := range pyTestName.FindAllSubmatch(data, -1) {
-			if !regexp.MustCompile(regexp.QuoteMeta(string(m[1]))+` \(.*\) \.\.\. ok`).MatchString(output) {
+			if !regexp.MustCompile(regexp.QuoteMeta(string(m[1])) + ` \(.*\) \.\.\. ok`).MatchString(output) {
 				missing = string(m[1])
 				return nil
 			}
