@@ -42,7 +42,13 @@ type Proxy struct {
 
 	mu      sync.Mutex
 	refusal []refusal
+	// conns are the connections open now, closed with the proxy so no tunnel outlives it.
+	conns  map[net.Conn]struct{}
+	closed bool
 }
+
+// idleTimeout ends a tunnel nobody has sent anything through for this long.
+const idleTimeout = 5 * time.Minute
 
 type refusal struct {
 	host string
@@ -57,7 +63,8 @@ func Start(allow []string, refused func(host string)) (*Proxy, error) {
 		return nil, err
 	}
 	dialer := &net.Dialer{Timeout: 30 * time.Second}
-	p := &Proxy{listener: listener, allow: allow, refused: refused, dial: dialer.DialContext}
+	p := &Proxy{listener: listener, allow: allow, refused: refused, dial: dialer.DialContext,
+		conns: map[net.Conn]struct{}{}}
 	p.wg.Add(1)
 	go p.serve()
 	return p, nil
@@ -92,7 +99,30 @@ func (p *Proxy) RefusedSince(since time.Time) []string {
 // Close stops the proxy.
 func (p *Proxy) Close() {
 	_ = p.listener.Close()
+	p.mu.Lock()
+	p.closed = true
+	for c := range p.conns {
+		_ = c.Close()
+	}
+	p.mu.Unlock()
 	p.wg.Wait()
+}
+
+// track registers a connection to be closed with the proxy, or reports that it is already closed.
+func (p *Proxy) track(c net.Conn) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return false
+	}
+	p.conns[c] = struct{}{}
+	return true
+}
+
+func (p *Proxy) untrack(c net.Conn) {
+	p.mu.Lock()
+	delete(p.conns, c)
+	p.mu.Unlock()
 }
 
 // Allowed reports whether host may be reached.
@@ -120,12 +150,20 @@ func (p *Proxy) serve() {
 		if err != nil {
 			return
 		}
-		go p.handle(conn)
+		p.wg.Add(1)
+		go func() {
+			defer p.wg.Done()
+			p.handle(conn)
+		}()
 	}
 }
 
 func (p *Proxy) handle(client net.Conn) {
 	defer func() { _ = client.Close() }()
+	if !p.track(client) {
+		return
+	}
+	defer p.untrack(client)
 	_ = client.SetReadDeadline(time.Now().Add(30 * time.Second))
 	reader := bufio.NewReader(client)
 	req, err := http.ReadRequest(reader)
@@ -145,7 +183,12 @@ func (p *Proxy) handle(client net.Conn) {
 			port = "443"
 		}
 	}
-	if !p.Allowed(host) {
+	// Web ports only: a registry is reached on 443, or 80, and an allowed host's other ports are
+	// services nobody asked to expose to a build.
+	if port != "443" && port != "80" {
+		host = net.JoinHostPort(host, port)
+	}
+	if port != "443" && port != "80" || !p.Allowed(host) {
 		p.mu.Lock()
 		p.refusal = append(p.refusal, refusal{host: host, at: time.Now()})
 		if len(p.refusal) > 256 {
@@ -170,6 +213,10 @@ func (p *Proxy) handle(client net.Conn) {
 		return
 	}
 	defer func() { _ = upstream.Close() }()
+	if !p.track(upstream) {
+		return
+	}
+	defer p.untrack(upstream)
 
 	if req.Method == http.MethodConnect {
 		if _, err := io.WriteString(client, "HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
@@ -197,11 +244,23 @@ func (p *Proxy) handle(client net.Conn) {
 	_, _ = io.Copy(client, upstream)
 }
 
-// splice copies both ways until either side closes.
+// splice copies both ways until either side closes, or nothing has moved for idleTimeout.
 func splice(a, b net.Conn) {
 	done := make(chan struct{}, 2)
 	copyTo := func(dst, src net.Conn) {
-		_, _ = io.Copy(dst, src)
+		buf := make([]byte, 32*1024)
+		for {
+			_ = src.SetReadDeadline(time.Now().Add(idleTimeout))
+			n, err := src.Read(buf)
+			if n > 0 {
+				if _, werr := dst.Write(buf[:n]); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
 		if tcp, ok := dst.(interface{ CloseWrite() error }); ok {
 			_ = tcp.CloseWrite()
 		}
@@ -210,6 +269,7 @@ func splice(a, b net.Conn) {
 	go copyTo(a, b)
 	go copyTo(b, a)
 	<-done
+	// One side has finished; the other gets as long as it takes to finish too, up to the timeout.
 	<-done
 }
 
