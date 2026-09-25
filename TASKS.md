@@ -8017,6 +8017,36 @@ mutation testing, fixes, re-review, then into the integration branch that lands 
 - Z-R14 `repo_map`. PR #80.
 - Z-R15 Golden screen snapshots. PR #82.
 - Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
+`status: review | owner: Claude | branch: feat/acp-server`
+
+`internal/acpserver` serves the Agent Client Protocol over stdio: initialize, session/new with
+Canopy's modes, session/set_mode, session/prompt streamed as thought, message, tool call and tool
+result updates, session/cancel, and permission questions sent to the editor as
+session/request_permission. Tests drive it with a scripted client: each chunk is sent once across
+several passes, cancel ends a prompt as cancelled, only an explicit allow approves, an unanswered
+question refuses when its call is cancelled and is forgotten, unknown methods are errors and unknown
+notifications get no reply. Smoke-tested as a binary with an isolated HOME: initialize and
+session/new answer, and a session in another directory is refused.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-X10 `canopy serve` and `canopy attach`: agents that outlive their client (D-63, part of F-07)
+`status: review | owner: Claude | branch: feat/acp-server`
+
+The ACP server became a hub: many connections to one engine, each conversation held by one client.
+`canopy serve` serves it on a private unix socket; `canopy attach` lists, picks up (session/load
+replays finished turns and streams a running one), starts, prompts and answers. Tests: a client
+leaving does not cancel its turn; a question with no client waits, is announced once, is listed as
+waiting, and reaches the client that loads the conversation; a question open to a client that
+leaves moves to the next one; a client that has left is never given a conversation (a race the
+smoke run found); attach end to end over a real socket, y allows and anything else refuses, listed
+titles are stripped of escapes; the socket is 0600, its directory must be 0700 and the user's, a
+path too long for a socket is refused, and a second server beside a running one is refused. Still
+open: the interface as a client of the server, and a notification when an agent is waiting.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-T1 Outside content taints a conversation (D-57)
 `status: review | owner: Claude | branch: feat/taint`
 

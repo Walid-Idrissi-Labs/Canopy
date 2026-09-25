@@ -1453,6 +1453,40 @@ new agent worktree and MCP servers remain unconfined for now: that setup runs fr
 configuration before any agent has touched the worktree, and servers commonly need to write where
 the sandbox does not allow.
 
+## D-62 An editor can drive Canopy over ACP, and answers its questions. Decided 2026-09-25.
+
+`canopy acp` serves the project it is started in to an editor over the Agent Client Protocol, the
+reverse of D-51's delegation: there Canopy is the client of someone else's agent, here Canopy is the
+agent and the editor is the client. Everything behind a turn is Canopy's own, the key, the mode, the
+permission layer, the sandbox and the language servers, so an editor gets the same boundaries the
+interface has. A question the permission layer would ask a person in the interface is sent to the
+editor as `session/request_permission`, with allow once and reject as the only answers; only an
+explicit allow runs the call, and a cancelled, unreadable or unrecognised answer refuses it. No
+standing approval can be given from the editor, since ACP's allow-always has no scope Canopy could
+hold it to. A session starts in build, the interface's default, where the project's trust allows it,
+and otherwise in the mode its trust gives; the editor is offered only the modes the conversation
+could be switched to, so runway and cruise, which need the interface's checkpoints and verification,
+are not offered. The trust gate cannot prompt,
+because the editor owns stdin, so an untrusted repository's configuration is withheld exactly as
+for `canopy run`. One process serves one project: a session asked for in another directory is
+refused, since the tools are rooted in the first.
+
+## D-63 Agents can outlive their client: `canopy serve`. Decided 2026-09-25.
+
+`canopy serve` holds this project's engine in a process of its own and serves it over the same
+protocol as D-62, on a unix socket in a directory only the user can open (created 0700, checked for
+owner and mode on every start, refused if either is wrong; the socket itself is 0600). Every
+connection is a client; a conversation belongs to the client that started, loaded or last prompted
+it. A client leaving stops nothing: its agents keep working, and a question one of them asks while
+no client holds its conversation waits, is announced on the server's error output with the command
+that picks it up, and goes to the next client that loads the conversation. It is never answered by
+default in either direction, and it is refused only when the call it belongs to is cancelled. A
+client that leaves with a question open has not answered it, so the question moves on rather than
+being taken as a refusal, and a conversation loaded by another client takes its open question with
+it. `canopy attach` is the terminal client: it lists, picks up with a replay of
+what happened, prompts, and answers y or n. The interface is not yet a client of the server, so a
+conversation started in `canopy` and one started under `canopy serve` are not live in each other.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

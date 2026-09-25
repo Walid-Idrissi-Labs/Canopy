@@ -387,6 +387,36 @@ fifty cents, retries included; in the interface, `/budget 2` caps one agent and 
 caps every agent together. A cap is checked between steps, so the request in flight finishes and the
 next one is not made.
 
+### In an editor
+
+```sh
+canopy acp
+```
+
+`canopy acp` speaks the Agent Client Protocol on stdin and stdout, so an editor that runs agents
+over ACP, Zed among them, can run Canopy in the project it opens. The editor sends prompts and draws
+the replies, tool calls and results as they stream; the questions Canopy would ask in the interface
+are asked in the editor, and its mode menu offers the Canopy modes the project allows. In Zed, add it under
+`agent_servers` in settings:
+
+```json
+{ "agent_servers": { "Canopy": { "type": "custom", "command": "canopy", "args": ["acp"] } } }
+```
+
+### In the background
+
+```sh
+canopy serve &           # keeps this project's agents running
+canopy attach new        # start a conversation; ctrl+d leaves it working
+canopy attach            # what is running, and what is waiting on you
+canopy attach 12         # pick one up: what happened, then what is happening
+```
+
+`canopy serve` keeps agents working after the client that started them has gone. It listens on a
+socket only you can reach, and speaks the same protocol as `canopy acp`. A question an agent asks
+while nobody is attached waits for the next `canopy attach`, and the server says which conversation
+is waiting.
+
 ## Where the tokens go
 
 Every request resends the conversation, so what it costs is decided by how much of that is read

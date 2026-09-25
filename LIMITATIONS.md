@@ -842,8 +842,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
   also cut off the local servers tests start), and anything whose purpose is to send data out is
   asked about, even in runway and cruise. The project's tests run in the sandbox but a taint does
-  not limit their network, and setup and hook commands run outside it, so a test a tainted agent
-  writes can still reach the network when runway runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
+  not limit their network, and a new worktree's setup commands run outside it, so a test a tainted
+  agent writes can still reach the network when runway runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
   `gh`, `nslookup`, `base64`, `eval`, `sh -c` and the like. A registry is still a server on the
   internet, and where the network cannot be limited the word list is the only guard, which a
   determined script can get around. Files in the workspace do not taint a conversation, though they
@@ -856,3 +856,17 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   `CANOPY_OPENAI_RESPONSES=on`. It has been tested against a fake of the service, not the service
   itself, which is why it is not the default yet; every other OpenAI-compatible endpoint uses chat
   completions, where reasoning is not carried between requests.
+- `canopy acp` (D-62) serves one project per process, the one it is started in. It does not take
+  images or use the editor's own file system or terminal: edits are written to disk by Canopy's
+  tools, and an editor with unsaved changes to the same file sees them only when it reloads.
+  Approvals from the editor are once only. Runway and cruise are not offered, since they need the
+  interface's checkpoints and verification. MCP servers the editor names are ignored; the project's
+  own canopy.json servers are used. A linked resource reaches the model as a reference it can read,
+  not as its contents. It has been tested against a scripted client, not against an editor.
+- `canopy serve` and `canopy attach` (D-63) keep agents working with no client attached, but the
+  interface (`canopy`) is not a client of the server: a conversation the server is running is
+  picked up with `canopy attach`, which is a line-based client with no screen, not in the chat.
+  A running `canopy` and a running `canopy serve` in one project are two engines working in the same
+  checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
+  service manager. A question waiting for a client is announced on the server's error output only,
+  with no desktop notification.
