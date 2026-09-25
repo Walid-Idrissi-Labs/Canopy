@@ -76,41 +76,16 @@ func (t *Taker) Take(ctx context.Context, id, label string) (Checkpoint, error) 
 		head = ""
 	}
 
-	// A temporary index, so staging for the checkpoint does not disturb what the user has staged.
-	// Without this, taking a checkpoint would silently stage every untracked file in their working
-	// tree, and the next `git commit` would include things they never chose.
-	index, err := t.indexPath(ctx)
+	tree, err := t.snapshot(ctx, head, id)
 	if err != nil {
-		return Checkpoint{}, fmt.Errorf("finding the index for the checkpoint: %w", err)
-	}
-	indexFile := fmt.Sprintf("%s.canopy-checkpoint-%s", index, id)
-	env := append(environ(t.dir), "GIT_INDEX_FILE="+indexFile)
-	// Removed with os rather than by shelling out, since it is a plain file and `git rm` means
-	// something entirely different from removing a file off disk.
-	defer func() { _ = os.Remove(indexFile) }()
-
-	// Seed the temporary index from HEAD so unchanged files are already in it, then add everything.
-	if head != "" {
-		if _, err := t.runEnv(ctx, env, "read-tree", head); err != nil {
-			return Checkpoint{}, fmt.Errorf("preparing the checkpoint index: %w", err)
-		}
-	}
-	// Untracked files are included, because an agent that created a file and then made a mess is
-	// the common case and an undo that left the new files behind would not be an undo.
-	if _, err := t.runEnv(ctx, env, "add", "--all", "."); err != nil {
-		return Checkpoint{}, fmt.Errorf("staging the checkpoint: %w", err)
-	}
-
-	tree, err := t.runEnv(ctx, env, "write-tree")
-	if err != nil {
-		return Checkpoint{}, fmt.Errorf("writing the checkpoint tree: %w", err)
+		return Checkpoint{}, err
 	}
 
 	args := []string{"commit-tree", tree, "-m", "canopy checkpoint: " + label}
 	if head != "" {
 		args = append(args, "-p", head)
 	}
-	commit, err := t.runEnv(ctx, env, args...)
+	commit, err := t.run(ctx, args...)
 	if err != nil {
 		return Checkpoint{}, fmt.Errorf("writing the checkpoint commit: %w", err)
 	}
@@ -279,4 +254,77 @@ func environ(dir string) []string {
 		"GIT_COMMITTER_NAME=Canopy",
 		"GIT_COMMITTER_EMAIL=canopy@localhost",
 	})
+}
+
+// Preview lists what restoring a checkpoint would change, without changing anything: tracked files
+// that differ from it, marked M, A or D as git reports them, and files that would be removed because
+// they did not exist at the checkpoint and are not ignored. The removals include anything a person
+// created since, which is exactly what they need to see before agreeing.
+func (t *Taker) Preview(ctx context.Context, checkpoint Checkpoint) ([]string, error) {
+	if checkpoint.Commit == "" {
+		return nil, fmt.Errorf("that checkpoint has no commit to compare with")
+	}
+	// Compared tree to tree, the working tree snapshotted exactly as a checkpoint would take it, so
+	// untracked files that were already there when the checkpoint was taken are not listed as going.
+	head, err := t.run(ctx, "rev-parse", "HEAD")
+	if err != nil {
+		head = ""
+	}
+	now, err := t.snapshot(ctx, head, fmt.Sprintf("preview-%d", time.Now().UnixNano()))
+	if err != nil {
+		return nil, err
+	}
+	changed, err := t.run(ctx, "diff-tree", "-r", "-z", "--no-renames", "--name-status", checkpoint.Commit, now)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	fields := strings.Split(changed, "\x00")
+	for i := 0; i+1 < len(fields); i += 2 {
+		status, path := fields[i], fields[i+1]
+		// Said as what the undo will do, not as what the turn did.
+		switch status {
+		case "A":
+			out = append(out, "remove "+path)
+		case "D":
+			out = append(out, "bring back "+path)
+		default:
+			out = append(out, "restore "+path)
+		}
+	}
+	return out, nil
+}
+
+// snapshot writes the working tree, untracked files included, as a tree object through a temporary
+// index, so the user's own staging is never touched.
+func (t *Taker) snapshot(ctx context.Context, head, id string) (string, error) {
+	// A temporary index, so staging for the checkpoint does not disturb what the user has staged.
+	// Without this, taking a checkpoint would silently stage every untracked file in their working
+	// tree, and the next `git commit` would include things they never chose.
+	index, err := t.indexPath(ctx)
+	if err != nil {
+		return "", fmt.Errorf("finding the index for the checkpoint: %w", err)
+	}
+	indexFile := fmt.Sprintf("%s.canopy-checkpoint-%s", index, id)
+	env := append(environ(t.dir), "GIT_INDEX_FILE="+indexFile)
+	// Removed with os rather than by shelling out, since it is a plain file and `git rm` means
+	// something entirely different from removing a file off disk.
+	defer func() { _ = os.Remove(indexFile) }()
+
+	// Seed the temporary index from HEAD so unchanged files are already in it, then add everything.
+	if head != "" {
+		if _, err := t.runEnv(ctx, env, "read-tree", head); err != nil {
+			return "", fmt.Errorf("preparing the checkpoint index: %w", err)
+		}
+	}
+	// Untracked files are included, because an agent that created a file and then made a mess is
+	// the common case and an undo that left the new files behind would not be an undo.
+	if _, err := t.runEnv(ctx, env, "add", "--all", "."); err != nil {
+		return "", fmt.Errorf("staging the checkpoint: %w", err)
+	}
+	tree, err := t.runEnv(ctx, env, "write-tree")
+	if err != nil {
+		return "", fmt.Errorf("writing the checkpoint tree: %w", err)
+	}
+	return tree, nil
 }

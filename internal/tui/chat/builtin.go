@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -359,6 +360,10 @@ func (m *Model) forkHere() {
 // Done off the update loop, like compaction, because restoring a checkpoint runs git against a
 // whole worktree. It is usually quick and it is not guaranteed to be, and the frame that must never
 // block is the one somebody is looking at while it happens.
+//
+// Two steps. The first lists what the restore would change, including files that would be removed
+// because they did not exist before the turn, which covers anything a person created since; the
+// second, within a minute and for the same turn, does it. Nothing is overwritten on one keystroke.
 func (m *Model) undoLastTurn() tea.Cmd {
 	if len(m.session.Turns) == 0 {
 		m.err = "there is nothing to undo in this conversation yet"
@@ -367,15 +372,47 @@ func (m *Model) undoLastTurn() tea.Cmd {
 
 	engine, sessionID := m.engine, m.sessionID
 	turnID := m.session.Turns[len(m.session.Turns)-1].ID
-	m.notice = "putting the workspace back"
 
+	if m.undoArmed == turnID && time.Since(m.undoArmedAt) < time.Minute {
+		m.undoArmed = ""
+		m.notice = "putting the workspace back"
+		return func() tea.Msg {
+			return undoneMsg{err: engine.Undo(context.Background(), sessionID, turnID)}
+		}
+	}
+	m.notice = "working out what undo would change"
 	return func() tea.Msg {
-		return undoneMsg{err: engine.Undo(context.Background(), sessionID, turnID)}
+		changes, err := engine.UndoPreview(context.Background(), sessionID, turnID)
+		return undoPreviewMsg{turnID: turnID, changes: changes, err: err}
 	}
 }
 
 // undoneMsg carries the outcome of an undo back into the update loop.
 type undoneMsg struct{ err error }
+
+// undoPreviewMsg carries what an undo would change.
+type undoPreviewMsg struct {
+	turnID  string
+	changes []string
+	err     error
+}
+
+// describeUndo is the preview shown before an undo is confirmed.
+func describeUndo(changes []string) string {
+	if len(changes) == 0 {
+		return "the workspace already matches how it was before the last turn, so there is nothing to undo"
+	}
+	shown := changes
+	if len(shown) > 12 {
+		shown = shown[:12]
+	}
+	text := fmt.Sprintf("undo would change %d paths, including any you edited or created since:\n  %s",
+		len(changes), strings.Join(shown, "\n  "))
+	if len(changes) > len(shown) {
+		text += fmt.Sprintf("\n  and %d more", len(changes)-len(shown))
+	}
+	return text + "\ntype /undo again within a minute to do it"
+}
 
 // builtinItems are the built-ins as menu entries.
 func builtinItems() []menuItem {
