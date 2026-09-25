@@ -342,7 +342,7 @@ func insideRepo(path string) (string, error) {
 func (r *Repo) ignores(ctx context.Context, root, path string) (bool, error) {
 	result, err := exec.Run(ctx, "git", []string{"check-ignore", "-q", "--", path}, exec.Options{
 		Dir:     root,
-		Env:     environ(),
+		Env:     environ(root),
 		Timeout: 30 * time.Second,
 	})
 	if err != nil {

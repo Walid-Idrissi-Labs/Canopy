@@ -88,3 +88,35 @@ func TestACleanFilterFromTheRepositoryDoesNotRun(t *testing.T) {
 		t.Fatal("a clean filter configured by the repository ran when Canopy called git")
 	}
 }
+
+// The user's own global filters, Git LFS being the common one, must keep working: neutralising
+// every filter would store raw content in each checkpoint and show LFS files as modified after a
+// restore.
+func TestTheUsersGlobalFiltersStillApply(t *testing.T) {
+	home := t.TempDir()
+	global := "[filter \"upper\"]\n\tclean = tr a-z A-Z\n\tsmudge = cat\n"
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(global), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	dir := repo(t)
+	if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("*.txt filter=upper\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := NewTaker(dir).Take(context.Background(), "t1", "turn")
+	if err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+	cmd := exec.Command("git", "show", checkpoint.Commit+":a.txt")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git show: %v", err)
+	}
+	if string(out) != "HELLO\n" {
+		t.Fatalf("a global clean filter did not apply to the checkpoint: stored %q", out)
+	}
+}

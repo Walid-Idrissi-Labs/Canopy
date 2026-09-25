@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"os"
 	"time"
 
@@ -389,6 +390,9 @@ func defaultBranch(ctx context.Context, repo *gitpkg.Repo) string {
 
 // loadProject reads the committed configuration, reporting a broken one rather than ignoring it.
 func loadProject(dir string) config.Project {
+	if err := gitsafe.CheckVersion(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 	project, found, err := config.Load(dir)
 	if err != nil {
 		// Loud, and then carry on with nothing configured. A config file that fails to load and is

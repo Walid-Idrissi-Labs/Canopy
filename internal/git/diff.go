@@ -130,7 +130,7 @@ func (r *Repo) Patch(ctx context.Context, dir, base, path string) (string, error
 		// meaning differences exist, so its output cannot be read through run.
 		result, runErr := exec.Run(ctx, "git",
 			[]string{"diff", "--no-ext-diff", "--no-textconv", "--no-index", "--", os.DevNull, path},
-			exec.Options{Dir: dir, Env: environ(), Timeout: 60 * time.Second})
+			exec.Options{Dir: dir, Env: environ(dir), Timeout: 60 * time.Second})
 		if runErr != nil || !result.Ran {
 			return "", nil
 		}
