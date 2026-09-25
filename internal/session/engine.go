@@ -91,6 +91,13 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// instructions are the project's, added to the system prompt of every conversation this engine
+	// runs. Set once at startup, so the prompt stays the same for a conversation's whole life.
+	instructions string
+
+	// autoCompactOff disables compaction past the context budget; see autoCompact.
+	autoCompactOff bool
+
 	mu       sync.Mutex
 	sessions map[string]*core.Session
 	order    []string
@@ -769,6 +776,10 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 		s.Title = summarise(prompt)
 	}
 
+	// The mode travels as a note on the message where it took effect, never as a change to the
+	// system prompt. See core.SystemPrompt.
+	s.Turns[len(s.Turns)-1].Request.Note = pendingModeNote(*s, e.modeLocked(sessionID))
+
 	history := s.History()
 	keyName, model := s.KeyName, s.Model
 
@@ -866,10 +877,34 @@ func (e *Engine) run(
 	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
 	// call, because a system prompt that changed mid conversation would rewrite what the model
 	// believes it was told earlier.
-	request := core.Request{Model: model, Messages: history, System: e.Mode(sessionID).Prompt}
+	request := core.Request{Model: model, Messages: history, System: e.systemPrompt()}
 
-	outcome, err := loop.Run(ctx, request,
+	// Tools learn which conversation epoch they serve, so a repeated read can be answered with a
+	// reference to what this conversation was already sent. A compaction starts a new epoch.
+	epoch := fmt.Sprintf("%s#%d", sessionID, len(e.snapshot(sessionID).Compactions))
+	outcome, err := loop.Run(core.WithConversation(ctx, epoch), request,
 		&turnObserver{engine: e, sessionID: sessionID, turnID: turnID})
+
+	// Every message the loop added, exactly as exchanged, is what the next turn replays. Recorded
+	// on failure too: a step that completed before the failure was seen by the provider, and a
+	// history that omitted it would not be the conversation the provider remembers.
+	if len(outcome.Messages) > len(history) {
+		steps := append([]core.Message(nil), outcome.Messages[len(history):]...)
+		e.update(sessionID, turnID, func(t *core.Turn) { t.Steps = steps })
+	}
+	if tooLong(outcome.Stop, err) {
+		// The provider says the conversation no longer fits. Compacting now means the next message
+		// fits; retrying this one silently would spend a second request on an answer the person did
+		// not see asked for. The turn says what happened and what to do.
+		compacted := e.compactPast(context.WithoutCancel(ctx), sessionID, true)
+		reason := errors.New("the conversation no longer fits the model's context window")
+		if compacted {
+			reason = errors.New("the conversation no longer fit the model's context window, so the " +
+				"older part has been summarised; send the message again")
+		}
+		e.finish(sessionID, turnID, core.TurnFailed, reason, outcome.Usage, client.Name())
+		return
+	}
 	if err != nil {
 		// failureState rather than a flat TurnFailed: a provider can take several seconds to send
 		// its first byte, and somebody who presses escape in that window has stopped the turn
@@ -929,6 +964,12 @@ func (e *Engine) run(
 	// it is terminal, and the checks are about what that turn left behind rather than part of it.
 	if held {
 		e.keepGreen(context.WithoutCancel(ctx), sessionID, turnID)
+	}
+
+	// At the turn boundary, never mid-turn: a conversation past its budget is compacted now, so
+	// the next request is small again. Announced in the transcript like any compaction.
+	if state == core.TurnComplete {
+		e.autoCompact(context.WithoutCancel(ctx), sessionID)
 	}
 }
 
@@ -1094,6 +1135,10 @@ func (o *turnObserver) StepFinished(usage core.Usage) {
 	// rather than only afterwards.
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
 		t.Usage = t.Usage.Add(usage)
+		if size := usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens +
+			usage.OutputTokens; size > 0 {
+			t.Context = size
+		}
 	})
 }
 
@@ -1320,4 +1365,62 @@ func (e *Engine) RenameCredential(from, to string) int {
 		e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: s.ID})
 	}
 	return len(moved)
+}
+
+// pendingModeNote is the mode note the newest turn must carry, or "" when the model already has it.
+//
+// The model has been told the mode when the most recent note it can still see says the same thing.
+// Only turns after the latest compaction count, because the ones before it are no longer sent.
+func pendingModeNote(s core.Session, mode core.Mode) string {
+	if mode.Prompt == "" {
+		return ""
+	}
+	first := 0
+	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(s.Turns) {
+		first = compaction.Through
+	}
+	for i := len(s.Turns) - 2; i >= first; i-- {
+		if note := s.Turns[i].Request.Note; note != "" {
+			if note == mode.Prompt {
+				return ""
+			}
+			break
+		}
+	}
+	return mode.Prompt
+}
+
+// tooLong reports whether a turn ended because the conversation outgrew the model's window.
+func tooLong(stop core.StopReason, err error) bool {
+	if stop == core.StopContextExceeded {
+		return true
+	}
+	var provider *core.ProviderError
+	return errors.As(err, &provider) && provider.Kind == core.ErrContextLength
+}
+
+// WithInstructions sets the project instructions every conversation is sent. Called once, before
+// the first turn: changing them later would change the front of every conversation's requests.
+func (e *Engine) WithInstructions(text string) {
+	e.mu.Lock()
+	e.instructions = text
+	e.mu.Unlock()
+}
+
+// Instructions are the project instructions in force.
+func (e *Engine) Instructions() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.instructions
+}
+
+// systemPrompt is the core prompt followed by the project's instructions.
+func (e *Engine) systemPrompt() string {
+	e.mu.Lock()
+	instructions := e.instructions
+	e.mu.Unlock()
+	if instructions == "" {
+		return core.SystemPrompt
+	}
+	return core.SystemPrompt + "\n\n" + core.InstructionsPreamble + "\n\n" + instructions
 }

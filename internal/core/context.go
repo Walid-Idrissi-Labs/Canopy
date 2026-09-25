@@ -153,8 +153,18 @@ func (s Session) ContextUse() ContextUse {
 
 	// The last terminal turn's input count is the size of everything sent up to that point, which
 	// is the conversation so far. Later turns only add to it.
+	compaction, compacted := s.Compacted()
 	for i := len(s.Turns) - 1; i >= 0; i-- {
 		turn := s.Turns[i]
+		if compacted && !turn.EndedAt.IsZero() && turn.EndedAt.Before(compaction.At) {
+			// A request measured before the latest compaction describes a conversation that has
+			// since been shortened; until the next turn reports, estimate what is sent now.
+			break
+		}
+		if turn.Context > 0 {
+			use.Tokens = turn.Context + estimateTokens(s.textAfter(i))
+			return use
+		}
 		if turn.Usage.InputTokens > 0 {
 			// Plus what has been said since, so a long question does not read as free until after
 			// it has been answered.
@@ -178,9 +188,20 @@ func (s Session) textAfter(index int) int {
 }
 
 func (s Session) allText() int {
+	// What is actually sent: the summary in place of compacted turns, tool calls and results
+	// included, since those are most of a working conversation.
 	var n int
-	for _, turn := range s.Turns {
-		n += len(turn.Request.Text) + len(turn.Text) + len(turn.Thinking)
+	for _, m := range s.History() {
+		n += len(m.Text) + len(m.Note)
+		for _, call := range m.ToolCalls {
+			n += len(call.Input)
+		}
+		for _, result := range m.ToolResults {
+			n += len(result.Content)
+		}
+		if m.Native != nil && len(m.ToolCalls) == 0 && m.Text == "" {
+			n += len(m.Native.Data)
+		}
 	}
 	return n
 }
@@ -194,3 +215,18 @@ func (s Session) allText() int {
 const bytesPerToken = 4
 
 func estimateTokens(bytes int) int { return bytes / bytesPerToken }
+
+// AutoCompactTokens is where a conversation is compacted without being asked: 80 percent of its
+// window, but never more than AutoCompactCeiling. Every request resends the whole conversation, so a
+// million-token window used to its edge is paid for on every step, and long contexts also answer
+// worse; the ceiling keeps a long session both cheap and sharp.
+func AutoCompactTokens(window ContextWindow) int {
+	at := int(float64(window) * CompactionThreshold)
+	if at > AutoCompactCeiling {
+		at = AutoCompactCeiling
+	}
+	return at
+}
+
+// AutoCompactCeiling bounds AutoCompactTokens.
+const AutoCompactCeiling = 160_000

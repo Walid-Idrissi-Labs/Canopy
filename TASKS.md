@@ -7936,6 +7936,66 @@ Replaced by the 2026-07-26 re-plan. Kept so the reasoning is not lost.
 
 ---
 
+# Phase Z: the round after the audit of 2026-09-24
+
+Planned from four audits (engine and tokens, security, the TUI, the delegated routes) and built by
+Claude with Walid, without the second pair's verification for this round by Walid's decision. Each
+change goes branch, pull request, review by an independent reviewing agent, then merge. Statuses
+below are this round's; `codex [ ]` stays open for the second pair.
+
+### Z-H Security and correctness hotfixes
+`status: review | owner: Claude | branch: fix/security-hotfixes (PR #57, merged, v0.1.0-beta.2)`
+
+File tools refuse `.git`; Canopy's own git runs no repository-configured command (fsmonitor, hooks,
+repository-defined filters, external diff, textconv); repository trust gates setup, tests, hooks,
+MCP servers, instructions, prompt commands and vendor settings; child environments lose
+credentials; fetch_url refuses private addresses after DNS; model text and sign-in links are
+escaped; the chat's event subscription leak is fixed; OpenAI cached tokens are billed once; Opus 5.5
+and Fable 5.1 are priced; SIGHUP quits cleanly; history is owner-only. Every fix has a regression
+test that fails without it.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-C1 Append-only transcript and frozen prefix (D-55)
+`status: review | owner: Claude | branch: feat/append-only-transcript`
+
+Turns keep their exact steps with native encodings; history replays them; thinking goes back with
+signatures; one core system prompt; modes as notes; tools follow the trust ceiling; adaptive
+thinking with drop_block; automatic cache placement at the newest block; pause_turn continued.
+Absorbs E-10. Test: consecutive requests to a fake Messages API share a byte-identical prefix
+across tool steps and a new user turn.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-C2 Honest meter and automatic compaction
+`status: review | owner: Claude | branch: feat/append-only-transcript`
+
+Absorbs E-01 (the meter half), E-02 and E-03: the last request's size on the provider's count,
+compaction past min(80 percent, 160k) at the turn boundary, compaction on overflow, a bounded summary
+sharing the conversation's cached prefix.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-C3 Project instructions
+`status: review | owner: Claude | branch: feat/append-only-transcript`
+
+Absorbs E-07 and the injection half of A8-03: AGENTS.md, CLAUDE.md, .canopy/instructions.md, the
+user's instructions.md and canopy.json, bounded, in precedence order, in the frozen prompt, covered
+by trust.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-C4 Reading less at the source, and offloading output
+`status: review | owner: Claude | branch: feat/append-only-transcript`
+
+Absorbs E-06: ranged reads with totals, compact numbering, a one-line answer for an unchanged range
+already sent in the same conversation epoch, ripgrep-backed grep with regex and context, and long
+command output stored behind a handle with its failures and ending kept inline.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+---
+
 ## Appendix: change log for this file
 
 Append one line per structural change (adding, removing or reordering tasks). Do not log ordinary

@@ -42,7 +42,14 @@ Keep, in this order of priority:
   - anything that was tried and did not work, so it is not tried again
 
 Leave out pleasantries and restatements. Write it as notes for yourself, not as a report for ` +
-	`somebody else. Be specific: a summary that says "discussed the API" is worse than no summary.`
+	`somebody else. Be specific: a summary that says "discussed the API" is worse than no summary.
+
+Do not call any tools. Answer with the summary only.`
+
+// summaryMaxTokens bounds what a summary may spend. A compaction exists to save money, and without a
+// bound it inherited the default for an agent turn, 32 thousand output tokens, for text that has to
+// fit in a few thousand to be worth having.
+const summaryMaxTokens = 8000
 
 // CompactionResult describes what a compaction did.
 type CompactionResult struct {
@@ -79,7 +86,7 @@ func (p CompactionPlan) Possible() bool { return p.Turns > 0 }
 
 // PlanCompaction is what compacting this conversation now would cover.
 func PlanCompaction(s core.Session) CompactionPlan {
-	older, kept := splitForCompaction(s.Turns)
+	older, kept := splitAfter(s.Turns, compactedThrough(s))
 	return CompactionPlan{Turns: len(older), Kept: len(kept), Tokens: estimateTokensOf(older)}
 }
 
@@ -100,9 +107,19 @@ func (e *Engine) Compact(ctx context.Context, sessionID string) (CompactionResul
 		return CompactionResult{}, ErrBusy
 	}
 	session := copySession(*s)
+	tools, _ := e.toolsForLocked(sessionID)
 	e.mu.Unlock()
 
-	older, kept := splitForCompaction(session.Turns)
+	return e.summarise(ctx, session, tools)
+}
+
+// summarise produces the compaction of a conversation without applying it. The caller has checked
+// the conversation may be compacted; an automatic compaction during a turn relies on the in-flight
+// turn being among the ones kept verbatim.
+func (e *Engine) summarise(
+	ctx context.Context, session core.Session, tools *core.ToolRegistry,
+) (CompactionResult, error) {
+	older, kept := splitAfter(session.Turns, compactedThrough(session))
 	if len(older) == 0 {
 		return CompactionResult{}, fmt.Errorf(
 			"there is not enough history to compact yet, %d turns and the last %d are always kept",
@@ -117,13 +134,26 @@ func (e *Engine) Compact(ctx context.Context, sessionID string) (CompactionResul
 	// The summary is asked for as an ordinary turn against the same provider, so it costs what it
 	// costs and shows up in the usage like anything else. Hiding the price of compaction would make
 	// a session's total quietly wrong.
-	history := core.Session{Turns: older}.History()
+	// The earlier summary and the turns since it, not the whole conversation again: a second
+	// compaction that resent everything from the first turn would overflow the very window it is
+	// meant to make room in.
+	history := core.Session{Turns: older, Compactions: session.Compactions}.History()
 	history = append(history, core.Message{Role: core.RoleUser, Text: compactionPrompt})
 
-	stream, err := client.Stream(ctx, core.Request{
-		Model:    session.Model,
-		Messages: history,
-	})
+	// The same system prompt and tool list as the conversation, so the request starts with exactly
+	// the prefix the conversation already cached and reads the older turns back at the cache rate.
+	// A summary request with neither, as before, wrote the whole conversation to cache again and
+	// sent tool calls with no tools defined.
+	request := core.Request{
+		Model:     session.Model,
+		System:    e.systemPrompt(),
+		Messages:  history,
+		MaxTokens: summaryMaxTokens,
+	}
+	if tools != nil {
+		request.Tools = tools.Definitions()
+	}
+	stream, err := client.Stream(ctx, request)
 	if err != nil {
 		return CompactionResult{}, err
 	}
@@ -139,7 +169,7 @@ func (e *Engine) Compact(ctx context.Context, sessionID string) (CompactionResul
 		case core.EventText:
 			summary.WriteString(event.Text)
 		case core.EventDone:
-			if !event.StopReason.Complete() {
+			if event.StopReason != core.StopEndTurn {
 				// A truncated or refused summary is worse than no summary, because it would replace
 				// real history with a partial account of it and nothing downstream could tell.
 				return CompactionResult{}, fmt.Errorf(
@@ -182,6 +212,14 @@ func estimateTokensOf(turns []core.Turn) int {
 	var bytes int
 	for _, turn := range turns {
 		bytes += len(turn.Request.Text) + len(turn.Text) + len(turn.Thinking)
+		for _, step := range turn.Steps {
+			for _, result := range step.ToolResults {
+				bytes += len(result.Content)
+			}
+			for _, call := range step.ToolCalls {
+				bytes += len(call.Input)
+			}
+		}
 	}
 	return bytes / bytesPerToken
 }
@@ -228,6 +266,12 @@ func (e *Engine) Apply(sessionID string, result CompactionResult) error {
 // Only terminal turns can be summarised. A turn still in flight has an answer arriving into it, and
 // folding that into a summary would produce a summary of something that had not happened yet.
 func splitForCompaction(turns []core.Turn) (older, kept []core.Turn) {
+	return splitAfter(turns, 0)
+}
+
+// splitAfter is splitForCompaction for a conversation already compacted through `after` turns:
+// there is something new to summarise only if the cut falls past it.
+func splitAfter(turns []core.Turn, after int) (older, kept []core.Turn) {
 	if len(turns) <= keepRecentTurns {
 		return nil, turns
 	}
@@ -235,8 +279,60 @@ func splitForCompaction(turns []core.Turn) (older, kept []core.Turn) {
 	for cut > 0 && !turns[cut-1].State.Terminal() {
 		cut--
 	}
-	if cut == 0 {
+	if cut <= after {
 		return nil, turns
 	}
 	return turns[:cut], turns[cut:]
+}
+
+// compactedThrough is how many turns the conversation's latest compaction covers.
+func compactedThrough(s core.Session) int {
+	if c, ok := s.Compacted(); ok {
+		return c.Through
+	}
+	return 0
+}
+
+// autoCompact compacts a conversation that has grown past its budget, and says so in the transcript
+// like any other compaction. Best effort: a conversation that is busy, too short, or whose summary
+// fails is left as it was, and the manual command still works.
+func (e *Engine) autoCompact(ctx context.Context, sessionID string) bool {
+	return e.compactPast(ctx, sessionID, false)
+}
+
+// compactPast compacts when the conversation is past its budget, or regardless when force is set,
+// which is the answer to a provider saying the conversation no longer fits at all.
+func (e *Engine) compactPast(ctx context.Context, sessionID string, force bool) bool {
+	e.mu.Lock()
+	if e.autoCompactOff && !force {
+		e.mu.Unlock()
+		return false
+	}
+	s, ok := e.sessions[sessionID]
+	if !ok {
+		e.mu.Unlock()
+		return false
+	}
+	session := copySession(*s)
+	tools, _ := e.toolsForLocked(sessionID)
+	e.mu.Unlock()
+
+	if !force && session.ContextUse().Tokens < core.AutoCompactTokens(core.WindowFor(session.Model)) {
+		return false
+	}
+	if !PlanCompaction(session).Possible() {
+		return false
+	}
+	result, err := e.summarise(ctx, session, tools)
+	if err != nil {
+		return false
+	}
+	return e.Apply(sessionID, result) == nil
+}
+
+// SetAutoCompact turns automatic compaction on or off; it is on unless configured otherwise.
+func (e *Engine) SetAutoCompact(on bool) {
+	e.mu.Lock()
+	e.autoCompactOff = !on
+	e.mu.Unlock()
 }

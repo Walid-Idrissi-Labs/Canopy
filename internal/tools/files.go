@@ -1,15 +1,20 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -40,9 +45,30 @@ const maxFileBytes = 1 << 20 // 1 MiB
 type readLedger struct {
 	mu     sync.Mutex
 	digest map[string]string
+	// shown is what each conversation epoch has already been sent: path and range to the digest of
+	// the content at the time. See readTool.Run.
+	shown map[string]string
 }
 
-func newReadLedger() *readLedger { return &readLedger{digest: map[string]string{}} }
+func newReadLedger() *readLedger {
+	return &readLedger{digest: map[string]string{}, shown: map[string]string{}}
+}
+
+// alreadyShown reports whether exactly this range of this content was sent in this epoch, and
+// records that it now has been.
+func (l *readLedger) alreadyShown(epoch, key, digest string) bool {
+	if epoch == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	id := epoch + "\x00" + key
+	if l.shown[id] == digest {
+		return true
+	}
+	l.shown[id] = digest
+	return false
+}
 
 func (l *readLedger) record(path, digest string) {
 	l.mu.Lock()
@@ -118,7 +144,8 @@ func (t *readTool) Name() string        { return "read_file" }
 func (t *readTool) Kind() core.ToolKind { return core.ToolRead }
 
 func (t *readTool) Description() string {
-	return "Read a file from the workspace. Returns its contents with line numbers. " +
+	return "Read a file from the workspace, with line numbers. Large files return their first " +
+		"2000 lines and the total; use offset and limit to read a range. " +
 		"You must read a file before you can edit it."
 }
 
@@ -126,15 +153,24 @@ func (t *readTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
 		"type": "object",
 		"properties": {
-			"path": {"type": "string", "description": "Path relative to the workspace root."}
+			"path": {"type": "string", "description": "Path relative to the workspace root."},
+			"offset": {"type": "integer", "description": "First line to return, from 1."},
+			"limit": {"type": "integer", "description": "How many lines to return."}
 		},
 		"required": ["path"]
 	}`)
 }
 
-func (t *readTool) Run(_ context.Context, input json.RawMessage) (core.ToolResult, error) {
+// defaultReadLines is how much of a file an unranged read returns. Most source files fit whole;
+// for the ones that do not, the first part plus the total line count is what lets the model decide
+// which range it actually needs instead of paying for all of it.
+const defaultReadLines = 2000
+
+func (t *readTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResult, error) {
 	var args struct {
-		Path string `json:"path"`
+		Path   string `json:"path"`
+		Offset int    `json:"offset"`
+		Limit  int    `json:"limit"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return failure("could not read the arguments: %v", err), nil
@@ -152,9 +188,20 @@ func (t *readTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 	if info.IsDir() {
 		return failure("%s is a directory. Use glob to list what is in it.", args.Path), nil
 	}
+	ranged := args.Offset > 0 || args.Limit > 0
+	if info.Size() > maxFileBytes && !ranged {
+		return failure("%s is %d bytes, larger than the %d byte limit for a whole read. Use grep "+
+			"to find what you need, or offset and limit to read a range.",
+			args.Path, info.Size(), maxFileBytes), nil
+	}
+
 	if info.Size() > maxFileBytes {
-		return failure("%s is %d bytes, larger than the %d byte limit. Use grep to find what you "+
-			"need in it.", args.Path, info.Size(), maxFileBytes), nil
+		// Ranged read of a file too large to load: streamed to the range, never held whole.
+		body, err := streamRange(path, args.Offset, args.Limit)
+		if err != nil {
+			return failure("%s: %v", args.Path, err), nil
+		}
+		return core.ToolResult{Content: body}, nil
 	}
 
 	content, err := os.ReadFile(path)
@@ -164,31 +211,59 @@ func (t *readTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 
 	// Recorded against the resolved path, so two names for one file cannot be used to get around
 	// the freshness check.
-	t.ledger.record(path, digestOf(content))
+	digest := digestOf(content)
+	t.ledger.record(path, digest)
 
-	return core.ToolResult{Content: numberLines(string(content))}, nil
-}
+	body, first, last, total := numberRange(string(content), args.Offset, args.Limit)
 
-// numberLines prefixes each line with its number.
-//
-// Because an edit refers to a place in the file, and a model that can see line numbers describes
-// that place accurately far more often than one counting newlines in its head.
-func numberLines(content string) string {
-	if content == "" {
-		return "(this file is empty)"
+	// The same range of the same content, already sent in this conversation since its last
+	// compaction, is still in front of the model: a one-line answer costs a few tokens where the
+	// file would cost thousands. A changed file, a different range or a compaction in between sends
+	// the content again.
+	key := fmt.Sprintf("%s:%d-%d", path, first, last)
+	if t.ledger.alreadyShown(core.ConversationFrom(ctx), key, digest) {
+		return core.ToolResult{Content: fmt.Sprintf(
+			"%s lines %d-%d are unchanged since you last read them in this conversation; that "+
+				"result still applies.", args.Path, first, last)}, nil
 	}
 
+	if total > 0 && (first > 1 || last < total) {
+		body += fmt.Sprintf("\n(lines %d-%d of %d; use offset and limit to read more)", first, last, total)
+	}
+	return core.ToolResult{Content: body}, nil
+}
+
+// numberRange numbers the lines of a range of content. Offset is 1-based; zero means the start.
+// Limit zero means defaultReadLines. It returns the numbered text, the range it covers, and the
+// file's total line count.
+func numberRange(content string, offset, limit int) (string, int, int, int) {
+	if content == "" {
+		return "(this file is empty)", 0, 0, 0
+	}
 	lines := strings.Split(content, "\n")
-	// A trailing newline produces a final empty element that is not a line of the file.
 	if len(lines) > 1 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
-
-	var b strings.Builder
-	for i, line := range lines {
-		fmt.Fprintf(&b, "%6d\t%s\n", i+1, line)
+	total := len(lines)
+	if offset < 1 {
+		offset = 1
 	}
-	return b.String()
+	if limit <= 0 {
+		limit = defaultReadLines
+	}
+	if offset > total {
+		return fmt.Sprintf("(the file has %d lines; offset %d is past the end)", total, offset), offset, offset, total
+	}
+	last := offset + limit - 1
+	if last > total {
+		last = total
+	}
+	width := len(strconv.Itoa(last))
+	var b strings.Builder
+	for i := offset; i <= last; i++ {
+		fmt.Fprintf(&b, "%*d\t%s\n", width, i, lines[i-1])
+	}
+	return strings.TrimSuffix(b.String(), "\n"), offset, last, total
 }
 
 // editTool replaces an exact string in a file.
@@ -533,8 +608,9 @@ func (t *grepTool) Name() string        { return "grep" }
 func (t *grepTool) Kind() core.ToolKind { return core.ToolRead }
 
 func (t *grepTool) Description() string {
-	return "Search the text of files in the workspace. Returns matching lines with their file " +
-		"and line number."
+	return "Search file contents in the workspace. Returns path:line: text for each match. " +
+		"Literal by default; set regex for a regular expression. context adds lines around each " +
+		"match, which often saves reading the whole file."
 }
 
 func (t *grepTool) Schema() json.RawMessage {
@@ -542,7 +618,10 @@ func (t *grepTool) Schema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"query": {"type": "string", "description": "The text to search for."},
-			"glob": {"type": "string", "description": "Optional file pattern to limit the search, for example \"**/*.go\"."}
+			"glob": {"type": "string", "description": "Optional file pattern, for example \"**/*.go\"."},
+			"regex": {"type": "boolean", "description": "Treat query as a regular expression."},
+			"ignore_case": {"type": "boolean"},
+			"context": {"type": "integer", "description": "Lines of context around each match, up to 10."}
 		},
 		"required": ["query"]
 	}`)
@@ -551,10 +630,13 @@ func (t *grepTool) Schema() json.RawMessage {
 // maxGrepMatches bounds a search for the same reason a listing is bounded.
 const maxGrepMatches = 200
 
-func (t *grepTool) Run(_ context.Context, input json.RawMessage) (core.ToolResult, error) {
+func (t *grepTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResult, error) {
 	var args struct {
-		Query string `json:"query"`
-		Glob  string `json:"glob"`
+		Query      string `json:"query"`
+		Glob       string `json:"glob"`
+		Regex      bool   `json:"regex"`
+		IgnoreCase bool   `json:"ignore_case"`
+		Context    int    `json:"context"`
 	}
 	if err := json.Unmarshal(input, &args); err != nil {
 		return failure("could not read the arguments: %v", err), nil
@@ -566,6 +648,36 @@ func (t *grepTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 		if err := checkPattern(args.Glob); err != nil {
 			return failure("%q is not a valid pattern: %v", args.Glob, err), nil
 		}
+	}
+
+	if args.Context < 0 {
+		args.Context = 0
+	}
+	if args.Context > 10 {
+		args.Context = 10
+	}
+
+	// ripgrep when it is installed: it respects .gitignore, skips hidden files such as .env, and is
+	// one to two orders of magnitude faster on a large tree than walking it here.
+	if result, ok := ripgrep(ctx, t.w.Root(), args.Query, args.Glob, args.Regex, args.IgnoreCase, args.Context); ok {
+		return result, nil
+	}
+
+	match := func(line string) bool { return strings.Contains(line, args.Query) }
+	switch {
+	case args.Regex:
+		pattern := args.Query
+		if args.IgnoreCase {
+			pattern = "(?i)" + pattern
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return failure("%q is not a valid regular expression: %v", args.Query, err), nil
+		}
+		match = re.MatchString
+	case args.IgnoreCase:
+		lower := strings.ToLower(args.Query)
+		match = func(line string) bool { return strings.Contains(strings.ToLower(line), lower) }
 	}
 
 	root := t.w.Root()
@@ -606,15 +718,22 @@ func (t *grepTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 			return nil
 		}
 
-		for i, line := range strings.Split(string(content), "\n") {
-			if !strings.Contains(line, args.Query) {
+		lines := strings.Split(string(content), "\n")
+		for i, line := range lines {
+			if !match(line) {
 				continue
 			}
 			if len(hits) >= maxGrepMatches {
 				truncated = true
 				return filepath.SkipAll
 			}
+			for c := max(0, i-args.Context); c < i; c++ {
+				hits = append(hits, fmt.Sprintf("%s-%d- %s", rel, c+1, strings.TrimSpace(lines[c])))
+			}
 			hits = append(hits, fmt.Sprintf("%s:%d: %s", rel, i+1, strings.TrimSpace(line)))
+			for c := i + 1; c <= min(len(lines)-1, i+args.Context); c++ {
+				hits = append(hits, fmt.Sprintf("%s-%d- %s", rel, c+1, strings.TrimSpace(lines[c])))
+			}
 		}
 		return nil
 	})
@@ -647,4 +766,101 @@ func looksBinary(content []byte) bool {
 		}
 	}
 	return false
+}
+
+// ripgrep runs rg when it is on PATH. The second result is false when it is not, or when it failed
+// in a way the built-in search should answer instead.
+func ripgrep(ctx context.Context, root, query, glob string, regex, ignoreCase bool, context int) (core.ToolResult, bool) {
+	rg, err := exec.LookPath("rg")
+	if err != nil {
+		return core.ToolResult{}, false
+	}
+	args := []string{"--line-number", "--no-heading", "--color", "never", "--max-columns", "400",
+		"--max-columns-preview", "--max-filesize", strconv.Itoa(maxFileBytes), "--glob", "!.git"}
+	if !regex {
+		args = append(args, "--fixed-strings")
+	}
+	if ignoreCase {
+		args = append(args, "--ignore-case")
+	}
+	if context > 0 {
+		args = append(args, "--context", strconv.Itoa(context))
+	}
+	if glob != "" {
+		args = append(args, "--glob", glob)
+	}
+	args = append(args, "--regexp", query, "--", ".")
+
+	cmd := exec.CommandContext(ctx, rg, args...)
+	cmd.Dir = root
+	cmd.Env = childenv.Inherited()
+	out, err := cmd.Output()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return core.ToolResult{Content: fmt.Sprintf("No matches for %q.", query)}, true
+	case errors.As(err, &exit) && exit.ExitCode() == 2 && regex:
+		return failure("%q is not a valid regular expression: %s", query,
+			strings.TrimSpace(string(exit.Stderr))), true
+	default:
+		return core.ToolResult{}, false
+	}
+
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	truncated := false
+	if len(lines) > maxGrepMatches*(1+2*context) {
+		lines = lines[:maxGrepMatches*(1+2*context)]
+		truncated = true
+	}
+	for i, line := range lines {
+		lines[i] = strings.TrimPrefix(line, "./")
+	}
+	content := strings.Join(lines, "\n")
+	if truncated {
+		content += fmt.Sprintf("\n\n(stopped at %d matches, there are more; narrow the query or glob)", maxGrepMatches)
+	}
+	return core.ToolResult{Content: content}, true
+}
+
+// streamRange numbers a range of a file by reading it a line at a time, counting the rest.
+func streamRange(path string, offset, limit int) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	if offset < 1 {
+		offset = 1
+	}
+	if limit <= 0 {
+		limit = defaultReadLines
+	}
+	last := offset + limit - 1
+	width := len(strconv.Itoa(last))
+	reader := bufio.NewReaderSize(file, 64*1024)
+	var b strings.Builder
+	line := 0
+	for {
+		text, err := reader.ReadString('\n')
+		if text != "" {
+			line++
+			if line >= offset && line <= last {
+				if len(text) > 4000 {
+					text = text[:4000] + " ...(line cut)\n"
+				}
+				fmt.Fprintf(&b, "%*d\t%s", width, line, strings.TrimRight(text, "\n")+"\n")
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	if line < offset {
+		return fmt.Sprintf("(the file has %d lines; offset %d is past the end)", line, offset), nil
+	}
+	if last > line {
+		last = line
+	}
+	return strings.TrimSuffix(b.String(), "\n") + fmt.Sprintf("\n(lines %d-%d of %d)", offset, last, line), nil
 }

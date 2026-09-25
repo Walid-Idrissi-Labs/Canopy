@@ -191,11 +191,15 @@ func (c *Client) buildRequest(req core.Request) chatRequest {
 			})
 		}
 
-		if msg.Text == "" && len(msg.ToolCalls) == 0 {
+		text := msg.Text
+		if msg.Note != "" {
+			text = core.ReminderText(msg.Note) + "\n\n" + text
+		}
+		if text == "" && len(msg.ToolCalls) == 0 {
 			continue
 		}
 
-		wire := chatMessage{Role: string(msg.Role), Content: msg.Text}
+		wire := chatMessage{Role: string(msg.Role), Content: text}
 		for _, call := range msg.ToolCalls {
 			wire.ToolCalls = append(wire.ToolCalls, chatToolCall{
 				ID:   call.ID,

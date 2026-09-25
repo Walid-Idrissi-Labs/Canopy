@@ -2,9 +2,11 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -318,5 +320,122 @@ func TestCompactionsSurviveARestart(t *testing.T) {
 	}
 	if len(loaded.Turns) != 10 {
 		t.Errorf("%d turns after restart, want all 10 still kept", len(loaded.Turns))
+	}
+}
+
+// The meter reads the size of the last request on the provider's own count, cached input included.
+// A cached conversation reports most of its input as cache reads, and a meter that ignored them read
+// a large conversation as nearly empty, so the warning and the automatic trigger never fired.
+func TestTheMeterCountsCachedInput(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: []core.StreamEvent{
+		{Kind: core.EventText, Text: "ok"},
+		{Kind: core.EventDone, StopReason: core.StopEndTurn,
+			Usage: core.Usage{InputTokens: 50, CacheReadTokens: 90_000, CacheWriteTokens: 1_000, OutputTokens: 200}},
+	}}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	s := e.Create("claude", "claude-opus-5")
+	turnID, err := e.Send(s.ID, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, e, s.ID, turnID)
+	got, _ := e.Session(s.ID)
+	if use := got.ContextUse(); use.Tokens < 91_000 {
+		t.Fatalf("the meter reads %d tokens for a request of 91,250", use.Tokens)
+	}
+}
+
+// Past the budget, the conversation is compacted at the turn boundary without being asked, and the
+// compaction is recorded like any other so the transcript announces it.
+func TestAConversationPastItsBudgetCompactsItself(t *testing.T) {
+	big := []core.StreamEvent{
+		{Kind: core.EventText, Text: "answer"},
+		{Kind: core.EventDone, StopReason: core.StopEndTurn,
+			Usage: core.Usage{InputTokens: 100, CacheReadTokens: core.AutoCompactCeiling, OutputTokens: 100}},
+	}
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	s := answered(t, e, client, keepRecentTurns+2)
+
+	client.events = big
+	turnID, err := e.Send(s.ID, "one more")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, e, s.ID, turnID)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, _ := e.Session(s.ID); len(got.Compactions) > 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("a conversation past its budget was not compacted at the turn boundary")
+}
+
+// Turned off, it stays off.
+func TestAutomaticCompactionCanBeTurnedOff(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	e.SetAutoCompact(false)
+	s := answered(t, e, client, keepRecentTurns+2)
+	client.events = []core.StreamEvent{
+		{Kind: core.EventText, Text: "answer"},
+		{Kind: core.EventDone, StopReason: core.StopEndTurn,
+			Usage: core.Usage{CacheReadTokens: core.AutoCompactCeiling * 2}},
+	}
+	turnID, _ := e.Send(s.ID, "one more")
+	waitForTurn(t, e, s.ID, turnID)
+	time.Sleep(200 * time.Millisecond)
+	if got, _ := e.Session(s.ID); len(got.Compactions) != 0 {
+		t.Fatal("compaction ran with automatic compaction turned off")
+	}
+}
+
+// A second compaction summarises the first summary and the turns since, not the whole
+// conversation again, or it would overflow the window it exists to make room in.
+func TestASecondCompactionDoesNotResendTheFirstTurns(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("answer")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	s := e.Create("claude", "claude-opus-5")
+	send := func(text string) {
+		client.events = reply("answer")
+		turnID, err := e.Send(s.ID, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForTurn(t, e, s.ID, turnID)
+	}
+	for i := 0; i < keepRecentTurns+2; i++ {
+		send(fmt.Sprintf("question-%d", i))
+	}
+	client.events = reply("FIRST SUMMARY")
+	first, err := e.Compact(context.Background(), s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Apply(s.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		send(fmt.Sprintf("later-%d", i))
+	}
+	client.events = reply("SECOND SUMMARY")
+	if _, err := e.Compact(context.Background(), s.ID); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	sent := client.history
+	client.mu.Unlock()
+	var all strings.Builder
+	for _, m := range sent {
+		all.WriteString(m.Text)
+	}
+	if strings.Contains(all.String(), "question-0") || !strings.Contains(all.String(), "FIRST SUMMARY") {
+		t.Fatalf("the second compaction resent turns the first had already summarised:\n%s", all.String())
 	}
 }
