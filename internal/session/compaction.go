@@ -272,7 +272,13 @@ func splitForCompaction(turns []core.Turn) (older, kept []core.Turn) {
 // like any other compaction. Best effort: a conversation that is busy, too short, or whose summary
 // fails is left as it was, and the manual command still works.
 func (e *Engine) autoCompact(ctx context.Context, sessionID string) bool {
-	if e.autoCompactOff {
+	return e.compactPast(ctx, sessionID, false)
+}
+
+// compactPast compacts when the conversation is past its budget, or regardless when force is set,
+// which is the answer to a provider saying the conversation no longer fits at all.
+func (e *Engine) compactPast(ctx context.Context, sessionID string, force bool) bool {
+	if e.autoCompactOff && !force {
 		return false
 	}
 	e.mu.Lock()
@@ -285,7 +291,7 @@ func (e *Engine) autoCompact(ctx context.Context, sessionID string) bool {
 	tools, _ := e.toolsForLocked(sessionID)
 	e.mu.Unlock()
 
-	if session.ContextUse().Tokens < core.AutoCompactTokens(core.WindowFor(session.Model)) {
+	if !force && session.ContextUse().Tokens < core.AutoCompactTokens(core.WindowFor(session.Model)) {
 		return false
 	}
 	if !PlanCompaction(session).Possible() {

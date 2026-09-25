@@ -885,6 +885,19 @@ func (e *Engine) run(
 		steps := append([]core.Message(nil), outcome.Messages[len(history):]...)
 		e.update(sessionID, turnID, func(t *core.Turn) { t.Steps = steps })
 	}
+	if tooLong(outcome.Stop, err) {
+		// The provider says the conversation no longer fits. Compacting now means the next message
+		// fits; retrying this one silently would spend a second request on an answer the person did
+		// not see asked for. The turn says what happened and what to do.
+		compacted := e.compactPast(context.WithoutCancel(ctx), sessionID, true)
+		reason := errors.New("the conversation no longer fits the model's context window")
+		if compacted {
+			reason = errors.New("the conversation no longer fit the model's context window, so the " +
+				"older part has been summarised; send the message again")
+		}
+		e.finish(sessionID, turnID, core.TurnFailed, reason, outcome.Usage, client.Name())
+		return
+	}
 	if err != nil {
 		// failureState rather than a flat TurnFailed: a provider can take several seconds to send
 		// its first byte, and somebody who presses escape in that window has stopped the turn
@@ -1368,4 +1381,13 @@ func pendingModeNote(s core.Session, mode core.Mode) string {
 		}
 	}
 	return mode.Prompt
+}
+
+// tooLong reports whether a turn ended because the conversation outgrew the model's window.
+func tooLong(stop core.StopReason, err error) bool {
+	if stop == core.StopContextExceeded {
+		return true
+	}
+	var provider *core.ProviderError
+	return errors.As(err, &provider) && provider.Kind == core.ErrContextLength
 }
