@@ -108,14 +108,7 @@ func TestAnExplicitSendStillSendsAndAConfirmedCompactionStillRuns(t *testing.T) 
 	if cmd == nil {
 		t.Fatal("the second press asked for nothing")
 	}
-	// The compaction may come batched with the spinner's timer, so every command in a batch runs.
-	if batch, ok := cmd().(tea.BatchMsg); ok {
-		for _, c := range batch {
-			if c != nil {
-				c()
-			}
-		}
-	}
+	cmd()
 
 	if engine.compacted != 1 {
 		t.Errorf("the confirmed compaction ran %d times", engine.compacted)

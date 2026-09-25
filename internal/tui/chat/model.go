@@ -991,12 +991,6 @@ func (m Model) compact() (Model, tea.Cmd) {
 		result, err := engine.Compact(context.Background(), sessionID)
 		return compactedMsg{result: result, err: err}
 	}
-	// The summary call can take a while and the spinner is what says it is still going.
-	if !m.ticking {
-		m.ticking = true
-		m.tickGeneration++
-		return m, tea.Batch(compact, tick(m.tickGeneration))
-	}
 	return m, compact
 }
 
