@@ -8081,6 +8081,15 @@ through theme styles and a rewrite needs its own golden review.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-V04 Find in the conversation, and copy the last reply (part of V-04)
+`status: review | owner: Claude | branch: feat/transcript-search`
+
+ctrl+f opens a find bar that takes every key: matches are found case-insensitively across the
+rendered transcript, the view scrolls to the newest and marks it with the selection highlight, enter
+and up walk to older ones, down to newer, esc closes and leaves the view there; it does not open on
+an empty conversation. ctrl+y copies the last fenced code block of the latest reply, or the reply.
+Tests cover the walk, the count, no match, the empty case and both copies. Mutation-checked. Still
+open from V-04: collapsible tool cards beyond ctrl+o, side-by-side diffs, virtualised rendering.
 ### Z-V05 Input: @ mentions, $EDITOR, # notes (part of V-05)
 `status: review | owner: Claude | branch: feat/input-extras`
 

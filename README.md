@@ -451,6 +451,12 @@ socket only you can reach, and speaks the same protocol as `canopy acp`. A quest
 while nobody is attached waits for the next `canopy attach`, and the server says which conversation
 is waiting.
 
+### Finding and copying
+
+ctrl+f finds text in the conversation, newest first: the view moves to each match and marks it, enter
+goes to an older one and down to a newer one, and esc leaves the view where the search took it.
+ctrl+y copies the last code block of the latest reply, or the whole reply when it has none.
+
 ## Where the tokens go
 
 Every request resends the conversation, so what it costs is decided by how much of that is read

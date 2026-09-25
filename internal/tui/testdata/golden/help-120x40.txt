@@ -25,6 +25,8 @@ chat
   mouse drag            select conversation text, copied when you let go
   ctrl+home / ctrl+end  the top, and back to following
   alt+enter             a line break instead of sending
+  ctrl+f                find in the conversation; enter older, down newer
+  ctrl+y                copy the last code block, or the last reply
   ctrl+p                every command, mode, theme and file, as you type
   @                     a file in this project, which narrows as you type
   ctrl+x ctrl+e         write the message in your editor
@@ -35,6 +37,4 @@ chat
   any other key         refuse it
 
 another agent's question, above the box
-  enter                 approve it once, while the box is empty
-  backspace             decline it, while the box is empty
   j/k scroll   any other key back
