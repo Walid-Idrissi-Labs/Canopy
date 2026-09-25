@@ -8081,6 +8081,22 @@ through theme styles and a rewrite needs its own golden review.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-V05 Input: @ mentions, $EDITOR, # notes (part of V-05)
+`status: review | owner: Claude | branch: feat/input-extras`
+
+`@` at a word start opens the command list's file mode over `git ls-files --cached --others
+--exclude-standard` (cached ten seconds, capped at 20,000), ranked name match, path match, letters in
+order, shorter first; tab and enter complete. ctrl+x ctrl+e hands the box to $VISUAL/$EDITOR through
+tea.ExecProcess and reads the file back; ctrl+x alone never eats the next key. `# note` appends to
+AGENTS.md (refused through a link), re-granting trust only where AGENTS.md still matches what was
+trusted. Tests: ranking, completion by tab and enter, no menu inside a word or without a source, the
+chord, notes kept not sent and a failed note kept in the box, trust kept for your own note and not
+for an unreviewed edit, the link refused, git's file list with ignored files left out.
+Mutation-checked. Still open from V-05: ctrl+r history search (ctrl+r is compaction, Q-21), `!`
+shell passthrough, large paste chips, vim mode.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`
 
