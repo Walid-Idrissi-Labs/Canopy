@@ -187,6 +187,10 @@ type Turn struct {
 	// before it existed, which History rebuilds the old way.
 	Steps []Message
 
+	// Notices are things said about the turn rather than in it, a search the provider ran for it,
+	// the statement a delegated route opens with. Shown, not sent.
+	Notices []string
+
 	// Context is the size of the last request this turn sent, cached and uncached input together,
 	// plus what came back. It is what the conversation measures on the provider's own count, which
 	// the turn's Usage cannot say: Usage adds up every step, so a ten step turn reports roughly ten

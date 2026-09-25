@@ -91,6 +91,9 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// webSearch offers the provider's own web search on every request; see SetWebSearch.
+	webSearch bool
+
 	// maxSteps bounds the model calls in one turn; zero means the loop's default.
 	maxSteps int
 
@@ -889,7 +892,7 @@ func (e *Engine) run(
 	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
 	// call, because a system prompt that changed mid conversation would rewrite what the model
 	// believes it was told earlier.
-	request := core.Request{Model: model, Messages: history, System: e.systemPrompt()}
+	request := core.Request{Model: model, Messages: history, System: e.systemPrompt(), WebSearch: e.webSearchOn()}
 
 	// Tools learn which conversation epoch they serve, so a repeated read can be answered with a
 	// reference to what this conversation was already sent. A compaction starts a new epoch.
@@ -1085,6 +1088,14 @@ type turnObserver struct {
 
 func (o *turnObserver) Text(chunk string) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Text += chunk })
+}
+
+func (o *turnObserver) Notice(text string) {
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		if n := len(t.Notices); n == 0 || t.Notices[n-1] != text {
+			t.Notices = append(t.Notices, text)
+		}
+	})
 }
 
 func (o *turnObserver) Thinking(chunk string) {
@@ -1503,4 +1514,18 @@ func (e *Engine) PendingJoins(sessionID string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.joinNotes[sessionID])
+}
+
+// SetWebSearch offers the provider's own web search to every conversation, where the provider has
+// one. Set once at startup: the tools a request carries are part of what the provider caches.
+func (e *Engine) SetWebSearch(on bool) {
+	e.mu.Lock()
+	e.webSearch = on
+	e.mu.Unlock()
+}
+
+func (e *Engine) webSearchOn() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.webSearch
 }

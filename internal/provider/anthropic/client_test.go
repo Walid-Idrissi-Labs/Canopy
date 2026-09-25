@@ -513,3 +513,18 @@ func TestClassifiedErrorsKeepTheProviderOwnWords(t *testing.T) {
 		}
 	}
 }
+
+// Web search is Anthropic's server tool, the filtering version on models that have it, and is only
+// offered when asked for.
+func TestWebSearchIsOfferedOnlyWhenAsked(t *testing.T) {
+	req := userRequest("what changed in go 1.26")
+	off, _ := testClient().buildParams(req)
+	if body, _ := json.Marshal(off); strings.Contains(string(body), "web_search") {
+		t.Fatalf("web search offered without being asked:\n%s", body)
+	}
+	req.WebSearch = true
+	on, _ := testClient().buildParams(req)
+	if body, _ := json.Marshal(on); !strings.Contains(string(body), `"web_search_20260209"`) {
+		t.Fatalf("web search was not offered:\n%s", body)
+	}
+}

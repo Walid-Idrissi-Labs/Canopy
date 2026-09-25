@@ -148,7 +148,11 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 	}
 	params.Messages = messages
 
-	if tools := buildTools(req.Tools); len(tools) > 0 {
+	tools := buildTools(req.Tools)
+	if req.WebSearch {
+		tools = append(tools, webSearchTool(model))
+	}
+	if len(tools) > 0 {
 		params.Tools = tools
 	}
 
@@ -493,4 +497,14 @@ func (c *Client) scrub(text string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, value, core.Redacted)
+}
+
+// webSearchTool is Anthropic's server-side search. The dynamic-filtering version, which keeps page
+// boilerplate out of the context, where the model has it; the basic one elsewhere. Bounded per
+// request, since each search is billed.
+func webSearchTool(model string) sdk.ToolUnionParam {
+	if adaptiveThinking(model) {
+		return sdk.ToolUnionParam{OfWebSearchTool20260209: &sdk.WebSearchTool20260209Param{MaxUses: sdk.Int(8)}}
+	}
+	return sdk.ToolUnionParam{OfWebSearchTool20250305: &sdk.WebSearchTool20250305Param{MaxUses: sdk.Int(8)}}
 }

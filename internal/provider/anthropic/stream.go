@@ -71,6 +71,14 @@ func (s *stream) Next() bool {
 
 // queueDeltas turns one SDK event into whatever core events it implies, which is often none.
 func (s *stream) queueDeltas(event sdk.MessageStreamEventUnion) {
+	// A search the provider ran for this reply is said where it happens, since its results arrive
+	// inside the reply rather than as a tool call Canopy made.
+	if start, ok := event.AsAny().(sdk.ContentBlockStartEvent); ok {
+		if use, ok := start.ContentBlock.AsAny().(sdk.ServerToolUseBlock); ok && use.Name == "web_search" {
+			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice, Text: "searching the web"})
+		}
+		return
+	}
 	delta, ok := event.AsAny().(sdk.ContentBlockDeltaEvent)
 	if !ok {
 		return

@@ -293,6 +293,12 @@ func (l *Loop) step(ctx context.Context, req core.Request, obs Observer) (reply,
 			obs.Text(event.Text)
 		case core.EventThinking:
 			obs.Thinking(event.Text)
+		case core.EventNotice:
+			// Said about the turn rather than in it: a search the provider ran, or a route's own
+			// statement of whose permissions apply. Optional for an observer to hear.
+			if n, ok := obs.(interface{ Notice(string) }); ok {
+				n.Notice(event.Text)
+			}
 		case core.EventToolCall:
 			out.calls = append(out.calls, *event.ToolCall)
 			obs.ToolRequested(*event.ToolCall)
