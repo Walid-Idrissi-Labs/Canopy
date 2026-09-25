@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -939,4 +940,49 @@ func TestACallCutOffByTheLengthCapIsNotRecorded(t *testing.T) {
 			t.Fatalf("a cut-off call was recorded without a result: %+v", m)
 		}
 	}
+}
+
+// A model that repeats the same call and gets the same answer is told so on the third time and
+// stopped on the fifth, instead of spending the whole step budget.
+func TestRepeatingTheSameCallWithoutProgressIsStopped(t *testing.T) {
+	var turns [][]core.StreamEvent
+	for i := 0; i < 10; i++ {
+		turns = append(turns, []core.StreamEvent{
+			{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: fmt.Sprintf("c%d", i), Name: "count", Input: []byte(`{}`)}},
+			{Kind: core.EventDone, StopReason: core.StopToolUse},
+		})
+	}
+	client := &scriptedClient{turns: turns}
+	tools := core.NewToolRegistry()
+	tools.MustRegister(&sameAnswer{})
+	loop := &Loop{Client: client, Tools: tools, Trust: core.TrustStandard}
+	outcome, err := loop.Run(context.Background(), core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "go"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.LimitHit == "" || outcome.Steps != 5 {
+		t.Fatalf("stopped after %d steps with %q; want a no-progress stop at 5", outcome.Steps, outcome.LimitHit)
+	}
+	warned := false
+	for _, m := range outcome.Messages {
+		for _, r := range m.ToolResults {
+			if strings.Contains(r.Content, "this exact call has now returned") {
+				warned = true
+			}
+		}
+	}
+	if !warned {
+		t.Fatal("the model was never told it was repeating itself")
+	}
+}
+
+type sameAnswer struct{}
+
+func (*sameAnswer) Name() string            { return "count" }
+func (*sameAnswer) Description() string     { return "always the same" }
+func (*sameAnswer) Kind() core.ToolKind     { return core.ToolRead }
+func (*sameAnswer) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (*sameAnswer) Run(context.Context, json.RawMessage) (core.ToolResult, error) {
+	return core.ToolResult{Content: "3 files"}, nil
 }

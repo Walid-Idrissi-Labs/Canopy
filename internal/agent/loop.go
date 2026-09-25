@@ -178,6 +178,7 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 	}
 
 	outcome := Outcome{Messages: messages}
+	repeats := map[string]int{}
 
 	for step := 1; ; step++ {
 		if step > maxSteps {
@@ -236,8 +237,24 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 		}
 
 		results := make([]core.ToolResult, 0, len(reply.calls))
+		stuck := false
 		for _, call := range reply.calls {
 			result := l.invoke(ctx, call, approver, obs)
+
+			// The same call with the same answer, again: a model going round in a circle, rerunning
+			// an unchanged failing test or reading a file it just read. Said to it plainly on the
+			// third time, and the turn is stopped with a blocker on the fifth, rather than spending
+			// the whole step budget learning nothing.
+			key := call.Name + "\x00" + string(call.Input) + "\x00" + result.Content
+			repeats[key]++
+			switch n := repeats[key]; {
+			case n == 3:
+				result.Content += fmt.Sprintf("\n\n(Canopy: this exact call has now returned this exact "+
+					"result %d times in this turn. Doing it again will not change the answer; try a "+
+					"different approach, or stop and say precisely what is blocking you.)", n)
+			case n >= 5:
+				stuck = true
+			}
 			results = append(results, result)
 
 			// Cancellation is checked between calls rather than only around the model. A turn that
@@ -262,6 +279,12 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 
 		outcome.Messages = append(outcome.Messages,
 			core.Message{Role: core.RoleUser, ToolResults: results})
+		if stuck {
+			outcome.Stop = core.StopError
+			outcome.LimitHit = "stopped because the agent was going in circles: it repeated the same call with the same result " +
+				"five times without making progress"
+			return outcome, nil
+		}
 	}
 }
 
