@@ -192,6 +192,9 @@ func (c *Client) buildRequest(req core.Request) chatRequest {
 		}
 
 		text := msg.Text
+		for i := len(msg.Reports) - 1; i >= 0; i-- {
+			text = core.ReportText(msg.Reports[i]) + "\n\n" + text
+		}
 		if msg.Note != "" {
 			text = core.ReminderText(msg.Note) + "\n\n" + text
 		}

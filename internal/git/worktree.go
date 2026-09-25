@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -84,6 +85,11 @@ func (r *Repo) Worktrees(ctx context.Context) ([]core.WorkspaceSnapshot, error) 
 		if i == 0 {
 			snapshot.Ownership = core.OwnershipPrimary
 		} else {
+			// A worktree whose directory was deleted outside Canopy is gone, whatever git's
+			// administrative record says; a locked one is never pruned by git, so it is dropped here.
+			if _, err := os.Stat(snapshot.Path); errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			snapshot.Ownership = ownershipOf(snapshot.Path)
 		}
 		found = append(found, snapshot)
@@ -107,6 +113,11 @@ func parseWorktreeBlock(block string) (core.WorkspaceSnapshot, bool) {
 			snapshot.Branch = strings.TrimPrefix(value, "refs/heads/")
 		case "detached":
 			snapshot.Detached = true
+		case "locked":
+			snapshot.Locked = value
+			if snapshot.Locked == "" {
+				snapshot.Locked = "locked"
+			}
 		case "bare":
 			// A bare repository has no working tree, so there is nothing for an agent to work in
 			// and nothing to report a dirty state for.
@@ -198,14 +209,22 @@ func (r *Repo) Create(ctx context.Context, name, branch string) (core.WorkspaceS
 		return core.WorkspaceSnapshot{}, err
 	}
 
-	// Beside the repository rather than inside it. A worktree nested in the primary checkout appears
-	// in every glob, every grep and every build, and the first thing anybody notices is their test
-	// suite running twice.
+	// Outside the repository, and not beside it either. A worktree nested in the primary checkout
+	// appears in every glob, every grep and every build; one beside it fills the folder that holds
+	// the user's projects with directories they did not make and nothing ever removes. Canopy's own
+	// data directory holds them instead, one folder per repository.
 	root, err := r.run(ctx, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return core.WorkspaceSnapshot{}, fmt.Errorf("finding the repository root: %w", err)
 	}
-	path := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-"+name)
+	home, err := WorktreeHome(root)
+	if err != nil {
+		return core.WorkspaceSnapshot{}, err
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return core.WorkspaceSnapshot{}, fmt.Errorf("creating %s: %w", home, err)
+	}
+	path := filepath.Join(home, name)
 
 	if _, err := os.Stat(path); err == nil {
 		return core.WorkspaceSnapshot{}, fmt.Errorf(
@@ -230,6 +249,10 @@ func (r *Repo) Create(ctx context.Context, name, branch string) (core.WorkspaceS
 	if err := os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644); err != nil {
 		return undo(err)
 	}
+	// Locked while an agent works in it, with this process named, so `canopy worktree gc` in another
+	// terminal cannot reclaim it from under a live agent. A lock whose process has gone is stale and
+	// gc treats it as released.
+	_, _ = r.run(ctx, "worktree", "lock", "--reason", LockReason(os.Getpid()), path)
 
 	// Git reports the resolved path, and on macOS the temporary directory is a symlink, so a
 	// worktree created at one path is listed at another. Resolving here keeps the ID and the path
@@ -287,6 +310,9 @@ func (r *Repo) Remove(ctx context.Context, workspace core.WorkspaceSnapshot, for
 		}
 	}
 
+	// Canopy's own lock comes off first; a snapshot taken before the lock was placed does not say
+	// it is there, so this is not conditional on what the snapshot says.
+	_, _ = r.run(ctx, "worktree", "unlock", workspace.Path)
 	args := []string{"worktree", "remove", workspace.Path}
 	if force {
 		args = append(args, "--force")
@@ -476,4 +502,65 @@ func (r *Repo) runRaw(ctx context.Context, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %w (%d bytes dropped)", args[0], ErrOutputTruncated, result.Truncated)
 	}
 	return result.Output, nil
+}
+
+// WorktreeHomeEnvVar overrides where agent worktrees are created.
+const WorktreeHomeEnvVar = "CANOPY_WORKTREES"
+
+// WorktreeHome is the directory that holds the agent worktrees of the repository at root:
+// <data>/canopy/worktrees/<repository name>-<short hash of its path>. Hashed so two repositories
+// with the same name do not share a folder, and named so a person looking in it can tell which is
+// which.
+func WorktreeHome(root string) (string, error) {
+	base := os.Getenv(WorktreeHomeEnvVar)
+	if base == "" && testing.Testing() {
+		// A test binary never writes into the user's own data directory, whichever package's test
+		// happens to create a worktree.
+		base = filepath.Join(os.TempDir(), "canopy-test-worktrees")
+	}
+	if base == "" {
+		data := os.Getenv("XDG_DATA_HOME")
+		if data == "" {
+			config, err := os.UserConfigDir()
+			if err != nil {
+				return "", fmt.Errorf("finding Canopy's data directory: %w", err)
+			}
+			data = config
+		}
+		base = filepath.Join(data, "canopy", "worktrees")
+	}
+	// Resolved, so the same repository reached through a symlink has one home, as it has one
+	// toplevel in git's own answer.
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	sum := sha256.Sum256([]byte(root))
+	return filepath.Join(base, filepath.Base(root)+"-"+hex.EncodeToString(sum[:4])), nil
+}
+
+// LockReason is the lock reason naming a Canopy process.
+func LockReason(pid int) string { return fmt.Sprintf("in use by Canopy (pid %d)", pid) }
+
+// LockHolder is the Canopy process a lock reason names, or zero when it names none.
+func LockHolder(reason string) int {
+	var pid int
+	if _, err := fmt.Sscanf(reason, "in use by Canopy (pid %d)", &pid); err != nil {
+		return 0
+	}
+	return pid
+}
+
+// Reachable reports whether a commit is on some branch, so removing a worktree whose HEAD is that
+// commit loses nothing.
+func (r *Repo) Reachable(ctx context.Context, commit string) bool {
+	if commit == "" {
+		return false
+	}
+	out, err := r.run(ctx, "branch", "--contains", commit, "--format=%(refname)")
+	return err == nil && strings.TrimSpace(out) != ""
+}
+
+// Toplevel is the root of the working tree the repository was opened in.
+func (r *Repo) Toplevel(ctx context.Context) (string, error) {
+	return r.run(ctx, "rev-parse", "--show-toplevel")
 }
