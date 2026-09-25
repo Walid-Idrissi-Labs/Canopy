@@ -20,7 +20,8 @@ type Inventory struct {
 	// Answered the model's replies.
 	Asked    int
 	Answered int
-	// Reasoning is the model's thinking replayed as the provider sent it, signatures included.
+	// Reasoning is the thinking replayed with earlier replies: the text of thinking blocks and the
+	// data of redacted ones, signatures and framing left out.
 	Reasoning int
 	Calls     int
 	Results   int
