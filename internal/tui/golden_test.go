@@ -51,3 +51,23 @@ func TestGoldenTheFirstScreen(t *testing.T) {
 		store.Close()
 	}
 }
+
+// The help overlay and the credentials screen, whole, at the three sizes.
+func TestGoldenHelpAndKeys(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{80, 24}, {120, 40}, {200, 50}} {
+		for _, screen := range []struct {
+			name string
+			key  tea.KeyMsg
+		}{
+			{"help", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")}},
+			{"keys", tea.KeyMsg{Type: tea.KeyCtrlK}},
+		} {
+			store := fake.New()
+			var model tea.Model = tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
+			model, _ = model.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+			model, _ = model.Update(screen.key)
+			golden(t, fmt.Sprintf("%s-%dx%d", screen.name, size.w, size.h), model.View())
+			store.Close()
+		}
+	}
+}

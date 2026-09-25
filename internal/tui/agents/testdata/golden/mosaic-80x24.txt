@@ -1,0 +1,24 @@
+╭─ 1 alpha · idle ─────────────────────╮╭─ 2 bravo · idle ─────────────────────╮
+│ > what is happening                  ││ > what is happening                  │
+│                                      ││                                      │
+│ a reply from alpha                   ││ a reply from bravo                   │
+│                                      ││                                      │
+│                                      ││                                      │
+│                                      ││                                      │
+╰─────────────────────────────  ▄▄▀▄▄  ╯╰─────────────────────────────  ▄▄▀▄▄  ╯
+╭─ 3 carol · idle ─────────────────────╮╭─ 4 delta · idle ─────────────────────╮
+│ > what is happening                  ││ > what is happening                  │
+│                                      ││                                      │
+│ a reply from carol                   ││ a reply from delta                   │
+│                                      ││                                      │
+│                                      ││                                      │
+│                                      ││                                      │
+╰─────────────────────────────  ▄▄▀▄▄  ╯╰─────────────────────────────  ▄▄▀▄▄  ╯
+╭─ 5 echo · idle ──────────────────────╮╭─ 6 fox · idle ───────────────────────╮
+│ > what is happening                  ││ > what is happening                  │
+│                                      ││                                      │
+│ a reply from echo                    ││ a reply from fox                     │
+│                                      ││                                      │
+│                                      ││                                      │
+╰─────────────────────────────  ▄▄▀▄▄  ╯╰─────────────────────────────  ▄▄▀▄▄  ╯
+  page 1/2 · 2 more off screen  [ and ] to page
