@@ -445,6 +445,13 @@ socket only you can reach, and speaks the same protocol as `canopy acp`. A quest
 while nobody is attached waits for the next `canopy attach`, and the server says which conversation
 is waiting.
 
+### Approving a plan
+
+In plan mode the agent reads and writes nothing, and answers with a plan. Under a finished plan,
+with nothing typed, enter carries it out: the conversation moves to build mode and the agent is told
+the plan is approved, and to stop and say so if the plan turns out not to fit. Typing instead
+changes the plan.
+
 ## Where the tokens go
 
 Every request resends the conversation, so what it costs is decided by how much of that is read
