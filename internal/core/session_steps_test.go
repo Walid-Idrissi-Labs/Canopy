@@ -39,3 +39,16 @@ func TestReasoningFromBeforeACompactionIsNotReplayed(t *testing.T) {
 		t.Fatalf("a later turn lost its reasoning, or a kept turn lost its text: %s", got)
 	}
 }
+
+// The rebuild used for turns without recorded steps sends only calls that were answered.
+func TestAnUnansweredCallIsNotRebuiltIntoHistory(t *testing.T) {
+	s := Session{Turns: []Turn{{
+		Request:   Message{Role: RoleUser, Text: "go"},
+		ToolCalls: []ToolCall{{ID: "cut", Name: "write_file", Input: []byte(`{"path":"a`)}},
+	}}}
+	for _, m := range s.History() {
+		if len(m.ToolCalls) > 0 {
+			t.Fatalf("an unanswered call went back into history: %+v", m)
+		}
+	}
+}
