@@ -1398,6 +1398,16 @@ by repository trust. The distribution-format worry D-40 recorded is answered by 
 others already use rather than inventing one. A8-01's nested sub-agents, agents that spawn agents,
 remain out.
 
+## D-61 A project's tests run in the sandbox too. Decided 2026-09-25.
+
+Extends D-56. A test command is code in the repository, which an agent may have written, and runway
+runs it after every turn without asking; leaving it unconfined made the shell's boundary one step
+deep. The project's tests now run in the same sandbox as an agent's shell commands, wherever that
+sandbox is available, for the verification the interface runs, `canopy run -verify` and `canopy
+land`. A suite that writes outside the workspace, the temporary area and the toolchain caches fails
+there and says why; `CANOPY_SANDBOX=off` is the way out, for everything at once. Setup, hooks and
+MCP servers remain unconfined for now, each named in LIMITATIONS.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

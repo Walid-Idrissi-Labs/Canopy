@@ -137,10 +137,11 @@ be rediscovered by getting burned by it.
   that is enforced. The writable download caches (the Go module cache, Cargo's registry, Gradle's caches,
   npm's) are shared with your own builds, and a command can alter a file in them that a later build
   uses; the sandbox narrows what can be planted, it does not verify caches. Network is open by
-  default. Commands that
-  install into your home break inside it: `pip install --user`, `gem install`, global npm installs,
-  version managers (nvm, pyenv, rbenv), Homebrew, and anything writing `~/.local/bin` or most of
-  `~/.config`. Test commands, setup, hooks, MCP servers and delegated vendor agents still run
+  default. Commands that install into your home break inside it: `pip install --user`, `gem
+  install`, global npm installs, version managers (nvm, pyenv, rbenv), Homebrew, and anything
+  writing `~/.local/bin` or most of `~/.config`, and so do test commands that do: the project's
+  tests run in the same sandbox (D-61), so a suite that writes outside the workspace, the temporary
+  area and the caches fails there. Setup, hooks, MCP servers and delegated vendor agents still run
   unconfined. A command that runs without the sandbox says so, and `CANOPY_SANDBOX=off` switches it
   off.
 

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
 
@@ -81,5 +83,34 @@ func TestAnUnsandboxedCommandSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(result.Content, "without a sandbox") {
 		t.Fatalf("an unconfined command did not say so: %q", result.Content)
+	}
+}
+
+// A project's test command is code in the repository, which an agent may have written, so it runs
+// in the same sandbox as the agent's shell: it can write in the workspace and nowhere else.
+func TestProjectTestsAreConfined(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	w := testWorkspace(t)
+	// Beside the test's own source rather than in the temporary area, which the sandbox allows.
+	outside, err := os.MkdirTemp(".", "outside-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(outside) })
+	outside, _ = filepath.Abs(outside)
+	outside, _ = filepath.EvalSymlinks(outside)
+	test := exec.Test{Name: "sneaky", Command: exec.Invocation{
+		Shell: "echo ok > inside.txt && echo leaked > " + filepath.Join(outside, "leak.txt")}}
+	outcome := exec.RunTest(context.Background(), test, exec.Target{Dir: w.Root(), Sandbox: Confinement(w.Root())}, "r1")
+	if _, err := os.Stat(filepath.Join(outside, "leak.txt")); err == nil {
+		t.Fatalf("a test command wrote outside the workspace: %+v", outcome.Run)
+	}
+	if _, err := os.Stat(filepath.Join(w.Root(), "inside.txt")); err != nil {
+		t.Fatalf("a test command could not write in the workspace: %s", outcome.Output)
+	}
+	if outcome.Run.State == core.TestPassing {
+		t.Fatal("a test whose write was refused reported passing")
 	}
 }

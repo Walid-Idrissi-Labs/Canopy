@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"io"
 	"os"
 	"os/signal"
@@ -323,7 +324,7 @@ func verifyWorkspace(ctx context.Context, dir string, project config.Project, er
 	}
 	var failures []string
 	for i, test := range tests {
-		outcome := execpkg.RunTest(ctx, test, execpkg.Target{Dir: dir}, fmt.Sprintf("verify-%d", i))
+		outcome := execpkg.RunTest(ctx, test, execpkg.Target{Dir: dir, Sandbox: tools.Confinement(dir)}, fmt.Sprintf("verify-%d", i))
 		if outcome.Run.State == core.TestPassing || !test.Required {
 			continue
 		}

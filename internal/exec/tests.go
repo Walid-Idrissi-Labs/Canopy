@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
 
 // DefaultTestTimeout is how long a test command is given before it is treated as unable to finish.
@@ -95,6 +96,10 @@ type Target struct {
 	// would let a caller compute it early, hand it around, and bind a result to code that had
 	// already been edited by the time the command ran.
 	Revision func(ctx context.Context) (core.RevisionKey, string)
+
+	// Sandbox confines the test command, as an agent's shell commands are confined: a test is code
+	// in the repository, which an agent may have written. Nil runs it unconfined.
+	Sandbox *sandbox.Policy
 }
 
 // Outcome is a finished run and what the command printed.
@@ -162,6 +167,7 @@ func runPreparedTest(ctx context.Context, test Test, target Target, run core.Tes
 	result, err := Run(ctx, name, args, Options{
 		Dir:     target.Dir,
 		Timeout: timeout,
+		Sandbox: target.Sandbox,
 	})
 
 	switch {

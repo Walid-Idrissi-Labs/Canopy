@@ -23,6 +23,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 )
 
 // Subject is one agent, as far as verification is concerned.
@@ -325,6 +326,7 @@ func (v *Verifier) Verify(ctx context.Context, agent string) error {
 		Revision: func(ctx context.Context) (core.RevisionKey, string) {
 			return v.repo.Revision(ctx, subject.Dir)
 		},
+		Sandbox: tools.Confinement(subject.Dir),
 	}
 	for _, test := range tests {
 		if _, err := v.runner.Start(ctx, test, target); err != nil {

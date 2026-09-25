@@ -247,3 +247,17 @@ func (w *Workspace) SandboxPolicy() sandbox.Policy {
 	})
 	return w.policy
 }
+
+// Confinement is the sandbox for commands run in dir other than the agent's own, the project's tests
+// first: nil where there is no sandbox or it was switched off, so the caller runs them as before.
+func Confinement(dir string) *sandbox.Policy {
+	if sandbox.Disabled() || sandbox.Available() != nil {
+		return nil
+	}
+	w, err := OpenWorkspace(dir)
+	if err != nil {
+		return nil
+	}
+	policy := w.SandboxPolicy()
+	return &policy
+}
