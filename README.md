@@ -57,6 +57,7 @@ Those are stated plainly rather than deferred quietly, and
 - [Watch them, and steer without stopping them](#watch-them-and-steer-without-stopping-them)
 - [Git as a real tool, not a shell string](#git-as-a-real-tool-not-a-shell-string)
 - [Know which agent was actually right](#know-which-agent-was-actually-right)
+- [Where the tokens go](#where-the-tokens-go)
 - [Reusable prompt commands](#reusable-prompt-commands)
 - [Modes, on shift+tab](#modes-on-shifttab)
 - [A report for the pull request](#a-report-for-the-pull-request)
@@ -358,6 +359,27 @@ canopy run -p "..." -effort low -verify -escalate 2
 project's own tests decide the exit code (3 when they fail). `-escalate N` retries a red result up to
 N times, one effort level higher each time, with the failing output: run cheap, and pay for more
 thinking only when the evidence says it was needed.
+
+## Where the tokens go
+
+Every request resends the conversation, so what it costs is decided by how much of that is read
+from the provider's cache and how much is sent fresh. Canopy keeps the conversation append-only: a
+turn's messages, tool calls and the model's signed thinking are replayed exactly as they were
+exchanged, the system prompt and tools never change mid-conversation, and a test holds every request
+to beginning, byte for byte, with the one before it. What that buys is visible:
+
+- Under each finished turn, a quiet line gives the model, the time, the tokens read and written,
+  the share that came from the cache, and the cost where the price is known.
+- `/context` breaks the next request into its parts (system prompt, project instructions, tool
+  definitions, summary, messages, replies, replayed thinking, tool calls and results) and says how
+  much of the last turn came from the cache, with a plain warning when a later turn got nothing
+  from it.
+- A read of a file already sent and unchanged is answered with a short reference instead of the
+  file again, and long tool output is kept aside with its head and tail shown and the rest one
+  `read_output` away.
+- `canopy bench` runs built-in tasks, each a small project whose check fails until the work is
+  done, and reports the pass rate, tokens, cache reads and cost per passing task; `-compare` sets
+  one run against another. It calls the model, so it only runs when you type it.
 
 ## Reusable prompt commands
 
