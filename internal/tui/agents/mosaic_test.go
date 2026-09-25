@@ -167,3 +167,21 @@ func TestTheFiresOnlyDanceWhileWatchedAndWorking(t *testing.T) {
 		t.Error("the fires are dancing with no agent working")
 	}
 }
+
+// Every pane carries its agent's receipt on its border: what it has cost and how much of what it
+// read came from the cache, without the frame growing a column.
+func TestEachPaneCarriesItsReceipt(t *testing.T) {
+	e := eight()
+	e.statuses[0].Usage = core.Usage{InputTokens: 1000, CacheReadTokens: 9000, OutputTokens: 300,
+		CostUSD: 0.4213, CostKnown: true}
+	m := mosaic(e, 200, 40)
+	view := plain(m.Body())
+	if !strings.Contains(view, "$0.42 · 90% cached") {
+		t.Fatalf("the first pane has no receipt:\n%s", view)
+	}
+	for i, line := range strings.Split(m.Body(), "\n") {
+		if got := len([]rune(plain(line))); got > 200 {
+			t.Errorf("line %d is %d columns wide", i, got)
+		}
+	}
+}
