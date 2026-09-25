@@ -34,6 +34,10 @@ func TestAPictureNamedInAMessageIsAttached(t *testing.T) {
 	if cmd == nil || len(engine.sent) != 0 {
 		t.Fatal("the pictures were not read off the update loop")
 	}
+	// A second enter while they are read starts nothing more.
+	if _, again := m.Update(keyCode(tea.KeyEnter)); again != nil {
+		t.Fatal("a second enter started a second read, and would send twice")
+	}
 	m, _ = m.Update(cmd())
 	if len(engine.sent) != 1 || len(engine.pictures) != 1 || engine.pictures[0].MediaType != "image/png" {
 		t.Fatalf("sent %v with %d pictures", engine.sent, len(engine.pictures))

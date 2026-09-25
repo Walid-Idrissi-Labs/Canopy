@@ -317,8 +317,24 @@ type Model struct {
 	commands config.CommandSet
 
 	// findPictures and loadPictures find and read the pictures a message names; see SetPictures.
-	findPictures func(prompt string) []string
-	loadPictures func(paths []string) ([]core.Image, error)
+	findPictures    func(prompt string) []string
+	readingPictures bool
+	loadPictures    func(paths []string) ([]core.Image, error)
+	// search is the find bar, on ctrl+f.
+	search search
+	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
+	// SetRemember.
+	files    func() []string
+	remember func(note string) (string, error)
+
+	// noteAsked is a "# note" waiting for the second enter that keeps it.
+	noteAsked string
+
+	// chordX is set by ctrl+x, the first half of ctrl+x ctrl+e, which opens the box in $EDITOR.
+	chordX bool
+
+	// palette is the command palette, on ctrl+p.
+	palette palette
 
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
@@ -623,6 +639,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case picturesReadyMsg:
 		return m.picturesReady(msg)
+	case editedMsg:
+		if msg.err != nil {
+			m.err = "the editor did not finish: " + msg.err.Error()
+			return m, nil
+		}
+		m.input.SetValue(msg.text)
+		m.err = ""
+		m.refreshMenu()
+		return m, nil
 
 	case tea.PasteMsg:
 		// Pasted text goes into the message box whole: an enter inside a paste is a line break in
@@ -1090,6 +1115,53 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.notice = ""
 	}
 
+	// The find bar takes every key while it is up, unless a question has arrived, which takes the
+	// keyboard back; ctrl+f opens it on a conversation with something to find.
+	if m.search.open {
+		if !m.awaiting {
+			return m.searchKey(msg)
+		}
+		m.search = search{}
+		m.sel = selection{}
+	}
+	if msg.String() == "ctrl+f" && !m.awaiting && !m.blank() {
+		m.openSearch()
+		return m, nil
+	}
+	if msg.String() == "ctrl+y" && !m.awaiting {
+		return m.copyReply()
+	}
+
+	// The palette takes every key while it is up; ctrl+p opens it when no question is.
+	if m.palette.open {
+		// A question that arrived while the palette was up takes the keyboard back: its keys are
+		// answers, and a "y" meant for it must not land in the palette's query.
+		if !m.awaiting {
+			return m.paletteKey(msg)
+		}
+		m.palette = palette{}
+	}
+	if msg.String() == "ctrl+p" && !m.awaiting {
+		m.openPalette()
+		return m, nil
+	}
+
+	// ctrl+x ctrl+e opens the box in $EDITOR, the chord shells use. The first half only waits for
+	// the second; any other key after it is itself, so ctrl+x never eats a keystroke.
+	if !m.awaiting {
+		if m.chordX {
+			m.chordX = false
+			if msg.String() == "ctrl+e" {
+				m.notice = ""
+				return m, openEditor(m.input.Value())
+			}
+		} else if msg.String() == "ctrl+x" {
+			m.chordX = true
+			m.notice = "ctrl+e opens the message in your editor"
+			return m, nil
+		}
+	}
+
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
 	// into the message box, and typing an answer to a yes or no question into a text field and
 	// wondering why nothing happens is a bad minute to give somebody.
@@ -1170,7 +1242,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			// not. Without the second half, typing a command out in full and pressing enter would
 			// put the name you already typed back in the box and do nothing, which reads as the
 			// key having stopped working.
-			if chosen, ok := m.menu.chosen(); ok && m.input.Value() != "/"+chosen.name {
+			if chosen, ok := m.menu.chosen(); ok && m.menu.sigil == "@" {
+				m.acceptFromMenu()
+				return m, nil
+			} else if ok && m.input.Value() != "/"+chosen.name {
 				m.acceptFromMenu()
 				return m, nil
 			}
@@ -1269,6 +1344,16 @@ func (m *Model) acceptFromMenu() bool {
 	if !ok {
 		return false
 	}
+	if m.menu.sigil == "@" {
+		// The mention being typed is replaced by the whole path, and the rest of the box kept on
+		// either side of it.
+		before := m.input.BeforeCursor()
+		at := strings.LastIndexAny(before, " \t\n")
+		m.input.Splice(before[:at+1]+"@"+chosen.name+" ", m.input.AfterCursor())
+		m.menu = menu{}
+		m.err = ""
+		return true
+	}
 	m.input.SetValue("/" + chosen.name + " ")
 	m.menu = menu{}
 	m.notice = chosen.description
@@ -1283,6 +1368,32 @@ func (m Model) send() (Model, tea.Cmd) {
 
 	typed := m.input.Value()
 	trimmed := strings.TrimSpace(typed)
+
+	// "# note" is kept in the project's instructions rather than sent: the quick way to tell every
+	// later conversation something once.
+	// Only a single line typed here, never a paste: a pasted markdown document beginning with a
+	// heading is a message, not an instruction for every later agent. And asked once, since what is
+	// kept is read by every conversation after it.
+	if note, ok := strings.CutPrefix(trimmed, "# "); ok && m.remember != nil && strings.TrimSpace(note) != "" &&
+		!strings.Contains(note, "\n") && !m.input.Pasted() {
+		if m.noteAsked != trimmed {
+			m.noteAsked = trimmed
+			m.notice = "enter again keeps this line in AGENTS.md, which every later conversation here reads; " +
+				"change it to send it as a message instead"
+			return m, nil
+		}
+		m.noteAsked = ""
+		path, err := m.remember(strings.TrimSpace(note))
+		if err != nil {
+			m.err = "the note was not kept: " + err.Error()
+			return m, nil
+		}
+		m.input.Remember(typed)
+		m.input.Clear()
+		m.menu = menu{}
+		m.notice = "kept in " + path + " for every conversation in this project"
+		return m, nil
+	}
 
 	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
 	// and never cost anything, so they are decided before the path that does either.
@@ -1317,11 +1428,16 @@ func (m Model) send() (Model, tea.Cmd) {
 	// A picture named in the message, a screenshot dropped on the terminal for one, goes with it.
 	// Read off the update loop, since a large one takes a moment; the message is sent once it is.
 	if paths := m.picturePaths(prompt); len(paths) > 0 {
+		// One read at a time: a second enter while the first is reading would send it twice.
+		if m.readingPictures {
+			return m, nil
+		}
+		m.readingPictures = true
 		m.notice = "reading " + pictureCount(len(paths))
-		load := m.loadPictures
+		load, sessionID := m.loadPictures, m.sessionID
 		return m, func() tea.Msg {
 			images, err := load(paths)
-			return picturesReadyMsg{typed: typed, prompt: prompt, images: images, err: err}
+			return picturesReadyMsg{sessionID: sessionID, typed: typed, prompt: prompt, images: images, err: err}
 		}
 	}
 	return m.deliver(typed, prompt, nil)
@@ -1329,6 +1445,7 @@ func (m Model) send() (Model, tea.Cmd) {
 
 // picturesReadyMsg carries the pictures a message named, read and ready to send with it.
 type picturesReadyMsg struct {
+	sessionID     string
 	typed, prompt string
 	images        []core.Image
 	err           error
@@ -1514,6 +1631,13 @@ func (m *Model) SetNotice(text string) { m.notice = text }
 
 // SetCommands installs the already resolved global and project command catalog.
 func (m *Model) SetCommands(commands config.CommandSet) { m.commands = commands }
+
+// SetFiles gives the box the project's files, for completing an @ mention. Nil turns mentions off.
+func (m *Model) SetFiles(files func() []string) { m.files = files }
+
+// SetRemember gives the box somewhere to keep a "# note": the note is written, and the returned
+// path named. Nil makes "#" an ordinary message.
+func (m *Model) SetRemember(remember func(note string) (string, error)) { m.remember = remember }
 
 // Notice is what is currently being said. For tests.
 func (m Model) Notice() string { return m.notice }
@@ -1793,6 +1917,8 @@ func (m Model) transcriptHeight() int {
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+	h -= m.search.height()
+	h -= m.palette.height()
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
 	// same reason, and so does another agent's question.
@@ -1852,7 +1978,7 @@ func (m Model) Body() string {
 			// agent's question: a fresh conversation is exactly where somebody sits while agents they
 			// started are working, so it is the last screen that should hide one asking for a hand.
 			panel: append(m.visitorPanel(), m.btwPanel()...),
-			menu:  m.menu.lines(m.width, m.menuFilter()),
+			menu:  append(m.menu.lines(m.width, m.menuFilter()), m.palette.lines(m.width)...),
 		}.render()
 	}
 
@@ -1887,6 +2013,8 @@ func (m Model) Body() string {
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
+	rows = append(rows, m.search.line()...)
+	rows = append(rows, m.palette.lines(m.width)...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
 	// is about to type into. See jumpPill.
 	rows = append(rows, m.jumpPill(len(lines)-end)...)
@@ -2713,6 +2841,11 @@ func (m Model) picturePaths(prompt string) []string {
 // picturesReady sends a message once its pictures are read. A picture that cannot be read stops the
 // message, so nobody sends "look at this" with nothing attached; the box keeps it.
 func (m Model) picturesReady(msg picturesReadyMsg) (Model, tea.Cmd) {
+	m.readingPictures = false
+	// Read for a conversation that is no longer the one on screen: not sent into this one.
+	if msg.sessionID != m.sessionID {
+		return m, nil
+	}
 	if msg.err != nil {
 		m.err = msg.err.Error()
 		m.notice = ""
@@ -2731,4 +2864,56 @@ func pictureCount(n int) string {
 		return "a picture"
 	}
 	return itoa(n) + " pictures"
+}
+
+// paletteKey handles a key while the palette is up.
+func (m Model) paletteKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+p":
+		m.palette = palette{}
+	case "up":
+		m.palette.move(-1)
+	case "down":
+		m.palette.move(1)
+	case "backspace":
+		if runes := []rune(m.palette.query); len(runes) > 0 {
+			m.palette.query = string(runes[:len(runes)-1])
+			m.palette.refresh()
+		}
+	case "space":
+		m.palette.query += " "
+		m.palette.refresh()
+	case "enter":
+		if m.palette.selected >= len(m.palette.matches) {
+			return m, nil
+		}
+		chosen := m.palette.matches[m.palette.selected]
+		m.palette = palette{}
+		switch chosen.action {
+		case paletteRun:
+			// Through the same path as typing it, so a command run from here is the command.
+			kept := m.input.Value()
+			m.input.SetValue(chosen.text)
+			next, cmd := m.send()
+			if next.input.Empty() {
+				next.input.SetValue(kept)
+			}
+			return next, cmd
+		case paletteFill:
+			m.input.SetValue(chosen.text)
+			m.refreshMenu()
+		case paletteMention:
+			value := m.input.Value()
+			if value != "" && !strings.HasSuffix(value, " ") && !strings.HasSuffix(value, "\n") {
+				value += " "
+			}
+			m.input.SetValue(value + chosen.text)
+		}
+	default:
+		if msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
+			m.palette.query += msg.Text
+			m.palette.refresh()
+		}
+	}
+	return m, nil
 }

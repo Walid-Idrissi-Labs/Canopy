@@ -19,6 +19,8 @@ import (
 type Input struct {
 	runes  []rune
 	cursor int
+	// pasted is whether the box holds anything pasted since it was last cleared.
+	pasted bool
 
 	// history is what has been sent in this conversation, oldest first.
 	history []string
@@ -68,8 +70,22 @@ func (i Input) Empty() bool { return strings.TrimSpace(i.Value()) == "" }
 func (i *Input) Clear() {
 	i.runes = nil
 	i.cursor = 0
+	i.pasted = false
 	i.release()
 }
+
+// BeforeCursor is the text up to the caret, and AfterCursor the rest.
+func (i *Input) BeforeCursor() string { return string(i.runes[:i.cursor]) }
+func (i *Input) AfterCursor() string  { return string(i.runes[i.cursor:]) }
+
+// Splice sets the text as before and after, with the caret between them.
+func (i *Input) Splice(before, after string) {
+	i.runes = []rune(before + after)
+	i.cursor = len([]rune(before))
+}
+
+// Pasted reports whether anything was pasted into the box since it was last cleared.
+func (i *Input) Pasted() bool { return i.pasted }
 
 // SetValue replaces the contents and puts the cursor at the end.
 func (i *Input) SetValue(s string) {
@@ -360,4 +376,5 @@ func (i *Input) Paste(text string) {
 	// Terminals send a pasted line break as a carriage return, which drawn raw would send the cursor
 	// back over the start of the line; paste.Lines makes it a newline and drops the other controls.
 	i.insert([]rune(paste.Lines(text)))
+	i.pasted = true
 }

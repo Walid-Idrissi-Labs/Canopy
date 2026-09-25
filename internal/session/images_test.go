@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -30,5 +31,34 @@ func TestAPictureTravelsWithItsMessage(t *testing.T) {
 	}
 	if last := client.history[len(client.history)-1]; len(last.Images) != 0 {
 		t.Fatal("a message with no picture was sent with one")
+	}
+}
+
+// Compacting sends the conversation too, and keeps only its recent pictures, so the way out of a
+// conversation grown too large is not itself too large.
+func TestCompactionSendsOnlyRecentPictures(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("ok")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	session := e.Create("claude", "claude-opus-5")
+	for i := 0; i < 10; i++ {
+		id, err := e.SendWithImages(session.ID, "look", []core.Image{{MediaType: "image/png", Data: []byte("x")}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForTurn(t, e, session.ID, id)
+	}
+	client.events = reply("a summary")
+	if _, err := e.Compact(context.Background(), session.ID); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	pictures := 0
+	for _, m := range client.history {
+		pictures += len(m.Images)
+	}
+	if pictures > core.PicturesKept {
+		t.Fatalf("compaction sent %d pictures", pictures)
 	}
 }

@@ -873,7 +873,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - Pictures (X-09) are sent only on Anthropic and OpenAI-compatible keys; the subscription routes
   refuse a message that carries one. A conversation resends only the pictures of its last three
   messages that had any, up to 16 MB in all; older ones are replaced by a line saying one was there,
-  so the model no longer sees them. A picture is read as its bytes say, whatever it is called, and a
+  so the model no longer sees them, and the provider's cache of the conversation is read again from
+  that point the one time it happens. A picture is read as its bytes say, whatever it is called, and a
   canvas over 40 megapixels is refused unread. A photo's EXIF orientation is not applied when it is
   scaled, so a sideways phone photo arrives sideways. A WebP larger than 3 MB is refused, since
   Canopy cannot scale one. Any picture file a message names by path is attached.
