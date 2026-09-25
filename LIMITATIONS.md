@@ -129,7 +129,12 @@ be rediscovered by getting burned by it.
   writes to the workspace, temporary directories and toolchain download caches, keeps git hooks and
   git config unwritable, and hides credential locations; on Linux it confines writes the same way
   but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since
-  Landlock cannot carve a path out of an allowed tree. Network is open by default. Commands that
+  Landlock cannot carve a path out of an allowed tree. On macOS the `.git` entry itself cannot be
+  moved or replaced either, so `git init` in a directory that is not yet a repository fails inside
+  the sandbox. The writable download caches (the Go module cache, Cargo's registry, Gradle's caches,
+  npm's) are shared with your own builds, and a command can alter a file in them that a later build
+  uses; the sandbox narrows what can be planted, it does not verify caches. Network is open by
+  default. Commands that
   install into your home break inside it: `pip install --user`, `gem install`, global npm installs,
   version managers (nvm, pyenv, rbenv), Homebrew, and anything writing `~/.local/bin` or most of
   `~/.config`. Test commands, setup, hooks, MCP servers and delegated vendor agents still run

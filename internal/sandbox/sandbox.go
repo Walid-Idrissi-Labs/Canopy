@@ -39,9 +39,12 @@ type Policy struct {
 	Writable []string
 	// DenyRead are paths the command may not read at all, where the platform can say so.
 	DenyRead []string
-	// DenyWrite are paths inside writable directories that still may not be written, where the
+	// DenyWrite are trees inside writable directories that still may not be written, where the
 	// platform can say so.
 	DenyWrite []string
+	// DenyWriteExact are single paths, a directory entry or a file, that may not be written,
+	// renamed or removed, while what is inside a directory stays as writable as it was.
+	DenyWriteExact []string
 	// Devices are device files that may be written: null, tty and the like, and not the whole of
 	// /dev, which holds other terminals.
 	Devices []string
@@ -82,8 +85,10 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 	writable = append(writable, temp, "/tmp", "/private/tmp", "/dev/fd")
 	if home != "" {
 		for _, rel := range []string{
-			".cache", "Library/Caches", "go/pkg/mod", ".npm/_cacache", ".npm/_logs", ".pnpm-store",
-			".yarn/berry/cache", ".cargo/registry", ".cargo/git", ".gradle/caches", ".gradle/wrapper",
+			".cache/go-build", ".cache/pip", ".cache/yarn", ".cache/pnpm", ".cache/deno",
+			"Library/Caches/go-build", "Library/Caches/pip", "Library/Caches/Yarn", "Library/Caches/pnpm",
+			"Library/Caches/deno", "go/pkg/mod", ".npm/_cacache", ".npm/_logs", ".pnpm-store",
+			".yarn/berry/cache", ".cargo/registry", ".cargo/git", ".gradle/caches",
 			".m2/repository", ".nuget/packages", ".bun/install/cache", ".pub-cache/hosted",
 			"Library/Developer/Xcode/DerivedData",
 		} {
@@ -116,14 +121,21 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 // WithGitDirs forbids writing the hooks and config of the given git directories, which git runs or
 // obeys on the user's next command. Enforced where the platform can carve a path out of a writable
 // tree (macOS); recorded otherwise.
+//
+// The git directory's own entry, and a worktree's gitdir and commondir files, are denied as well:
+// otherwise a command renames .git out of the way, writes hooks and config in the renamed copy, and
+// renames it back, or points a worktree's .git file somewhere it controls.
 func (p Policy) WithGitDirs(dirs ...string) Policy {
 	for _, d := range dirs {
 		if d == "" {
 			continue
 		}
 		p.DenyWrite = append(p.DenyWrite, filepath.Join(d, "hooks"), filepath.Join(d, "config"))
+		p.DenyWriteExact = append(p.DenyWriteExact, d,
+			filepath.Join(d, "commondir"), filepath.Join(d, "gitdir"))
 	}
 	p.DenyWrite = clean(p.DenyWrite)
+	p.DenyWriteExact = clean(p.DenyWriteExact)
 	return p
 }
 

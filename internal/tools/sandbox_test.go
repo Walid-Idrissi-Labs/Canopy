@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -31,6 +32,10 @@ func TestShellCommandsAreConfined(t *testing.T) {
 	}
 
 	w := testWorkspace(t)
+	// A repository already, as a workspace normally is, made outside the sandbox.
+	if out, err := osexec.Command("git", "-C", w.Root(), "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
 	shell := ShellTool(w)
 	run := func(command string) string {
 		input, _ := json.Marshal(map[string]string{"command": command})
@@ -51,9 +56,17 @@ func TestShellCommandsAreConfined(t *testing.T) {
 		}
 		// A command must not leave a program for the user's next ordinary command to run
 		// unconfined: a git hook, or a binary in a toolchain directory on PATH.
-		run("git init -q . && mkdir -p .git/hooks && echo evil > .git/hooks/pre-commit")
+		run("mkdir -p .git/hooks; echo evil > .git/hooks/pre-commit")
 		if data, err := os.ReadFile(filepath.Join(w.Root(), ".git", "hooks", "pre-commit")); err == nil && strings.Contains(string(data), "evil") {
 			t.Fatal("a sandboxed command wrote a git hook")
+		}
+		// Nor by moving the git directory out of the way and back.
+		got := run("mv .git g && mkdir -p g/hooks && echo evil > g/hooks/pre-commit && mv g .git")
+		if _, err := os.Stat(filepath.Join(w.Root(), ".git")); err != nil {
+			t.Fatalf("the repository's .git was moved away: %v\n%s", err, got)
+		}
+		if data, err := os.ReadFile(filepath.Join(w.Root(), ".git", "hooks", "pre-commit")); err == nil && strings.Contains(string(data), "evil") {
+			t.Fatal("a sandboxed command planted a hook by renaming .git")
 		}
 	}
 }
