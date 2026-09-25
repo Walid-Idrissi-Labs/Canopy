@@ -96,6 +96,39 @@ func Describe(dir string, project config.Project) Request {
 		_, _ = fmt.Fprintf(h, "\x00%s\x00", rel)
 		h.Write(data)
 	}
+	// Project skills are instructions too, loaded into the model when a task matches them. Every
+	// file in a skill's folder counts, not only SKILL.md: the skill tool serves the others and
+	// SKILL.md tells the model to follow them.
+	for _, pattern := range []string{".claude/skills/*/SKILL.md", ".agents/skills/*/SKILL.md", ".canopy/skills/*/SKILL.md"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		sort.Strings(matches)
+		for _, path := range matches {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			rel, _ := filepath.Rel(dir, path)
+			req.Instructions = true
+			req.InstructionFiles = append(req.InstructionFiles, filepath.ToSlash(rel))
+			var files []string
+			_ = filepath.WalkDir(filepath.Dir(path), func(p string, d os.DirEntry, err error) error {
+				if err == nil && !d.IsDir() && len(files) < 200 {
+					files = append(files, p)
+				}
+				return nil
+			})
+			sort.Strings(files)
+			for _, f := range files {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					continue
+				}
+				fr, _ := filepath.Rel(dir, f)
+				_, _ = fmt.Fprintf(h, "\x00%s\x00", fr)
+				h.Write(data)
+			}
+		}
+	}
 	for _, rel := range vendorSettings {
 		data, err := os.ReadFile(filepath.Join(dir, rel))
 		if err != nil {

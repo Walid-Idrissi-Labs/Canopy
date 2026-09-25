@@ -96,13 +96,7 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	// No one is there to answer a trust prompt, so an untrusted repository's configuration is
 	// withheld and the warning says how to trust it.
 	project := gateProject(dir, loadProjectRaw(dir, errOut), stdin, errOut, false)
-	if project.Trusted {
-		instructions, err := config.LoadInstructions(dir, project)
-		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "warning: project instructions are not being sent: %v\n", err)
-		}
-		engine.WithInstructions(instructions.Text)
-	}
+	engine.WithInstructions(projectInstructions(dir, project, errOut))
 
 	registry, err := toolsFor(dir)
 	if err != nil {

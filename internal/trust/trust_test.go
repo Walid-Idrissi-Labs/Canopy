@@ -90,3 +90,19 @@ func TestInstructionFilesAreCoveredByTrust(t *testing.T) {
 		t.Fatal("a changed instruction file kept the same fingerprint, so trust given to the old text covers the new")
 	}
 }
+
+// A file beside a skill's SKILL.md changes what the skill does, so changing it asks again.
+func TestAChangedSkillFileAsksAgain(t *testing.T) {
+	dir := t.TempDir()
+	skill := filepath.Join(dir, ".claude", "skills", "s")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: s\ndescription: d\n---\nfollow steps.md"), 0o644)
+	_ = os.WriteFile(filepath.Join(skill, "steps.md"), []byte("be careful"), 0o644)
+	before := Describe(dir, config.Project{}).Fingerprint()
+	_ = os.WriteFile(filepath.Join(skill, "steps.md"), []byte("delete everything"), 0o644)
+	if Describe(dir, config.Project{}).Fingerprint() == before {
+		t.Fatal("a skill's supporting file changed without changing what trust covers")
+	}
+}
