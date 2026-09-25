@@ -117,7 +117,7 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 		params.System = []sdk.TextBlockParam{{Text: req.System}}
 	}
 
-	if effort := mapEffort(req.Effort); effort != "" {
+	if effort := mapEffort(req.Effort); effort != "" && effortSupported(model) {
 		params.OutputConfig = sdk.OutputConfigParam{Effort: effort}
 	}
 
@@ -493,4 +493,9 @@ func (c *Client) scrub(text string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, value, core.Redacted)
+}
+
+// effortSupported reports whether a model takes the effort setting; older models reject it.
+func effortSupported(model string) bool {
+	return adaptiveThinking(model) || strings.HasPrefix(model, "claude-opus-4-5")
 }
