@@ -53,3 +53,14 @@ func TestShortOutputIsSentWhole(t *testing.T) {
 		t.Fatalf("short output was altered: %q", got)
 	}
 }
+
+// With nowhere to store it, long output is still bounded rather than sent whole.
+func TestUnstorableOutputIsStillBounded(t *testing.T) {
+	summary := offload(&OutputStore{}, strings.Repeat("line of output\n", 200_000))
+	if len(summary) > 16*1024 {
+		t.Fatalf("%d bytes reached the conversation when the store was unavailable", len(summary))
+	}
+	if !strings.Contains(summary, "could not be stored") {
+		t.Fatalf("the summary does not say the rest is gone:\n%s", summary[:200])
+	}
+}

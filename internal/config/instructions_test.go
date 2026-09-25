@@ -52,3 +52,23 @@ func TestOversizedInstructionsAreRefusedNotTruncated(t *testing.T) {
 		t.Fatalf("the error does not name the file: %v", err)
 	}
 }
+
+// A repository cannot send a file from outside itself by making an instruction file a symlink.
+func TestAnInstructionFileSymlinkIsNotFollowed(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	dir := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(secret, []byte("SECRET-CONTENT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(dir, "CLAUDE.md")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadInstructions(dir, Project{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got.Text, "SECRET-CONTENT") || len(InstructionFiles(dir)) != 0 {
+		t.Fatalf("a symlinked instruction file was followed: %q", got.Text)
+	}
+}

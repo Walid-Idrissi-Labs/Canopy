@@ -409,18 +409,30 @@ func (s Session) History() []Message {
 	// A compaction replaces the turns it covers with its summary. Sent as a user message rather
 	// than an assistant one, because it is Canopy speaking about the conversation and not the model
 	// recalling it, and a model that reads its own summary as something it said will defend it.
+	var compactedAt time.Time
 	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(turns) {
 		messages = append(messages, Message{
 			Role: RoleUser,
 			Text: "Summary of the earlier part of this conversation:\n\n" + compaction.Summary,
 		})
 		turns = turns[compaction.Through:]
+		compactedAt = compaction.At
 	}
 
 	for _, turn := range turns {
 		messages = append(messages, turn.Request)
 
 		if len(turn.Steps) > 0 {
+			// A turn kept verbatim across a compaction was answered with the full conversation in
+			// front of the model. Its reasoning blocks are bound to that conversation, which the
+			// summary has replaced, so replaying them would have the provider drop them and every
+			// reasoning block after them for the rest of the session. They are left out instead.
+			if !compactedAt.IsZero() && turn.StartedAt.Before(compactedAt) {
+				for _, step := range turn.Steps {
+					messages = append(messages, step.WithoutReasoning())
+				}
+				continue
+			}
 			messages = append(messages, turn.Steps...)
 			continue
 		}
@@ -428,13 +440,17 @@ func (s Session) History() []Message {
 		// A turn that produced nothing is left out entirely. An empty assistant message is rejected
 		// by the API, and a turn that failed before the model said anything has nothing to
 		// contribute to the context anyway.
-		if turn.Text == "" && len(turn.ToolCalls) == 0 {
+		// Only calls that were answered: a call recorded as the model asked for it but never run,
+		// because its step was cut off by a length cap or the turn stopped, would go out without a
+		// result and make every later request in the conversation fail.
+		answered := answeredCalls(turn.ToolCalls, turn.ToolResults)
+		if turn.Text == "" && len(answered) == 0 {
 			continue
 		}
 		messages = append(messages, Message{
 			Role:      RoleAssistant,
 			Text:      turn.Text,
-			ToolCalls: turn.ToolCalls,
+			ToolCalls: answered,
 		})
 		if len(turn.ToolResults) > 0 {
 			messages = append(messages, Message{Role: RoleUser, ToolResults: turn.ToolResults})
@@ -466,4 +482,22 @@ func (s Session) Validate() error {
 		}
 	}
 	return nil
+}
+
+// answeredCalls keeps the calls that have a result.
+func answeredCalls(calls []ToolCall, results []ToolResult) []ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	has := make(map[string]bool, len(results))
+	for _, r := range results {
+		has[r.CallID] = true
+	}
+	out := make([]ToolCall, 0, len(calls))
+	for _, c := range calls {
+		if has[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
 }

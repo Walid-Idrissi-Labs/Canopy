@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -192,6 +193,15 @@ func (t *readTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRes
 		return failure("%s is %d bytes, larger than the %d byte limit for a whole read. Use grep "+
 			"to find what you need, or offset and limit to read a range.",
 			args.Path, info.Size(), maxFileBytes), nil
+	}
+
+	if info.Size() > maxFileBytes {
+		// Ranged read of a file too large to load: streamed to the range, never held whole.
+		body, err := streamRange(path, args.Offset, args.Limit)
+		if err != nil {
+			return failure("%s: %v", args.Path, err), nil
+		}
+		return core.ToolResult{Content: body}, nil
 	}
 
 	content, err := os.ReadFile(path)
@@ -811,4 +821,46 @@ func ripgrep(ctx context.Context, root, query, glob string, regex, ignoreCase bo
 		content += fmt.Sprintf("\n\n(stopped at %d matches, there are more; narrow the query or glob)", maxGrepMatches)
 	}
 	return core.ToolResult{Content: content}, true
+}
+
+// streamRange numbers a range of a file by reading it a line at a time, counting the rest.
+func streamRange(path string, offset, limit int) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	if offset < 1 {
+		offset = 1
+	}
+	if limit <= 0 {
+		limit = defaultReadLines
+	}
+	last := offset + limit - 1
+	width := len(strconv.Itoa(last))
+	reader := bufio.NewReaderSize(file, 64*1024)
+	var b strings.Builder
+	line := 0
+	for {
+		text, err := reader.ReadString('\n')
+		if text != "" {
+			line++
+			if line >= offset && line <= last {
+				if len(text) > 4000 {
+					text = text[:4000] + " ...(line cut)\n"
+				}
+				fmt.Fprintf(&b, "%*d\t%s", width, line, strings.TrimRight(text, "\n")+"\n")
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	if line < offset {
+		return fmt.Sprintf("(the file has %d lines; offset %d is past the end)", line, offset), nil
+	}
+	if last > line {
+		last = line
+	}
+	return strings.TrimSuffix(b.String(), "\n") + fmt.Sprintf("\n(lines %d-%d of %d)", offset, last, line), nil
 }

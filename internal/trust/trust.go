@@ -87,7 +87,7 @@ func Describe(dir string, project config.Project) Request {
 		project.Commands})
 	h.Write(canonical)
 	for _, rel := range config.InstructionFiles(dir) {
-		data, err := os.ReadFile(filepath.Join(dir, rel))
+		data, err := os.ReadFile(filepath.Join(dir, rel)) // regular files only, checked by InstructionFiles
 		if err != nil {
 			continue
 		}

@@ -101,11 +101,12 @@ func offload(store *OutputStore, output string) string {
 		return output
 	}
 	id, err := store.save(output)
-	if err != nil {
-		// Without somewhere to keep it, the whole output is the only honest answer.
-		return output
-	}
 	lines := strings.Split(output, "\n")
+	if err != nil {
+		// Nowhere to keep it, so no handle to offer: the same head, failures and tail, bounded
+		// the way output always was before it could be stored, and said to be incomplete.
+		id = ""
+	}
 	head, tail := firstBytes(lines, 2500), lastBytes(lines, 3500)
 
 	var failures []string
@@ -121,8 +122,14 @@ func offload(store *OutputStore, output string) string {
 
 	var b strings.Builder
 	b.WriteString(strings.Join(head, "\n"))
-	fmt.Fprintf(&b, "\n\n[%d lines, %d bytes in all. The middle is omitted here; read_output with "+
-		"handle %q pages through the whole output, or searches it with grep.]\n", len(lines), len(output), id)
+	if id != "" {
+		fmt.Fprintf(&b, "\n\n[%d lines, %d bytes in all. The middle is omitted here; read_output with "+
+			"handle %q pages through the whole output, or searches it with grep.]\n", len(lines), len(output), id)
+	} else {
+		fmt.Fprintf(&b, "\n\n[%d lines, %d bytes in all. The middle is omitted and could not be stored, "+
+			"so it cannot be read back; rerun the command with its output filtered if you need it.]\n",
+			len(lines), len(output))
+	}
 	if len(failures) > 0 {
 		b.WriteString("[Lines that look like failures:]\n")
 		b.WriteString(strings.Join(failures, "\n"))
