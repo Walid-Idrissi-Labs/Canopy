@@ -71,6 +71,14 @@ func (s *stream) Next() bool {
 
 // queueDeltas turns one SDK event into whatever core events it implies, which is often none.
 func (s *stream) queueDeltas(event sdk.MessageStreamEventUnion) {
+	// A search the provider ran for this reply is said where it happens, since its results arrive
+	// inside the reply rather than as a tool call Canopy made.
+	if start, ok := event.AsAny().(sdk.ContentBlockStartEvent); ok {
+		if use, ok := start.ContentBlock.AsAny().(sdk.ServerToolUseBlock); ok && use.Name == "web_search" {
+			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice, Text: "searching the web..."})
+		}
+		return
+	}
 	delta, ok := event.AsAny().(sdk.ContentBlockDeltaEvent)
 	if !ok {
 		return
@@ -125,6 +133,18 @@ func (s *stream) finish() {
 		})
 	}
 
+	// Each search the provider ran is reported with its query once the reply is complete, so it
+	// reaches the audit trail as well as the screen.
+	for _, block := range s.message.Content {
+		if use, ok := block.AsAny().(sdk.ServerToolUseBlock); ok && use.Name == "web_search" {
+			var input struct {
+				Query string `json:"query"`
+			}
+			_ = json.Unmarshal([]byte(use.JSON.Input.Raw()), &input)
+			s.pending = append(s.pending, core.StreamEvent{Kind: core.EventNotice,
+				Text: WebSearchNotice + input.Query})
+		}
+	}
 	s.native = s.nativeMessage()
 	s.finishWith(mapStopReason(s.message.StopReason), nil)
 }
@@ -137,6 +157,30 @@ func (s *stream) nativeMessage() *core.Native {
 	}
 	data, err := json.Marshal(s.message.ToParam())
 	if err != nil {
+		return nil
+	}
+	// A reply cut off mid-thought carries a thinking block with no signature, and the API refuses
+	// every later request that sends one back. The unsigned block goes; the rest of the reply stays.
+	var message map[string]json.RawMessage
+	var blocks []json.RawMessage
+	if json.Unmarshal(data, &message) != nil || json.Unmarshal(message["content"], &blocks) != nil {
+		return nil
+	}
+	kept := blocks[:0]
+	for _, block := range blocks {
+		var head struct{ Type, Signature string }
+		if json.Unmarshal(block, &head) == nil && head.Type == "thinking" && head.Signature == "" {
+			continue
+		}
+		kept = append(kept, block)
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	if message["content"], err = json.Marshal(kept); err != nil {
+		return nil
+	}
+	if data, err = json.Marshal(message); err != nil {
 		return nil
 	}
 	return &core.Native{Provider: providerName, Data: data}

@@ -1010,3 +1010,41 @@ func TestTheSameCheckAfterDifferentEditsIsNotACircle(t *testing.T) {
 		t.Fatalf("stopped with %q after %d builds; eight edit-and-build rounds are progress", outcome.LimitHit, build.count())
 	}
 }
+
+// A paused reply holding only provider-side work is kept, so the continuation does not run it again.
+func TestAPausedReplyWithOnlyProviderWorkIsKept(t *testing.T) {
+	native := &core.Native{Provider: "p", Data: []byte(`{"role":"assistant","content":[{"type":"server_tool_use"}]}`)}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		{{Kind: core.EventDone, StopReason: core.StopPauseTurn, Native: native}},
+		{{Kind: core.EventText, Text: "done"}, {Kind: core.EventDone, StopReason: core.StopEndTurn}},
+	}}
+	loop := &Loop{Client: client, Tools: core.NewToolRegistry(), Trust: core.TrustStandard}
+	outcome, err := loop.Run(context.Background(), core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "search"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := client.seen[1].Messages
+	if len(second) < 2 || second[len(second)-1].Native != native {
+		t.Fatalf("the continuation did not carry the paused reply: %+v", second)
+	}
+	_ = outcome
+}
+
+// A reply cut off by the length cap before it said anything is not recorded: what it holds is at
+// best an unsigned half-thought, and replaying that has every later request refused.
+func TestABareReplyCutOffIsNotKept(t *testing.T) {
+	native := &core.Native{Provider: "p", Data: []byte(`{"role":"assistant","content":[{"type":"thinking"}]}`)}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		{{Kind: core.EventDone, StopReason: core.StopMaxTokens, Native: native}},
+	}}
+	outcome, err := loop(client, registryWith(), core.TrustStandard).Run(context.Background(), ask("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range outcome.Messages {
+		if m.Native != nil {
+			t.Fatal("a bare cut-off reply was kept and will be replayed")
+		}
+	}
+}

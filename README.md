@@ -41,7 +41,9 @@ things follow from taking that seriously:
   tested, and three agents on one task are ranked by whose code passes rather than by which one
   sounded most confident. Fanning out is not new. Using test evidence to settle it appears to be.
 
-What Canopy does not have yet: a language server, web search, or agents that spawn agents.
+What Canopy does not have yet: a language server, or agents that spawn agents. Web search is
+Anthropic's own server-side search, offered on Anthropic keys when `CANOPY_WEB_SEARCH=on`; other
+providers have `fetch_url` only.
 Those are stated plainly rather than deferred quietly, and
 [LIMITATIONS.md](LIMITATIONS.md) is the honest list.
 

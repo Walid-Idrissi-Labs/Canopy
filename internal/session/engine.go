@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,9 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// webSearch offers the provider's own web search on every request; see SetWebSearch.
+	webSearch bool
+
 	// maxSteps bounds the model calls in one turn; zero means the loop's default.
 	maxSteps int
 
@@ -889,7 +893,7 @@ func (e *Engine) run(
 	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
 	// call, because a system prompt that changed mid conversation would rewrite what the model
 	// believes it was told earlier.
-	request := core.Request{Model: model, Messages: history, System: e.systemPrompt()}
+	request := core.Request{Model: model, Messages: history, System: e.systemPrompt(), WebSearch: e.webSearchOn()}
 
 	// Tools learn which conversation epoch they serve, so a repeated read can be answered with a
 	// reference to what this conversation was already sent. A compaction starts a new epoch.
@@ -1085,6 +1089,25 @@ type turnObserver struct {
 
 func (o *turnObserver) Text(chunk string) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Text += chunk })
+}
+
+func (o *turnObserver) Notice(text string) {
+	// A search the provider ran is recorded in the audit trail like any tool call, marked as run by
+	// the provider, since no approval prompt saw it.
+	if query, ok := strings.CutPrefix(text, anthropic.WebSearchNotice); ok {
+		o.engine.mu.Lock()
+		trail := o.engine.trail
+		o.engine.mu.Unlock()
+		if trail != nil {
+			trail.Record(permission.Entry{At: time.Now(), AgentID: o.sessionID, SessionID: o.sessionID,
+				Tool: "web_search", Arguments: query, Result: "run by the provider"})
+		}
+	}
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		if n := len(t.Notices); n == 0 || t.Notices[n-1] != text {
+			t.Notices = append(t.Notices, text)
+		}
+	})
 }
 
 func (o *turnObserver) Thinking(chunk string) {
@@ -1543,4 +1566,18 @@ func (e *Engine) UndoPreview(ctx context.Context, sessionID, turnID string) ([]s
 		return nil, fmt.Errorf("turn %s has no checkpoint, so there is nothing to restore", turnID)
 	}
 	return taker.Preview(ctx, git.Checkpoint{Commit: commit})
+}
+
+// SetWebSearch offers the provider's own web search to every conversation, where the provider has
+// one. Set once at startup: the tools a request carries are part of what the provider caches.
+func (e *Engine) SetWebSearch(on bool) {
+	e.mu.Lock()
+	e.webSearch = on
+	e.mu.Unlock()
+}
+
+func (e *Engine) webSearchOn() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.webSearch
 }

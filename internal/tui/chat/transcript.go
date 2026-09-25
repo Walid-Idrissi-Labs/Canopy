@@ -155,6 +155,12 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 		}
 	}
 
+	for _, notice := range turn.Notices {
+		for _, line := range wrap("· "+terminalSafe(notice), width-2) {
+			lines = append(lines, t.Muted.Render(line))
+		}
+	}
+
 	if turn.Text != "" {
 		lines = append(lines, "")
 		// The reply goes through the markdown renderer; the question above does not. What somebody
