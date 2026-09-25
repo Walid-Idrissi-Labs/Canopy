@@ -851,3 +851,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - At most half the machine's CPUs worth of test runs execute at once, across every agent; the rest
   wait, shown as queued. `CANOPY_MAX_TESTS` changes the number. Agents' own shell commands are not
   limited this way.
+- OpenAI's Responses API, which keeps a reasoning model's thinking between requests and names the
+  conversation as the prompt cache key, is used for OpenAI's own endpoint only when
+  `CANOPY_OPENAI_RESPONSES=on`. It has been tested against a fake of the service, not the service
+  itself, which is why it is not the default yet; every other OpenAI-compatible endpoint uses chat
+  completions, where reasoning is not carried between requests.

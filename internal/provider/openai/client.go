@@ -30,6 +30,8 @@ type Client struct {
 	secret  core.Secret
 	http    *http.Client
 	name    string
+	// responses uses the Responses API; see responses.go.
+	responses bool
 }
 
 var _ core.ProviderClient = (*Client)(nil)
@@ -75,6 +77,9 @@ func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, err
 	if c.baseURL == "" {
 		return nil, c.fail(core.ErrInvalidRequest,
 			"no base URL. This provider is defined by its endpoint, so there is no sensible default", nil)
+	}
+	if c.responses {
+		return c.streamResponses(ctx, req)
 	}
 
 	body, err := json.Marshal(c.buildRequest(req))
