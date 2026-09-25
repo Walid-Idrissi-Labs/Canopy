@@ -127,6 +127,11 @@ type WorkspaceSnapshot struct {
 	Branch   string
 	Detached bool
 
+	// Locked is git's lock reason for the worktree, empty when it is not locked. Canopy locks the
+	// worktrees it makes while an agent works in them, naming its process, so nothing reclaims a
+	// worktree that is in use.
+	Locked string
+
 	Ownership WorkspaceOwnership
 
 	// Revision is the current content of the worktree. An unknown revision means evidence about

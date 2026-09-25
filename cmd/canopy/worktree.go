@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"syscall"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
@@ -38,7 +39,7 @@ func runWorktree(args []string, out io.Writer) error {
 
 	switch sub {
 	case "list":
-		home, _ := gitpkg.WorktreeHome(dir)
+		home, _ := gitpkg.WorktreeHome(repoRoot(ctx, dir))
 		_, _ = fmt.Fprintf(out, "new agent worktrees go under %s\n", home)
 		for _, w := range found {
 			if w.Ownership != core.OwnershipManaged {
@@ -57,17 +58,18 @@ func runWorktree(args []string, out io.Writer) error {
 			if w.Ownership != core.OwnershipManaged {
 				continue
 			}
+			if why := keepReason(ctx, repo, w); why != "" {
+				kept++
+				_, _ = fmt.Fprintf(out, "kept %s: %s\n", w.Path, why)
+				continue
+			}
 			if dryRun {
 				_, _ = fmt.Fprintf(out, "would remove %s (branch %s kept)\n", w.Path, w.Branch)
 				continue
 			}
 			if err := repo.Remove(ctx, w, false); err != nil {
 				kept++
-				if errors.Is(err, gitpkg.ErrDirty) {
-					_, _ = fmt.Fprintf(out, "kept %s: it has uncommitted work\n", w.Path)
-				} else {
-					_, _ = fmt.Fprintf(out, "kept %s: %v\n", w.Path, err)
-				}
+				_, _ = fmt.Fprintf(out, "kept %s: %v\n", w.Path, err)
 				continue
 			}
 			removed++
@@ -80,4 +82,37 @@ func runWorktree(args []string, out io.Writer) error {
 	default:
 		return errors.New("usage: canopy worktree [list | gc [--dry-run]]")
 	}
+}
+
+// keepReason says why gc must leave a worktree alone, or "" when removing it loses nothing.
+func keepReason(ctx context.Context, repo *gitpkg.Repo, w core.WorkspaceSnapshot) string {
+	if w.Locked != "" {
+		pid := gitpkg.LockHolder(w.Locked)
+		if pid == 0 || processAlive(pid) {
+			return "locked (" + w.Locked + ")"
+		}
+	}
+	if dirty, err := repo.DirtyState(ctx, w.Path); err != nil {
+		return "its state could not be read: " + err.Error()
+	} else if dirty.IsDirty() {
+		return "it has uncommitted work"
+	}
+	if w.Detached && !repo.Reachable(ctx, w.Revision.HeadSHA) {
+		return "its commits are on no branch, so removing it would lose them"
+	}
+	return ""
+}
+
+func repoRoot(ctx context.Context, dir string) string {
+	if repo, err := gitpkg.OpenRepo(dir); err == nil {
+		if root, err := repo.Toplevel(ctx); err == nil {
+			return root
+		}
+	}
+	return dir
+}
+
+// processAlive reports whether a process exists, by signalling it with nothing.
+func processAlive(pid int) bool {
+	return syscall.Kill(pid, 0) == nil
 }
