@@ -40,8 +40,8 @@ func TestInitWritesTheDetectedTests(t *testing.T) {
 	if !strings.Contains(out.String(), "canopy trust") {
 		t.Fatalf("it did not say the file has to be trusted before it runs: %q", out.String())
 	}
-	if err := runInit(nil, &out); err == nil {
-		t.Fatal("a second init overwrote canopy.json")
+	if err := runInit(nil, &out); err == nil || !strings.Contains(err.Error(), "already has a canopy.json") {
+		t.Fatalf("a second init said %v", err)
 	}
 }
 
