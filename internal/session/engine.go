@@ -1302,8 +1302,9 @@ func (e *Engine) finish(
 	e.persistTurn(sessionID, ordinal, finished)
 	e.persistSession(saved)
 
-	// Told before the turn is published as finished, so whoever waits for the finish, canopy run
-	// on its way out among them, finds the turn-end hooks already started and can wait for them.
+	// Told before the turn is published as finished, so a reader woken by that event finds the hooks
+	// started. The way out does not rely on this alone: it waits for them after the engine has
+	// closed, which is when every turn has ended and told them.
 	e.mu.Lock()
 	hooks := e.toolHooks
 	e.mu.Unlock()

@@ -214,7 +214,7 @@ func runChat(resume string) error {
 	// somebody has stopped watching, so one that quietly stopped working is one they would go on not
 	// watching indefinitely.
 	for _, failure := range verification.HookFailures() {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", failure)
+		fmt.Fprintf(os.Stderr, "warning: %s\n", terminalText(failure))
 	}
 
 	if last != "" {

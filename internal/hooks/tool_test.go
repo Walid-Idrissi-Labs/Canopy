@@ -182,8 +182,8 @@ func TestAHookRunsWhereItsAgentWorks(t *testing.T) {
 		}
 		return Answer{}
 	}
-	r := NewToolRunner([]Hook{{On: PreTool, Run: "guard", Tools: []string{"run_command"}}, {On: PostTool, Run: "note"}},
-		"/main", exec, nil)
+	r := NewToolRunner([]Hook{{On: PreTool, Run: "guard", Tools: []string{"run_command"}}, {On: PostTool, Run: "note"},
+		{On: TurnEnd, Run: "done"}}, "/main", exec, nil)
 	r.SetWorkspaces(func(session string) (string, string) {
 		if session == "s1" {
 			return "refactor", "/worktrees/refactor"
@@ -191,11 +191,17 @@ func TestAHookRunsWhereItsAgentWorks(t *testing.T) {
 		return "", ""
 	})
 	r.Before(context.Background(), shellCall)
+	r.After(context.Background(), shellCall, core.ToolResult{})
 	other := shellCall
 	other.SessionID = "s9"
 	r.After(context.Background(), other, core.ToolResult{})
-	if len(dirs) != 2 || dirs[0] != "/worktrees/refactor" || dirs[1] != "/main" {
+	if len(dirs) != 3 || dirs[0] != "/worktrees/refactor" || dirs[1] != "/worktrees/refactor" || dirs[2] != "/main" {
 		t.Fatalf("ran in %v", dirs)
+	}
+	r.TurnEnded("s1", core.Turn{})
+	r.Wait(5 * time.Second)
+	if len(dirs) != 4 || dirs[3] != "/worktrees/refactor" {
+		t.Fatalf("a turn-end hook ran in %v", dirs)
 	}
 	if names := r.Named(); len(names) != 1 || names[0] != "run_command" {
 		t.Fatalf("named %v", names)
@@ -216,7 +222,8 @@ func TestWaitingForTurnEndHooksIsBounded(t *testing.T) {
 }
 
 func TestAShortenedAnswerKeepsWholeCharacters(t *testing.T) {
-	got := short(strings.Repeat("é", 1500))
+	// One byte first, so the cut lands in the middle of a character.
+	got := short("x" + strings.Repeat("é", 1500))
 	if !utf8.ValidString(got) {
 		t.Fatal("cut through a character")
 	}

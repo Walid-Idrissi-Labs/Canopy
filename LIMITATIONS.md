@@ -879,4 +879,5 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   a guard script kept in the repository, so a pre-tool guard meant to hold against the agent belongs
   outside it. On the subscription routes, which run the vendor's own tools, tool hooks do not run at
   all. A tool name in a hook's `tools` that Canopy does not have is warned about at start and never
-  matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds.
+  matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
+  running after that is left to finish on its own.
