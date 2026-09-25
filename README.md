@@ -295,6 +295,16 @@ unknown provider costs, names the sample size, and refuses a conclusion until at
 have three exact samples each. The result is an association in local history, not a claim that the
 model caused the outcome.
 
+## Project instructions
+
+Canopy sends a project's standing instructions with every request: your own
+`instructions.md` in the Canopy config directory, then the repository's `AGENTS.md`, `CLAUDE.md`,
+`.canopy/instructions.md` and the `instructions` field of canopy.json, in that order, later ones
+winning where they conflict. They sit in the system prompt, which never changes during a
+conversation, so they are cached rather than paid for again on every step. Oversized instructions
+(over 48 KB together) are refused by name rather than cut. Like the rest of a repository's
+configuration, they are only sent once the repository is trusted.
+
 ## A repository has to be trusted before it runs anything
 
 canopy.json can name a setup command, test commands, hooks and MCP servers, and carry instructions

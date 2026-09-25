@@ -125,13 +125,14 @@ func TestAConfinedDefaultTellsTheProviderAboutItsActualBoundary(t *testing.T) {
 
 	confined, _ := core.ModeByName(core.ModeConfined)
 	client.mu.Lock()
-	system := client.system
+	history := client.history
 	client.mu.Unlock()
-	if system != confined.Prompt {
-		t.Errorf("provider system prompt = %q, want the confined mode prompt", system)
+	note := history[len(history)-1].Note
+	if note != confined.Prompt {
+		t.Errorf("the first message carried note %q, want the confined mode prompt", note)
 	}
-	if !strings.Contains(system, "cannot run shell commands") {
-		t.Errorf("the confined prompt does not explain the enforced shell boundary: %q", system)
+	if !strings.Contains(note, "cannot run shell commands") {
+		t.Errorf("the confined note does not explain the enforced shell boundary: %q", note)
 	}
 }
 
@@ -323,10 +324,16 @@ func TestAModeStillLowersWhatAnAgentMayDo(t *testing.T) {
 		t.Errorf("a standard agent in plan mode resolved to %s, want read-only: a mode that cannot "+
 			"lower anything is decoration", resolved)
 	}
+	// The write tool stays listed, because the list must not change when the mode does; what the
+	// mode lowers is the decision on each call, which the resolved level above carries.
+	listed := false
 	for _, definition := range tools.Definitions() {
 		if definition.Name == "subject" {
-			t.Error("plan mode offered a tool that writes files")
+			listed = true
 		}
+	}
+	if !listed {
+		t.Error("plan mode removed a tool from the list; switching modes would rewrite every request's prefix")
 	}
 }
 

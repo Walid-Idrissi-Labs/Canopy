@@ -21,11 +21,18 @@ import (
 //
 // Canopy does not sandbox and must never imply that it does.
 type shellTool struct {
-	w *Workspace
+	w       *Workspace
+	outputs *OutputStore
 }
 
 // ShellTool builds the shell tool for a workspace.
 func ShellTool(w *Workspace) core.Tool { return &shellTool{w: w} }
+
+// ShellToolWithOutputs is ShellTool with long output kept in store and summarised in the
+// conversation; see offload.
+func ShellToolWithOutputs(w *Workspace, store *OutputStore) core.Tool {
+	return &shellTool{w: w, outputs: store}
+}
 
 func (t *shellTool) Name() string        { return "run_command" }
 func (t *shellTool) Kind() core.ToolKind { return core.ToolExecute }
@@ -74,18 +81,21 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	// command and it will contain pipes, redirections and globs. Splitting it ourselves would run
 	// something subtly different from what was asked for and approved, which is worse than running
 	// what was asked for.
-	result, err := exec.Run(ctx, "/bin/sh", []string{"-c", args.Command}, exec.Options{
-		Dir:     t.w.Root(),
-		Timeout: timeout,
-	})
+	options := exec.Options{Dir: t.w.Root(), Timeout: timeout}
+	if t.outputs != nil {
+		options.MaxOutput = capturedOutputBytes
+	}
+	result, err := exec.Run(ctx, "/bin/sh", []string{"-c", args.Command}, options)
 	if err != nil {
 		return failure("%v", err), nil
 	}
 
-	return core.ToolResult{
-		Content: describe(args.Command, result),
-		IsError: !result.Succeeded(),
-	}, nil
+	content := describe(args.Command, result)
+	if t.outputs != nil {
+		content = strings.TrimSpace(offload(t.outputs, strings.TrimRight(result.Output, "\n")) +
+			"\n" + outcome(args.Command, result))
+	}
+	return core.ToolResult{Content: content, IsError: !result.Succeeded()}, nil
 }
 
 // describe turns a result into something a model can act on.
@@ -100,6 +110,12 @@ func describe(command string, result exec.Result) string {
 		b.WriteString(strings.TrimRight(result.Output, "\n"))
 		b.WriteString("\n")
 	}
+	return b.String() + outcome(command, result)
+}
+
+// outcome is the sentence that says how the command ended.
+func outcome(command string, result exec.Result) string {
+	var b strings.Builder
 
 	switch {
 	case result.TimedOut:

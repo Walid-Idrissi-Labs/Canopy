@@ -1,7 +1,9 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -606,7 +608,9 @@ func TestAFileAtTheOlderSchemaMigratesForward(t *testing.T) {
 	if err := storage.SaveSession(core.Session{ID: "s1", Title: "written by the older build"}); err != nil {
 		t.Fatalf("SaveSession: %v", err)
 	}
-	if _, err := storage.db.Exec(`DROP TABLE asides; PRAGMA user_version = 7`); err != nil {
+	if _, err := storage.db.Exec(
+		`ALTER TABLE turns DROP COLUMN steps; ALTER TABLE turns DROP COLUMN context_tokens;
+		DROP TABLE asides; PRAGMA user_version = 7`); err != nil {
 		t.Fatalf("winding the file back: %v", err)
 	}
 	if err := storage.Close(); err != nil {
@@ -642,6 +646,46 @@ func TestAFileAtTheOlderSchemaMigratesForward(t *testing.T) {
 	}
 	if kept, err := forward.loadAsides("s1"); err != nil || len(kept) != 1 {
 		t.Errorf("asides after migrating: %+v, %v", kept, err)
+	}
+
+	// The file as it was before the upgrade is kept beside it, owner only.
+	info, err := os.Stat(path + ".schema-7.bak")
+	if err != nil {
+		t.Fatalf("no backup was taken before migrating: %v", err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Errorf("the backup is %v; it holds the same transcripts as the history", info.Mode().Perm())
+	}
+}
+
+// Steps are replayed verbatim on the next turn, native encoding included, so they must come back
+// from storage byte for byte.
+func TestStepsSurviveARoundTrip(t *testing.T) {
+	storage, err := OpenStorage(filepath.Join(t.TempDir(), "history.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = storage.Close() }()
+	if err := storage.SaveSession(core.Session{ID: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	native := json.RawMessage(`{"role":"assistant","content":[{"type":"thinking","thinking":"x","signature":"sig"},{"type":"tool_use","id":"t1","name":"read_file","input":{"path":"a.go"}}]}`)
+	turn := core.Turn{ID: "t1", State: core.TurnComplete, Request: core.Message{Role: core.RoleUser, Text: "go"},
+		Steps: []core.Message{
+			{Role: core.RoleAssistant, ToolCalls: []core.ToolCall{{ID: "t1", Name: "read_file", Input: []byte(`{"path":"a.go"}`)}},
+				Native: &core.Native{Provider: "anthropic", Data: native}},
+			{Role: core.RoleUser, ToolResults: []core.ToolResult{{CallID: "t1", Content: "package a"}}},
+		}}
+	if err := storage.SaveTurn("s1", 0, turn); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := storage.Load("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loaded.Turns[0].Steps
+	if len(got) != 2 || got[0].Native == nil || string(got[0].Native.Data) != string(native) {
+		t.Fatalf("steps did not survive storage byte for byte: %+v", got)
 	}
 }
 

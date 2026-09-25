@@ -1333,6 +1333,32 @@ restarted after a CLI rename. This decision does not claim atomicity across proc
 systems; it requires a truthful final state, compensating rollback where possible, and an actionable
 description where it is not.
 
+## D-55 The transcript is append-only and the prefix is frozen. Decided 2026-09-25.
+
+Current Claude models bind every reasoning block to the exact conversation before it, and reject or
+discard it when anything there changed; every provider's prompt cache is a prefix match. The
+engine rebuilt each finished turn from its summary fields (step texts joined, all tool calls in one
+message), gave each mode its own system prompt, and filtered the tool list by the current mode, so
+every new turn and every mode switch rewrote the front of the request. A measured five-turn session
+cost 1.76 times what an append-only one does.
+
+1. A turn keeps the messages it added exactly as exchanged (`Turn.Steps`), with the provider's own
+   encoding of each assistant message (`Message.Native`), thinking blocks and signatures included.
+   History replays them verbatim.
+2. The system prompt is one frozen core prompt for every mode (`core.SystemPrompt`). A mode is stated
+   in a note attached to the user message where it took effect (`Message.Note`), once, and never
+   edited afterwards.
+3. The tool list follows the agent's configured trust ceiling, which does not change during a
+   conversation, not its current mode. A mode lowers what each call may do; the permission layer
+   enforces that per call, as it always did.
+4. A conversation is a sequence of epochs. Only compaction, a model change or a capability change
+   starts a new one, and the first request of an epoch is expected to miss the cache.
+
+Supersedes the mechanism in D-42 rule 3 that rewrote the prefix to elide old reads (E-04's design):
+shortening now happens by compaction, by server-side context management, or by making new tool
+results smaller. D-42's visibility rules stand. Supersedes the parts of D-41 and M-09 that sent a
+mode's prompt as the system prompt and hid tools a mode forbids.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

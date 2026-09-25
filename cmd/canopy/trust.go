@@ -21,6 +21,7 @@ import (
 func gateProject(dir string, project config.Project, in io.Reader, out io.Writer, interactive bool) config.Project {
 	req := trust.Describe(dir, project)
 	if req.Empty() {
+		project.Trusted = true
 		return project
 	}
 	store, err := trust.Open()
@@ -29,6 +30,7 @@ func gateProject(dir string, project config.Project, in io.Reader, out io.Writer
 		return trust.Withhold(project)
 	}
 	if store.Trusted(req) {
+		project.Trusted = true
 		return project
 	}
 
@@ -49,6 +51,7 @@ func gateProject(dir string, project config.Project, in io.Reader, out io.Writer
 	if err := store.Grant(req); err != nil {
 		_, _ = fmt.Fprintf(out, "warning: could not record the answer (%v); it applies to this run only\n", err)
 	}
+	project.Trusted = true
 	return project
 }
 

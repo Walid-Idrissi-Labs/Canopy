@@ -893,3 +893,50 @@ func TestARepeatedArgumentIsFoundAtAnyDepth(t *testing.T) {
 		}
 	}
 }
+
+// Stopping a turn between two tool calls still answers both, or every later request in the
+// conversation carries an unanswered call and is refused by the provider.
+func TestAStoppedTurnAnswersEveryCall(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	tools := core.NewToolRegistry()
+	tools.MustRegister(&cancellingTool{cancel: cancel})
+	client := &scriptedClient{turns: [][]core.StreamEvent{{
+		{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: "a", Name: "stopper", Input: []byte(`{}`)}},
+		{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: "b", Name: "stopper", Input: []byte(`{}`)}},
+		{Kind: core.EventDone, StopReason: core.StopToolUse},
+	}}}
+	loop := &Loop{Client: client, Tools: tools, Trust: core.TrustStandard}
+	outcome, _ := loop.Run(ctx, core.Request{Model: "m", Messages: []core.Message{{Role: core.RoleUser, Text: "go"}}}, nil)
+	last := outcome.Messages[len(outcome.Messages)-1]
+	if len(last.ToolResults) != 2 {
+		t.Fatalf("%d results for 2 calls after a stop: %+v", len(last.ToolResults), last)
+	}
+}
+
+type cancellingTool struct{ cancel context.CancelFunc }
+
+func (*cancellingTool) Name() string            { return "stopper" }
+func (*cancellingTool) Description() string     { return "stops the turn" }
+func (*cancellingTool) Kind() core.ToolKind     { return core.ToolRead }
+func (*cancellingTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (t *cancellingTool) Run(context.Context, json.RawMessage) (core.ToolResult, error) {
+	t.cancel()
+	return core.ToolResult{Content: "ran"}, nil
+}
+
+// A step cut off by the length cap can carry a call whose input is incomplete; it is not recorded,
+// because a recorded call must be answered and this one was never going to run.
+func TestACallCutOffByTheLengthCapIsNotRecorded(t *testing.T) {
+	client := &scriptedClient{turns: [][]core.StreamEvent{{
+		{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: "a", Name: "write_file", Input: []byte(`{"path":"a`)}},
+		{Kind: core.EventDone, StopReason: core.StopMaxTokens},
+	}}}
+	loop := &Loop{Client: client, Tools: core.NewToolRegistry(), Trust: core.TrustStandard}
+	outcome, _ := loop.Run(context.Background(), core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "go"}}}, nil)
+	for _, m := range outcome.Messages {
+		if len(m.ToolCalls) > 0 {
+			t.Fatalf("a cut-off call was recorded without a result: %+v", m)
+		}
+	}
+}

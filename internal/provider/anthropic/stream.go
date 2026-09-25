@@ -2,6 +2,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/json"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 
@@ -34,6 +35,7 @@ type stream struct {
 	current core.StreamEvent
 	pending []core.StreamEvent
 
+	native   *core.Native
 	err      error
 	finished bool
 	closed   bool
@@ -123,7 +125,21 @@ func (s *stream) finish() {
 		})
 	}
 
+	s.native = s.nativeMessage()
 	s.finishWith(mapStopReason(s.message.StopReason), nil)
+}
+
+// nativeMessage is the finished assistant message as the API's own JSON, thinking blocks and
+// signatures included, so the next request can send back exactly what was received.
+func (s *stream) nativeMessage() *core.Native {
+	if len(s.message.Content) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(s.message.ToParam())
+	if err != nil {
+		return nil
+	}
+	return &core.Native{Provider: providerName, Data: data}
 }
 
 // finishWith queues the terminal event.
@@ -138,6 +154,7 @@ func (s *stream) finishWith(reason core.StopReason, err error) {
 		StopReason: reason,
 		Usage:      s.usage(),
 		Err:        err,
+		Native:     s.native,
 	})
 }
 
