@@ -9,10 +9,10 @@ package hooks
 import (
 	"context"
 	"fmt"
-	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"os"
 	"strings"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
@@ -37,15 +37,25 @@ func Confined(confine func(dir string) (*sandbox.Policy, []string)) Executor {
 	}
 }
 
-func run(ctx context.Context, command, dir string, env []string, policy *sandbox.Policy, base []string) (string, error) {
-	shell := os.Getenv("SHELL")
-	if strings.TrimSpace(shell) == "" {
-		shell = "/bin/sh"
+// shellPath is the user's shell, or sh.
+func shellPath() string {
+	if shell := os.Getenv("SHELL"); strings.TrimSpace(shell) != "" {
+		return shell
 	}
+	return "/bin/sh"
+}
 
+// withInherited is base, or the inherited environment when the sandbox gave none.
+func withInherited(base []string) []string {
 	if base == nil {
-		base = childenv.Inherited()
+		return childenv.Inherited()
 	}
+	return base
+}
+
+func run(ctx context.Context, command, dir string, env []string, policy *sandbox.Policy, base []string) (string, error) {
+	shell := shellPath()
+	base = withInherited(base)
 	result, err := exec.Run(ctx, shell, []string{"-c", command}, exec.Options{
 		Dir: dir,
 		// Added to the environment rather than replacing it. A hook that cannot see PATH is a hook

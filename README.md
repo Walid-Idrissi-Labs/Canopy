@@ -63,6 +63,7 @@ Those are stated plainly rather than deferred quietly, and
 - [Where the tokens go](#where-the-tokens-go)
 - [Reusable prompt commands](#reusable-prompt-commands)
 - [Modes, on shift+tab](#modes-on-shifttab)
+- [Themes](#themes)
 - [A report for the pull request](#a-report-for-the-pull-request)
 - [What it will not do](#what-it-will-not-do)
 - [Requirements](#requirements)
@@ -90,6 +91,10 @@ canopy keys list                             # the MODEL column says NOT SET whe
 canopy keys rename nim minimax               # the value is not asked for again
 ```
 
+Already have `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set for another tool? `canopy keys import`
+shows what it found, by fingerprint and never by value, and stores them as named keys once you say
+yes.
+
 No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy keys signin` rather
 than `canopy keys add`, and read
 [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
@@ -112,6 +117,11 @@ The keys screen offers a dated catalog where Canopy knows both the endpoint and 
 transport, while still accepting an unlisted model id. OpenAI's offered list is intentionally
 limited to models the current Chat Completions adapter can invoke; models that require the
 Responses API need a transport Canopy does not yet ship.
+
+In a project with no canopy.json, `canopy init` writes one with the tests its go.mod, Cargo.toml,
+package.json or pytest setup suggests, for you to read and `canopy trust`. `canopy doctor` checks
+git, the key store, the sandbox, the project's configuration, language servers, the programs the
+subscription routes need, and the terminal, and says what to do about each that is missing.
 
 Now run `canopy` in a git repository. Press `?` for every key binding.
 
@@ -364,6 +374,24 @@ file never holds it; the trust prompt shows which variables go to which url, a s
 is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
 cloud's) is never sent to a server a repository names.
 
+A hook runs on something that happened: `tests-passed`, `tests-failed`, `verified`, `agent-idle` and
+`agent-blocked` for the project's state, and `pre-tool`, `post-tool` and `turn-end` around an agent's
+work. The last three are given what happened as JSON on stdin. A `pre-tool` hook can refuse a call,
+by answering `{"decision": "deny", "reason": "..."}` or exiting 2 with the reason on stderr, and the
+model is told why; it can never approve one, since it runs only after the permission layer has said
+yes. One that cannot answer, by crashing, timing out or saying something else, refuses the call too.
+A `post-tool` hook can answer `{"note": "..."}`, which is added to what the model is told of the
+result. `"tools": ["run_command"]` narrows either to some tools. Every hook runs in the sandbox, in
+the directory of the agent the call belongs to, which its input names as `workspace`.
+
+```json
+{"hooks": [
+  {"on": "pre-tool", "tools": ["run_command"], "run": "./scripts/guard.sh", "timeout": "10s"},
+  {"on": "post-tool", "tools": ["write_file", "edit_file"], "run": "./scripts/lint-note.sh"},
+  {"on": "turn-end", "run": "osascript -e 'display notification \"turn done\"'"}
+]}
+```
+
 ## Landing an agent's work
 
 ```sh
@@ -501,6 +529,23 @@ plan for a fraction of a second on its way from cruise to build. The box says bo
 `cruise → plan`, so the mode in effect is never the one being claimed. Sending a message, naming a
 mode with `/mode`, leaving the conversation or quitting all apply it at once, and `/mode plan` skips
 the wait entirely. The key is not the emergency stop, and never was: `esc` ends the turn now.
+
+## Themes
+
+`/theme` lists the palettes and `/theme nord` switches to one; `CANOPY_THEME=nord` starts in it.
+Canopy's own palette ships with catppuccin, dracula, gruvbox, nord, solarized and tokyonight, each in
+a light and a dark form that follow the terminal's background, and `mono`, which is what `NO_COLOR`
+gives. Every shipped palette is checked for contrast against the background it was made for (text
+4.5:1, outcomes and quiet text 3:1, code 2.5:1, borders just visible), which deepened a few of the
+upstream colours, as each theme's own description says. A test fails if a colour is made outside the
+theme package in any of the ways it knows to look for, so a theme reaches the whole interface.
+
+A theme of your own is a JSON file in `canopy/themes` under your config directory
+(`~/Library/Application Support` on macOS, `~/.config` on Linux, or `CANOPY_THEMES_DIR`), one colour
+per role, each either
+`"#rrggbb"` or `{"light": "#rrggbb", "dark": "#rrggbb"}`. The shipped ones in
+`internal/tui/theme/themes` are complete examples. A file that does not load is named, with the
+reason, by a bare `/theme`.
 
 ## A report for the pull request
 

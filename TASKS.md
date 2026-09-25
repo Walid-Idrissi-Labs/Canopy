@@ -8029,6 +8029,55 @@ how many are working and waiting. OSC 9;4 progress is drawn only on Ghostty, Wez
 Terminal and ConEmu, since an older iTerm2 shows any OSC 9 as a notification. Tests cover each
 sequence, the escaping, the title, where progress is drawn, and the app announcing who waits once
 and a finish only while blurred; off unless asked for. Mutation-checked.
+### Z-V10 First run: keys import, canopy init, canopy doctor (V-10)
+`status: review | owner: Claude | branch: feat/doctor-and-first-run`
+
+`canopy keys import` stores ANTHROPIC_API_KEY and OPENAI_API_KEY as named keys after one
+confirmation, showing fingerprints and never values; a key already stored under any name, or a name
+already taken, is left alone. `canopy init` writes a canopy.json with the tests the build files
+suggest (go.mod, Cargo.toml, a package.json test script other than npm's placeholder, a pytest
+setup), never over an existing one, and says it must be trusted before it runs. `canopy doctor`
+reports git, repository, key store (naming CANOPY_KEY_BACKEND=file where there is no keychain),
+keys, sandbox, canopy.json and its trust, language servers, the subscription routes' programs, the
+terminal and tmux clipboard, and exits 1 when something needed is missing. After review: the key
+store is probed rather than listed, so a missing keychain fails; the Claude bridge is found the way
+the route finds it; a subdirectory is named as one; runners run the project's script (`bun run
+test`), pytest runs under python3 or the project's .venv; import leaves alone a key whose
+*_BASE_URL points elsewhere and stores one value once. Tests cover the detection per ecosystem, init
+never overwriting, import's answer, endpoint and duplicate handling, and doctor's key store, sandbox
+switch, trust, repository and exit code; 24 mutants killed across the two review rounds.
+### Z-X11 Hooks around tool calls: pre-tool, post-tool, turn-end (X-11, D-64)
+`status: review | owner: Claude | branch: feat/tool-hooks`
+
+Three hook events, given JSON on stdin and run in the sandbox: pre-tool can refuse a call (a deny
+answer, or exit 2 with the reason on stderr) and fails closed; post-tool can add a note to the
+result; turn-end runs in the background. `"tools"` narrows the first two, is refused on any other
+event, and shows in the trust prompt. exec.Run gained stdin and a separate stderr. Tests: the answer
+is read strictly (silence, allow, deny, exit 2, other exits, no answer, not JSON, unknown words);
+hooks run in order for their tools and the first refusal stands; post-tool notes gather and failures
+report; turn-end runs in the background; a real shell hook reads stdin and answers; in the loop, a
+refusal stops the call, reaches the model and is audited as denied, a note reaches the model, and a
+call refused by the level or not approved never reaches a hook; the engine tells turn-end hooks of
+every turn. Mutation-checked.
+### Z-V02 Themes as data, a person's own themes, and the colour gate (part of V-02)
+`status: review | owner: Claude | branch: feat/themes-as-data`
+
+Themes beyond canopy and mono are JSON files: catppuccin, dracula, gruvbox, nord, solarized and
+tokyonight ship embedded, each light and dark, and a person's own load from `canopy/themes` in the
+config directory. A file is checked colour by colour (every role present, each `#rrggbb`, no unknown
+keys, a plain name); one that fails, or takes a name already used, is skipped and named by a bare
+`/theme`, which also reads the files again and shows the current palette's description. A pipe, a
+device or a file over 64 KB is refused without being read, the reading happens outside the lock, and
+a file's name is quoted where it is shown. Tests: every shipped theme loads; each way a file can be
+wrong is refused and the missing colour named (a key twice, a key in other case, a stray half, a bad
+dark half, trailing data; a byte order mark is accepted); a person's theme loads beside the shipped
+ones in file-name order and cannot replace one, canopy and mono included; a pipe and /dev/zero do
+not hang the load; every palette clears WCAG contrast against the background it was made for (text
+4.5, outcomes and quiet text 3, code 2.5, borders 1.2), which moved a few upstream colours, each said
+in the theme's description; nothing in internal or cmd outside the theme package makes a colour,
+checked by planting four kinds of one. Still open from V-02: the
+component set (Card, Badge, StatusPill, KeyHint and the rest), since the screens already draw these
+through theme styles and a rewrite needs its own golden review.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 

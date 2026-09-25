@@ -838,3 +838,12 @@ func TestStoppingDoesNotWaitForARead(t *testing.T) {
 		t.Fatal("the server waited for a read that was never going to come")
 	}
 }
+
+func TestToolKindsNameCanopysOwnTools(t *testing.T) {
+	for name, want := range map[string]string{"run_command": "execute", "read_file": "read", "write_file": "edit",
+		"grep": "search", "fetch_url": "fetch", "git_status": "other"} {
+		if got := toolKind(name); got != want {
+			t.Errorf("%s is %q, want %q", name, got, want)
+		}
+	}
+}

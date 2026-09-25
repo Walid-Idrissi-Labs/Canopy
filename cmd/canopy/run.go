@@ -19,6 +19,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
@@ -87,6 +88,10 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	resolver := session.NewKeyResolver(keyStore, version)
 	resolver.Renews(signInSources())
 	engine := session.New(resolver)
+	// Turn-end hooks are waited for after the engine has closed, which is when the last turn has
+	// ended and told them.
+	var toolHooks *hooks.ToolRunner
+	defer func() { toolHooks.Wait(hookShutdownLimit) }()
 	defer engine.Close()
 	// One prompt and done: a summary compacted at the end would be paid for and never read.
 	engine.SetAutoCompact(false)
@@ -132,6 +137,11 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	}
 	stopServers := attachMCP(engine, dir, project)
 	defer stopServers()
+	toolHooks = attachToolHooks(engine, dir, project, func(r hooks.Report) {
+		if r.Failed() {
+			_, _ = fmt.Fprintln(errOut, "warning: "+terminalText(r.Summary()))
+		}
+	}, errOut)
 
 	if *keyName == "" {
 		*keyName = resolver.DefaultKeyName()

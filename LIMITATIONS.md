@@ -870,3 +870,17 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
   service manager. A question waiting for a client is announced on the server's error output only,
   with no desktop notification.
+- `canopy init` proposes `.venv/bin/python -m pytest` where the project has a `.venv`. An agent's
+  worktree has none unless canopy.json's `copy` or `setup` makes one, so the test fails there until
+  it does.
+- A pre-tool hook (D-64) runs for every call it matches, so a slow one slows every such call; the
+  default timeout is 30 seconds, after which the call is refused. It sees a call's arguments as the
+  model wrote them, and the result it is given by post-tool is cut at 16 KB. A turn-end hook's
+  failure is reported on the way out in the interface and as a warning in `canopy run`, `acp` and
+  `serve`, not on screen as it happens.
+- Trust covers a hook's command, not the script it runs (D-64). An agent that may write files can edit
+  a guard script kept in the repository, so a pre-tool guard meant to hold against the agent belongs
+  outside it. On the subscription routes, which run the vendor's own tools, tool hooks do not run at
+  all. A tool name in a hook's `tools` that Canopy does not have is warned about at start and never
+  matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
+  running after that is left to finish on its own.
