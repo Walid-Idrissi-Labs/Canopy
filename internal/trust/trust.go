@@ -62,6 +62,13 @@ var vendorSettings = []string{
 
 // Describe builds the request for a directory and its loaded configuration.
 func Describe(dir string, project config.Project) Request {
+	return DescribeWith(dir, project, nil)
+}
+
+// DescribeWith is Describe with the named instruction files read as the contents given rather than
+// from disk: what the request would be after a change that has not been made yet. A file not on disk
+// is not added.
+func DescribeWith(dir string, project config.Project, contents map[string][]byte) Request {
 	req := Request{Dir: dir, Setup: project.Setup,
 		Instructions: strings.TrimSpace(project.Instructions) != "" || len(project.Commands) > 0}
 	for _, t := range project.Tests {
@@ -102,6 +109,9 @@ func Describe(dir string, project config.Project) Request {
 	h.Write(canonical)
 	for _, rel := range config.InstructionFiles(dir) {
 		data, err := os.ReadFile(filepath.Join(dir, rel)) // regular files only, checked by InstructionFiles
+		if given, ok := contents[rel]; ok {
+			data, err = given, nil
+		}
 		if err != nil {
 			continue
 		}

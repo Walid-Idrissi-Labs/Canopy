@@ -102,3 +102,24 @@ func TestCtrlYCopiesTheLastCodeBlock(t *testing.T) {
 		t.Fatalf("copied %q", copied)
 	}
 }
+
+// Matches do not overlap, and a question arriving takes the keyboard back from the find bar.
+func TestFindCountsWholeMatchesAndGivesWayToAQuestion(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		turn("t1", "q", "aaaa", core.TurnComplete), turn("t2", "go", "", core.TurnStreaming)}}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 20)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	m, _ = m.Update(keyCode('f', tea.ModCtrl))
+	m = typeFind(m, "aa")
+	if !strings.Contains(plain(m.Body()), "2 of 2") {
+		t.Fatalf("overlapping matches were counted:\n%s", plain(m.Body()))
+	}
+	engine.session.Turns[1].State = core.TurnAwaitingTools
+	engine.prompt = pendingPrompt("make clean")
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	m, _ = m.Update(keyText("x"))
+	if strings.Contains(plain(m.Body()), "esc closes") {
+		t.Fatal("the find bar kept the keyboard from a question")
+	}
+}

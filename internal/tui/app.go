@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
@@ -131,6 +132,13 @@ type App struct {
 	// go on waiting. See bell.go.
 	waiting []string
 
+	// working is who had a turn in flight the last time the engine said anything, so a turn that
+	// ends while the terminal is not in front can be announced.
+	working []string
+
+	// blurred is whether the terminal has said it is not the window in front.
+	blurred bool
+
 	chat      chat.Model
 	agents    agentsui.Model
 	dashboard Model
@@ -170,6 +178,11 @@ type AppOptions struct {
 	// "session-1" is the oldest chat in the database. Every launch opened it, while the agent that
 	// had just been created sat in a conversation nobody could see.
 	Session string
+
+	// Files lists the project's files for @ mentions, and Remember keeps a "# note" in its
+	// instructions. Either may be nil.
+	Files    func() []string
+	Remember func(note string) (string, error)
 }
 
 // NewApp builds the application.
@@ -229,6 +242,8 @@ func NewAppConfigured(
 		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
+	app.chat.SetFiles(options.Files)
+	app.chat.SetRemember(options.Remember)
 	app.chat.SetAgent(options.Agent)
 	app.review.SetCostOutcomes(options.Costs)
 	app.review.SetJudge(engine.Judge)
@@ -280,6 +295,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.screen = screenChat
 		a.agents.SetVisible(false)
 		return a, cmd
+
+	case tea.FocusMsg:
+		a.blurred = false
+		return a, nil
+
+	case tea.BlurMsg:
+		a.blurred = true
+		return a, nil
 
 	case tea.BackgroundColorMsg:
 		theme.SetDark(m.IsDark())
@@ -606,18 +629,78 @@ func (a App) attention() []string {
 func (a *App) noticeAttention() {
 	waiting := a.attention()
 
-	fresh := false
+	var fresh []string
 	for _, id := range waiting {
 		if !named(a.waiting, id) {
-			fresh = true
-			break
+			fresh = append(fresh, id)
 		}
 	}
 	a.waiting = waiting
 
-	if fresh {
+	if len(fresh) > 0 {
 		ring()
+		// Announced when it cannot be seen: the terminal is behind another window, or the question
+		// belongs to a conversation other than the one on screen, which asks it in place already.
+		for _, id := range fresh {
+			if a.blurred || id != a.chat.SessionID() {
+				notify(a.whyWaiting(id))
+			}
+		}
 	}
+
+	// A turn that ends while the terminal is not in front is worth a notification too: whoever
+	// started it has gone to another window and is waiting to hear.
+	working := a.workingNow()
+	if a.blurred {
+		for _, id := range a.working {
+			if !named(working, id) && !named(waiting, id) {
+				notify(a.nameOf(id) + " finished")
+			}
+		}
+	}
+	a.working = working
+}
+
+// workingNow is every conversation with a turn in flight, the one on screen included.
+func (a App) workingNow() []string {
+	var who []string
+	if a.chat.Working() {
+		who = append(who, a.chat.SessionID())
+	}
+	for _, status := range a.engine.AgentStatuses() {
+		if status.State == core.AgentWorking && status.Agent.SessionID != "" && !named(who, status.Agent.SessionID) {
+			who = append(who, status.Agent.SessionID)
+		}
+	}
+	return who
+}
+
+// nameOf is what a conversation is called in a notification: the agent's name, or yours.
+func (a App) nameOf(id string) string {
+	if id == a.chat.SessionID() {
+		return "your conversation"
+	}
+	for _, status := range a.engine.AgentStatuses() {
+		if status.Agent.SessionID == id || (status.Agent.SessionID == "" && status.Agent.Name == id) {
+			return status.Agent.Name
+		}
+	}
+	return "an agent"
+}
+
+// whyWaiting says who needs a person and for what, as a notification.
+func (a App) whyWaiting(id string) string {
+	for _, waiting := range a.engine.PendingAll() {
+		if waiting.SessionID != id {
+			continue
+		}
+		what := waiting.Request.Tool
+		if waiting.Request.Command != "" {
+			what = waiting.Request.Command
+		}
+		return a.nameOf(id) + " asks to run " + what
+	}
+	return a.nameOf(id) + " needs you"
 }
 
 func named(who []string, id string) bool {
@@ -977,6 +1060,11 @@ func (a App) View() tea.View {
 	view := tea.NewView(a.render())
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
+	view.ReportFocus = true
+	view.WindowTitle = windowTitle(filepath.Base(a.dir), len(a.waiting), len(a.working))
+	if progressSupported() {
+		view.ProgressBar = progress(len(a.waiting), len(a.working))
+	}
 	return view
 }
 

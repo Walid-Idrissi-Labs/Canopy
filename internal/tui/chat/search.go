@@ -32,12 +32,14 @@ func (m Model) findAll(query string) []hit {
 	if query == "" {
 		return nil
 	}
-	needle := []rune(strings.ToLower(query))
+	// Compared rune for rune without changing case first, since lowering can change how many runes
+	// a string has, and the columns have to be the screen's.
+	needle := []rune(query)
 	var hits []hit
 	for i, line := range m.transcript() {
-		hay := []rune(strings.ToLower(ansi.Strip(line)))
+		hay := []rune(ansi.Strip(line))
 		for col := 0; col+len(needle) <= len(hay); col++ {
-			if string(hay[col:col+len(needle)]) == string(needle) {
+			if strings.EqualFold(string(hay[col:col+len(needle)]), query) {
 				hits = append(hits, hit{i, col, len(needle)})
 				col += len(needle) - 1
 			}
@@ -74,12 +76,12 @@ func (m Model) searchKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		// The view stays where the search took it, which is usually why somebody searched.
 		m.search = search{}
 		m.sel = selection{}
-	case "enter", "up", "ctrl+p":
+	case "enter", "up":
 		if len(m.search.hits) > 0 {
 			m.search.at = (m.search.at - 1 + len(m.search.hits)) % len(m.search.hits)
 			m.showHit()
 		}
-	case "down", "ctrl+n":
+	case "down":
 		if len(m.search.hits) > 0 {
 			m.search.at = (m.search.at + 1) % len(m.search.hits)
 			m.showHit()
