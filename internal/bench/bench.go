@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -301,11 +302,53 @@ func runOne(ctx context.Context, task Task, attempt Attempt) Result {
 		res.Error = "the attempt changed " + changed + ", so the check no longer measures the task"
 		return res
 	}
-	res.Passed, _, err = RunCheck(ctx, task, dir)
+	passed, output, err := RunCheck(ctx, task, dir)
 	if err != nil && res.Error == "" {
 		res.Error = err.Error()
 	}
+	// A pass counts only when the laid-out tests are seen to pass: code that ends the process
+	// before any test runs passes a check too, without a test file being touched.
+	if missing := unseenTests(task, output); passed && missing != "" {
+		res.Error = "the check passed without " + missing + " being seen to pass"
+		passed = false
+	}
+	res.Passed = passed
 	return res
+}
+
+var (
+	goTestName = regexp.MustCompile(`(?m)^func (Test\w+)\(`)
+	pyTestName = regexp.MustCompile(`(?m)^\s+def (test\w+)\(`)
+)
+
+// unseenTests names the first laid-out test the check's output does not report passing, or "".
+func unseenTests(task Task, output string) string {
+	root := path.Join("tasks", task.Name)
+	var missing string
+	_ = fs.WalkDir(embedded, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || missing != "" {
+			return err
+		}
+		rel := strings.TrimSuffix(strings.TrimPrefix(p, root+"/"), ".txt")
+		if !isTest(rel) {
+			return nil
+		}
+		data, _ := fs.ReadFile(embedded, p)
+		for _, m := range goTestName.FindAllSubmatch(data, -1) {
+			if !strings.Contains(output, "--- PASS: "+string(m[1])) {
+				missing = string(m[1])
+				return nil
+			}
+		}
+		for _, m := range pyTestName.FindAllSubmatch(data, -1) {
+			if !regexp.MustCompile(regexp.QuoteMeta(string(m[1])) + ` \(.*\) \.\.\. ok`).MatchString(output) {
+				missing = string(m[1])
+				return nil
+			}
+		}
+		return nil
+	})
+	return missing
 }
 
 // changedTests names the first test file that is missing, differs from the one laid out, or was

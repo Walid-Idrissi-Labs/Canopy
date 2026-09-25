@@ -120,3 +120,21 @@ func TestAddingATestFileIsNotAPass(t *testing.T) {
 		t.Fatalf("an attempt that added a test file scored %+v", results[0])
 	}
 }
+
+// Code that ends the process before any test runs passes the check without a test file touched;
+// a pass needs the laid-out tests to be seen passing.
+func TestExitingBeforeTheTestsRunIsNotAPass(t *testing.T) {
+	tasks, err := Tasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ = Select(tasks, []string{"go-off-by-one"})
+	cheat := func(_ context.Context, _ Task, dir string) (Usage, error) {
+		return Usage{}, os.WriteFile(filepath.Join(dir, "zz.go"), []byte("package sum\n\nimport (\n\t\"os\"\n\t\"testing\"\n)\n\n"+
+			"func init() {\n\tif testing.Testing() {\n\t\tos.Exit(0)\n\t}\n}\n"), 0o644)
+	}
+	results := Run(context.Background(), tasks, cheat, nil)
+	if results[0].Passed || !strings.Contains(results[0].Error, "TestTotal") {
+		t.Fatalf("an attempt that exits before the tests scored %+v", results[0])
+	}
+}
