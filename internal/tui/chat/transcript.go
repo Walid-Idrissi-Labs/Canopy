@@ -155,6 +155,27 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 		}
 	}
 
+	// A finished turn with its steps recorded is drawn in the order it happened: what the model
+	// said, the tools it called and what they returned, then what it said next. Drawing the whole
+	// reply above every tool call put a conclusion written after reading a file above the read.
+	if len(turn.Steps) > 0 && terminal(turn.State) {
+		for _, step := range turn.Steps {
+			if step.Role != core.RoleAssistant {
+				continue
+			}
+			if text := terminalSafe(step.Text); text != "" {
+				lines = append(lines, "")
+				lines = append(lines, RenderMarkdown(text, width)...)
+			}
+			for _, call := range step.ToolCalls {
+				lines = append(lines, renderToolCall(
+					call, resultFor(turn, call), turn.State, width, kinds, detail)...)
+			}
+		}
+		lines = append(lines, statusLines(turn, spinner, width)...)
+		return lines
+	}
+
 	if turn.Text != "" {
 		lines = append(lines, "")
 		// The reply goes through the markdown renderer; the question above does not. What somebody
