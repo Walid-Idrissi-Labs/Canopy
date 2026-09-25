@@ -62,6 +62,7 @@ Those are stated plainly rather than deferred quietly, and
 - [Know which agent was actually right](#know-which-agent-was-actually-right)
 - [Where the tokens go](#where-the-tokens-go)
 - [Reusable prompt commands](#reusable-prompt-commands)
+- [Writing a message](#writing-a-message)
 - [Modes, on shift+tab](#modes-on-shifttab)
 - [Themes](#themes)
 - [A report for the pull request](#a-report-for-the-pull-request)
@@ -468,6 +469,15 @@ Global commands use the same `{"commands": [...]}` shape under the platform user
 project definition with the same name wins only for that project. `$ARGUMENTS` is replaced literally
 in one pass; there is no template evaluation or shell interpolation. When the placeholder is
 absent, arguments are appended under an `Arguments:` heading.
+
+## Writing a message
+
+`@` at the start of a word offers the project's files as git lists them, ignored ones left out,
+best match first; tab or enter puts the path in. ctrl+x ctrl+e opens the message in `$VISUAL` or
+`$EDITOR` and takes back what you wrote. A message that begins with `# ` is not sent: it is kept as a
+line in AGENTS.md, which every conversation started afterwards reads. Since AGENTS.md is part of what
+you trusted, trust follows your note, but only while AGENTS.md is still what you trusted; if an agent
+has edited it meanwhile, the next start asks again.
 
 ## Modes, on shift+tab
 
