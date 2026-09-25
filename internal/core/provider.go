@@ -120,6 +120,11 @@ type Message struct {
 	// conversation's prefix stable. See SystemPrompt.
 	Note string `json:",omitempty"`
 
+	// Reports are what other agents sent back, carried on a user message. Unlike Note they are not
+	// Canopy's instructions: an agent's report repeats whatever it read, so adapters send each one
+	// framed as data with its markup neutralised. See ReportText.
+	Reports []string `json:",omitempty"`
+
 	// ToolCalls are tool invocations the assistant requested.
 	ToolCalls []ToolCall
 

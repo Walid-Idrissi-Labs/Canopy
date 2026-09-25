@@ -83,6 +83,11 @@ be rediscovered by getting burned by it.
   at once. Asking for more is refused rather than trimmed. The counts are blast radius limits rather
   than measured capacity, so they may be wrong for your machine in either direction.
 
+- When a dispatched agent finishes, a bounded report of how it ended goes with the next message you
+  send in the conversation that started it; it never starts a turn by itself. Reports waiting to be
+  sent are held in memory, so quitting Canopy before sending another message loses them, though
+  each agent's own conversation keeps everything it said.
+
 - A spawned agent cannot spawn agents of its own. That is deliberate for 0.1: nested dispatch is
   A8-01 and needs its own limits, and inheriting it by accident would let one confirmation multiply
   into an unbounded fan out.
