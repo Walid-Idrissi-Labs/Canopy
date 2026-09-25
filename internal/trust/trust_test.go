@@ -106,3 +106,13 @@ func TestAChangedSkillFileAsksAgain(t *testing.T) {
 		t.Fatal("a skill's supporting file changed without changing what trust covers")
 	}
 }
+
+// A remote MCP server is shown with the url it reaches and the environment variables its headers
+// carry there, so approving it is approving where those values go.
+func TestARemoteServerShowsWhatItSends(t *testing.T) {
+	req := Describe(t.TempDir(), config.Project{MCP: []config.MCPServer{{Name: "issues",
+		URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer ${ISSUES_TOKEN}"}}}})
+	if text := req.Text(); !strings.Contains(text, "https://mcp.example.com/mcp, sending $ISSUES_TOKEN") {
+		t.Fatalf("the prompt hides what the server is sent:\n%s", text)
+	}
+}

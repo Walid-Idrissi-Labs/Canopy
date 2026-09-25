@@ -16,8 +16,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
 )
 
 // MCPServer is one Model Context Protocol server to connect to.
@@ -131,13 +134,18 @@ func usableURL(raw string) bool {
 	return false
 }
 
-// ExpandedHeaders is Headers with ${NAME} replaced from the environment, and the names that were
-// not set, so a missing token is said rather than sent as an empty header.
-func (s MCPServer) ExpandedHeaders() (map[string]string, []string) {
-	var missing []string
-	out := make(map[string]string, len(s.Headers))
+// ExpandedHeaders is Headers with ${NAME} replaced from the environment. It also returns the names
+// that were not set, so a missing token is said rather than sent empty, and the names it refused:
+// a general credential (a code host's, a cloud's, a model provider's) is never sent to a server a
+// repository names, whatever the file says.
+func (s MCPServer) ExpandedHeaders() (headers map[string]string, missing, refused []string) {
+	headers = make(map[string]string, len(s.Headers))
 	for name, value := range s.Headers {
-		out[name] = os.Expand(value, func(key string) string {
+		headers[name] = os.Expand(value, func(key string) string {
+			if childenv.WellKnown(key) {
+				refused = append(refused, key)
+				return ""
+			}
 			v, ok := os.LookupEnv(key)
 			if !ok {
 				missing = append(missing, key)
@@ -145,5 +153,18 @@ func (s MCPServer) ExpandedHeaders() (map[string]string, []string) {
 			return v
 		})
 	}
-	return out, missing
+	return headers, missing, refused
+}
+
+// HeaderVariables names the environment variables the headers read, for the trust prompt.
+func (s MCPServer) HeaderVariables() []string {
+	var names []string
+	for _, value := range s.Headers {
+		os.Expand(value, func(key string) string {
+			names = append(names, key)
+			return ""
+		})
+	}
+	sort.Strings(names)
+	return names
 }

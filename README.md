@@ -348,9 +348,11 @@ An MCP server is a local program started over stdio, or a remote one reached ove
 ]}
 ```
 
-A remote server's url must be https, or http to this machine. A header names its token as
-`${NAME}`, read from the environment Canopy starts in, so the committed file never holds it; a
-server whose variable is not set is not connected, and says why.
+A remote server's url must be https, or http to this machine, and a redirect is never followed. A
+header names its token as `${NAME}`, read from the environment Canopy starts in, so the committed
+file never holds it; the trust prompt shows which variables go to which url, a server whose variable
+is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
+cloud's) is never sent to a server a repository names.
 
 ## Landing an agent's work
 

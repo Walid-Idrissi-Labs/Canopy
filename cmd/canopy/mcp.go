@@ -80,7 +80,13 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 		if server.Disabled {
 			continue
 		}
-		headers, missing := server.ExpandedHeaders()
+		headers, missing, refused := server.ExpandedHeaders()
+		if len(refused) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: the MCP server %q is not connected: %s is a general "+
+				"credential, which Canopy never sends to a server a repository names\n",
+				server.Name, strings.Join(refused, ", "))
+			continue
+		}
 		if len(missing) > 0 {
 			fmt.Fprintf(os.Stderr, "warning: the MCP server %q is not connected: %s is not set\n",
 				server.Name, strings.Join(missing, ", "))

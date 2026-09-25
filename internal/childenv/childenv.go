@@ -50,6 +50,22 @@ func Secret(name string) bool {
 	return false
 }
 
+// WellKnown reports whether a variable is one of the general credentials: a code host's, a cloud's
+// or a model provider's. Unlike a project's own token, such a key opens far more than any one server
+// needs, and a repository must never be able to direct it anywhere.
+func WellKnown(name string) bool {
+	upper := strings.ToUpper(name)
+	if exact[upper] {
+		return true
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(upper, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // Scrub returns env without secret variables, keeping any name listed in keep. keep is how a project
 // that genuinely needs a token in its tests says so, visibly, in its own configuration.
 func Scrub(env []string, keep ...string) []string {

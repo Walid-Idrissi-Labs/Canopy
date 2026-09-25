@@ -17,6 +17,7 @@ import (
 type httpServer struct {
 	mu       sync.Mutex
 	sessions []string
+	versions []string
 	auth     []string
 	refused  bool
 	deleted  bool
@@ -25,6 +26,7 @@ type httpServer struct {
 func (h *httpServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	h.sessions = append(h.sessions, r.Header.Get("Mcp-Session-Id"))
+	h.versions = append(h.versions, r.Header.Get("MCP-Protocol-Version"))
 	h.auth = append(h.auth, r.Header.Get("Authorization"))
 	h.mu.Unlock()
 	if r.Method == http.MethodDelete {
@@ -96,8 +98,19 @@ func TestARemoteServerOverHTTP(t *testing.T) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.sessions[0] != "" || h.sessions[len(h.sessions)-1] != "sess-42" {
-		t.Errorf("session ids sent: %v", h.sessions)
+	// Nothing before initialize has them; everything after it, each POST as well as the DELETE, does.
+	if h.sessions[0] != "" || h.versions[0] != "" {
+		t.Errorf("initialize carried a session or version: %v %v", h.sessions, h.versions)
+	}
+	for i := 1; i < len(h.sessions); i++ {
+		if h.sessions[i] != "sess-42" {
+			t.Errorf("request %d went without the session id: %v", i, h.sessions)
+		}
+	}
+	for i := 1; i < len(h.versions)-1; i++ {
+		if h.versions[i] != "2025-06-18" {
+			t.Errorf("request %d went without the protocol version: %v", i, h.versions)
+		}
 	}
 	for _, a := range h.auth {
 		if a != "Bearer t0ken" {

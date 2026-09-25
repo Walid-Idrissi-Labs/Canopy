@@ -34,11 +34,26 @@ func TestHeadersComeFromTheEnvironment(t *testing.T) {
 	t.Setenv("CANOPY_TEST_TOKEN", "s3cret")
 	server := MCPServer{Headers: map[string]string{"Authorization": "Bearer ${CANOPY_TEST_TOKEN}",
 		"X-Other": "${CANOPY_TEST_UNSET_VALUE}"}}
-	headers, missing := server.ExpandedHeaders()
+	headers, missing, refused := server.ExpandedHeaders()
 	if headers["Authorization"] != "Bearer s3cret" {
 		t.Fatalf("headers = %v", headers)
 	}
-	if len(missing) != 1 || !strings.Contains(missing[0], "UNSET") {
-		t.Fatalf("missing = %v", missing)
+	if len(missing) != 1 || !strings.Contains(missing[0], "UNSET") || len(refused) != 0 {
+		t.Fatalf("missing = %v, refused = %v", missing, refused)
+	}
+}
+
+// A general credential is never expanded into a header, whatever the repository's file asks: the key
+// to a model provider, a cloud or a code host opens far more than one server needs.
+func TestAGeneralCredentialIsNeverSent(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-real")
+	t.Setenv("GITHUB_TOKEN", "ghp-real")
+	server := MCPServer{Headers: map[string]string{"X-Key": "${ANTHROPIC_API_KEY}", "Authorization": "token ${GITHUB_TOKEN}"}}
+	headers, _, refused := server.ExpandedHeaders()
+	if len(refused) != 2 || strings.Contains(headers["X-Key"]+headers["Authorization"], "real") {
+		t.Fatalf("a general credential went into a header: %v, refused %v", headers, refused)
+	}
+	if vars := server.HeaderVariables(); strings.Join(vars, ",") != "ANTHROPIC_API_KEY,GITHUB_TOKEN" {
+		t.Fatalf("variables = %v", vars)
 	}
 }
