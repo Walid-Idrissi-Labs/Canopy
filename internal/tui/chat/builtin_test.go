@@ -582,7 +582,7 @@ func TestUndoComparesTheWorkspaceNotTheList(t *testing.T) {
 	}
 	engine.undoErr = errors.New("git is not answering")
 	next, cmd = run(next, "/undo")
-	next, _ = next.Update(cmd())
+	_, _ = next.Update(cmd())
 	if len(engine.undone) != 0 {
 		t.Fatal("undone although the preview could not be taken again")
 	}
