@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -559,7 +560,66 @@ func TestADispatchedAgentDoesNotGetTheDispatchTools(t *testing.T) {
 	if got := names(main.SessionID); !got[spawnToolName] || !got[profilesToolName] {
 		t.Errorf("the orchestrating conversation lost its dispatch tools: %v", got)
 	}
-	if got := names(created[0].SessionID); got[spawnToolName] || got[profilesToolName] {
-		t.Errorf("a spawned agent can spawn agents of its own: %v", got)
+	// Listed identically, so the spawned agent's requests share the orchestrator's cached prefix,
+	// and refused when called, so one confirmation cannot multiply into a nested fan out.
+	if got := names(created[0].SessionID); !got[spawnToolName] {
+		t.Errorf("the spawned agent's tool list differs from its orchestrator's: %v", got)
+	}
+	e.mu.Lock()
+	tools, _ := e.toolsForLocked(created[0].SessionID)
+	e.mu.Unlock()
+	spawn, _ := tools.Get(spawnToolName)
+	result, err := spawn.Run(context.Background(), json.RawMessage(`{"count":2,"profile":"nemotron","task":"x"}`))
+	if err != nil || !result.IsError || !result.Refused {
+		t.Errorf("a spawned agent was able to spawn agents of its own: %+v %v", result, err)
+	}
+}
+
+// When a dispatched agent finishes, its conclusion goes back to the conversation that started it,
+// with the next message sent there, and does not start a turn by itself.
+func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("the migration works; tests pass")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	main, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", KeyName: "claude", Model: "claude-opus-5",
+		Dir: t.TempDir(), Trust: core.TrustStandard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, _ := e.Session(main.SessionID)
+	created, err := e.Spawn(context.Background(), Dispatch{Count: 1, Profile: "claude", Task: "try it", Parent: parent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := e.Session(created[0].SessionID)
+	waitForTurn(t, e, child.ID, child.Turns[0].ID)
+	deadline := time.Now().Add(3 * time.Second)
+	for e.PendingJoins(parent.ID) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if e.PendingJoins(parent.ID) != 1 {
+		t.Fatal("the finished agent's report did not reach its orchestrator")
+	}
+	if got, _ := e.Session(parent.ID); len(got.Turns) != 0 {
+		t.Fatal("an agent finishing started a turn in the orchestrator by itself")
+	}
+	turnID, err := e.Send(parent.ID, "what did they find?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurn(t, e, parent.ID, turnID)
+	client.mu.Lock()
+	last := client.history[len(client.history)-1]
+	client.mu.Unlock()
+	if len(last.Reports) != 1 || !strings.Contains(last.Reports[0], "the migration works") {
+		t.Fatalf("the report did not travel with the next message: %+v", last.Reports)
+	}
+	if strings.Contains(last.Note, "the migration works") {
+		t.Fatal("an agent's report went out on Canopy's own instruction channel")
+	}
+	if e.PendingJoins(parent.ID) != 0 {
+		t.Fatal("a delivered report stayed pending")
 	}
 }

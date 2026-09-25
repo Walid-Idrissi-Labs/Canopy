@@ -83,6 +83,11 @@ be rediscovered by getting burned by it.
   at once. Asking for more is refused rather than trimmed. The counts are blast radius limits rather
   than measured capacity, so they may be wrong for your machine in either direction.
 
+- When a dispatched agent finishes, a bounded report of how it ended goes with the next message you
+  send in the conversation that started it; it never starts a turn by itself. Reports waiting to be
+  sent are held in memory, so quitting Canopy before sending another message loses them, though
+  each agent's own conversation keeps everything it said.
+
 - A spawned agent cannot spawn agents of its own. That is deliberate for 0.1: nested dispatch is
   A8-01 and needs its own limits, and inheriting it by accident would let one confirmation multiply
   into an unbounded fan out.
@@ -130,10 +135,14 @@ be rediscovered by getting burned by it.
   git-ignored files, in practice a `.env`, can be copied across through an explicit allow list;
   anything larger is expected to be rebuilt by a setup command rather than copied (A5-04).
 
-- Copying a large directory into a new worktree, such as an installed dependency tree, is a plain
-  byte-for-byte copy, not a reflink or copy-on-write clone, even on filesystems like APFS or Btrfs
-  that could do it nearly free. The size is measured and shown before you confirm, but each isolated
-  agent still pays that disk and time cost again (Q-14).
+- Copying a directory into a new worktree clones it where the filesystem can (APFS on macOS, Btrfs
+  and XFS on Linux), which costs no disk until either copy changes; elsewhere it is a byte-for-byte
+  copy, measured and shown before you confirm (Q-14).
+
+- Agent worktrees live in Canopy's data directory (`canopy worktree list` shows where), not beside
+  your repository, and `canopy worktree gc` removes the ones with no uncommitted work while keeping
+  every branch. Worktrees made by older builds beside the repository are still found and handled the
+  same way.
 
 - There is no way yet to choose an agent's trust level from the interface. A new agent inherits the
   credential and model currently in use; choosing a different trust posture per agent waits on a
