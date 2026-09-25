@@ -7994,6 +7994,32 @@ command output stored behind a handle with its failures and ending kept inline.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-R Round two: the AAA plan, built and reviewed
+`status: review | owner: Claude | branch: integration/round-2 (PR #78)`
+
+Each item below went branch, pull request, review by an independent Opus reviewing agent with
+mutation testing, fixes, re-review, then into the integration branch that lands as one merge.
+
+- Z-R1 OS sandbox for agent shell commands (D-56): Seatbelt and Landlock, nested repositories
+  guarded in the workspace and shared git directories. PR #64.
+- Z-R2 Code blocks highlighted by a real lexer, cached. PR #65.
+- Z-R3 Agent Skills with progressive disclosure, folders pinned at load (D-59). PR #66.
+- Z-R4 Anthropic web search, opt-in, audited as it happens; notices on screen (D-59). PRs #67, #84.
+- Z-R5 No-progress detection that resets when the workspace changes. PR #68.
+- Z-R6 Agent definitions as files, tools list as a trust ceiling (D-59). PR #69.
+- Z-R7 Undo preview from a snapshot, taken again on confirmation. PRs #70, #85.
+- Z-R8 `canopy land`: merge only a result that passes, prepared like an agent worktree. PR #71.
+- Z-R9 `canopy run -verify -escalate`, refusing -verify with nothing to verify. PR #72.
+- Z-R10 A finished turn drawn in the order it happened; a per-turn footer. PRs #73, #74.
+- Z-R11 `/context` request inventory, and a byte-level prefix test. PRs #75, #76.
+- Z-R12 `canopy bench`, scored only on the task's own tests seen passing. PR #77.
+- Z-R13 Spending caps between steps and across running agents; `/budget`, `run -budget`. PR #79.
+- Z-R14 `repo_map`. PR #80.
+- Z-R15 Golden screen snapshots. PR #82.
+- Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ---
 
 ## Appendix: change log for this file

@@ -1372,6 +1372,31 @@ no sandbox is available or `CANOPY_SANDBOX=off`, says so in its result. D-33's d
 contracts are unchanged; what changed is that the shell now has an enforced boundary on the two
 platforms Canopy supports, stated per platform rather than implied.
 
+## D-58 Language servers are back, for diagnostics and navigation, and only confined. Decided 2026-09-25.
+
+Supersedes D-27. The condition D-27 named was agent quality on real repositories, and the cheapest
+lever on it turned out to be hearing about a type error in the step that made it rather than
+several steps later from a failing build. The subsystem it feared is kept small: one client for
+every server, a server per language per worktree started only when a file of that language is
+written, diagnostics for the file just written added to the edit's result, and two read tools,
+`find_definition` and `find_references`. A language server runs the repository's own toolchain,
+so it starts only in a trusted repository, inside the same sandbox as the agent's shell commands,
+and not at all where there is no sandbox; rust-analyzer starts with build scripts and procedural
+macros off. `CANOPY_LSP=off` turns them off.
+
+## D-59 Web search, skills and agent definitions are in. Decided 2026-09-25.
+
+Supersedes D-40's rows for A4-07 and A8-09, and the part of A8-01 that is dispatch by name. Web
+search is the provider's own, Anthropic's server-side search, so Q-11's question of which search
+account to hold does not arise; it is opt-in with `CANOPY_WEB_SEARCH=on`, each search is audited,
+and it taints the conversation (D-57). Skills are the Agent Skills format that already exists,
+folders with a `SKILL.md`, loaded by progressive disclosure: names in the prompt, bodies on demand.
+Agent definitions are markdown files in `.claude/agents` or `.canopy/agents`, dispatched by name,
+and a definition's tools list becomes a trust ceiling. Project skills and definitions are covered
+by repository trust. The distribution-format worry D-40 recorded is answered by adopting a format
+others already use rather than inventing one. A8-01's nested sub-agents, agents that spawn agents,
+remain out.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:
