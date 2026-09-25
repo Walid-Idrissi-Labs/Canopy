@@ -95,6 +95,11 @@ type Request struct {
 	//	{"path": "project-1", "operation": "read"}
 	//	{"path": "project-1", "operation": "delete"}
 	Opaque bool
+
+	// Tainted says the conversation has taken in content from outside, a fetched page, a web search
+	// or an MCP tool's result, which may carry instructions nobody here wrote. From then on an action
+	// that could send data out is asked about whatever the level or earlier approvals say.
+	Tainted bool
 }
 
 // Decision is the answer, and why.
@@ -180,6 +185,14 @@ func Decide(req Request, level core.TrustLevel, granted *Grants) Decision {
 	}
 
 	scope := scopeFor(req)
+	// Before standing approvals and the level: an approval given before outside text arrived was
+	// given to the conversation as it was then, and injected instructions aim precisely at the
+	// actions a broad level runs unasked.
+	if req.Tainted && exfiltrationCapable(req) {
+		return Decision{Outcome: Ask, Scope: scope, Reason: "this conversation has read content from " +
+			"outside (a fetched page, a web search or an MCP tool), which can carry instructions, and " +
+			"this could send data out; it is asked about every time from here on"}
+	}
 	if granted != nil && granted.Covers(req, scope) {
 		return Decision{Outcome: Allow, Reason: "already approved", Scope: scope}
 	}
@@ -383,3 +396,129 @@ func PathScope(tool, dir string) Scope {
 // The broadest thing on offer and it is still bounded by the session, because an approval that
 // outlives the conversation it was given in is one nobody remembers granting.
 func KindScope(kind core.ToolKind) Scope { return Scope{Kind: kind} }
+
+// exfiltrationCapable reports whether a call could carry data out of the machine: anything on the
+// network, any MCP tool, a shell command that reaches the network or hides what it runs, and a git
+// push or a change of remote.
+func exfiltrationCapable(req Request) bool {
+	switch {
+	case req.Kind == core.ToolNetwork, req.Opaque:
+		return true
+	case req.Kind == core.ToolGit:
+		command := strings.TrimSpace(req.Command)
+		return strings.HasPrefix(command, "push") || strings.HasPrefix(command, "remote")
+	case req.Kind == core.ToolExecute:
+		return networkish(req.Command)
+	}
+	return false
+}
+
+// networkCommands are programs whose purpose is to reach another machine, or to run text that is
+// not in the command line itself and so could do anything.
+var networkCommands = map[string]bool{
+	"curl": true, "wget": true, "nc": true, "ncat": true, "netcat": true, "socat": true, "telnet": true,
+	"ssh": true, "scp": true, "sftp": true, "rsync": true, "ftp": true, "tftp": true, "sendmail": true,
+	"mail": true, "mailx": true, "nslookup": true, "dig": true, "host": true, "ping": true,
+	"gh": true, "aws": true, "gcloud": true, "gsutil": true, "az": true, "kubectl": true, "twine": true,
+	"openssl": true, "eval": true, "base64": true, "xxd": true,
+}
+
+// networkSubcommands are the network uses of tools that mostly work locally.
+var networkSubcommands = map[string][]string{
+	"git":    {"push", "fetch", "pull", "clone", "remote", "ls-remote", "submodule", "send-email", "archive"},
+	"npm":    {"publish"},
+	"yarn":   {"publish"},
+	"pnpm":   {"publish"},
+	"cargo":  {"publish"},
+	"gem":    {"push"},
+	"docker": {"push", "login"},
+}
+
+// networkish reports whether a shell command runs, as the command of any of its stages, a program
+// that reaches the network. Only command words count, not paths or arguments, so building a package
+// named mail or grepping for curl is not mistaken for sending anything.
+func networkish(command string) bool {
+	for _, stage := range stages(command) {
+		words := strings.Fields(stage)
+		// Leading assignments and wrappers that run the command after them.
+		for len(words) > 0 && (strings.Contains(words[0], "=") || wrapper[words[0]]) {
+			words = words[1:]
+			// A wrapper's own options and numbers, as in timeout 10 or nice -n 5.
+			for len(words) > 0 && (strings.HasPrefix(words[0], "-") || strings.Trim(words[0], "0123456789.smh") == "") {
+				words = words[1:]
+			}
+		}
+		if len(words) == 0 {
+			continue
+		}
+		name := commandName(words[0])
+		// A command named by a variable or a substitution runs something the line does not show.
+		if strings.HasPrefix(name, "$") {
+			return true
+		}
+		if networkCommands[name] {
+			return true
+		}
+		// find runs the command after -exec for each file it finds.
+		for i, w := range words[1:] {
+			if (w == "-exec" || w == "-execdir" || w == "-ok" || w == "-okdir") && i+2 < len(words) &&
+				networkCommands[commandName(words[i+2])] {
+				return true
+			}
+		}
+		// A shell given its commands as a string or on its input runs text the command line does
+		// not show; one given a script file is the script's own business.
+		if name == "sh" || name == "bash" || name == "zsh" {
+			if len(words) == 1 || words[1] == "-c" || words[1] == "-s" {
+				return true
+			}
+		}
+		if subs, ok := networkSubcommands[name]; ok {
+			if sub := subcommand(words[1:]); sub != "" {
+				for _, s := range subs {
+					if sub == s {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// commandName is a command word as the shell will run it: quotes and backslashes removed, since
+// "curl" and c\url are curl, and the directory dropped.
+func commandName(word string) string {
+	name := strings.NewReplacer(`"`, "", "'", "", `\`, "").Replace(word)
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
+}
+
+// subcommand is the first word that is not an option, skipping the values of the options that take
+// one, as in git -C dir push.
+func subcommand(args []string) string {
+	for i := 0; i < len(args); i++ {
+		switch w := args[i]; {
+		case w == "-C" || w == "-c" || w == "--git-dir" || w == "--work-tree" || w == "--namespace":
+			i++
+		case strings.HasPrefix(w, "-"):
+		default:
+			return w
+		}
+	}
+	return ""
+}
+
+// wrapper are commands that run the command after them.
+var wrapper = map[string]bool{"sudo": true, "env": true, "nohup": true, "time": true, "command": true,
+	"exec": true, "xargs": true, "nice": true, "timeout": true, "stdbuf": true}
+
+// stages splits a shell command into the commands it runs: at pipes, sequences, conditionals,
+// newlines, subshells and command substitutions.
+func stages(command string) []string {
+	replacer := strings.NewReplacer("||", "\n", "&&", "\n", "|", "\n", ";", "\n", "&", "\n",
+		"$(", "\n", "`", "\n", "(", "\n", ")", "\n", "{", "\n", "}", "\n")
+	return strings.Split(replacer.Replace(command), "\n")
+}

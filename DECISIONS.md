@@ -1372,6 +1372,31 @@ no sandbox is available or `CANOPY_SANDBOX=off`, says so in its result. D-33's d
 contracts are unchanged; what changed is that the shell now has an enforced boundary on the two
 platforms Canopy supports, stated per platform rather than implied.
 
+## D-57 Outside content taints a conversation, and a tainted conversation cannot freely send data out. Decided 2026-09-25.
+
+Extends D-33's approval scope; nothing it grants is withdrawn for a conversation that has read
+nothing from outside. A conversation is tainted once it has taken in content Canopy did not produce
+and the person did not type: a page from `fetch_url`, a web search the provider ran, or any MCP
+tool's result, counted once the result has come back. Such content can carry instructions aimed at
+the model. The taint is saved with the conversation, so it holds across compaction, a restart and
+a pickup; agents a tainted conversation starts inherit it, and a tainted agent passes it to the
+conversation it reports to.
+
+From then on two things hold, in every mode and past earlier approvals. Every shell command runs
+with its network limited to package registries through the egress proxy (D-60) where the sandbox
+limits by address, which is macOS, so a script the model writes cannot post what it read anywhere
+but a registry; on Linux, where the limit would be by port and cut off the local servers tests
+start, it is not forced. And an action whose purpose is to send data out is asked about: network tools, every MCP tool, a git push, fetch,
+clone or change of remote, and a shell command whose command word, in any stage of a pipeline, is a
+network program or runs text the line does not show (curl, ssh, `gh`, `nslookup`, `base64`, `eval`,
+a shell reading `-c` or its input, publishing commands). Only command words count, so building a
+package called `mail` or grepping for `curl` is not asked about. Reading, editing, building and
+testing keep their level. Enforced in the permission layer and the sandbox, never left to the
+model. Where the network is not limited, the word list is the only guard, and it narrows
+exfiltration rather than preventing it. The project's tests run in the sandbox (D-61), but a taint
+does not limit their network, and setup and hook commands run outside it, so a test a tainted agent
+writes, and runway then runs, can still reach the network.
+
 ## D-58 Language servers are back, for diagnostics and navigation, and only confined. Decided 2026-09-25.
 
 Supersedes D-27. The condition D-27 named was agent quality on real repositories, and the cheapest
@@ -1397,6 +1422,21 @@ and a definition's tools list becomes a trust ceiling. Project skills and defini
 by repository trust. The distribution-format worry D-40 recorded is answered by adopting a format
 others already use rather than inventing one. A8-01's nested sub-agents, agents that spawn agents,
 remain out.
+
+## D-60 The sandbox's network can be narrowed to package registries. Decided 2026-09-25.
+
+Follows D-56, which left the network open and named an egress allow list as the next step. Open
+stays the default, since a build that cannot fetch its dependencies is a build that fails for
+reasons nobody can see. `CANOPY_SANDBOX_NETWORK=registries` confines a command to the loopback
+address, where Canopy runs an HTTP proxy that forwards only to package registries and GitHub, and
+to hosts named in `CANOPY_SANDBOX_ALLOW`; everything else is refused, and the command's result says
+which hosts. `off` allows no connections. The proxy decides by host name, so the list is readable,
+and reaches those hosts on ports 80 and 443 only. What a program that ignores the proxy variables
+can reach differs by platform and is stated as such: on macOS, Seatbelt allows the loopback address
+only, so it reaches local services and nothing beyond the machine; on Linux, Landlock names ports
+rather than addresses, so it can reach any address on the proxy's one port. The list includes
+general-purpose hosts, GitHub and Google's storage among them, because dependencies are fetched
+from them, which is why this narrows where data can go rather than stopping it.
 
 ## D-61 A project's tests run in the sandbox too. Decided 2026-09-25.
 

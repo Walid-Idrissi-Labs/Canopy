@@ -10,3 +10,9 @@ func (p Policy) Wrap(string, []string) (string, []string, error) { return "", ni
 
 // RunTrampoline is only used on Linux.
 func RunTrampoline([]string) error { return ErrUnavailable }
+
+// NetworkEnforced reports whether this machine can limit a command's network.
+func NetworkEnforced() bool { return false }
+
+// LoopbackKept reports whether a network limited to the proxy still reaches the loopback address.
+func LoopbackKept() bool { return false }

@@ -59,8 +59,12 @@ func (p Policy) profile() string {
 		}
 		b.WriteString(")\n")
 	}
-	if p.Network == NetworkNone {
+	switch p.Network {
+	case NetworkNone:
 		b.WriteString("(deny network-outbound (remote ip))\n(deny network-bind)\n")
+	case NetworkProxy:
+		// The loopback address only, where the proxy is and where a test's own servers listen.
+		b.WriteString("(deny network-outbound (remote ip))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
 	}
 	return b.String()
 }
@@ -71,3 +75,10 @@ func quote(s string) string {
 
 // RunTrampoline is only used on Linux.
 func RunTrampoline([]string) error { return ErrUnavailable }
+
+// NetworkEnforced reports whether this machine can limit a command's network; Seatbelt always can.
+func NetworkEnforced() bool { return true }
+
+// LoopbackKept reports whether a network limited to the proxy still reaches the loopback address;
+// Seatbelt limits by address, so it does.
+func LoopbackKept() bool { return true }

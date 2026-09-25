@@ -740,6 +740,11 @@ func (m Model) summary(status session.AgentStatus) string {
 	if status.Usage.TotalTokens() > 0 {
 		parts = append(parts, fmt.Sprintf("%d tokens", status.Usage.TotalTokens()))
 	}
+	// How much of what it read came from the provider's cache, which decides most of what an agent
+	// costs: one sitting far below the others is resending its conversation fresh.
+	if read := status.Usage.InputTokens + status.Usage.CacheReadTokens + status.Usage.CacheWriteTokens; read > 0 {
+		parts = append(parts, fmt.Sprintf("%d%% cached", status.Usage.CacheReadTokens*100/read))
+	}
 	if status.Usage.CostKnown && status.Usage.CostUSD > 0 {
 		parts = append(parts, fmt.Sprintf("$%.4f", status.Usage.CostUSD))
 	}

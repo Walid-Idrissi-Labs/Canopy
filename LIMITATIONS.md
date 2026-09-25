@@ -137,7 +137,15 @@ be rediscovered by getting burned by it.
   that is enforced. The writable download caches (the Go module cache, Cargo's registry, Gradle's caches,
   npm's) are shared with your own builds, and a command can alter a file in them that a later build
   uses; the sandbox narrows what can be planted, it does not verify caches. Network is open by
-  default. Commands that install into your home break inside it: `pip install --user`, `gem
+  default. `CANOPY_SANDBOX_NETWORK=registries` sends a command's traffic through a proxy that reaches
+  package registries, GitHub and Google's storage, plus hosts in `CANOPY_SANDBOX_ALLOW`, on ports
+  80 and 443. Those are general-purpose hosts too, a repository or a bucket anybody can own, so this
+  narrows where data can go rather than stopping it. On macOS a command can still reach anything on
+  the loopback address, a test's own servers and any other local service; on Linux Landlock limits
+  connections by port, not address, so a program that ignores the proxy variables can reach any
+  address on the proxy's port, a test that starts a local server on another port cannot reach it,
+  and a kernel older than 6.7 cannot limit the network at all. `CANOPY_SANDBOX_NETWORK=off` allows
+  no connections. Commands that install into your home break inside it: `pip install --user`, `gem
   install`, global npm installs, version managers (nvm, pyenv, rbenv), Homebrew, and anything
   writing `~/.local/bin` or most of `~/.config`, and so do test commands that do: the project's
   tests run in the same sandbox (D-61), so a suite that writes outside the workspace, the temporary
@@ -826,3 +834,13 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   idle minutes; one that fails to answer twice in a row, such as one still indexing a large
   project, is left alone for the rest of the session. Only errors and warnings for the file just
   written are shown, up to twenty.
+- Once a conversation has read a fetched page, a provider search or an MCP result (D-57), its shell
+  commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
+  also cut off the local servers tests start), and anything whose purpose is to send data out is
+  asked about, even in runway and cruise. The project's tests run in the sandbox but a taint does
+  not limit their network, and setup and hook commands run outside it, so a test a tainted agent
+  writes can still reach the network when runway runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
+  `gh`, `nslookup`, `base64`, `eval`, `sh -c` and the like. A registry is still a server on the
+  internet, and where the network cannot be limited the word list is the only guard, which a
+  determined script can get around. Files in the workspace do not taint a conversation, though they
+  can carry instructions too.

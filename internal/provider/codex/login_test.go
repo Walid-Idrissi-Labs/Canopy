@@ -168,7 +168,7 @@ func TestCancellingASignInStopsThePollingAndSaysItWasStoppedRatherThanThatItFail
 		t.Fatal("Wait never returned after Cancel, so a wizard would sit on the sign-in step forever")
 	}
 
-	if _, ok := server.sentMethod(methodLoginCancel); !ok {
+	if _, ok := server.awaitMethod(methodLoginCancel); !ok {
 		t.Error("OpenAI was never told to stop. An abandoned device code otherwise goes on being " +
 			"polled every few seconds for as long as the program runs, on behalf of somebody who " +
 			"pressed escape")

@@ -120,8 +120,10 @@ type Engine struct {
 
 	mu       sync.Mutex
 	sessions map[string]*core.Session
-	order    []string
-	cancels  map[string]context.CancelFunc
+	// taint marks conversations known to have taken in outside content; see tainted.
+	taint   map[string]bool
+	order   []string
+	cancels map[string]context.CancelFunc
 
 	resolver Resolver
 	events   *store.Broker
@@ -449,7 +451,17 @@ func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
 	if err != nil {
 		return err
 	}
+	tainted, err := storage.taintedSessions()
+	if err != nil {
+		return err
+	}
 	e.mu.Lock()
+	for _, sessionID := range tainted {
+		if e.taint == nil {
+			e.taint = map[string]bool{}
+		}
+		e.taint[sessionID] = true
+	}
 	for sessionID, projectID := range projects {
 		e.projects[sessionID] = projectID
 	}
@@ -799,11 +811,17 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 	// The mode travels as a note on the message where it took effect, never as a change to the
 	// system prompt. See core.SystemPrompt.
 	note := pendingModeNote(*s, e.modeLocked(sessionID))
+	// The task list outlives a compaction in the conversation's record but not in what the model
+	// sees, so the first message after one carries it again.
+	if tasks := pendingTaskNote(*s); tasks != "" {
+		note = strings.TrimSpace(tasks + "\n\n" + note)
+	}
 	// An agent started from a definition gets its standing instructions with its first message, in
 	// Canopy's own channel, since the person chose the definition.
-	if standing := e.agentNotes[sessionID]; standing != "" {
+	// Kept, and sent again with the first message after a compaction, which replaces the turn that
+	// carried them.
+	if standing := e.agentNotes[sessionID]; standing != "" && (len(s.Turns) == 1 || firstSinceCompaction(*s)) {
 		note = strings.TrimSpace(standing + "\n\n" + note)
-		delete(e.agentNotes, sessionID)
 	}
 	s.Turns[len(s.Turns)-1].Request.Note = note
 	s.Turns[len(s.Turns)-1].Request.Reports = e.joinNotes[sessionID]
@@ -901,6 +919,7 @@ func (e *Engine) run(
 		SessionID: sessionID,
 		MaxSteps:  e.maxStepsSetting(),
 		Gate:      e.budgetGate(sessionID, id),
+		Tainted:   func() bool { return e.tainted(sessionID) },
 	}
 
 	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never
@@ -1109,8 +1128,10 @@ func (o *turnObserver) Text(chunk string) {
 
 func (o *turnObserver) Notice(text string) {
 	// A search the provider ran is recorded in the audit trail like any tool call, marked as run by
-	// the provider, since no approval prompt saw it.
+	// the provider, since no approval prompt saw it. It taints the conversation now, and the taint is
+	// saved now: the notice itself is not kept across a restart.
 	if query, ok := strings.CutPrefix(text, anthropic.WebSearchNotice); ok {
+		o.engine.markTainted(o.sessionID)
 		o.engine.mu.Lock()
 		trail := o.engine.trail
 		o.engine.mu.Unlock()
@@ -1139,11 +1160,20 @@ func (o *turnObserver) ToolRequested(call core.ToolCall) {
 	})
 }
 
-func (o *turnObserver) ToolFinished(_ core.ToolCall, result core.ToolResult) {
+func (o *turnObserver) ToolFinished(call core.ToolCall, result core.ToolResult) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
 		t.ToolResults = append(t.ToolResults, result)
 		t.State = core.TurnStreaming
 	})
+	// Outside content taints the conversation when it arrives, and the taint is saved then, rather
+	// than worked out later from a record that may not show it after a restart (an MCP server not
+	// started again, for one).
+	o.engine.mu.Lock()
+	tools, _ := o.engine.toolsForLocked(o.sessionID)
+	o.engine.mu.Unlock()
+	if taintSource(tools, call.Name) {
+		o.engine.markTainted(o.sessionID)
+	}
 	o.engine.refreshTasks(o.sessionID)
 }
 
@@ -1442,6 +1472,47 @@ func pendingModeNote(s core.Session, mode core.Mode) string {
 	return mode.Prompt
 }
 
+// pendingTaskNote is the agent's task list, for the first message after a compaction, or "". The
+// summary says what happened; the list says what the agent meant to do next, in its own words, and
+// a summary that paraphrased it would lose exactly the items still open.
+func pendingTaskNote(s core.Session) string {
+	if len(s.Tasks) == 0 || !firstSinceCompaction(s) {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Your task list, as you left it before the conversation was summarised:\n")
+	for _, task := range s.Tasks {
+		mark := " "
+		switch task.State {
+		case core.TaskDone:
+			mark = "x"
+		case core.TaskInProgress:
+			mark = "~"
+		}
+		fmt.Fprintf(&b, "- [%s] %s", mark, task.Text)
+		if task.Outcome != "" {
+			b.WriteString(" (" + task.Outcome + ")")
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// firstSinceCompaction reports whether the newest turn is the first one begun since the latest
+// compaction, the message that has to carry again what the summary replaced.
+func firstSinceCompaction(s core.Session) bool {
+	compaction, ok := s.Compacted()
+	if !ok || len(s.Turns) == 0 {
+		return false
+	}
+	for _, turn := range s.Turns[:len(s.Turns)-1] {
+		if turn.StartedAt.After(compaction.At) {
+			return false
+		}
+	}
+	return true
+}
+
 // tooLong reports whether a turn ended because the conversation outgrew the model's window.
 func tooLong(stop core.StopReason, err error) bool {
 	if stop == core.StopContextExceeded {
@@ -1520,6 +1591,7 @@ func (e *Engine) noteJoin(sessionID string) {
 	if parent == "" {
 		return
 	}
+	e.taintParent(sessionID, parent)
 	s, ok := e.Session(sessionID)
 	if !ok || len(s.Turns) == 0 {
 		return

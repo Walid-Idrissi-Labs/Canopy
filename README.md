@@ -428,6 +428,11 @@ stopped, which is the only kind of instruction worth relying on.
   afterwards. Needs a git repository and a configured test, and refuses to engage without them.
 - **cruise** runs everything without asking. Needs a git repository, so there is a way back.
 
+One exception holds in every mode: once a conversation has read a fetched page, a web search or an
+MCP tool's result, which can carry instructions aimed at the model, anything that could send data
+out (a network tool, an MCP tool, a git push, a shell command such as curl, ssh or `base64`) is
+asked about from then on. Reading, editing, building and testing are not.
+
 `shift+tab` cycles them, and it works while a turn is running: tightening takes hold on the next
 tool call rather than on the next message.
 
@@ -460,10 +465,12 @@ the pass.
   by the operating system where it can: on macOS they can write only in the workspace, temporary
   directories and toolchain caches, and cannot read `~/.ssh`, `~/.aws`, keychains and the like; on
   Linux, Landlock confines writes the same way but cannot hide files from reading. Network access
-  is not restricted by default. The project's test commands run in the same sandbox; setup, hooks
-  and MCP servers are not sandboxed yet, and a worktree on its own is file isolation, not a
-  security boundary. `CANOPY_SANDBOX=off` turns it off, and every command that runs unconfined says
-  so in its result.
+  is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
+  package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
+  `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. The project's test commands run in the same
+  sandbox; setup, hooks and MCP servers are not sandboxed yet, and a worktree on its own is file
+  isolation, not a security boundary. `CANOPY_SANDBOX=off` turns it off, and every command that runs
+  unconfined says so in its result.
 - Windows is deferred until process group and terminal semantics are designed for it rather than
   approximated.
 
