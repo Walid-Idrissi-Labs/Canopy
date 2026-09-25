@@ -65,6 +65,10 @@ type Palette struct {
 	CodeString  lipgloss.TerminalColor
 	CodeComment lipgloss.TerminalColor
 	CodeNumber  lipgloss.TerminalColor
+	// CodeFunction and CodeType colour function names and type names; a zero value falls back to
+	// the text colour.
+	CodeFunction lipgloss.TerminalColor
+	CodeType     lipgloss.TerminalColor
 }
 
 // Theme is a palette plus the styles derived from it.
@@ -109,6 +113,9 @@ type Theme struct {
 	CodeString  lipgloss.Style
 	CodeComment lipgloss.Style
 	CodeNumber  lipgloss.Style
+
+	CodeFunction lipgloss.Style
+	CodeType     lipgloss.Style
 }
 
 // The brand colours.
@@ -179,6 +186,10 @@ var Default = Palette{
 	CodeString:  lipgloss.AdaptiveColor{Light: brandSecondaryLight, Dark: brandSecondary},
 	CodeComment: lipgloss.AdaptiveColor{Light: brandAccentLight, Dark: brandAccent},
 	CodeNumber:  lipgloss.AdaptiveColor{Light: "#7a4fbf", Dark: "#b48ce8"},
+	// A warm gold for function names and a teal for types, the two colours a reader's eye uses to
+	// find the shape of code before reading it.
+	CodeFunction: lipgloss.AdaptiveColor{Light: "#8a5a00", Dark: "#e8c27a"},
+	CodeType:     lipgloss.AdaptiveColor{Light: "#0f7b6c", Dark: "#5cc9b8"},
 }
 
 // New builds the styles for a palette.
@@ -210,6 +221,9 @@ func New(p Palette) Theme {
 		CodeString:  lipgloss.NewStyle().Foreground(p.CodeString),
 		CodeComment: lipgloss.NewStyle().Foreground(p.CodeComment),
 		CodeNumber:  lipgloss.NewStyle().Foreground(p.CodeNumber),
+
+		CodeFunction: lipgloss.NewStyle().Foreground(orText(p.CodeFunction, p.Text)),
+		CodeType:     lipgloss.NewStyle().Foreground(orText(p.CodeType, p.Text)),
 	}
 }
 
@@ -323,4 +337,11 @@ func Names() []string {
 		names = append(names, palette.Name)
 	}
 	return names
+}
+
+func orText(c, text lipgloss.TerminalColor) lipgloss.TerminalColor {
+	if c == nil {
+		return text
+	}
+	return c
 }
