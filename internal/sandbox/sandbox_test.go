@@ -120,3 +120,30 @@ func TestNestedRepositoriesCannotBeArmed(t *testing.T) {
 		t.Fatalf("an ordinary write was refused: %v %s", err, out)
 	}
 }
+
+// Anchored to the workspace: a repository made in the temporary area, the way a git dependency is
+// fetched, is left alone, while one inside the workspace, even under a path with spaces and
+// brackets, is still refused.
+func TestOnlyTheWorkspaceIsGuardedAgainstNestedRepositories(t *testing.T) {
+	requireSandbox(t)
+	if runtime.GOOS != "darwin" {
+		t.Skip("carving paths out of a writable tree is enforced on macOS")
+	}
+	base, _ := filepath.EvalSymlinks(t.TempDir())
+	ws := filepath.Join(base, "my project (v1.2)")
+	elsewhere := filepath.Join(base, "cache")
+	for _, d := range []string{ws, elsewhere} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p := Policy{Workspace: ws, Writable: []string{ws, elsewhere}, Network: NetworkOpen}.
+		WithGitDirs(filepath.Join(ws, ".git"))
+	if out, err := run(t, p, "mkdir -p '"+elsewhere+"/dep/.git/hooks' && echo x > '"+elsewhere+"/dep/.git/config'"); err != nil {
+		t.Fatalf("a repository outside the workspace was refused: %v %s", err, out)
+	}
+	_, _ = run(t, p, "mkdir -p '"+ws+"/sub/.git'")
+	if _, err := os.Stat(filepath.Join(ws, "sub", ".git")); err == nil {
+		t.Fatal("a nested repository was made inside the workspace")
+	}
+}

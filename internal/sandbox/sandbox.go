@@ -52,6 +52,9 @@ type Policy struct {
 	// /dev, which holds other terminals.
 	Devices []string
 	Network Network
+	// Workspace is the directory the command works in, where a nested repository would be run
+	// by the user's own git. Empty means the rules about repositories apply everywhere writable.
+	Workspace string
 }
 
 // ErrUnavailable means this platform or machine cannot confine a command.
@@ -117,7 +120,11 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 			deny = append(deny, filepath.Join(home, rel))
 		}
 	}
-	return Policy{Writable: clean(writable), DenyRead: clean(deny), Network: NetworkOpen,
+	resolved := workspace
+	if r, err := filepath.EvalSymlinks(workspace); err == nil {
+		resolved = r
+	}
+	return Policy{Workspace: resolved, Writable: clean(writable), DenyRead: clean(deny), Network: NetworkOpen,
 		Devices: []string{"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"}}
 }
 
@@ -142,7 +149,15 @@ func (p Policy) WithGitDirs(dirs ...string) Policy {
 	// Any other repository beneath the workspace is as dangerous as the workspace's own: once it is
 	// added as a gitlink, the user's plain git status runs a git inside it, which obeys its config.
 	// So no new .git may be made, and no git config or hooks written, anywhere a command can reach.
-	p.DenyWriteMatching = append(p.DenyWriteMatching, nestedGit...)
+	// Anchored to the workspace where it is known: a clone into the temporary area or a package
+	// cache, which a git dependency makes, is nobody's git status and is left alone.
+	prefix := "/"
+	if p.Workspace != "" {
+		prefix = "^" + literal(p.Workspace) + "/(.*/)?"
+	}
+	for _, pattern := range nestedGit {
+		p.DenyWriteMatching = append(p.DenyWriteMatching, prefix+pattern)
+	}
 	return p
 }
 
@@ -151,8 +166,26 @@ func (p Policy) WithGitDirs(dirs ...string) Policy {
 // or in one of its submodules or worktrees. Written without backslashes, which Seatbelt's regex
 // literals take raw.
 var nestedGit = []string{
-	`/[.]git/?$`,
-	`/[.]git/((modules|worktrees)/.+/)?(config|config[.]worktree|hooks)(/|$)`,
+	`[.]git/?$`,
+	`[.]git/((modules|worktrees)/.+/)?(config|config[.]worktree|hooks)(/|$)`,
+}
+
+// literal matches a path exactly in a Seatbelt regex, without backslashes, which its literals take
+// raw: each special character goes in a bracket of its own. The two that cannot, a caret and a
+// backslash, match any character instead, which denies a little more and never less.
+func literal(path string) string {
+	var b strings.Builder
+	for _, r := range path {
+		switch r {
+		case '^', '\\':
+			b.WriteByte('.')
+		case '.', '(', ')', '+', '*', '?', '[', ']', '{', '}', '|', '$':
+			b.WriteString("[" + string(r) + "]")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func clean(paths []string) []string {
