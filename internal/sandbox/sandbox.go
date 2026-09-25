@@ -143,6 +143,10 @@ func (p Policy) WithGitDirs(dirs ...string) Policy {
 		p.DenyWrite = append(p.DenyWrite, filepath.Join(d, "hooks"), filepath.Join(d, "config"))
 		p.DenyWriteExact = append(p.DenyWriteExact, d,
 			filepath.Join(d, "commondir"), filepath.Join(d, "gitdir"))
+		// Its submodules' and worktrees' config and hooks too, which git obeys in the same way; a
+		// worktree's shared git directory lies outside the workspace, so the rule below misses it.
+		p.DenyWriteMatching = append(p.DenyWriteMatching, "^"+literal(d)+
+			"/(modules|worktrees)/.+/(config|config[.]worktree|hooks)(/|$)")
 	}
 	p.DenyWrite = clean(p.DenyWrite)
 	p.DenyWriteExact = clean(p.DenyWriteExact)
