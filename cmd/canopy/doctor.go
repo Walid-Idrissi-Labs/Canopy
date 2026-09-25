@@ -5,12 +5,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/lsp"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/acp"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/trust"
 )
@@ -27,6 +27,7 @@ type doctorEnv struct {
 	getenv   func(string) string
 	lookPath func(string) (string, error)
 	gitLine  func() (string, error)
+	gitTop   func() (string, error)
 	dir      string
 	keyStore func() (*keys.Store, error)
 	sandbox  func() error
@@ -42,6 +43,10 @@ func realDoctorEnv() doctorEnv {
 			out, err := exec.Command("git", "--version").Output()
 			return strings.TrimSpace(string(out)), err
 		},
+		gitTop: func() (string, error) {
+			out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+			return strings.TrimSpace(string(out)), err
+		},
 		dir:      dir,
 		keyStore: openKeyStore,
 		sandbox:  sandbox.Available,
@@ -51,8 +56,10 @@ func realDoctorEnv() doctorEnv {
 
 // runDoctor says what is and is not in place, each with what to do about it, and exits 1 when
 // something Canopy needs is missing.
-func runDoctor(out io.Writer) int {
-	checks := diagnose(realDoctorEnv())
+func runDoctor(out io.Writer) int { return reportChecks(out, diagnose(realDoctorEnv())) }
+
+// reportChecks prints the checks and chooses the exit code.
+func reportChecks(out io.Writer, checks []check) int {
 	failed := false
 	for _, c := range checks {
 		_, _ = fmt.Fprintf(out, "%-4s  %-18s %s\n", c.level, c.what, c.say)
@@ -74,8 +81,11 @@ func diagnose(env doctorEnv) []check {
 	} else {
 		add("ok", "git", line)
 	}
-	if _, err := os.Stat(filepath.Join(env.dir, ".git")); err != nil {
-		add("note", "repository", "this directory is not the top of a git repository; agents need one to work in")
+	if top, err := env.gitTop(); err != nil {
+		add("note", "repository", "this directory is not in a git repository; agents need one to work in")
+	} else if !sameDir(top, env.dir) {
+		add("note", "repository", "inside "+top+"; canopy.json and agents' worktrees are read from here, "+
+			"so run Canopy at the top to use the repository's own")
 	}
 
 	// Credentials.
@@ -86,7 +96,10 @@ func diagnose(env doctorEnv) []check {
 			"%s=file stores keys in a file only you can read", err, keys.BackendEnvVar))
 	default:
 		backend := store.BackendName()
-		if store.UsingInsecureBackend() {
+		if err := store.Probe(); err != nil {
+			add("fail", "key store", fmt.Sprintf("%s cannot be reached: %v. Where there is no keychain or "+
+				"Secret Service, %s=file stores keys in a file only you can read", backend, err, keys.BackendEnvVar))
+		} else if store.UsingInsecureBackend() {
 			add("warn", "key store", backend+": keys are in a plain file, readable by anything running as you")
 		} else {
 			add("ok", "key store", backend)
@@ -128,8 +141,8 @@ func diagnose(env doctorEnv) []check {
 		add("fail", "canopy.json", err.Error())
 	case !found:
 		if detected := config.DetectTests(env.dir); len(detected) > 0 {
-			add("note", "canopy.json", fmt.Sprintf("none; `canopy init` writes one with the %d tests this "+
-				"project's build files suggest", len(detected)))
+			add("note", "canopy.json", "none; `canopy init` writes one with the "+count(len(detected), "test")+
+				" this project's build files suggest")
 		} else {
 			add("note", "canopy.json", "none, so there are no tests to verify agents' work against")
 		}
@@ -147,7 +160,7 @@ func diagnose(env doctorEnv) []check {
 		case len(project.Tests) == 0:
 			add("note", "canopy.json", "trusted, with no tests to verify agents' work against")
 		default:
-			add("ok", "canopy.json", fmt.Sprintf("trusted, %d tests", len(project.Tests)))
+			add("ok", "canopy.json", "trusted, "+count(len(project.Tests), "test"))
 		}
 	}
 
@@ -168,7 +181,6 @@ func diagnose(env doctorEnv) []check {
 	// The programs the subscription routes delegate to.
 	for _, route := range []struct{ what, program, say string }{
 		{"claude route", "claude", "Claude Code, for signing in with a Claude subscription"},
-		{"claude bridge", "claude-agent-acp", "the ACP bridge the Claude route talks through"},
 		{"chatgpt route", "codex", "the Codex CLI, for signing in with ChatGPT"},
 		{"copilot route", "copilot", "the Copilot CLI, for signing in with GitHub Copilot"},
 	} {
@@ -177,6 +189,13 @@ func diagnose(env doctorEnv) []check {
 		} else {
 			add("note", route.what, route.program+" not found; "+route.say)
 		}
+	}
+
+	// The bridge, found the way the Claude route finds it: either name, or CANOPY_CLAUDE_ACP.
+	if bridge, err := (acp.Discovery{LookPath: env.lookPath, Getenv: env.getenv}).Bridge(); err == nil {
+		add("ok", "claude bridge", bridge+" found")
+	} else {
+		add("note", "claude bridge", "not found; the ACP bridge the Claude route talks through")
 	}
 
 	// The terminal.
@@ -194,4 +213,12 @@ func diagnose(env doctorEnv) []check {
 		add("note", "tmux", "copying to the clipboard needs `set -g set-clipboard on` in tmux")
 	}
 	return checks
+}
+
+// count says n of a thing, in the singular for one.
+func count(n int, thing string) string {
+	if n == 1 {
+		return "1 " + thing
+	}
+	return fmt.Sprintf("%d %ss", n, thing)
 }

@@ -78,6 +78,9 @@ type importable struct {
 	provider core.Provider
 	baseURL  string
 	model    string
+	// endpointEnv names the variable that points this key at somewhere other than the provider;
+	// a key set beside it belongs to that somewhere, so it is not imported as the provider's.
+	endpointEnv string
 }
 
 // importables are the environment variables `canopy keys import` looks for. Only providers whose
@@ -89,8 +92,9 @@ func importables() []importable {
 		model = models[0].ID
 	}
 	return []importable{
-		{env: "ANTHROPIC_API_KEY", name: "claude", provider: core.ProviderAnthropic},
-		{env: "OPENAI_API_KEY", name: "openai", provider: core.ProviderOpenAICompatible, baseURL: openAI, model: model},
+		{env: "ANTHROPIC_API_KEY", name: "claude", provider: core.ProviderAnthropic, endpointEnv: "ANTHROPIC_BASE_URL"},
+		{env: "OPENAI_API_KEY", name: "openai", provider: core.ProviderOpenAICompatible, baseURL: openAI, model: model,
+			endpointEnv: "OPENAI_BASE_URL"},
 	}
 }
 
@@ -130,6 +134,9 @@ func runKeysImport(args []string, in io.Reader, out io.Writer) error {
 		}
 		secret := core.NewSecret(value)
 		switch {
+		case os.Getenv(candidate.endpointEnv) != "":
+			_, _ = fmt.Fprintf(out, "%s is left alone: %s points it at another endpoint, which `canopy keys add "+
+				"-base-url` records.\n", candidate.env, candidate.endpointEnv)
 		case byPrint[secret.Fingerprint()] != "":
 			_, _ = fmt.Fprintf(out, "%s is already stored, as %q.\n", candidate.env, byPrint[secret.Fingerprint()])
 		case taken[candidate.name]:
@@ -137,6 +144,9 @@ func runKeysImport(args []string, in io.Reader, out io.Writer) error {
 				"`canopy keys add` under another name.\n", candidate.env, candidate.name)
 		default:
 			todo = append(todo, found{candidate, secret})
+			// One value in two variables is one key, stored once.
+			byPrint[secret.Fingerprint()] = candidate.name
+			taken[candidate.name] = true
 		}
 	}
 	if len(todo) == 0 {

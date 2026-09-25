@@ -35,12 +35,20 @@ func DetectTests(dir string) []Test {
 	}
 	if exists("package.json") {
 		if runner := nodeRunner(dir, exists); runner != "" && hasTestScript(filepath.Join(dir, "package.json")) {
-			tests = append(tests, argv(runner+" test", true, "15m", runner, "test"))
+			// "run test", so every runner runs the script the project wrote: bare `bun test` is bun's
+			// own test runner, which ignores the script entirely.
+			tests = append(tests, argv(runner+" test", true, "15m", runner, "run", "test"))
 		}
 	}
 	if exists("pyproject.toml") || exists("pytest.ini") || exists("setup.cfg") || exists("tox.ini") {
 		if usesPytest(dir, exists) {
-			tests = append(tests, argv("pytest", true, "15m", "python", "-m", "pytest"))
+			// The project's own environment where it has one; python3 otherwise, since a bare
+			// `python` is missing on stock macOS and Debian.
+			python := "python3"
+			if exists(filepath.Join(".venv", "bin", "python")) {
+				python = filepath.Join(".venv", "bin", "python")
+			}
+			tests = append(tests, argv("pytest", true, "15m", python, "-m", "pytest"))
 		}
 	}
 	return tests

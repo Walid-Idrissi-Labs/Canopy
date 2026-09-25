@@ -8027,8 +8027,13 @@ suggest (go.mod, Cargo.toml, a package.json test script other than npm's placeho
 setup), never over an existing one, and says it must be trusted before it runs. `canopy doctor`
 reports git, repository, key store (naming CANOPY_KEY_BACKEND=file where there is no keychain),
 keys, sandbox, canopy.json and its trust, language servers, the subscription routes' programs, the
-terminal and tmux clipboard, and exits 1 when something needed is missing. Tests cover each branch,
-mutation-checked.
+terminal and tmux clipboard, and exits 1 when something needed is missing. After review: the key
+store is probed rather than listed, so a missing keychain fails; the Claude bridge is found the way
+the route finds it; a subdirectory is named as one; runners run the project's script (`bun run
+test`), pytest runs under python3 or the project's .venv; import leaves alone a key whose
+*_BASE_URL points elsewhere and stores one value once. Tests cover the detection per ecosystem, init
+never overwriting, import's answer, endpoint and duplicate handling, and doctor's key store, sandbox
+switch, trust, repository and exit code; 24 mutants killed across the two review rounds.
 ### Z-V02 Themes as data, a person's own themes, and the colour gate (part of V-02)
 `status: review | owner: Claude | branch: feat/themes-as-data`
 
