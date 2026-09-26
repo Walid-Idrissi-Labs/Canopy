@@ -626,3 +626,30 @@ func TestUndoComparesTheWorkspaceNotTheList(t *testing.T) {
 		t.Fatal("undone although the preview could not be taken again")
 	}
 }
+
+// What a conversation may do without asking is listed in the prompt's own words, and taken back by
+// number; an empty list says so.
+func TestGrantsAreListedAndTakenBack(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(120, 30)
+	next, _ := run(m, "/grants")
+	if !strings.Contains(next.Notice(), "no standing permissions") {
+		t.Fatalf("an empty list said %q", next.Notice())
+	}
+	engine.granted = []permission.Scope{{Tool: "run_command", Command: "go test ./..."}, {Tool: "write_file", Path: "internal/"}}
+	next, _ = run(next, "/grants")
+	if !strings.Contains(next.Notice(), `1  running "go test ./..."`) || !strings.Contains(next.Notice(), "2  write_file on internal/") {
+		t.Fatalf("listed %q", next.Notice())
+	}
+	next, _ = run(next, "/grants revoke 1")
+	if len(engine.granted) != 1 || engine.granted[0].Tool != "write_file" || !strings.Contains(next.Notice(), "taken back") {
+		t.Fatalf("granted %v, notice %q", engine.granted, next.Notice())
+	}
+	for _, bad := range []string{"9", "0", "-1"} {
+		next, _ = run(next, "/grants revoke "+bad)
+		if !strings.Contains(next.Error(), "revoke which") || len(engine.granted) != 1 {
+			t.Fatalf("revoke %s: error %q, granted %v", bad, next.Error(), engine.granted)
+		}
+	}
+}

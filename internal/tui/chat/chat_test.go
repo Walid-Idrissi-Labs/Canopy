@@ -23,6 +23,7 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 type fakeEngine struct {
 	pictures        []core.Image
 	retried         int
+	granted         []permission.Scope
 	undoChanges     []string
 	undoState       string
 	previewErr      error
@@ -1023,6 +1024,18 @@ func (e *fakeEngine) ClearSteering(string) []string {
 func (e *fakeEngine) Retry(string) (string, error) {
 	e.retried++
 	return "turn", nil
+}
+
+func (e *fakeEngine) Grants(string) []permission.Scope { return e.granted }
+
+func (e *fakeEngine) Revoke(_ string, scope permission.Scope) {
+	kept := e.granted[:0]
+	for _, g := range e.granted {
+		if g != scope {
+			kept = append(kept, g)
+		}
+	}
+	e.granted = kept
 }
 
 // asides is what this conversation was asked on the side before the screen opened, which is the

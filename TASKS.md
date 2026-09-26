@@ -4860,7 +4860,7 @@ notes: the screen for watching several agents currently cannot act on any of the
 is a screen switch away, which at six agents is the difference between a glance and a tour.
 
 ### U-13 Grants on the table
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/grants-view | depends: PG-M`
 `scope: internal/tui/chat/, internal/permission (callers only)`
 
 Deliverable: what has been allowed this session, visible and revocable. A `/grants` view backed

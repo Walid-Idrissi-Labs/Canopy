@@ -126,6 +126,9 @@ type Engine interface {
 	ClearSteering(sessionID string) []string
 	// Retry tries a failed turn again as a new one, refusing a failure trying again cannot fix.
 	Retry(sessionID string) (string, error)
+	// Grants are the standing approvals this conversation holds, and Revoke takes one back.
+	Grants(sessionID string) []permission.Scope
+	Revoke(sessionID string, scope permission.Scope)
 
 	// Aside answers a question from this conversation's context without joining it. No turn is
 	// created, nothing joins the conversation's history, and a turn in flight is undisturbed, which

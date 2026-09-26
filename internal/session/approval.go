@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
@@ -71,6 +72,23 @@ type answer struct {
 // question asked outside the tool loop, which checks its own.
 func (e *Engine) Granted(sessionID string, req permission.Request, scope permission.Scope) bool {
 	return e.grantsFor(sessionID).Covers(req, scope)
+}
+
+// Grants are the standing approvals a conversation has been given, in a fixed order: by how they
+// read, then by every field, so two that read alike keep their places and a number taken from one
+// listing names the same grant in the next.
+func (e *Engine) Grants(sessionID string) []permission.Scope {
+	granted := e.grantsFor(sessionID).Granted()
+	key := func(s permission.Scope) string {
+		return strings.Join([]string{s.String(), s.Tool, s.Path, s.Command, string(s.Kind), s.Arguments}, "\x00")
+	}
+	sort.Slice(granted, func(i, j int) bool { return key(granted[i]) < key(granted[j]) })
+	return granted
+}
+
+// Revoke takes a standing approval back, so the next call it covered is asked about again.
+func (e *Engine) Revoke(sessionID string, scope permission.Scope) {
+	e.grantsFor(sessionID).Revoke(scope)
 }
 
 // Approve implements agent.Approver by asking whoever is watching.
