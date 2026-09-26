@@ -1233,6 +1233,16 @@ func TestThePaletteOpensAgentsAndConversations(t *testing.T) {
 	}
 }
 
+// typedWith opens the palette, types, and returns the command the last key started.
+func typedWith(app tea.Model, text string) (tea.Model, tea.Cmd) {
+	app, _ = app.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	var cmd tea.Cmd
+	for _, r := range text {
+		app, cmd = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	return app, cmd
+}
+
 // A conversation from before is found by what was said in it, shows its code, cost and where it was
 // forked from, and another project's never appears.
 func TestAnEarlierConversationIsFoundByWhatWasSaid(t *testing.T) {
@@ -1272,12 +1282,17 @@ func TestAnEarlierConversationIsFoundByWhatWasSaid(t *testing.T) {
 	if strings.Contains(view, "other repo") {
 		t.Fatalf("another project's conversation is offered:\n%s", view)
 	}
-	found := typed(app, "bcrypt")
+	// The search of what was said waits for typing to pause and runs off the update loop, so the
+	// commands the last key started are run through, as the program would.
+	found, cmd := typedWith(app, "bcrypt")
+	for step := 0; cmd != nil && step < 4; step++ {
+		found, cmd = found.Update(cmd())
+	}
 	view = plain(found.(tui.App).View().Content)
 	if !strings.Contains(view, "said in auth work") || strings.Contains(view, "other repo") {
 		t.Fatalf("the search by content:\n%s", view)
 	}
-	found, cmd := found.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	found, cmd = found.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("choosing a found conversation asked for nothing")
 	}

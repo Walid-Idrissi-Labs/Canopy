@@ -8,7 +8,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
@@ -131,14 +133,16 @@ func conversationDetail(s core.Session) string {
 func (m *Model) SetDestinations(list func() []Destination) { m.destinations = list }
 
 type palette struct {
-	// find searches conversations by what was said in them; see SetHistory.
-	find     func(query string) []paletteItem
-	open     bool
-	query    string
-	items    []paletteItem
-	matches  []paletteItem
-	selected int
-	offset   int
+	// find searches conversations by what was said in them; see SetHistory. generation counts the
+	// queries, so an answer to one typed over is dropped.
+	find       func(query string) []paletteItem
+	generation int
+	open       bool
+	query      string
+	items      []paletteItem
+	matches    []paletteItem
+	selected   int
+	offset     int
 }
 
 // paletteItems is everything the palette offers, in the order an empty query shows it.
@@ -221,10 +225,8 @@ func (p *palette) refresh() {
 	for _, f := range found {
 		p.matches = append(p.matches, f.item)
 	}
-	// Then what was said: a conversation found by its content, after everything found by name.
-	if p.find != nil && len([]rune(strings.TrimSpace(p.query))) >= 3 {
-		p.matches = append(p.matches, p.find(strings.TrimSpace(p.query))...)
-	}
+	// What was said is searched separately, off the update loop; see searchSaid.
+	p.generation++
 	p.selected, p.offset = 0, 0
 }
 
@@ -280,4 +282,43 @@ func (p palette) lines(width int) []string {
 		out = append(out, t.Muted.Render("  "+itoa(hidden)+" more, up and down to move"))
 	}
 	return out
+}
+
+// paletteSearchDelay is how long typing pauses before what was said is searched, so a word typed a
+// letter at a time is one search rather than one per letter.
+const paletteSearchDelay = 150 * time.Millisecond
+
+// paletteSearchMsg asks for the search once typing has paused; paletteFoundMsg brings its answer.
+type paletteSearchMsg struct{ generation int }
+
+type paletteFoundMsg struct {
+	generation int
+	items      []paletteItem
+}
+
+// searchSaid starts the wait before a search of what was said, for a query of three letters or more.
+func (m Model) searchSaid() tea.Cmd {
+	if !m.palette.open || m.palette.find == nil || len([]rune(strings.TrimSpace(m.palette.query))) < 3 {
+		return nil
+	}
+	generation := m.palette.generation
+	return tea.Tick(paletteSearchDelay, func(time.Time) tea.Msg { return paletteSearchMsg{generation: generation} })
+}
+
+// paletteSearch runs the search, off the update loop, if nothing has been typed since it was asked.
+func (m Model) paletteSearch(msg paletteSearchMsg) tea.Cmd {
+	if !m.palette.open || msg.generation != m.palette.generation || m.palette.find == nil {
+		return nil
+	}
+	find, query, generation := m.palette.find, strings.TrimSpace(m.palette.query), m.palette.generation
+	return func() tea.Msg { return paletteFoundMsg{generation: generation, items: find(query)} }
+}
+
+// paletteFound adds what the search found after everything found by name, if it is still wanted.
+func (m Model) paletteFound(msg paletteFoundMsg) Model {
+	if !m.palette.open || msg.generation != m.palette.generation {
+		return m
+	}
+	m.palette.matches = append(m.palette.matches, msg.items...)
+	return m
 }

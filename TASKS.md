@@ -4685,7 +4685,9 @@ gets its screen, which that task's notes deferred to exactly here.
 feat/palette-destinations. chat.History (Sessions, InThisProject, SearchHistory) lists this
 project's conversations with turns, most recently active first, each with its pickup code, turns,
 cost, last activity and "forked from"; three letters or more also search the full-text index and
-offer "said in <title>" entries. Another project's conversations are left out by the rule pickup
+offer "said in <title>" entries: searched once typing pauses (150 ms) off the update loop, the last
+word as a prefix, filtered to this project in SQL so the limit counts only its own matches
+(Storage.SearchProject), and an answer to a query typed over is dropped. Another project's conversations are left out by the rule pickup
 uses (Engine.InThisProject). Enter opens one in place through SwitchMsg. Tests: an app-level test
 finds a conversation by its content and opens it, shows code, cost and fork origin, and never shows
 another project's; the engine's project rule is tested; mutants on each filter, the fork line and

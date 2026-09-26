@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -764,5 +765,39 @@ func TestAFileAtVersionElevenGetsTheWait(t *testing.T) {
 	turn.RetryAfter = time.Minute
 	if err := forward.SaveTurn("s1", 0, turn); err != nil {
 		t.Fatalf("saving on a migrated version eleven file: %v", err)
+	}
+}
+
+// A project's search finds a word from its first letters, only in that project's conversations and
+// those recorded with none, and counts its limit among those alone.
+func TestAProjectSearchFindsPrefixesInItsOwnConversations(t *testing.T) {
+	storage := testStorage(t)
+	save := func(id, project, ask string) {
+		if err := storage.SaveSessionForProject(core.Session{ID: id, Title: id, CreatedAt: storedAt, UpdatedAt: storedAt}, project); err != nil {
+			t.Fatal(err)
+		}
+		if err := storage.SaveTurn(id, 0, storedTurn(id+"-t1", ask, "ok", core.TurnComplete)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		save(fmt.Sprintf("theirs-%d", i), "other", "rewrite the parser")
+	}
+	save("mine", "here", "rewrite the parser")
+	save("old", "", "the parser from before projects")
+
+	hits, err := storage.SearchProject("pars", "here", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, hit := range hits {
+		found[hit.SessionID] = true
+	}
+	if len(hits) != 2 || !found["mine"] || !found["old"] {
+		t.Fatalf("found %v", found)
+	}
+	if hits, _ := storage.Search("pars", 10); len(hits) != 0 {
+		t.Fatal("the plain search matched a prefix")
 	}
 }

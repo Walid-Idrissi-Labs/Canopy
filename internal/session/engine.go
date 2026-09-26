@@ -422,15 +422,16 @@ func (e *Engine) InThisProject(sessionID string) bool {
 	return owner == "" || e.projectID == "" || owner == e.projectID
 }
 
-// SearchHistory finds stored turns matching a full text query, nothing without storage attached.
+// SearchHistory finds this project's stored turns matching a query, its last word as a prefix;
+// nothing without storage attached.
 func (e *Engine) SearchHistory(query string, limit int) []SearchHit {
 	e.mu.Lock()
-	storage := e.storage
+	storage, project := e.storage, e.projectID
 	e.mu.Unlock()
 	if storage == nil {
 		return nil
 	}
-	hits, err := storage.Search(query, limit)
+	hits, err := storage.SearchProject(query, project, limit)
 	if err != nil {
 		return nil
 	}
