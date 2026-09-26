@@ -4716,7 +4716,7 @@ with the user retyping. The taxonomy was built for this task; it just took a yea
 time to arrive.
 
 ### U-06 The first run holds your hand
-`status: partial | owner: Claude | branch: feat/startup-warnings | depends: PG-M`
+`status: review | owner: Claude | branch: feat/startup-warnings, feat/key-check | depends: PG-M`
 `status: review | owner: Claude | branch: feat/key-check | depends: PG-M`
 `scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
 
@@ -4850,7 +4850,7 @@ honesty as much as ergonomics: a box showing six lines of a 200 line paste is a 
 under-reporting what is about to be sent, to a model, at a price.
 
 ### U-11 Copy and find without the mouse
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/transcript-search | depends: PG-M`
 `scope: internal/tui/chat/, internal/tui/clipboard/`
 
 Deliverable: the transcript's contents reachable by keyboard. Copy the last reply. Copy the last
@@ -4868,8 +4868,13 @@ notes: drag-to-copy exists and costs native terminal selection while mouse repor
 which LIMITATIONS already documents. Keyboard copy is the version that works everywhere the
 product claims to work, ssh included.
 
+2026-09-26 (Claude): delivered as Z-V04 (#108): ctrl+f finds in the conversation (enter older,
+down newer, as the find bar's own keys, since n and N would be typed into it), ctrl+y copies the
+last code block or the last reply through the same OSC 52 path and notice the mouse copy uses, and
+neither needs mouse reporting. The scroll position is kept when find closes.
+
 ### U-12 The agents screen grows hands
-`status: partial | owner: Claude | branch: feat/steering-and-agent-actions | depends: A5-11`
+`status: review | owner: Claude | branch: feat/steering-and-agent-actions, feat/pane-costs | depends: A5-11`
 `status: review | owner: Claude | branch: feat/pane-costs | depends: A5-11`
 `scope: internal/tui/agents/`
 
