@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
@@ -67,14 +68,15 @@ type answer struct {
 	remember bool
 }
 
-// Approve implements agent.Approver by asking whoever is watching.
-//
-// Blocks until answered or the turn is cancelled. That is correct: the tool has not run and the
-// model is waiting for its result either way, so there is nothing useful to do in the meantime.
-// Grants are the standing approvals a conversation has been given, in the order they sort in.
+// Grants are the standing approvals a conversation has been given, in a fixed order: by how they
+// read, then by every field, so two that read alike keep their places and a number taken from one
+// listing names the same grant in the next.
 func (e *Engine) Grants(sessionID string) []permission.Scope {
 	granted := e.grantsFor(sessionID).Granted()
-	sort.Slice(granted, func(i, j int) bool { return granted[i].String() < granted[j].String() })
+	key := func(s permission.Scope) string {
+		return strings.Join([]string{s.String(), s.Tool, s.Path, s.Command, string(s.Kind), s.Arguments}, "\x00")
+	}
+	sort.Slice(granted, func(i, j int) bool { return key(granted[i]) < key(granted[j]) })
 	return granted
 }
 
@@ -83,6 +85,10 @@ func (e *Engine) Revoke(sessionID string, scope permission.Scope) {
 	e.grantsFor(sessionID).Revoke(scope)
 }
 
+// Approve implements agent.Approver by asking whoever is watching.
+//
+// Blocks until answered or the turn is cancelled. That is correct: the tool has not run and the
+// model is waiting for its result either way, so there is nothing useful to do in the meantime.
 func (e *Engine) Approve(
 	ctx context.Context, req permission.Request, decision permission.Decision,
 ) bool {

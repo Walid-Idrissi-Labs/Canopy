@@ -646,8 +646,10 @@ func TestGrantsAreListedAndTakenBack(t *testing.T) {
 	if len(engine.granted) != 1 || engine.granted[0].Tool != "write_file" || !strings.Contains(next.Notice(), "taken back") {
 		t.Fatalf("granted %v, notice %q", engine.granted, next.Notice())
 	}
-	next, _ = run(next, "/grants revoke 9")
-	if !strings.Contains(next.Error(), "revoke which") || len(engine.granted) != 1 {
-		t.Fatalf("a bad number: error %q, granted %v", next.Error(), engine.granted)
+	for _, bad := range []string{"9", "0", "-1"} {
+		next, _ = run(next, "/grants revoke "+bad)
+		if !strings.Contains(next.Error(), "revoke which") || len(engine.granted) != 1 {
+			t.Fatalf("revoke %s: error %q, granted %v", bad, next.Error(), engine.granted)
+		}
 	}
 }
