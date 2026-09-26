@@ -285,6 +285,9 @@ func (c *conn) handle(ctx context.Context, m message) {
 		// screen draws neither whole, and a conversation of pictures would otherwise outgrow a line.
 		var page struct {
 			From int `json:"from"`
+			// Kept is the id of the last turn the client keeps, the one before From: a record that
+			// no longer has it there has changed under the client, and is sent whole.
+			Kept string `json:"kept"`
 		}
 		_ = json.Unmarshal(m.Params, &page)
 		session, ok := h.engine.Session(p.SessionID)
@@ -294,7 +297,7 @@ func (c *conn) handle(ctx context.Context, m message) {
 		}
 		total := len(session.Turns)
 		from := page.From
-		if from < 0 || from > total {
+		if from < 0 || from > total || (from > 0 && session.Turns[from-1].ID != page.Kept) {
 			from = 0
 		}
 		turns := make([]core.Turn, 0, total-from)

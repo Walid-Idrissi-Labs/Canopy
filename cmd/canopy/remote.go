@@ -44,6 +44,9 @@ type remoteEngine struct {
 	// times at once.
 	refreshing map[string]bool
 	again      map[string]bool
+	// fetches numbers each fetch as it is asked, and applied is the latest applied per conversation.
+	fetches uint64
+	applied map[string]uint64
 }
 
 type remoteModes struct {
@@ -65,7 +68,7 @@ var _ tui.Engine = (*remoteEngine)(nil)
 func newRemoteEngine(client *rpcClient, dir string) *remoteEngine {
 	e := &remoteEngine{client: client, dir: dir, trail: permission.NewTrail(),
 		sessions: map[string]core.Session{}, modes: map[string]remoteModes{},
-		refreshing: map[string]bool{}, again: map[string]bool{}}
+		refreshing: map[string]bool{}, again: map[string]bool{}, applied: map[string]uint64{}}
 	go e.follow()
 	return e
 }
@@ -174,10 +177,17 @@ func (e *remoteEngine) refresh(sessionID string) bool {
 	e.mu.Lock()
 	known, have := e.sessions[sessionID]
 	e.mu.Unlock()
-	from := 0
+	e.mu.Lock()
+	e.fetches++
+	fetch := e.fetches
+	e.mu.Unlock()
+	from, kept := 0, ""
 	if have {
 		for from < len(known.Turns) && known.Turns[from].State.Terminal() {
 			from++
+		}
+		if from > 0 {
+			kept = known.Turns[from-1].ID
 		}
 	}
 	var reply struct {
@@ -186,7 +196,7 @@ func (e *remoteEngine) refresh(sessionID string) bool {
 		From      int          `json:"from"`
 		TurnCount int          `json:"turnCount"`
 	}
-	if err := e.client.call("_canopy/session", map[string]any{"sessionId": sessionID, "from": from}, &reply); err != nil {
+	if err := e.client.call("_canopy/session", map[string]any{"sessionId": sessionID, "from": from, "kept": kept}, &reply); err != nil {
 		return false
 	}
 	fresh := reply.Session
@@ -204,6 +214,13 @@ func (e *remoteEngine) refresh(sessionID string) bool {
 		fresh.Turns = append(append([]core.Turn(nil), known.Turns[:reply.From]...), fresh.Turns...)
 	}
 	e.mu.Lock()
+	// Two fetches can be in flight, one from the screen and one from an update; an answer older
+	// than one already applied is dropped rather than drawn over it.
+	if fetch < e.applied[sessionID] {
+		e.mu.Unlock()
+		return true
+	}
+	e.applied[sessionID] = fetch
 	if _, listed := e.sessions[sessionID]; !listed && !e.listed(sessionID) {
 		e.order = append(e.order, sessionID)
 	}

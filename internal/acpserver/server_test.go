@@ -878,11 +878,26 @@ func TestTheCanopyClientIsSentAConversationTrimmedAndPaged(t *testing.T) {
 		t.Fatalf("the conversation came as %+v", reply.Result)
 	}
 	c.send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "_canopy/session",
-		"params": map[string]any{"sessionId": "s1", "from": 2}})
+		"params": map[string]any{"sessionId": "s1", "from": 2, "kept": "t-b"}})
 	_, paged := c.until(2)
 	raw, _ = json.Marshal(paged)
 	_ = json.Unmarshal(raw, &reply)
 	if len(reply.Result.Session.Turns) != 1 || reply.Result.Session.Turns[0].ID != "t0" || reply.Result.TurnCount != 3 {
 		t.Fatalf("from turn 2 came %+v", reply.Result.Session.Turns)
+	}
+	// A client whose kept turn is no longer there is sent the whole record.
+	c.send(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "_canopy/session",
+		"params": map[string]any{"sessionId": "s1", "from": 2, "kept": "t-gone"}})
+	_, moved := c.until(3)
+	raw, _ = json.Marshal(moved)
+	var whole2 struct {
+		Result struct {
+			From    int          `json:"from"`
+			Session core.Session `json:"session"`
+		} `json:"result"`
+	}
+	_ = json.Unmarshal(raw, &whole2)
+	if whole2.Result.From != 0 || len(whole2.Result.Session.Turns) != 3 {
+		t.Fatalf("a changed record came from %d with %d turns", whole2.Result.From, len(whole2.Result.Session.Turns))
 	}
 }
