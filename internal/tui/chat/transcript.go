@@ -149,6 +149,15 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 	if n := len(turn.Request.Images); n > 0 {
 		lines = append(lines, "  "+t.Muted.Render("with "+pictureCount(n)))
 	}
+	// What agents reported back went with this message, and is said, so the model's answer to it is
+	// not a mystery to whoever reads the transcript.
+	if n := len(turn.Request.Reports); n > 0 {
+		reports := "with the report of 1 agent"
+		if n > 1 {
+			reports = "with the reports of " + itoa(n) + " agents"
+		}
+		lines = append(lines, "  "+t.Muted.Render(reports))
+	}
 
 	if turn.Thinking != "" {
 		lines = append(lines, "")

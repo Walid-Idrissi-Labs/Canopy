@@ -113,6 +113,9 @@ type Engine struct {
 	// with the next message the person sends there. See noteJoin.
 	dispatchParents map[string]string
 	joinNotes       map[string][]string
+	// standing says how verification stands in a directory, for an agent's report; nil says nothing.
+	// See SetStanding.
+	standing func(dir string) string
 
 	// instructions are the project's, added to the system prompt of every conversation this engine
 	// runs. Set once at startup, so the prompt stays the same for a conversation's whole life.
@@ -1658,10 +1661,25 @@ func (e *Engine) noteJoin(sessionID string) {
 	if runes := []rune(text); len(runes) > joinExcerpt {
 		text = "..." + string(runes[len(runes)-joinExcerpt:])
 	}
-	if text == "" && turn.Error != "" {
+	switch {
+	case text == "" && turn.Error != "":
 		text = "error: " + turn.Error
+	case text == "":
+		// Said rather than left blank, so an agent that produced nothing is not read as one whose
+		// report went missing.
+		text = "(it ended without saying anything)"
 	}
 	report := fmt.Sprintf("agent %s, state %s.%s\n%s", name, turn.State, where, text)
+	// How its work stands by the project's own checks, from the verifier and never from what the
+	// agent said about it.
+	e.mu.Lock()
+	standing := e.standing
+	e.mu.Unlock()
+	if agent, found := e.AgentFor(sessionID); found && standing != nil {
+		if line := standing(agent.Dir); line != "" {
+			report += "\nverification: " + line
+		}
+	}
 
 	e.mu.Lock()
 	if e.joinNotes == nil {
@@ -1670,6 +1688,14 @@ func (e *Engine) noteJoin(sessionID string) {
 	e.joinNotes[parent] = append(e.joinNotes[parent], report)
 	e.mu.Unlock()
 	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: parent})
+}
+
+// SetStanding attaches what says how verification stands in a directory, so an agent's report to
+// its orchestrator carries the verifier's verdict on its work alongside its own account of it.
+func (e *Engine) SetStanding(standing func(dir string) string) {
+	e.mu.Lock()
+	e.standing = standing
+	e.mu.Unlock()
 }
 
 // PendingJoins is how many dispatched agents' reports are waiting to go with the next message in a
