@@ -1289,6 +1289,10 @@ func (e *Engine) finish(
 	}
 	if err != nil {
 		turn.Error = err.Error()
+		var provider *core.ProviderError
+		if errors.As(err, &provider) {
+			turn.ErrorKind, turn.RetryAfter = provider.Kind, provider.RetryAfter
+		}
 	}
 	// Validate requires a reason on a failed turn, and a turn that failed with no error attached
 	// would otherwise be an invalid state nobody could explain.
@@ -1737,4 +1741,83 @@ func (e *Engine) effortSetting() core.Effort {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.effort
+}
+
+// Retry tries a failed turn again as a new one, with the same question, and marks the
+// failed one so it is not sent to the model twice. Refused for a failure trying again cannot fix:
+// a credential that was refused, a request the provider called malformed, or a conversation too
+// long for the model, each of which needs something changed first.
+func (e *Engine) Retry(sessionID string) (string, error) {
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok || len(s.Turns) == 0 {
+		e.mu.Unlock()
+		return "", errors.New("there is nothing to retry")
+	}
+	last := &s.Turns[len(s.Turns)-1]
+	switch {
+	case last.State != core.TurnFailed:
+		e.mu.Unlock()
+		return "", errors.New("the last turn did not fail, so there is nothing to retry")
+	case last.ErrorKind != "" && !last.ErrorKind.Retryable():
+		e.mu.Unlock()
+		return "", fmt.Errorf("trying again will fail the same way: %s", retryAdvice(last.ErrorKind))
+	case last.RetryAfter > 0 && !last.EndedAt.IsZero() && time.Since(last.EndedAt) < last.RetryAfter:
+		wait := (last.RetryAfter - time.Since(last.EndedAt)).Round(time.Second)
+		e.mu.Unlock()
+		return "", fmt.Errorf("the provider asked for %s more before trying again", wait)
+	}
+	failedID, prompt := last.ID, retryPrompt(*last)
+	e.mu.Unlock()
+
+	// The failed turn stays in what the model is sent, with what it did before failing, its
+	// pictures and the notes it carried, so the retry asks it to carry on rather than asking the
+	// question again, which would drop all of that.
+	turnID, err := e.Send(sessionID, prompt)
+	if err != nil {
+		// Refused (a budget, a check still running): the failure stands, and can be retried later.
+		return "", err
+	}
+	e.mu.Lock()
+	var failed core.Turn
+	ordinal := -1
+	if s := e.sessions[sessionID]; s != nil {
+		for i := range s.Turns {
+			if s.Turns[i].ID == failedID {
+				s.Turns[i].Retried = true
+				failed, ordinal = s.Turns[i], i
+			}
+		}
+	}
+	e.mu.Unlock()
+	if ordinal >= 0 {
+		e.persistTurn(sessionID, ordinal, failed)
+	}
+	return turnID, nil
+}
+
+// retryPrompt is the message a retry sends: carry on, in words that say what happened.
+func retryPrompt(failed core.Turn) string {
+	why := "an error"
+	if failed.ErrorKind != "" {
+		why = "an error (" + string(failed.ErrorKind) + ")"
+	}
+	if len(failed.Steps) == 0 && failed.Text == "" && len(failed.ToolCalls) == 0 {
+		return "That request ended in " + why + " before you answered it. Please answer it now."
+	}
+	return "Your last reply was cut off by " + why + ". Carry on from where it stopped; what you " +
+		"already did is above, so do not do it again."
+}
+
+// retryAdvice is what to do instead of retrying a failure of this kind.
+func retryAdvice(kind core.ProviderErrorKind) string {
+	switch kind {
+	case core.ErrAuthentication:
+		return "the credential was refused; check it with canopy keys test, or add a new one"
+	case core.ErrContextLength:
+		return "the conversation is too long for the model; compact it with /compact"
+	case core.ErrInvalidRequest:
+		return "the provider refused the request as malformed"
+	}
+	return "the provider's answer was not one trying again can fix"
 }

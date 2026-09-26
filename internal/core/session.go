@@ -209,6 +209,15 @@ type Turn struct {
 	// Error explains a failed turn in words a user can act on.
 	Error string
 
+	// ErrorKind classifies a provider failure, and RetryAfter is how long the provider asked for
+	// before trying again; both empty when the failure was not the provider's or it did not say.
+	ErrorKind  ProviderErrorKind `json:",omitempty"`
+	RetryAfter time.Duration     `json:",omitempty"`
+
+	// Retried marks a failed turn that has been tried again. It stays in the transcript and in what
+	// the model is sent, and the retry asks the model to carry on from it.
+	Retried bool `json:",omitempty"`
+
 	// Checkpoint is the worktree state captured before this turn ran, empty when nothing was
 	// captured. Undoing a turn restores it.
 	//

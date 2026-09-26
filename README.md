@@ -468,6 +468,13 @@ changes the plan.
 ctrl+f finds text in the conversation, newest first: the view moves to each match and marks it, enter
 goes to an older one and down to a newer one, and esc leaves the view where the search took it.
 ctrl+y copies the last code block of the latest reply, or the whole reply when it has none.
+### When a turn fails
+
+Under a failed turn, with nothing typed, enter tries it again: the failed turn stays in the
+conversation, with whatever it did before failing, and a new turn asks the model to carry on from
+it, so the question is sent once and nothing already done is forgotten. A rate limit counts down the wait the provider asked for, a
+network failure is called one, and a failure trying again cannot fix, a refused credential or a
+conversation too long for the model, says what to change instead and is not retried.
 
 ## Where the tokens go
 

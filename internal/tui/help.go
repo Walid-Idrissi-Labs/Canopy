@@ -65,6 +65,7 @@ func bindings() []section {
 			{"@", "a file in this project, which narrows as you type"},
 			{"ctrl+x ctrl+e", "write the message in your editor"},
 			{"# note", "keep a note in AGENTS.md for later conversations"},
+			{"enter, box empty", "try a failed turn again, where that can work"},
 			{"enter / y", "allow a tool call once, while a question is up"},
 			{"a", "allow it for the rest of the session"},
 			{"arrows / pgup", "read on with a question up, deciding nothing"},

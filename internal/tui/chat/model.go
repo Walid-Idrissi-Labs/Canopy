@@ -124,6 +124,8 @@ type Engine interface {
 
 	// ClearSteering takes back guidance that has not been delivered, returning what it took.
 	ClearSteering(sessionID string) []string
+	// Retry tries a failed turn again as a new one, refusing a failure trying again cannot fix.
+	Retry(sessionID string) (string, error)
 
 	// Aside answers a question from this conversation's context without joining it. No turn is
 	// created, nothing joins the conversation's history, and a turn in flight is undisturbed, which
@@ -347,6 +349,9 @@ type Model struct {
 
 	// palette is the command palette, on ctrl+p.
 	palette palette
+	// retryTicking and retryGeneration run the countdown under a failed turn; see retrycard.go.
+	retryTicking    bool
+	retryGeneration int
 
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
@@ -530,11 +535,21 @@ func (m *Model) SetSize(width, height int) {
 // Update handles one message.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case retryTickMsg:
+		if msg.generation != m.retryGeneration {
+			return m, nil
+		}
+		m.retryTicking = false
+		return m, m.retryCountdown()
+
 	case EventMsg:
 		m.refresh()
 		// Something happened between the two enters that carry a plan out, so the first no longer
 		// stands: the second is asked for again, over whatever is on screen now.
 		m.planAsked = false
+		if countdown := m.retryCountdown(); countdown != nil {
+			return m, tea.Batch(m.subscribe(), countdown)
+		}
 		// The spinner only turns while something is running; an idle screen redrew itself eight
 		// times a second for nothing. An event that starts work starts it again.
 		if m.working && !m.ticking {
@@ -1302,6 +1317,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.planAsked = false
 			return m.carryOutPlan()
 		}
+		if turn, ok := m.failedTurn(); ok && (turn.ErrorKind == "" || turn.ErrorKind.Retryable()) {
+			return m.retry()
+		}
 		return m.send()
 
 	case "tab":
@@ -1970,6 +1988,7 @@ func (m Model) transcriptHeight() int {
 	h -= len(m.planCard())
 	h -= m.search.height()
 	h -= m.palette.height()
+	h -= len(m.retryCard())
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
 	// same reason, and so does another agent's question.
@@ -2067,6 +2086,7 @@ func (m Model) Body() string {
 	rows = append(rows, m.planCard()...)
 	rows = append(rows, m.search.line()...)
 	rows = append(rows, m.palette.lines(m.width)...)
+	rows = append(rows, m.retryCard()...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
 	// is about to type into. See jumpPill.
 	rows = append(rows, m.jumpPill(len(lines)-end)...)

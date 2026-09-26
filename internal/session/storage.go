@@ -35,7 +35,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 10
+const schemaVersion = 12
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -217,6 +217,17 @@ var migrations = []string{
 	// tainted after a restart and a pickup, including one tainted only because the agent that
 	// started it was, which nothing in its own turns would show.
 	`ALTER TABLE sessions ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;`,
+
+	// Added with retrying a failed turn (U-05): what kind of failure it was, and whether it has
+	// been tried again.
+	`
+	ALTER TABLE turns ADD COLUMN error_kind TEXT NOT NULL DEFAULT '';
+	ALTER TABLE turns ADD COLUMN retried INTEGER NOT NULL DEFAULT 0;
+	`,
+
+	// How long the provider asked to be left alone, so the wait survives a restart. Its own step
+	// rather than folded into the one above, which a build had already applied.
+	`ALTER TABLE turns ADD COLUMN retry_after_ms INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // OpenStorage opens or creates the session database.
@@ -562,8 +573,9 @@ func (s *Storage) SaveTurn(sessionID string, ordinal int, turn core.Turn) error 
 			session_id, turn_id, ordinal, state, request, request_text, reply, thinking,
 			tool_calls, tool_results,
 			input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_known,
-			provider, model, error, started_at, ended_at, checkpoint, steps, context_tokens
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			provider, model, error, started_at, ended_at, checkpoint, steps, context_tokens,
+			error_kind, retried, retry_after_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id, turn_id) DO UPDATE SET
 			state = excluded.state,
 			reply = excluded.reply,
@@ -582,14 +594,18 @@ func (s *Storage) SaveTurn(sessionID string, ordinal int, turn core.Turn) error 
 			ended_at = excluded.ended_at,
 			checkpoint = excluded.checkpoint,
 			steps = excluded.steps,
-			context_tokens = excluded.context_tokens`,
+			context_tokens = excluded.context_tokens,
+			error_kind = excluded.error_kind,
+			retried = excluded.retried,
+			retry_after_ms = excluded.retry_after_ms`,
 		sessionID, turn.ID, ordinal, string(turn.State), string(request), turn.Request.Text,
 		turn.Text, turn.Thinking, string(calls), string(results),
 		turn.Usage.InputTokens, turn.Usage.OutputTokens,
 		turn.Usage.CacheReadTokens, turn.Usage.CacheWriteTokens,
 		turn.Usage.CostUSD, boolToInt(turn.Usage.CostKnown),
 		turn.Provider, turn.Model, turn.Error, unix(turn.StartedAt), unix(turn.EndedAt),
-		turn.Checkpoint, string(steps), turn.Context)
+		turn.Checkpoint, string(steps), turn.Context, string(turn.ErrorKind), boolToInt(turn.Retried),
+		turn.RetryAfter.Milliseconds())
 	if err != nil {
 		return fmt.Errorf("saving turn %s: %w", turn.ID, err)
 	}
@@ -647,7 +663,8 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 	rows, err := s.db.Query(`
 		SELECT turn_id, state, request, reply, thinking, tool_calls, tool_results,
 		       input_tokens, output_tokens, cache_read, cache_write, cost_usd, cost_known,
-		       provider, model, error, started_at, ended_at, checkpoint, steps, context_tokens
+		       provider, model, error, started_at, ended_at, checkpoint, steps, context_tokens,
+		       error_kind, retried, retry_after_ms
 		FROM turns WHERE session_id = ? ORDER BY ordinal`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("loading the turns of session %s: %w", sessionID, err)
@@ -660,16 +677,22 @@ func (s *Storage) loadTurns(sessionID string) ([]core.Turn, error) {
 		var state, request, calls, results, steps string
 		var costKnown int
 		var started, ended int64
+		var errorKind string
+		var retried int
+		var retryAfter int64
 
 		if err := rows.Scan(&t.ID, &state, &request, &t.Text, &t.Thinking, &calls, &results,
 			&t.Usage.InputTokens, &t.Usage.OutputTokens,
 			&t.Usage.CacheReadTokens, &t.Usage.CacheWriteTokens,
 			&t.Usage.CostUSD, &costKnown,
-			&t.Provider, &t.Model, &t.Error, &started, &ended, &t.Checkpoint, &steps, &t.Context); err != nil {
+			&t.Provider, &t.Model, &t.Error, &started, &ended, &t.Checkpoint, &steps, &t.Context,
+			&errorKind, &retried, &retryAfter); err != nil {
 			return nil, err
 		}
 
 		t.State = core.TurnState(state)
+		t.ErrorKind, t.Retried = core.ProviderErrorKind(errorKind), retried != 0
+		t.RetryAfter = time.Duration(retryAfter) * time.Millisecond
 		t.Usage.CostKnown = costKnown != 0
 		t.StartedAt = fromUnix(started)
 		t.EndedAt = fromUnix(ended)

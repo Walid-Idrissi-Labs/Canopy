@@ -610,7 +610,9 @@ func TestAFileAtTheOlderSchemaMigratesForward(t *testing.T) {
 	}
 	if _, err := storage.db.Exec(
 		`ALTER TABLE turns DROP COLUMN steps; ALTER TABLE turns DROP COLUMN context_tokens;
-		ALTER TABLE sessions DROP COLUMN tainted; DROP TABLE asides; PRAGMA user_version = 7`); err != nil {
+		ALTER TABLE sessions DROP COLUMN tainted; DROP TABLE asides;
+		ALTER TABLE turns DROP COLUMN error_kind; ALTER TABLE turns DROP COLUMN retried;
+		ALTER TABLE turns DROP COLUMN retry_after_ms; PRAGMA user_version = 7`); err != nil {
 		t.Fatalf("winding the file back: %v", err)
 	}
 	if err := storage.Close(); err != nil {
@@ -712,5 +714,55 @@ func TestDeletingAConversationTakesItsAsidesWithIt(t *testing.T) {
 	}
 	if len(kept) != 0 {
 		t.Errorf("a deleted conversation left %+v behind", kept)
+	}
+}
+
+// How a turn failed, how long the provider asked for, and whether it was retried come back after a
+// restart, so a retried turn is not offered again and a refusal is still refused.
+func TestAFailuresKindAndRetryComeBack(t *testing.T) {
+	storage := testStorage(t)
+	session := core.Session{ID: "s1", KeyName: "claude", Model: "claude-opus-5", CreatedAt: storedAt, UpdatedAt: storedAt}
+	turn := storedTurn("t1", "go", "", core.TurnFailed)
+	turn.ErrorKind, turn.RetryAfter, turn.Retried = core.ErrRateLimited, 90*time.Second, true
+	if err := storage.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.SaveTurn("s1", 0, turn); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := storage.Load("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loaded.Turns[0]
+	if got.ErrorKind != core.ErrRateLimited || got.RetryAfter != 90*time.Second || !got.Retried {
+		t.Fatalf("came back as %q, %s, retried %v", got.ErrorKind, got.RetryAfter, got.Retried)
+	}
+}
+
+// A file an earlier build left at version eleven, with the failure columns but not the wait, is
+// brought forward rather than read as current.
+func TestAFileAtVersionElevenGetsTheWait(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.db.Exec(`ALTER TABLE turns DROP COLUMN retry_after_ms; PRAGMA user_version = 11`); err != nil {
+		t.Fatal(err)
+	}
+	_ = storage.Close()
+	forward, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = forward.Close() }()
+	if err := forward.SaveSession(core.Session{ID: "s1", CreatedAt: storedAt, UpdatedAt: storedAt}); err != nil {
+		t.Fatal(err)
+	}
+	turn := storedTurn("t1", "go", "", core.TurnFailed)
+	turn.RetryAfter = time.Minute
+	if err := forward.SaveTurn("s1", 0, turn); err != nil {
+		t.Fatalf("saving on a migrated version eleven file: %v", err)
 	}
 }
