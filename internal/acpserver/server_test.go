@@ -847,3 +847,57 @@ func TestToolKindsNameCanopysOwnTools(t *testing.T) {
 		}
 	}
 }
+
+// A Canopy client is sent a conversation from the turn it asks for, with pictures' bytes left out
+// and tool output bounded, and told how many turns there are in all.
+func TestTheCanopyClientIsSentAConversationTrimmedAndPaged(t *testing.T) {
+	engine := newFakeEngine()
+	big := strings.Repeat("x", 100_000)
+	engine.history = []core.Turn{
+		{ID: "t-a", State: core.TurnComplete, Request: core.Message{Text: "look",
+			Images: []core.Image{{MediaType: "image/png", Data: make([]byte, 1<<20)}}},
+			ToolResults: []core.ToolResult{{CallID: "c", Content: big}}},
+		{ID: "t-b", State: core.TurnComplete, Request: core.Message{Text: "and this"}},
+	}
+	_, c := start(t, engine)
+	c.send(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "_canopy/session", "params": map[string]any{"sessionId": "s1"}})
+	_, whole := c.until(1)
+	raw, _ := json.Marshal(whole)
+	if len(raw) > 64<<10 {
+		t.Fatalf("the reply is %d bytes: picture bytes or tool output were sent whole", len(raw))
+	}
+	var reply struct {
+		Result struct {
+			Session   core.Session `json:"session"`
+			TurnCount int          `json:"turnCount"`
+		} `json:"result"`
+	}
+	_ = json.Unmarshal(raw, &reply)
+	first := reply.Result.Session.Turns[0]
+	if reply.Result.TurnCount != 3 || len(first.Request.Images) != 1 || first.Request.Images[0].MediaType != "image/png" {
+		t.Fatalf("the conversation came as %+v", reply.Result)
+	}
+	c.send(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "_canopy/session",
+		"params": map[string]any{"sessionId": "s1", "from": 2, "kept": "t-b"}})
+	_, paged := c.until(2)
+	raw, _ = json.Marshal(paged)
+	_ = json.Unmarshal(raw, &reply)
+	if len(reply.Result.Session.Turns) != 1 || reply.Result.Session.Turns[0].ID != "t0" || reply.Result.TurnCount != 3 {
+		t.Fatalf("from turn 2 came %+v", reply.Result.Session.Turns)
+	}
+	// A client whose kept turn is no longer there is sent the whole record.
+	c.send(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "_canopy/session",
+		"params": map[string]any{"sessionId": "s1", "from": 2, "kept": "t-gone"}})
+	_, moved := c.until(3)
+	raw, _ = json.Marshal(moved)
+	var whole2 struct {
+		Result struct {
+			From    int          `json:"from"`
+			Session core.Session `json:"session"`
+		} `json:"result"`
+	}
+	_ = json.Unmarshal(raw, &whole2)
+	if whole2.Result.From != 0 || len(whole2.Result.Session.Turns) != 3 {
+		t.Fatalf("a changed record came from %d with %d turns", whole2.Result.From, len(whole2.Result.Session.Turns))
+	}
+}

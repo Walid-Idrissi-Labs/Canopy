@@ -108,3 +108,36 @@ func TestTheTranscriptSaysAMessageCarriedReports(t *testing.T) {
 		t.Fatalf("no reports line:\n%s", plain(m.Body()))
 	}
 }
+
+// An engine whose events end, as one reached over a lost connection does, is said to have gone
+// rather than leaving a screen that silently stops changing.
+func TestAConversationWhoseEventsEndSaysSo(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}, eventsEnded: true}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	batch, ok := m.Init()().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("Init is not a batch")
+	}
+	for _, cmd := range batch {
+		if cmd == nil {
+			continue
+		}
+		m, _ = m.Update(cmd())
+	}
+	if !strings.Contains(m.Error(), "has ended") {
+		t.Fatalf("error %q", m.Error())
+	}
+}
+
+// A built-in that refuses what was typed leaves it in the box to be corrected.
+func TestARefusedBuiltinKeepsWhatWasTyped(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	m, _ = m.Update(tea.PasteMsg{Content: "/budget lots"})
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	if m.Error() == "" || m.InputValue() != "/budget lots" {
+		t.Fatalf("error %q, box %q", m.Error(), m.InputValue())
+	}
+}

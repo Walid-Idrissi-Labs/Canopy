@@ -8317,3 +8317,22 @@ recording (VHS) of a whole session, which needs a scripted provider the product 
 choosing which image the README leads with, which is an editorial call for the owner.
 
 `verify: claude [x] 2026-09-26   codex [ ]`
+
+### Z-F07 The interface attached to canopy serve (F-07 client half, X-10)
+`status: review | owner: Claude | branch: feat/attach-tui`
+
+`canopy attach CODE|new` on a terminal opens the interface with a remote engine
+(cmd/canopy/remote.go) implementing tui.Engine over the serve socket. Conversations are fetched
+whole with a new `_canopy/session` request and fetched again on every session/update, coalesced so a
+streaming turn is fetched as often as a fetch takes. A question arrives with the engine's exact
+permission.Request and Decision in `_meta.canopy`, so it is drawn as asked; answers go back as
+allow or reject ("always" cannot cross the protocol and is answered as once, stated in LIMITATIONS).
+Send reports the server's refusal: the server registers a turn before reading the next request, so
+the conversation fetched right after holds it or the refusal has already arrived. Mode switching
+and ctrl+n work; everything the protocol cannot ask for returns errAttached in words. `-lines`, or a
+non-terminal, keeps the line client. Tests: a remote engine against a hub runs a prompt, receives
+the exact question, answers it, and sees the turn end; a refused prompt says why; the interface
+draws the attached question. Race-clean; mutants on the meta, the answered question and the refusal
+are killed.
+
+`verify: claude [x] 2026-09-26   codex [ ]`

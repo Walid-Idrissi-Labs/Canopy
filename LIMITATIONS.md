@@ -865,10 +865,15 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   interface's checkpoints and verification. MCP servers the editor names are ignored; the project's
   own canopy.json servers are used. A linked resource reaches the model as a reference it can read,
   not as its contents. It has been tested against a scripted client, not against an editor.
-- `canopy serve` and `canopy attach` (D-63) keep agents working with no client attached, but the
-  interface (`canopy`) is not a client of the server: a conversation the server is running is
-  picked up with `canopy attach`, which is a line-based client with no screen, not in the chat.
-  A running `canopy` and a running `canopy serve` in one project are two engines working in the same
+- `canopy serve` and `canopy attach` (D-63) keep agents working with no client attached. On a
+  terminal, `canopy attach CODE` opens the interface on the server's conversation (`-lines` keeps
+  the plain line client). Attached, the conversation, its questions, its mode and ctrl+n work; what
+  the protocol has no way to ask for is refused in words rather than faked: compacting, undo, fork,
+  steering, retry, side questions, budgets, grants, switching credentials and the agents screen,
+  which run in `canopy` or in the server's own terminal. "Always" on a question is answered as
+  this once, since the protocol carries only allow and reject. A picture named in a message is sent
+  as its path, not attached, and tool output is drawn bounded to 8,000 characters; `/grants` and the
+  agents screen show nothing, since the server's are not sent. A running `canopy` and a running `canopy serve` in one project are two engines working in the same
   checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
   service manager. A question waiting for a client is announced on the server's error output only,
   with no desktop notification.

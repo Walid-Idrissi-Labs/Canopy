@@ -26,6 +26,8 @@ type servedEngine struct {
 	mu     sync.Mutex
 	turns  []core.Turn
 	events chan core.Event
+	// refuse is what Send answers with, when set.
+	refuse error
 }
 
 func (e *servedEngine) NewSession(context.Context, string) (string, error) { return "session-7", nil }
@@ -48,6 +50,9 @@ func (e *servedEngine) SetMode(string, string) error       { return nil }
 func (e *servedEngine) Events(uint64) <-chan core.Event    { return e.events }
 func (e *servedEngine) Modes(string) (string, []core.Mode) { return core.ModeBuild, core.Modes() }
 func (e *servedEngine) Send(id, text string) (string, error) {
+	if e.refuse != nil {
+		return "", e.refuse
+	}
 	e.mu.Lock()
 	e.turns = append(e.turns, core.Turn{ID: "t1", State: core.TurnStreaming, Request: core.Message{Text: text}})
 	e.mu.Unlock()

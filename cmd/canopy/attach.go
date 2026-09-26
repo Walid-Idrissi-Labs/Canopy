@@ -51,9 +51,19 @@ func runAttach(args []string, stdin io.Reader, out, errOut io.Writer) int {
 		at = parent
 	}
 	defer func() { _ = conn.Close() }()
-	target := ""
-	if len(args) > 0 {
-		target = args[0]
+	target, lines := "", false
+	for _, arg := range args {
+		switch {
+		case arg == "-lines" || arg == "--lines":
+			lines = true
+		case target == "":
+			target = arg
+		}
+	}
+	// A conversation on a terminal opens in the interface; -lines, or output that is not a
+	// terminal, keeps the plain line client scripts and tests drive.
+	if target != "" && !lines && isTerminal(os.Stdout) && isTerminal(os.Stdin) {
+		return attachInterface(conn, dir, target, errOut)
 	}
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
@@ -90,7 +100,9 @@ func newRPCClient(rw io.ReadWriter) *rpcClient {
 	go func() {
 		defer close(c.closed)
 		scanner := bufio.NewScanner(rw)
-		scanner.Buffer(make([]byte, 1<<20), 16<<20)
+		// Large enough for a whole conversation, which the attached interface is sent, pictures
+		// left out and tool output bounded; see _canopy/session.
+		scanner.Buffer(make([]byte, 1<<20), 256<<20)
 		for scanner.Scan() {
 			var m map[string]json.RawMessage
 			if json.Unmarshal(scanner.Bytes(), &m) != nil {
