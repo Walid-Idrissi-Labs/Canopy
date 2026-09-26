@@ -278,6 +278,33 @@ func TestACapStopsALongTurnBetweenSteps(t *testing.T) {
 	if !e.Budget(session.ID).Paused {
 		t.Error("the agent is not marked paused")
 	}
+
+	// Refused while paused; raised, a retry carries on with the steps it already took in context.
+	if _, err := e.Retry(session.ID); err == nil {
+		t.Fatal("a paused agent was retried")
+	}
+	if err := e.SetBudget(session.ID, 5); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	client.events = reply("finished")
+	client.mu.Unlock()
+	next, err := e.Retry(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waitForTurn(t, e, session.ID, next).Text != "finished" {
+		t.Fatal("the raised agent did not carry on")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	results := 0
+	for _, m := range client.history {
+		results += len(m.ToolResults)
+	}
+	if results < 4 {
+		t.Fatalf("the carried-on turn was sent %d of the 4 results the stopped one had", results)
+	}
 }
 
 // The cap across every agent counts what the others' running turns have spent, not only finished

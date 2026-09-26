@@ -4727,7 +4727,7 @@ past explanation: a stored-but-unselected key that works with one credential by 
 breaks with two, and warnings printed into a void.
 
 ### U-07 Budgets reach the user
-`status: todo | owner: none | branch: none | depends: A5-09`
+`status: review | owner: Claude | branch: feat/budgets-ui | depends: A5-09`
 `scope: internal/tui/chat/, internal/tui/agents/`
 
 Deliverable: the interface for the caps A5-09 built and verified. Set a per-agent or per-session
@@ -4742,7 +4742,14 @@ enforced that the screen does not show.
 `verify: claude [ ]   codex [ ]`
 
 notes: the engine half was verified by Codex in July and has never once been driven by a person,
-which the A5-09 note now records. This is the smallest task in the phase relative to how often
+which the A5-09 note now records.
+
+2026-09-26 (Claude): `/budget` already set both caps. The header now shows each cap in force
+(`cap $0.50 of $2.00`, `, a floor` when requests went unpriced, `paused at the $2.00 cap`), and a
+turn stopped at a cap shows Budget.Status verbatim with the `/budget` that raises it; after raising,
+enter retries, which (#114) carries on from the stopped turn with its steps in context. Tests: the
+engine test stops at the cap, refuses a retry while paused, and carries on with all four results
+after the raise; the chat test covers each header form and both pause cards. Stacked on #114. This is the smallest task in the phase relative to how often
 its absence will be noticed.
 
 ### U-08 Steering you can take back

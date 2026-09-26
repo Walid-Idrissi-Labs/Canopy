@@ -2586,6 +2586,14 @@ func (m Model) ContextParts() []string {
 		}
 		parts = append(parts, fmt.Sprintf("%d tokens, %s", usage.TotalTokens(), spent))
 	}
+	// A cap is shown wherever it is enforced: one the screen did not show would stop an agent for a
+	// reason nobody could see coming.
+	if part := capPart("cap", m.engine.Budget(m.sessionID)); part != "" {
+		parts = append(parts, part)
+	}
+	if part := capPart("cap for all", m.engine.OverallBudget()); part != "" {
+		parts = append(parts, part)
+	}
 
 	// The context meter is always here, not only when it is nearly full.
 	//
@@ -2596,6 +2604,20 @@ func (m Model) ContextParts() []string {
 		parts = append(parts, m.contextMeter())
 	}
 	return parts
+}
+
+// capPart is a spending cap in the header: how much of it is spent, and whether the figure is only
+// a floor because some requests could not be costed. Empty when there is no cap.
+func capPart(label string, b session.Budget) string {
+	switch {
+	case !b.Capped():
+		return ""
+	case b.Paused:
+		return fmt.Sprintf("paused at the $%.2f %s", b.Limit, label)
+	case !b.Reliable():
+		return fmt.Sprintf("%s $%.2f of $%.2f, a floor", label, b.Spent, b.Limit)
+	}
+	return fmt.Sprintf("%s $%.2f of $%.2f", label, b.Spent, b.Limit)
 }
 
 // contextMeter is the "how full is this conversation" figure in the header.

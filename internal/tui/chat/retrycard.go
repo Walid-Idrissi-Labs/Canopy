@@ -4,11 +4,14 @@ package chat
 // counting down when the provider asked for a wait, and what to fix instead when it cannot.
 
 import (
+	"math"
+	"strconv"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -47,6 +50,12 @@ func (m Model) retryCard() []string {
 		return nil
 	}
 	t := theme.Current()
+	// Stopped at a spending cap: what was spent against what, in the budget's own words, and the
+	// way on, which is raising it and carrying on from where the turn stopped.
+	if budget, raise := m.pausedBudget(); raise != "" {
+		return []string{t.Warning.Render("  ") + t.Body.Render(budget.Status()) +
+			t.Muted.Render("; "+raise+" raises the cap, then enter carries on")}
+	}
 	if turn.ErrorKind != "" && !turn.ErrorKind.Retryable() {
 		return []string{t.Warning.Render("  ") + t.Body.Render(retryAdviceFor(turn, m.keyName))}
 	}
@@ -59,6 +68,28 @@ func (m Model) retryCard() []string {
 		why = "; the network failed, so the request got no answer"
 	}
 	return []string{t.Key.Render("  enter") + t.Body.Render(" tries it again") + t.Muted.Render(why)}
+}
+
+// pausedBudget is the cap this conversation is paused at, this agent's or the one across every
+// agent, with the command that raises it; the command is empty when neither is paused.
+func (m Model) pausedBudget() (session.Budget, string) {
+	if own := m.engine.Budget(m.sessionID); own.Paused {
+		return own, "/budget " + raisedCap(own)
+	}
+	if overall := m.engine.OverallBudget(); overall.Paused {
+		return overall, "/budget all " + raisedCap(overall)
+	}
+	return session.Budget{}, ""
+}
+
+// raisedCap suggests a cap past what was spent: double the old one, in whole dollars where that
+// reads naturally.
+func raisedCap(b session.Budget) string {
+	next := b.Limit * 2
+	if next < b.Spent+1 {
+		next = b.Spent + 1
+	}
+	return strconv.FormatFloat(math.Ceil(next), 'f', -1, 64)
 }
 
 // retryAdviceFor says what to change for a failure retrying cannot fix, naming the credential.
