@@ -884,6 +884,6 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   all. A tool name in a hook's `tools` that Canopy does not have is warned about at start and never
   matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
   running after that is left to finish on its own.
-- A `!command` typed in the box runs outside the sandbox, as the person's own terminal would, since
-  they typed it; it has two minutes, and the last 16 KB of what it printed goes with the next
+- A `!command` typed in the box, and confirmed, runs outside the sandbox, as the person's own
+  terminal would, since they typed it; it has two minutes, and the last 16 KB of what it printed goes with the next
   message.

@@ -6,6 +6,7 @@ package chat
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -48,9 +49,18 @@ func (m Model) shellDone(msg shellDoneMsg) Model {
 	}
 	output := terminalSafe(strings.TrimRight(r.Output, "\n"))
 	if len(output) > maxShellContext {
-		output = output[len(output)-maxShellContext:]
+		cut := len(output) - maxShellContext
+		for cut < len(output) && !utf8.RuneStart(output[cut]) {
+			cut++
+		}
+		output = output[cut:]
 	}
 	m.shellContext = append(m.shellContext, shellRun{command: msg.command, exit: r.ExitCode, output: output})
+	// All the output waiting for the next message together is held to the same bound, oldest
+	// dropped first.
+	for total := contextSize(m.shellContext); total > maxShellContext*2 && len(m.shellContext) > 1; total = contextSize(m.shellContext) {
+		m.shellContext = m.shellContext[1:]
+	}
 	lines := strings.Split(output, "\n")
 	shown := lines
 	if len(shown) > 12 {
@@ -76,7 +86,9 @@ func (m Model) withShellContext(prompt string) string {
 	var b strings.Builder
 	for _, run := range m.shellContext {
 		b.WriteString("<shell-output command=" + quoteAttr(run.command) + " exit=\"" + itoa(run.exit) + "\">\n")
-		b.WriteString(strings.ReplaceAll(run.output, "</shell-output>", "</shell-output >"))
+		// Angle brackets written as entities, so nothing in the output can close the frame, or open
+		// one of its own, however it is spelled.
+		b.WriteString(strings.NewReplacer("<", "&lt;", ">", "&gt;").Replace(run.output))
 		b.WriteString("\n</shell-output>\n\n")
 	}
 	return b.String() + prompt
@@ -84,4 +96,12 @@ func (m Model) withShellContext(prompt string) string {
 
 func quoteAttr(s string) string {
 	return "\"" + strings.NewReplacer("\"", "&quot;", "\n", " ").Replace(s) + "\""
+}
+
+func contextSize(runs []shellRun) int {
+	total := 0
+	for _, run := range runs {
+		total += len(run.output)
+	}
+	return total
 }

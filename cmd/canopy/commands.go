@@ -198,6 +198,7 @@ func runChat(resume string) error {
 			Review: review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
 			SignIn: signInRoutes, Shell: shellIn(dir),
+			Files: projectFiles(dir), Remember: rememberIn(dir, project),
 		})
 	if err != nil {
 		return err

@@ -62,6 +62,7 @@ Those are stated plainly rather than deferred quietly, and
 - [Know which agent was actually right](#know-which-agent-was-actually-right)
 - [Where the tokens go](#where-the-tokens-go)
 - [Reusable prompt commands](#reusable-prompt-commands)
+- [Writing a message](#writing-a-message)
 - [Modes, on shift+tab](#modes-on-shifttab)
 - [Themes](#themes)
 - [A report for the pull request](#a-report-for-the-pull-request)
@@ -239,7 +240,12 @@ screen, not only on the one that lists agents, and no screen is ever locked beca
 waiting: leaving a conversation is not answering it, and the question is still there when you come
 back. Scrolling a permission prompt to read what is above it does not answer it either. Set
 `CANOPY_BELL=1` to have the terminal beep the moment an agent starts needing you, which is off
-unless you ask for it.
+unless you ask for it. `CANOPY_NOTIFY=1` posts a desktop notification instead, saying which agent
+wants what, and another when a turn finishes while the terminal is behind another window; it uses
+the sequence your terminal understands (iTerm2, WezTerm, Ghostty, kitty, foot and Windows Terminal
+among them) and passes through tmux when `allow-passthrough` is on. The window title always says how
+many agents are working and how many are waiting on you, and Ghostty, WezTerm and Windows Terminal
+show the same as a progress indicator on the tab.
 
 ## Git as a real tool, not a shell string
 
@@ -447,9 +453,15 @@ is waiting.
 
 ### Running a command yourself
 
-`!go test ./...` in the box runs the command in the project through your shell, as your terminal
-would, with the provider keys Canopy holds kept out of its environment. What it printed is shown,
+`!go test ./...` typed in the box, and confirmed with a second enter, runs the command in the
+project with sh, as your terminal would, with the provider keys Canopy holds kept out of its
+environment; a pasted line is sent as a message instead. What it printed is shown,
 and goes with your next message, marked as command output, so "why does this fail" needs no pasting.
+### Finding and copying
+
+ctrl+f finds text in the conversation, newest first: the view moves to each match and marks it, enter
+goes to an older one and down to a newer one, and esc leaves the view where the search took it.
+ctrl+y copies the last code block of the latest reply, or the whole reply when it has none.
 
 ## Where the tokens go
 
@@ -501,6 +513,19 @@ Global commands use the same `{"commands": [...]}` shape under the platform user
 project definition with the same name wins only for that project. `$ARGUMENTS` is replaced literally
 in one pass; there is no template evaluation or shell interpolation. When the placeholder is
 absent, arguments are appended under an `Arguments:` heading.
+
+## Writing a message
+
+ctrl+p opens a palette of every command, mode, theme and file, narrowed as you type (letters in
+order are enough: `thn` finds `theme nord`); enter runs a built-in, puts one of the project's own
+commands in the box to be sent, and mentions a file. `@` at the start of a word offers the project's files as git lists them, ignored ones left out,
+best match first; tab or enter puts the path in. ctrl+x ctrl+e opens the message in `$VISUAL` or
+`$EDITOR` and takes back what you wrote. A single typed line that begins with `# ` is kept, after a
+second enter, as a line in AGENTS.md, which every conversation started afterwards reads; a paste, or
+anything over more than one line, is sent as an ordinary message. Since AGENTS.md is part of what
+you trusted, trust follows your note only when the repository is, after the note, exactly what you
+trusted plus that line; anything else that changed, an agent's edit included, is asked about at the
+next start.
 
 ## Modes, on shift+tab
 

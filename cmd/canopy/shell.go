@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"os"
 	"strings"
 	"time"
 
@@ -12,14 +11,11 @@ import (
 )
 
 // shellIn runs a "!command" typed in the box, in dir, the way the person's own terminal would:
-// through their shell, unconfined, since they typed it, but without the provider keys Canopy holds.
+// unconfined, since they typed it, but without the provider keys Canopy holds. Through sh rather
+// than their own shell, which would read its startup files and could put the keys back.
 func shellIn(dir string) func(ctx context.Context, command string) chat.ShellResult {
 	return func(ctx context.Context, command string) chat.ShellResult {
-		shell := os.Getenv("SHELL")
-		if strings.TrimSpace(shell) == "" {
-			shell = "/bin/sh"
-		}
-		result, err := exec.Run(ctx, shell, []string{"-c", command}, exec.Options{
+		result, err := exec.Run(ctx, "/bin/sh", []string{"-c", command}, exec.Options{
 			Dir: dir, Env: childenv.Inherited(), Timeout: 2 * time.Minute, MaxOutput: 64 << 10,
 		})
 		switch {
