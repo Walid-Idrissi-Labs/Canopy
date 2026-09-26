@@ -131,6 +131,9 @@ type Model struct {
 	height int
 
 	statuses []session.AgentStatus
+	// branches are the tree glyphs drawn before each agent's name, one per status: empty for an
+	// agent a person started, the line to its orchestrator for one that was dispatched.
+	branches []string
 
 	// step is where the pane fires have got to, and the three fields after it are the machinery
 	// that keeps them moving only while there is something to move for. The animation runs while
@@ -528,7 +531,7 @@ func (m *Model) refresh() {
 		m.statuses = nil
 		return
 	}
-	m.statuses = m.engine.AgentStatuses()
+	m.statuses, m.branches = nest(m.engine.AgentStatuses())
 
 	if m.anchored == "" {
 		if len(m.statuses) > 0 {
@@ -732,6 +735,9 @@ func (m Model) list() string {
 		}
 
 		b.WriteString(marker)
+		if i < len(m.branches) && m.branches[i] != "" {
+			name = t.Muted.Render(m.branches[i]) + name
+		}
 		b.WriteString(pad(name, 18))
 		b.WriteString(stateBadge(status.State))
 		b.WriteString("  ")
@@ -746,6 +752,16 @@ func (m Model) list() string {
 // What it says depends on the state, because a blocked agent's most useful fact is what it is
 // blocked on, and an idle one's is what it was last doing.
 func (m Model) detail(status session.AgentStatus) string {
+	// The branch first for an agent on one of its own, since that is where its work is to be
+	// found, reviewed and landed.
+	if status.Agent.Isolated && status.Agent.Branch != "" {
+		rest := m.plainDetail(status)
+		return "on " + status.Agent.Branch + " · " + rest
+	}
+	return m.plainDetail(status)
+}
+
+func (m Model) plainDetail(status session.AgentStatus) string {
 	switch {
 	case status.Waiting != "":
 		return "waiting: " + status.Waiting
@@ -826,3 +842,52 @@ func (m Model) Context() string {
 // Notice is the last grid-level outcome the frame should say. It is separate from err, which belongs
 // to the new-agent form and is rendered inside that form.
 func (m Model) Notice() string { return m.notice }
+
+// nest orders agents so each dispatched one sits under the agent that dispatched it, keeping the
+// order it was given among its siblings, and returns the tree glyph for each. An agent whose
+// orchestrator is not in the list stands at the top, as does any caught in a loop of parents.
+func nest(statuses []session.AgentStatus) ([]session.AgentStatus, []string) {
+	present := map[string]bool{}
+	for _, s := range statuses {
+		present[s.Agent.Name] = true
+	}
+	children := map[string][]session.AgentStatus{}
+	var roots []session.AgentStatus
+	for _, s := range statuses {
+		if s.Parent != "" && s.Parent != s.Agent.Name && present[s.Parent] {
+			children[s.Parent] = append(children[s.Parent], s)
+			continue
+		}
+		roots = append(roots, s)
+	}
+	out := make([]session.AgentStatus, 0, len(statuses))
+	glyphs := make([]string, 0, len(statuses))
+	placed := map[string]bool{}
+	var walk func(s session.AgentStatus, lead, glyph string)
+	walk = func(s session.AgentStatus, lead, glyph string) {
+		if placed[s.Agent.Name] {
+			return
+		}
+		placed[s.Agent.Name] = true
+		out = append(out, s)
+		glyphs = append(glyphs, glyph)
+		kids := children[s.Agent.Name]
+		for i, kid := range kids {
+			if i == len(kids)-1 {
+				walk(kid, lead+"   ", lead+"└─ ")
+			} else {
+				walk(kid, lead+"│  ", lead+"├─ ")
+			}
+		}
+	}
+	for _, root := range roots {
+		walk(root, "", "")
+	}
+	// Anything a loop of parents kept from being reached is still listed.
+	for _, s := range statuses {
+		if !placed[s.Agent.Name] {
+			walk(s, "", "")
+		}
+	}
+	return out, glyphs
+}
