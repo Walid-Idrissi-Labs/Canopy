@@ -21,9 +21,10 @@ If you find that the plan will not work, or that the real fix is somewhere you d
 	`stop and say so rather than carrying on. What was approved was the plan above, not whatever ` +
 	`turns out to be necessary.`
 
-// planReady reports whether the conversation is sitting on a finished plan with nothing typed.
+// planReady reports whether the conversation is sitting on a finished plan with nothing typed and
+// nobody else's question waiting on the same key.
 func (m Model) planReady() bool {
-	if m.Mode() != core.ModePlan || !m.input.Empty() || m.working || m.awaiting {
+	if m.Mode() != core.ModePlan || !m.input.Empty() || m.working || m.awaiting || len(m.visitors) > 0 {
 		return false
 	}
 	session, ok := m.engine.Session(m.sessionID)
@@ -31,7 +32,26 @@ func (m Model) planReady() bool {
 		return false
 	}
 	last := session.Turns[len(session.Turns)-1]
-	return last.State == core.TurnComplete && strings.TrimSpace(last.Text) != ""
+	return last.State == core.TurnComplete && looksLikeAPlan(last.Text)
+}
+
+// looksLikeAPlan is a reply that sets out steps: at least two lines of a numbered or bulleted list.
+// An answer to a question asked in plan mode is not a plan, and approving one would spend money
+// and change code on the strength of a stray key.
+func looksLikeAPlan(text string) bool {
+	steps := 0
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "* "):
+			steps++
+		case len(line) > 2 && line[0] >= '0' && line[0] <= '9' &&
+			(strings.HasPrefix(line[1:], ". ") || strings.HasPrefix(line[1:], ") ") ||
+				len(line) > 3 && line[1] >= '0' && line[1] <= '9' && strings.HasPrefix(line[2:], ". ")):
+			steps++
+		}
+	}
+	return steps >= 2
 }
 
 // planCard is the line offered under a finished plan.
@@ -40,8 +60,12 @@ func (m Model) planCard() []string {
 		return nil
 	}
 	t := theme.Current()
-	return []string{t.Key.Render("  enter") + t.Body.Render(" carries this plan out in build mode") +
-		t.Muted.Render(", or type to change it; shift+tab changes the mode without sending")}
+	if m.planAsked {
+		return []string{t.Key.Render("  enter again") + t.Body.Render(" switches to build and carries this plan out") +
+			t.Muted.Render("; any other key keeps planning")}
+	}
+	return []string{t.Key.Render("  enter twice") + t.Body.Render(" carries this plan out in build mode") +
+		t.Muted.Render(", or type to change it")}
 }
 
 // carryOutPlan switches to build and sends the approval.

@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 )
 
@@ -30,6 +32,10 @@ func TestEnterCarriesOutAFinishedPlan(t *testing.T) {
 	m := planned(engine)
 	if !strings.Contains(plain(m.Body()), "carries this plan out in build mode") {
 		t.Fatalf("no plan card:\n%s", plain(m.Body()))
+	}
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	if len(engine.sent) != 0 || engine.mode.Name != core.ModePlan {
+		t.Fatal("one enter carried the plan out")
 	}
 	_, _ = m.Update(keyCode(tea.KeyEnter))
 	if engine.mode.Name != core.ModeBuild || len(engine.sent) != 1 || !strings.HasPrefix(engine.sent[0], "That plan is approved") {
@@ -65,7 +71,40 @@ func TestThePlanCardOnlyAppearsWhereItMeansSomething(t *testing.T) {
 	readOnly := &fakeEngine{session: planSession(), trust: core.TrustReadOnly}
 	m = planned(readOnly)
 	m, _ = m.Update(keyCode(tea.KeyEnter))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 	if len(readOnly.sent) != 0 || !strings.Contains(m.Error(), "cannot be carried out") {
 		t.Fatalf("a read-only agent was sent to build: sent %v, error %q", readOnly.sent, m.Error())
+	}
+}
+
+// An answer in plan mode that sets out no steps is not a plan; a key between the two enters keeps
+// planning; and with another agent's question waiting on enter, no card offers enter for the plan.
+func TestThePlanCardNeedsAPlanAndAClearKey(t *testing.T) {
+	answer := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		turn("t1", "what is the parser", "It turns text into a tree.", core.TurnComplete)}}}
+	m := planned(answer)
+	if strings.Contains(plain(m.Body()), "carries this plan out") {
+		t.Fatal("a plain answer was offered as a plan")
+	}
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	_, _ = m.Update(keyCode(tea.KeyEnter))
+	if len(answer.sent) != 0 || answer.mode.Name != core.ModePlan {
+		t.Fatal("enter on an answer carried out a plan")
+	}
+
+	engine := &fakeEngine{session: planSession()}
+	m = planned(engine)
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	m, _ = m.Update(keyCode(tea.KeyDown))
+	_, _ = m.Update(keyCode(tea.KeyEnter))
+	if len(engine.sent) != 0 {
+		t.Fatal("a key between the enters did not keep planning")
+	}
+
+	visited := &fakeEngine{session: planSession(), waiting: []session.Waiting{{SessionID: "s2", Agent: "other",
+		Request: permission.Request{SessionID: "s2", Tool: "run_command", Command: "make"}}}}
+	m = planned(visited)
+	if strings.Contains(plain(m.Body()), "carries this plan out") {
+		t.Fatal("the plan card offered enter while another agent's question waits on it")
 	}
 }
