@@ -277,6 +277,15 @@ func (c *conn) handle(ctx context.Context, m message) {
 		c.prompt(ctx, m)
 	case "session/cancel":
 		h.engine.Cancel(p.SessionID)
+	case "_canopy/session":
+		// Canopy's own interface, attached, draws a conversation from the whole record rather than
+		// from the updates an editor is sent; this is that record, as the engine holds it now.
+		session, ok := h.engine.Session(p.SessionID)
+		if !ok {
+			c.reply(m.ID, nil, &rpcError{Code: -32602, Message: "there is no conversation " + p.SessionID})
+			return
+		}
+		c.reply(m.ID, map[string]any{"session": session, "modes": h.modes(p.SessionID)}, nil)
 	default:
 		if len(m.ID) > 0 {
 			c.reply(m.ID, nil, &rpcError{Code: -32601, Message: "Canopy does not offer " + m.Method})
@@ -554,6 +563,8 @@ func (c *conn) ask(ctx context.Context, req permission.Request, decision permiss
 				map[string]any{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
 				map[string]any{"optionId": "reject", "name": "Reject: " + decision.Reason, "kind": "reject_once"},
 			},
+			// The question whole, for a Canopy client, which draws it as the engine asked it.
+			"_meta": map[string]any{"canopy": map[string]any{"request": req, "decision": decision}},
 		})
 	for {
 		h.mu.Lock()

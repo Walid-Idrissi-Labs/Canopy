@@ -51,9 +51,19 @@ func runAttach(args []string, stdin io.Reader, out, errOut io.Writer) int {
 		at = parent
 	}
 	defer func() { _ = conn.Close() }()
-	target := ""
-	if len(args) > 0 {
-		target = args[0]
+	target, lines := "", false
+	for _, arg := range args {
+		switch {
+		case arg == "-lines" || arg == "--lines":
+			lines = true
+		case target == "":
+			target = arg
+		}
+	}
+	// A conversation on a terminal opens in the interface; -lines, or output that is not a
+	// terminal, keeps the plain line client scripts and tests drive.
+	if target != "" && !lines && isTerminal(os.Stdout) && isTerminal(os.Stdin) {
+		return attachInterface(conn, dir, target, errOut)
 	}
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)

@@ -463,7 +463,10 @@ canopy attach 12         # pick one up: what happened, then what is happening
 ```
 
 `canopy serve` keeps agents working after the client that started them has gone. It listens on a
-socket only you can reach, and speaks the same protocol as `canopy acp`. A question an agent asks
+socket only you can reach, and speaks the same protocol as `canopy acp`. On a terminal,
+`canopy attach 12` opens the same interface as `canopy` on that conversation, drawn from what the
+server holds; leaving it leaves the agent working. `-lines` gives the plain line client instead, and
+LIMITATIONS lists what only the server's own terminal can do. A question an agent asks
 while nobody is attached waits for the next `canopy attach`, and the server says which conversation
 is waiting.
 
