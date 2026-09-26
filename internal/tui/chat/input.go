@@ -220,11 +220,32 @@ func (i *Input) Update(msg tea.KeyPressMsg) bool {
 		}
 		return true
 
+	// Within a draft of several lines up and down move the caret; only from the first line does up
+	// recall what was sent, and only from the last does down come forward again, so a long draft
+	// is never lost to a key meant for moving around in it.
 	case "up", "alt+up":
+		if i.lineAbove() {
+			return true
+		}
 		return i.older()
 
 	case "down", "alt+down":
+		if i.lineBelow() {
+			return true
+		}
 		return i.newer()
+
+	case "alt+k":
+		// Kill to the end of the line, the pair of ctrl+u; ctrl+k is the credentials screen.
+		end := i.cursor
+		for end < len(i.runes) && i.runes[end] != '\n' {
+			end++
+		}
+		if end > i.cursor {
+			i.runes = append(i.runes[:i.cursor], i.runes[end:]...)
+			i.edited()
+		}
+		return true
 
 	case "left":
 		if i.cursor > 0 {
@@ -314,6 +335,49 @@ func (i *Input) wordEnd() int {
 
 func isSpace(r rune) bool { return r == ' ' || r == '\n' }
 
+// lineStart is where the line holding position at begins.
+func (i *Input) lineStart(at int) int {
+	for at > 0 && i.runes[at-1] != '\n' {
+		at--
+	}
+	return at
+}
+
+// lineAbove moves the caret up a line, keeping its column where the line is long enough, and reports
+// whether there was a line above.
+func (i *Input) lineAbove() bool {
+	start := i.lineStart(i.cursor)
+	if start == 0 {
+		return false
+	}
+	column := i.cursor - start
+	above := i.lineStart(start - 1)
+	i.cursor = min(above+column, start-1)
+	return true
+}
+
+// lineBelow moves the caret down a line, and reports whether there was one.
+func (i *Input) lineBelow() bool {
+	column := i.cursor - i.lineStart(i.cursor)
+	end := i.cursor
+	for end < len(i.runes) && i.runes[end] != '\n' {
+		end++
+	}
+	if end >= len(i.runes) {
+		return false
+	}
+	next := end + 1
+	nextEnd := next
+	for nextEnd < len(i.runes) && i.runes[nextEnd] != '\n' {
+		nextEnd++
+	}
+	i.cursor = min(next+column, nextEnd)
+	return true
+}
+
+// pastedSummaryLines is the size of paste shown as a count rather than as its text.
+const pastedSummaryLines = 12
+
 // cursorBlock is what stands in for a terminal cursor.
 //
 // Drawn rather than positioned, because the real cursor cannot be placed inside a lipgloss
@@ -348,13 +412,27 @@ func (i Input) Lines() []string {
 		tail = after
 	}
 
+	// A long paste with the caret after it is shown as its size, not as its last few lines: a box
+	// showing six lines of two hundred is a screen saying less than what is about to be sent.
+	if total := strings.Count(string(i.runes), "\n") + 1; i.pasted && total > pastedSummaryLines && i.cursor == len(i.runes) {
+		all := wrapWithMarkers(before, head, "", width)
+		summary := t.Muted.Render("  ... " + itoa(total) + " lines pasted, all of them sent; up to look through them")
+		lines := append(append([]string(nil), all[0]), summary, all[len(all)-1])
+		if len(all) == 2 {
+			lines = all
+		}
+		return lines
+	}
+
 	lines := wrapWithMarkers(before, head, tail, width)
 
 	if len(lines) > i.MaxLines {
-		// Scrolled to keep the last lines, which is where the cursor is while typing. A box that
-		// scrolled from the top would show the beginning of a long message and hide what is being
-		// written.
-		return lines[len(lines)-i.MaxLines:]
+		// Scrolled so the caret is on screen: the lines up to it, or the last ones when it is near
+		// the end. A box that kept the last lines whatever the caret did would hide it the moment
+		// somebody moved up into a long draft.
+		atLine := len(wrapWithMarkers(before, head, "", width)) - 1
+		first := max(0, min(atLine-i.MaxLines+1, len(lines)-i.MaxLines))
+		return lines[first : first+i.MaxLines]
 	}
 	if len(lines) < i.MinLines {
 		// Padded below rather than above, so the first line of what is being typed stays on the
