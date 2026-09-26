@@ -169,7 +169,19 @@ func TestThePaletteSearchesWhatWasSaidWhenTypingPauses(t *testing.T) {
 		t.Fatal("a search typed over was still run")
 	}
 	m, run := m.Update(fresh())
-	m, _ = m.Update(run())
+	answer := run()
+	// An answer that arrives after the palette was closed and opened on other words is dropped, as
+	// is one for a query typed over, even where the generation happens to agree.
+	reopened, _ := m.Update(keyCode(tea.KeyEscape))
+	reopened, _ = reopened.Update(keyCode('p', tea.ModCtrl))
+	for _, r := range "xyzw" {
+		reopened, _ = reopened.Update(keyText(string(r)))
+	}
+	reopened, _ = reopened.Update(answer)
+	if strings.Contains(plain(reopened.Body()), "said in auth work") {
+		t.Fatal("an answer for other words landed in a reopened palette")
+	}
+	m, _ = m.Update(answer)
 	body := plain(m.Body())
 	if !strings.Contains(body, "said in auth work") || strings.Contains(body, "this one") {
 		t.Fatalf("found:\n%s", body)

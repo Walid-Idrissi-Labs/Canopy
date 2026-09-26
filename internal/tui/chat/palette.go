@@ -293,7 +293,10 @@ type paletteSearchMsg struct{ generation int }
 
 type paletteFoundMsg struct {
 	generation int
-	items      []paletteItem
+	// query is what was searched for: the generation starts again when the palette is reopened,
+	// so an answer is matched to the words too.
+	query string
+	items []paletteItem
 }
 
 // searchSaid starts the wait before a search of what was said, for a query of three letters or more.
@@ -311,12 +314,12 @@ func (m Model) paletteSearch(msg paletteSearchMsg) tea.Cmd {
 		return nil
 	}
 	find, query, generation := m.palette.find, strings.TrimSpace(m.palette.query), m.palette.generation
-	return func() tea.Msg { return paletteFoundMsg{generation: generation, items: find(query)} }
+	return func() tea.Msg { return paletteFoundMsg{generation: generation, query: query, items: find(query)} }
 }
 
 // paletteFound adds what the search found after everything found by name, if it is still wanted.
 func (m Model) paletteFound(msg paletteFoundMsg) Model {
-	if !m.palette.open || msg.generation != m.palette.generation {
+	if !m.palette.open || msg.generation != m.palette.generation || msg.query != strings.TrimSpace(m.palette.query) {
 		return m
 	}
 	m.palette.matches = append(m.palette.matches, msg.items...)
