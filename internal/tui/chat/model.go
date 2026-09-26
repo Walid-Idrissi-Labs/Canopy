@@ -515,11 +515,15 @@ func (m Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-events
 		if !ok {
-			return nil
+			return eventsEndedMsg{}
 		}
 		return EventMsg{Event: ev}
 	}
 }
+
+// eventsEndedMsg is the engine's events ending: at exit for the engine in this process, and when
+// the connection goes for one reached over a socket, where it is the only sign of it.
+type eventsEndedMsg struct{}
 
 func tick(generation int) tea.Cmd {
 	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return tickMsg{generation: generation} })
@@ -672,6 +676,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
+	case eventsEndedMsg:
+		m.events = nil
+		m.err = "the connection to what runs this conversation has ended; nothing more will arrive here"
+		return m, nil
 	case picturesReadyMsg:
 		return m.picturesReady(msg)
 	case shellDoneMsg:
@@ -1467,10 +1475,12 @@ func (m Model) send() (Model, tea.Cmd) {
 	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
 	// and never cost anything, so they are decided before the path that does either.
 	if name, arguments, ok := builtinInvocation(trimmed); ok {
+		m.err = ""
 		if handled, cmd := m.runBuiltin(name, arguments); handled {
 			m.input.Remember(typed)
-			// Cleared unless the command put something in the box for the person to finish.
-			if m.input.Value() == typed {
+			// Cleared unless the command put something in the box for the person to finish, or
+			// refused it: a refused command stays to be corrected rather than typed again.
+			if m.input.Value() == typed && m.err == "" {
 				m.input.Clear()
 			}
 			m.menu = menu{}

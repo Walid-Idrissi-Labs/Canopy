@@ -21,6 +21,8 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
+	// eventsEnded makes Events answer with a channel already closed, as a lost connection does.
+	eventsEnded     bool
 	pictures        []core.Image
 	retried         int
 	granted         []permission.Scope
@@ -113,7 +115,11 @@ func (e *fakeEngine) Cancel(string) { e.cancelled++ }
 
 func (e *fakeEngine) Events(uint64) <-chan core.Event {
 	e.subscriptions++
-	return make(chan core.Event)
+	events := make(chan core.Event)
+	if e.eventsEnded {
+		close(events)
+	}
+	return events
 }
 
 func (e *fakeEngine) Compact(context.Context, string) (session.CompactionResult, error) {

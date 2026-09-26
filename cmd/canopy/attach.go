@@ -100,7 +100,9 @@ func newRPCClient(rw io.ReadWriter) *rpcClient {
 	go func() {
 		defer close(c.closed)
 		scanner := bufio.NewScanner(rw)
-		scanner.Buffer(make([]byte, 1<<20), 16<<20)
+		// Large enough for a whole conversation, which the attached interface is sent, pictures
+		// left out and tool output bounded; see _canopy/session.
+		scanner.Buffer(make([]byte, 1<<20), 256<<20)
 		for scanner.Scan() {
 			var m map[string]json.RawMessage
 			if json.Unmarshal(scanner.Bytes(), &m) != nil {

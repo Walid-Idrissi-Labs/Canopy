@@ -168,24 +168,59 @@ func (e *remoteEngine) refreshSoon(sessionID string) {
 	}()
 }
 
-// refresh fetches a conversation as the server holds it now, and says it changed.
+// refresh fetches a conversation as the server holds it now, and says it changed. Only the turns
+// from the first one not yet finished are asked for; the finished ones before it are kept.
 func (e *remoteEngine) refresh(sessionID string) bool {
-	var reply struct {
-		Session core.Session `json:"session"`
-		Modes   remoteModes  `json:"modes"`
+	e.mu.Lock()
+	known, have := e.sessions[sessionID]
+	e.mu.Unlock()
+	from := 0
+	if have {
+		for from < len(known.Turns) && known.Turns[from].State.Terminal() {
+			from++
+		}
 	}
-	if err := e.client.call("_canopy/session", map[string]any{"sessionId": sessionID}, &reply); err != nil {
+	var reply struct {
+		Session   core.Session `json:"session"`
+		Modes     remoteModes  `json:"modes"`
+		From      int          `json:"from"`
+		TurnCount int          `json:"turnCount"`
+	}
+	if err := e.client.call("_canopy/session", map[string]any{"sessionId": sessionID, "from": from}, &reply); err != nil {
 		return false
 	}
+	fresh := reply.Session
+	if reply.From > 0 {
+		if reply.From > len(known.Turns) || reply.TurnCount < reply.From {
+			// The record moved under the part kept here, an undo for one: asked for whole.
+			if from == 0 {
+				return false
+			}
+			e.mu.Lock()
+			delete(e.sessions, sessionID)
+			e.mu.Unlock()
+			return e.refresh(sessionID)
+		}
+		fresh.Turns = append(append([]core.Turn(nil), known.Turns[:reply.From]...), fresh.Turns...)
+	}
 	e.mu.Lock()
-	if _, known := e.sessions[sessionID]; !known {
+	if _, listed := e.sessions[sessionID]; !listed && !e.listed(sessionID) {
 		e.order = append(e.order, sessionID)
 	}
-	e.sessions[sessionID] = reply.Session
+	e.sessions[sessionID] = fresh
 	e.modes[sessionID] = reply.Modes
 	e.mu.Unlock()
 	e.publish(sessionID)
 	return true
+}
+
+func (e *remoteEngine) listed(sessionID string) bool {
+	for _, id := range e.order {
+		if id == sessionID {
+			return true
+		}
+	}
+	return false
 }
 
 // publish tells every screen watching that something changed.

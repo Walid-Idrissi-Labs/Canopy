@@ -869,7 +869,9 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   the protocol has no way to ask for is refused in words rather than faked: compacting, undo, fork,
   steering, retry, side questions, budgets, grants, switching credentials and the agents screen,
   which run in `canopy` or in the server's own terminal. "Always" on a question is answered as
-  this once, since the protocol carries only allow and reject. A running `canopy` and a running `canopy serve` in one project are two engines working in the same
+  this once, since the protocol carries only allow and reject. A picture named in a message is sent
+  as its path, not attached, and tool output is drawn bounded to 8,000 characters; `/grants` and the
+  agents screen show nothing, since the server's are not sent. A running `canopy` and a running `canopy serve` in one project are two engines working in the same
   checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
   service manager. A question waiting for a client is announced on the server's error output only,
   with no desktop notification.
