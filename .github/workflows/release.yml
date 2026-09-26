@@ -6,24 +6,29 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  # Keyless signing and build provenance both prove who built a release with the workflow's OIDC
-  # token; neither needs a stored key.
-  id-token: write
-  attestations: write
+  contents: read
 
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    # Keyless signing and build provenance both prove who built a release with the workflow's OIDC
+    # token; neither needs a stored key. Granted to this job alone.
+    #
+    # Every action is pinned to a commit rather than a tag, since this job can write the release
+    # and mint an identity token: a tag can be moved to other code, a commit cannot.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # GoReleaser reads the tag history to compute the version and to build the changelog
           # from the commits since the previous tag. A shallow checkout only has the commit the
           # tag points at, which leaves GoReleaser with no prior tag to diff against.
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -39,10 +44,14 @@ jobs:
             echo "::warning::CANOPY_GITHUB_CLIENT_ID is not set, so this release cannot sign in to GitHub Copilot."
           fi
 
-      - uses: sigstore/cosign-installer@v3
-      - uses: anchore/sbom-action/download-syft@v0
+      # cosign itself pinned too: a later major changes what sign-blob writes by default, and the
+      # .sig and .pem files RELEASING.md verifies are what this configuration expects.
+      - uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+        with:
+          cosign-release: v2.6.5
+      - uses: anchore/sbom-action/download-syft@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
 
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
         with:
           distribution: goreleaser
           version: "~> v2"
@@ -57,7 +66,7 @@ jobs:
       # SLSA build provenance for every archive and the checksum file, recorded with GitHub's
       # attestation store: `gh attestation verify <archive> --repo Walid-Idrissi-Labs/Canopy` checks
       # that a download was built here, from which commit, by this workflow.
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/*.tar.gz

@@ -18,11 +18,15 @@ identity. To check a download:
 ```sh
 cosign verify-blob checksums.txt \
   --signature checksums.txt.sig --certificate checksums.txt.pem \
-  --certificate-identity-regexp '^https://github.com/Walid-Idrissi-Labs/Canopy/\.github/workflows/release\.yml@' \
+  --certificate-identity-regexp '^https://github.com/Walid-Idrissi-Labs/Canopy/\.github/workflows/release\.yml@refs/tags/v' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 sha256sum -c checksums.txt --ignore-missing
 gh attestation verify canopy_*_linux_amd64.tar.gz --repo Walid-Idrissi-Labs/Canopy
 ```
+
+The identity is tied to a tag run of the release workflow, so a signature from a branch run of the
+same file does not pass. Provenance is recorded after GoReleaser publishes; if that step fails, the
+release is up without it, and re-running the job adds it.
 
 The macOS binary is still not notarised; that needs an Apple Developer account, which is a decision
 for the owner rather than something the pipeline can do.
