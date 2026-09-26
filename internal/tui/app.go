@@ -161,6 +161,8 @@ type AppOptions struct {
 	// should be working it out. Nil is a legitimate state and means the credential screen offers
 	// exactly what it offered before phase S.
 	SignIn keysui.SignIn
+	// CheckKey asks a credential's provider whether it takes it, at no cost; nil checks nothing.
+	CheckKey keysui.Check
 
 	// Agent names the agent whose conversation is being opened, for the corner of the header.
 	//
@@ -221,6 +223,7 @@ func NewAppConfigured(
 	options AppOptions,
 ) App {
 	credentials := keysui.NewWithSignIn(keyStore, options.SignIn)
+	credentials.SetCheck(options.CheckKey)
 	model := credentials.ModelFor(keyName)
 
 	// Nothing named means a fresh conversation, made here because there is nothing to show

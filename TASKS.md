@@ -4704,7 +4704,7 @@ with the user retyping. The taxonomy was built for this task; it just took a yea
 time to arrive.
 
 ### U-06 The first run holds your hand
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/key-check | depends: PG-M`
 `scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
 
 Deliverable: the add-key wizard ends with a selected, tested credential. Storing a key selects
@@ -4725,6 +4725,16 @@ alt screen opens.
 notes: M-06 got the screens to explain themselves; this closes the two holes the audit found
 past explanation: a stored-but-unselected key that works with one credential by coincidence and
 breaks with two, and warnings printed into a void.
+
+2026-09-26 (Claude): storing a key already selected it. feat/key-check adds the live check: the
+wizard asks the provider's model list (GET /v1/models for Anthropic, {base}/models for
+OpenAI-compatible; free, no message sent) the moment a key is stored, and `t` asks again; a refusal
+names the key and says how to redo it, an endpoint with no list says it was not checked. `p` enters
+a rate (input output [cached] per million) through Store.SetRate, which the resolver already prices
+from (D-32). Startup warnings in the interface are #117. Tests cover each check outcome against a
+fake server, the wizard asking at once, a stale answer being dropped, and the price field; mutants
+on the refusal status, the version header, the check after storing and the stale-answer guard are
+killed.
 
 ### U-07 Budgets reach the user
 `status: todo | owner: none | branch: none | depends: A5-09`

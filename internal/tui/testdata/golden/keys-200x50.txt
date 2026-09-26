@@ -47,4 +47,4 @@
 
 
 
-  enter use   m model   e rename   a add   d remove   j/k move   esc back
+  enter use   t test   p price   m model   e rename   a add   d remove   esc back

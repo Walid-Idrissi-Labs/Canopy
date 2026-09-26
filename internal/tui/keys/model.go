@@ -49,6 +49,9 @@ type Store interface {
 	// whichever key the alphabet has moved into its place.
 	Rename(ref core.KeyRef, to string) (core.KeyMetadata, error)
 
+	// SetRate records the owner's own price for a credential, the zero rate forgetting it.
+	SetRate(ref core.KeyRef, rate core.KeyRate) error
+
 	BackendName() string
 	UsingInsecureBackend() bool
 }
@@ -72,6 +75,8 @@ const (
 
 	modeConfirmRemove
 	modeRename
+	// modeRate is the price field for a credential Canopy has no rate for.
+	modeRate
 )
 
 // Model is the credential screen.
@@ -90,6 +95,15 @@ type Model struct {
 	// identities is who each credential is signed in as, read once per reload rather than per frame.
 	// Keyed by credential name, which is what the list has in hand while it draws.
 	identities map[string]Identity
+
+	// check asks a provider whether it takes a credential, and checking is the one being asked
+	// about. See check.go.
+	check    Check
+	checking string
+
+	// ratingKey is the credential whose price is being typed, into draftRate.
+	ratingKey core.KeyRef
+	draftRate string
 
 	// draft holds the credential being added.
 	draftName     string
@@ -320,6 +334,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.signInStarted(msg)
 	case signInDoneMsg:
 		return m, m.signInDone(msg)
+	case checkDoneMsg:
+		m.checkDone(msg)
+		return m, nil
 	}
 	return m, nil
 }
@@ -327,7 +344,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch m.mode {
 	case modeList:
-		m.handleListKey(msg)
+		return m.handleListKey(msg)
+	case modeRate:
+		m.handleTextKey(msg, &m.draftRate, (*Model).afterRate)
 	case modeName:
 		m.handleTextKey(msg, &m.draftName, (*Model).afterName)
 	case modeBaseURL:
@@ -338,6 +357,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.handleTextKey(msg, &m.draftName, (*Model).afterRename)
 	case modeSecret:
 		m.handleTextKey(msg, &m.draftSecret, (*Model).afterSecret)
+		// Stored: asked about at once, so a typo is found before the first message rather than by it.
+		if m.mode == modeList && m.storedChoice && m.err == nil {
+			return m.startCheck(m.chosen)
+		}
 	case modeProvider:
 		return m.handleProviderKey(msg)
 	case modeSignIn:
@@ -364,8 +387,17 @@ func (m *Model) paste(text string) {
 	}
 }
 
-func (m *Model) handleListKey(msg tea.KeyPressMsg) {
+func (m *Model) handleListKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
+	case "t":
+		if len(m.keys) > 0 && m.check != nil {
+			m.status, m.err = "Checking "+m.keys[m.cursor].Ref.Name+"...", nil
+			return m.startCheck(m.keys[m.cursor].Ref.Name)
+		}
+	case "p":
+		if len(m.keys) > 0 {
+			m.startRate(m.keys[m.cursor])
+		}
 	case "a", "n":
 		m.mode = modeName
 		m.draftName, m.draftBaseURL, m.draftModel, m.draftSecret = "", "", "", ""
@@ -413,6 +445,7 @@ func (m *Model) handleListKey(msg tea.KeyPressMsg) {
 			m.err = nil
 		}
 	}
+	return nil
 }
 
 // startRename opens the name field on a credential that already exists.

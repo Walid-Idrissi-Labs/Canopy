@@ -74,6 +74,8 @@ func (f *fakeKeyStore) Rename(ref core.KeyRef, to string) (core.KeyMetadata, err
 func (f *fakeKeyStore) BackendName() string        { return "test" }
 func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 
+func (f *fakeKeyStore) SetRate(core.KeyRef, core.KeyRate) error { return nil }
+
 func (f *fakeKeyStore) Identity(ref core.KeyRef) (keysui.Identity, error) {
 	return f.identities[ref.Name], nil
 }
