@@ -100,6 +100,8 @@ type Engine interface {
 	// agent, keeping its conversation on record.
 	Cancel(sessionID string)
 	RemoveAgent(name string) error
+	// Tools is the registry the agents were given, for labelling a tool call by its kind.
+	Tools() (*core.ToolRegistry, bool)
 }
 
 // SwitchMsg asks the application to open an agent's conversation.

@@ -2,6 +2,7 @@ package agents_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ type fakeEngine struct {
 	staleAnswer bool
 	cancelled   []string
 	removed     []string
+	tools       *core.ToolRegistry
 }
 
 // answeredCall is one reply the view sent through Answer, and on whose behalf.
@@ -83,6 +85,7 @@ func (e *fakeEngine) RemoveAgent(name string) error {
 	e.statuses = kept
 	return nil
 }
+func (e *fakeEngine) Tools() (*core.ToolRegistry, bool) { return e.tools, e.tools != nil }
 
 func (e *fakeEngine) AddAgent(_ context.Context, agent session.Agent) (session.Agent, error) {
 	if e.addErr != nil {
@@ -614,5 +617,31 @@ func TestAnAgentIsStoppedAndRemovedFromTheList(t *testing.T) {
 	_ = key(m, "s")
 	if len(asking.cancelled) != 1 || asking.cancelled[0] != "s-asker" {
 		t.Fatalf("stop cancelled %v", asking.cancelled)
+	}
+}
+
+type labelledTool struct{ name string }
+
+func (l labelledTool) Name() string            { return l.name }
+func (l labelledTool) Description() string     { return l.name }
+func (l labelledTool) Kind() core.ToolKind     { return core.ToolExecute }
+func (l labelledTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (l labelledTool) Run(context.Context, json.RawMessage) (core.ToolResult, error) {
+	return core.ToolResult{}, nil
+}
+
+// A tool call in a pane carries the kind label it has in the chat.
+func TestAPaneLabelsToolCallsByKind(t *testing.T) {
+	e := engine(status("one", core.AgentWorking, "task one"))
+	e.sessions["s-one"] = core.Session{ID: "s-one", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete,
+		Request:     core.Message{Text: "go"},
+		ToolCalls:   []core.ToolCall{{ID: "c1", Name: "run_command", Input: []byte(`{"command":"make"}`)}},
+		ToolResults: []core.ToolResult{{CallID: "c1", Content: "ok"}}}}}
+	registry := core.NewToolRegistry()
+	registry.MustRegister(labelledTool{"run_command"})
+	e.tools = registry
+	m := key(model(e), "v")
+	if !strings.Contains(plain(m.Body()), "run ") {
+		t.Fatalf("the pane's tool call has no kind label:\n%s", plain(m.Body()))
 	}
 }

@@ -4840,6 +4840,7 @@ product claims to work, ssh included.
 
 ### U-12 The agents screen grows hands
 `status: partial | owner: Claude | branch: feat/steering-and-agent-actions | depends: A5-11`
+`status: review | owner: Claude | branch: feat/pane-costs | depends: A5-11`
 `scope: internal/tui/agents/`
 
 Deliverable: acting on an agent from where you see it. Stop a running agent's turn. Remove a
