@@ -21,6 +21,11 @@ const anthropicAPI = "https://api.anthropic.com"
 // provider takes, so a typo is found before the first message rather than by it. A signed-in
 // credential was checked by signing in, and is not asked about again here.
 func checkKey(store *keys.Store, client *http.Client) keysui.Check {
+	// Redirects are not followed: Go drops Authorization when one crosses hosts, but not x-api-key,
+	// so following one could hand an Anthropic key to whatever host the answer named.
+	noRedirects := *client
+	noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	client = &noRedirects
 	return func(name string) keysui.CheckResult {
 		meta, err := store.Metadata(core.KeyRef{Name: name})
 		if err != nil {
@@ -73,6 +78,8 @@ func checkKey(store *keys.Store, client *http.Client) keysui.Check {
 			return keysui.CheckResult{Accepted: true}
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			return keysui.CheckResult{Refused: true, Note: "HTTP " + strconv.Itoa(resp.StatusCode)}
+		case resp.StatusCode >= 300 && resp.StatusCode < 400:
+			return keysui.CheckResult{Note: "the provider answered with a redirect, which is not followed with a key"}
 		case resp.StatusCode == http.StatusNotFound:
 			return keysui.CheckResult{Note: "the endpoint lists no models, so there was nothing free to ask"}
 		}
