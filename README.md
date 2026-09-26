@@ -79,7 +79,9 @@ go install github.com/Walid-Idrissi-Labs/Canopy/cmd/canopy@latest
 ```
 
 Or take a binary from the [releases page](https://github.com/Walid-Idrissi-Labs/Canopy/releases).
-macOS and Linux, on both Intel and ARM. Windows is not supported, see below.
+macOS and Linux, on both Intel and ARM. Windows is not supported, see below. Each release carries
+an SBOM, a keyless cosign signature over its checksums and SLSA build provenance;
+[RELEASING.md](RELEASING.md) has the commands that check a download.
 
 Then give it a key. A credential is stored by name and carries its own endpoint and model, which is
 what lets you talk about agents by name later:
@@ -211,6 +213,12 @@ they are isolated into their own worktree and branch.
 
 It confirms the plan before spawning anything, because spawning agents spends real money against
 real keys, and a misread number should be a question rather than an invoice.
+
+When an agent finishes, the conversation that started it hears back with the next message you send
+there: the end of the agent's last reply (bounded), and how verification stands on its work, from
+the project's own tests rather than from what the agent claimed; stale is said as stale. Nothing is
+sent on its own, so an agent finishing never spends on the orchestrator's key unasked, and the
+transcript marks the message that carried the reports.
 
 ## Watch them, and steer without stopping them
 

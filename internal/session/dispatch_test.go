@@ -581,6 +581,11 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 	client := &scriptedClient{name: "claude", events: reply("the migration works; tests pass")}
 	e := New(fixedResolver{client: client, id: anthropicID()})
 	t.Cleanup(e.Close)
+	var askedAbout []string
+	e.SetStanding(func(agent string) string {
+		askedAbout = append(askedAbout, agent)
+		return "stale at abc1234: tests were not run since its last edit"
+	})
 	main, err := e.AddAgent(context.Background(), Agent{
 		Name: "main", KeyName: "claude", Model: "claude-opus-5",
 		Dir: t.TempDir(), Trust: core.TrustStandard,
@@ -615,6 +620,13 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 	client.mu.Unlock()
 	if len(last.Reports) != 1 || !strings.Contains(last.Reports[0], "the migration works") {
 		t.Fatalf("the report did not travel with the next message: %+v", last.Reports)
+	}
+	// The verifier's word on its work, not the agent's, goes with it, asked about that agent.
+	if !strings.Contains(last.Reports[0], "verification: stale at abc1234") {
+		t.Fatalf("the report carries no verdict: %q", last.Reports[0])
+	}
+	if agent, _ := e.AgentFor(created[0].SessionID); len(askedAbout) == 0 || askedAbout[0] != agent.Name {
+		t.Fatalf("the standing was asked about %v", askedAbout)
 	}
 	if strings.Contains(last.Note, "the migration works") {
 		t.Fatal("an agent's report went out on Canopy's own instruction channel")
@@ -670,5 +682,34 @@ func TestADefinitionsCeilingLowersTheAgent(t *testing.T) {
 	}
 	if created[0].Trust != core.TrustReadOnly {
 		t.Fatalf("the reviewer runs at %q", created[0].Trust)
+	}
+}
+
+// An agent that finishes having said nothing reports that, rather than an empty report that reads
+// as one lost on the way.
+func TestAnAgentThatSaidNothingSaysSo(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: []core.StreamEvent{{Kind: core.EventDone, StopReason: core.StopEndTurn}}}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	main, err := e.AddAgent(context.Background(), Agent{Name: "main", KeyName: "claude", Model: "claude-opus-5",
+		Dir: t.TempDir(), Trust: core.TrustStandard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := e.Spawn(context.Background(), Dispatch{Count: 1, Profile: "claude", Task: "try it", Parent: main.SessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := e.Session(created[0].SessionID)
+	waitForTurn(t, e, child.ID, child.Turns[0].ID)
+	deadline := time.Now().Add(3 * time.Second)
+	for e.PendingJoins(main.SessionID) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.mu.Lock()
+	notes := append([]string(nil), e.joinNotes[main.SessionID]...)
+	e.mu.Unlock()
+	if len(notes) != 1 || !strings.Contains(notes[0], "without saying anything") {
+		t.Fatalf("reports %q", notes)
 	}
 }

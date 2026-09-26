@@ -4909,7 +4909,7 @@ five minutes later. A standing permission nobody can enumerate is a small lie of
 who can do what, which is the exact class of thing this product exists to refuse.
 
 ### U-14 Dispatch comes back with an answer
-`status: todo | owner: none | branch: none | depends: A5-08, A6-04`
+`status: review | owner: Claude | branch: feat/join-standing | depends: A5-08, A6-04`
 `scope: internal/session/, internal/tui/chat/`
 
 Deliverable: the fan-out gets a join. When a dispatched agent reaches a terminal state, the
@@ -4932,6 +4932,17 @@ delivery reuses A5-07's queue semantics on purpose: one mechanism for things tha
 the model is thinking. The cap plus the roll-up keeps this from becoming the context leak
 sub-agents were deferred for in D-40, and it deliberately does not resurrect A8-01; the children
 here are the flat dispatch A5-08 already ships, not nested agents.
+
+2026-09-26 (Claude): the join itself shipped with 7fa0793 (noteJoin: the last reply capped at 1200
+runes, delivered as Request.Reports with the next message, never starting a turn). feat/join-standing
+adds the rest: each report carries "verification: ..." for that agent (Engine.SetStanding, wired
+in cmd/canopy to the verifier: its snapshot judged at the revision git reports now, not the last
+poll's, so a green run from before the agent's final edits reads as stale; green or not, revision,
+test state and reason), an agent that said nothing reports so, and the transcript
+shows "with the reports of N agents" under the message that carried them. Tests cover the verdict
+travelling with the report and being asked about that agent, the empty report, green only at the
+revision now (a moved head is not green, an unreadable one is not green), and the transcript line;
+mutants on each are killed.
 
 ### U-15 Cycling past a mode is not choosing it
 `status: review | owner: claude | branch: tui/mode-settle | depends: none`
@@ -8271,3 +8282,17 @@ status or verification updates.
 | 2026-07-29 | Claude | Added phase K, one key many models, and U-16 to U-19, from six asks by Walid: keys that hold several models over a dated catalog, dispatch that understands model words, a picker screen, other agents' permission prompts surfacing on the conversation you are on, the header naming the agent instead of the brand, a tasks block with state colours, and btw history that survives the screen. Recorded as D-46 and D-47. Claimed on feat/one-key-many-models and tui/ambient-attention, stacked in that order on tui/mode-settle. |
 | 2026-07-30 | Claude | Added phase S after phase K, signing in with a subscription instead of pasting a key. Eight tasks and a gate, written from research into what each vendor actually permits rather than what is technically reachable: Copilot through its official Go SDK, Claude through the user's own Claude Code over ACP, OpenAI through the Codex app server with an existing `auth.json` login as the degraded fallback. claude.ai OAuth is refused as prohibited and server-enforced, and Gemini consumer sign-in is recorded as closed so neither is proposed again. Recorded as D-51, which takes that number because D-50 is reserved by work in flight. New questions Q-22, the paused Anthropic credit change, and Q-23, what Canopy's tools, permissions and verification mean in a delegated turn. Claimed on feat/subscription-sign-in, ledger pushed before any code. Nothing renumbered. |
 | 2026-07-30 | Claude | Added U-26 from Walid using the built program: U-16's summaries become bounded approval surfaces, answered with enter and backspace where they are seen, and the accept key is enter on every prompt. Built the same day on tui/answer-where-you-are. Recorded as D-50, superseding the enter-refuses reflex and the focus-step half of D-47; the once-only and typing-answers-nothing guards stay. |
+
+### Z-Z03 Release supply chain (part of Z-03)
+`status: review | owner: Claude | branch: feat/release-supply-chain`
+
+GoReleaser now writes an SBOM per archive (syft) and signs checksums.txt with cosign's keyless flow;
+the release workflow installs both tools, has `id-token: write` and `attestations: write`, and
+records SLSA build provenance for the archives and the checksum file with
+actions/attest-build-provenance. RELEASING.md says how to verify a download, and README points to
+it. `goreleaser check` validates the configuration and a snapshot release (signing and SBOM
+skipped, since neither tool is installed locally) builds all four archives. Not done, and not the
+pipeline's to do: macOS notarisation (an Apple Developer account) and the tag itself, which is the
+owner's call. The `go install` path was already documented.
+
+`verify: claude [x] 2026-09-26   codex [ ]`

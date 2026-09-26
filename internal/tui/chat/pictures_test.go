@@ -95,3 +95,16 @@ func TestTheTranscriptSaysAMessageHadPictures(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 }
+
+// Agents' reports that went with a message are shown as having gone with it.
+func TestTheTranscriptSaysAMessageCarriedReports(t *testing.T) {
+	one := turn("t1", "what did they find", "both pass", core.TurnComplete)
+	one.Request.Reports = []string{"agent a", "agent b"}
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{one}}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	if !strings.Contains(plain(m.Body()), "with the reports of 2 agents") {
+		t.Fatalf("no reports line:\n%s", plain(m.Body()))
+	}
+}

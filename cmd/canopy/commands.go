@@ -203,6 +203,7 @@ func runChat(resume string) error {
 		review = insights
 		costs = insights
 		monitor = verification.store
+		engine.SetStanding(standingOf(verification.verifier))
 	}
 	defer monitor.Close()
 
