@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -64,6 +65,42 @@ func TestABangCommandRunsAndGoesWithTheNextMessage(t *testing.T) {
 	_, _ = enter(m, "and now")
 	if engine.sent[1] != "and now" {
 		t.Fatalf("the output went with a second message: %q", engine.sent[1])
+	}
+}
+
+// An entity already in the output stays one, rather than turning into the bracket it names.
+func TestShellOutputKeepsItsOwnEntities(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m, _ := withShell(engine, chat.ShellResult{Output: "a &lt; b"})
+	m, cmd := runBang(m, "!cat notes")
+	m, _ = m.Update(cmd())
+	_, _ = enter(m, "what")
+	if !strings.Contains(engine.sent[0], "a &amp;lt; b") {
+		t.Fatalf("sent %q", engine.sent[0])
+	}
+}
+
+// Long output is cut from the front at a character boundary, and the output waiting for the next
+// message together is bounded, the oldest run dropped first.
+func TestShellOutputIsBounded(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	output := "START" + strings.Repeat("é", 12<<10)
+	m, _ := withShell(engine, chat.ShellResult{Output: output})
+	for _, command := range []string{"!one", "!two", "!three"} {
+		var cmd tea.Cmd
+		m, cmd = runBang(m, command)
+		m, _ = m.Update(cmd())
+	}
+	_, _ = enter(m, "why")
+	sent := engine.sent[0]
+	if !utf8.ValidString(sent) {
+		t.Fatal("the output was cut inside a character")
+	}
+	if strings.Contains(sent, `command="one"`) || strings.Count(sent, "<shell-output") != 2 {
+		t.Fatalf("%d runs went with the message", strings.Count(sent, "<shell-output"))
+	}
+	if strings.Contains(sent, "START") || len(sent) > 2*(16<<10)+1024 {
+		t.Fatalf("the output was not cut: %d bytes", len(sent))
 	}
 }
 

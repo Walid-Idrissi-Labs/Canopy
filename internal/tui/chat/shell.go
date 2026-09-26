@@ -87,8 +87,9 @@ func (m Model) withShellContext(prompt string) string {
 	for _, run := range m.shellContext {
 		b.WriteString("<shell-output command=" + quoteAttr(run.command) + " exit=\"" + itoa(run.exit) + "\">\n")
 		// Angle brackets written as entities, so nothing in the output can close the frame, or open
-		// one of its own, however it is spelled.
-		b.WriteString(strings.NewReplacer("<", "&lt;", ">", "&gt;").Replace(run.output))
+		// one of its own, however it is spelled; and ampersands too, so an entity the output
+		// already had is not read as a bracket it never had.
+		b.WriteString(strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(run.output))
 		b.WriteString("\n</shell-output>\n\n")
 	}
 	return b.String() + prompt
