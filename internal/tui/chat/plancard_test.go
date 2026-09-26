@@ -92,8 +92,20 @@ func TestThePlanCardNeedsAPlanAndAClearKey(t *testing.T) {
 		t.Fatal("enter on an answer carried out a plan")
 	}
 
+	oneStep := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		turn("t1", "what next", "1. Run the tests.", core.TurnComplete)}}}
+	if m = planned(oneStep); strings.Contains(plain(m.Body()), "carries this plan out") {
+		t.Fatal("a single step was offered as a plan")
+	}
+
 	engine := &fakeEngine{session: planSession()}
 	m = planned(engine)
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	_, _ = m.Update(keyCode(tea.KeyEnter))
+	if len(engine.sent) != 0 {
+		t.Fatal("an enter before something happened and one after it carried the plan out")
+	}
 	m, _ = m.Update(keyCode(tea.KeyEnter))
 	m, _ = m.Update(keyCode(tea.KeyDown))
 	_, _ = m.Update(keyCode(tea.KeyEnter))

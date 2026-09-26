@@ -519,6 +519,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case EventMsg:
 		m.refresh()
+		// Something happened between the two enters that carry a plan out, so the first no longer
+		// stands: the second is asked for again, over whatever is on screen now.
+		m.planAsked = false
 		// The spinner only turns while something is running; an idle screen redrew itself eight
 		// times a second for nothing. An event that starts work starts it again.
 		if m.working && !m.ticking {
