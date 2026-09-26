@@ -103,9 +103,7 @@ func serveSocket(dir string) (string, error) {
 // privateDir reports whether info, from Lstat, is a real directory owned by uid that nobody else
 // can open.
 func privateDir(info os.FileInfo, uid int) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && info.IsDir() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == 0o700 &&
-		int(stat.Uid) == uid
+	return info.IsDir() && info.Mode()&os.ModeSymlink == 0 && info.Mode().Perm() == 0o700 && ownedBy(info, uid)
 }
 
 // errServing is a server already running for the project.
@@ -119,7 +117,7 @@ func listenServe(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := lockExclusive(lock); err != nil {
 		_ = lock.Close()
 		return nil, errServing
 	}

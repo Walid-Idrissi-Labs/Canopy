@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 )
 
 // Diagnostic is one problem a server reported.
@@ -38,7 +40,10 @@ const (
 
 // Client is one running language server.
 type Client struct {
-	cmd   *exec.Cmd
+	cmd *exec.Cmd
+	// child is the started server with what it starts: its own process group, or job on Windows,
+	// so closing it does not leave a helper process behind.
+	child *execpkg.Child
 	stdin io.WriteCloser
 	root  string
 	// out feeds the one goroutine that writes to the server, so nothing else ever blocks on a
@@ -74,10 +79,11 @@ func Start(ctx context.Context, argv []string, root string, env []string, option
 	if err != nil {
 		return nil, err
 	}
+	execpkg.Contain(cmd)
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	c := &Client{cmd: cmd, stdin: stdin, root: root, out: make(chan []byte, 256),
+	c := &Client{cmd: cmd, child: execpkg.Started(cmd), stdin: stdin, root: root, out: make(chan []byte, 256),
 		pending: map[int]chan json.RawMessage{}, diags: map[string][]Diagnostic{},
 		arrived: map[string]int{}, versions: map[string]int{},
 		changed: make(chan struct{}), done: make(chan struct{})}
@@ -249,10 +255,8 @@ func (c *Client) Close() {
 	case <-c.done:
 	case <-time.After(2 * time.Second):
 	}
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	_ = c.cmd.Wait()
+	c.child.Stop()
+	_ = c.child.Wait()
 }
 
 type message struct {

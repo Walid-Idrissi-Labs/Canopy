@@ -44,6 +44,29 @@ jobs:
         env:
           CANOPY_REQUIRE_SANDBOX: "1"
 
+  # Windows is not supported (see LIMITATIONS), but it is kept building, and the one piece of it
+  # that has code of its own, ending a command's whole process tree with a job object, is tested on
+  # a real Windows runner.
+  windows:
+    name: windows build and process tree
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test the process tree
+        run: go test -run TestStoppingACommandEndsWhatItStarted ./internal/exec/
+
   lint:
     name: lint
     runs-on: ubuntu-latest

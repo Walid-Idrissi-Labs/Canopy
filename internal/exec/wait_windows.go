@@ -8,6 +8,7 @@ func (c *Child) Wait() error {
 	err := c.cmd.Wait()
 	c.mu.Lock()
 	c.reaped = true
+	c.tree.release()
 	c.mu.Unlock()
 	return err
 }
