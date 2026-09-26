@@ -6,18 +6,15 @@ import (
 	"testing"
 )
 
-// npx and uvx install the servers they start into caches the sandbox lets them write; the places a
-// program would be run from, ~/.local/bin among them, stay closed.
-func TestServerInstallersCanWriteTheirCachesAndNothingThatRuns(t *testing.T) {
+// What npx and uv install and later run from is not writable: the user's own next npx or uv tool
+// run would use whatever a sandboxed command left there, outside the sandbox. Servers get
+// installers' directories of their own instead (see mcpInstallDirs).
+func TestInstallersDirectoriesThatRunLaterStayClosed(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("UV_CACHE_DIR", filepath.Join(home, "uvcache"))
 	policy := ForWorkspace(t.TempDir())
-	for _, want := range []string{".npm/_npx", ".cache/uv", ".local/share/uv"} {
-		if !slices.Contains(policy.Writable, filepath.Join(home, want)) {
-			t.Errorf("%s is not writable", want)
-		}
-	}
-	for _, closed := range []string{".local/bin", ".npm", ".cache"} {
+	for _, closed := range []string{".local/bin", ".local/share/uv", ".npm/_npx", ".npm", ".cache", ".cache/uv", "uvcache"} {
 		if slices.Contains(policy.Writable, filepath.Join(home, closed)) {
 			t.Errorf("%s is writable", closed)
 		}

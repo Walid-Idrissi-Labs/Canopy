@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
@@ -108,6 +109,14 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 		// sandbox like everything else the project starts, unless the project says otherwise.
 		if server.URL == "" && !server.Unconfined {
 			spec.Sandbox, spec.SandboxEnv = tools.Confinement(dir)
+			if spec.Sandbox != nil {
+				// npx and uvx install the server before running it, into directories of Canopy's
+				// own rather than the person's: theirs are what their own npx and uv run from later,
+				// outside the sandbox.
+				writable, env := mcpInstallDirs()
+				spec.Sandbox.Writable = append(spec.Sandbox.Writable, writable...)
+				spec.Env = append(env, spec.Env...)
+			}
 			// Said rather than done quietly: where there is no sandbox to run it in, it runs as it
 			// did before, like every other command here, and the person should know.
 			if spec.Sandbox == nil && !sandbox.Disabled() {
@@ -118,4 +127,31 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 		specs = append(specs, spec)
 	}
 	return specs
+}
+
+// mcpInstallDirs are where a confined server's npx and uv install and cache things, under Canopy's
+// cache directory, with the environment that points them there. Nothing outside a confined server
+// runs from them.
+func mcpInstallDirs() (writable, env []string) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return nil, nil
+	}
+	root := filepath.Join(cache, "canopy", "mcp-servers")
+	dirs := map[string]string{
+		"npm_config_cache":      "npm",
+		"UV_CACHE_DIR":          "uv-cache",
+		"UV_TOOL_DIR":           "uv-tools",
+		"UV_TOOL_BIN_DIR":       "uv-bin",
+		"UV_PYTHON_INSTALL_DIR": "uv-python",
+	}
+	for _, name := range []string{"npm_config_cache", "UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_PYTHON_INSTALL_DIR"} {
+		dir := filepath.Join(root, dirs[name])
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			continue
+		}
+		writable = append(writable, dir)
+		env = append(env, name+"="+dir)
+	}
+	return writable, env
 }

@@ -1516,8 +1516,11 @@ worktree exists, since its path is not known before. A local server that cannot 
 be marked `"unconfined": true` in canopy.json; that is part of what a person trusts, and the trust
 prompt names it as running outside the sandbox. A server whose sandbox cannot be made is not
 started; where there is no sandbox at all, it runs as every other command then does, and a warning
-says so. The caches npx and uvx install servers into are writable in the sandbox, as the other
-toolchain caches are.
+says so. npx and uv install a confined server into directories of Canopy's own, under its cache
+directory (`npm_config_cache`, `UV_CACHE_DIR`, `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR` and
+`UV_PYTHON_INSTALL_DIR` point there), not into the person's: their `~/.npm/_npx` and uv's tool and
+Python directories are what their own later npx and uv runs use outside the sandbox, so a writable
+one would be a way out of it.
 
 ## Appendix: where the settled scope comes from
 

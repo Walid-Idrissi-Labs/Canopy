@@ -102,14 +102,11 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 			".yarn/berry/cache", ".cargo/registry", ".cargo/git", ".gradle/caches",
 			".m2/repository", ".nuget/packages", ".bun/install/cache", ".pub-cache/hosted",
 			"Library/Developer/Xcode/DerivedData",
-			// What npx and uvx install a server into before running it, which is how most local MCP
-			// servers are started.
-			".npm/_npx", ".cache/uv", "Library/Caches/uv", ".local/share/uv",
 		} {
 			writable = append(writable, filepath.Join(home, rel))
 		}
 	}
-	for _, env := range []string{"GOCACHE", "GOMODCACHE", "npm_config_cache", "PIP_CACHE_DIR", "UV_CACHE_DIR"} {
+	for _, env := range []string{"GOCACHE", "GOMODCACHE", "npm_config_cache", "PIP_CACHE_DIR"} {
 		if v := os.Getenv(env); v != "" {
 			writable = append(writable, v)
 		}
