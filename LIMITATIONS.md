@@ -887,6 +887,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - Local MCP servers run in the sandbox (D-65), which lets them write only in the workspace, the
   temporary area, the toolchain caches, and the npm and uv directories Canopy keeps for that
   server under its cache directory, one set per project and server name, so one repository's server
-  cannot plant a package another project's server runs. A server that needs more, one run through a container
+  cannot plant a package another project's server runs. Nothing prunes them: each server keeps its
+  own npm and uv downloads, often around 100 MB, until
+  `~/Library/Caches/canopy/mcp-servers` (`~/.cache/canopy/mcp-servers` on Linux) is deleted. A server that needs more, one run through a container
   runtime for instance, fails to start until canopy.json marks it `"unconfined": true`. Remote servers
   start nothing and are unaffected.
