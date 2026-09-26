@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
+	"io"
 	"os"
 	"time"
 
@@ -405,7 +406,16 @@ func loadProject(dir string) config.Project {
 	if !found {
 		return config.Project{}
 	}
+	warnReserved(project, os.Stderr)
 	return gateProject(dir, project, os.Stdin, os.Stderr, isTerminal(os.Stdin) && isTerminal(os.Stderr))
+}
+
+// warnReserved names the project's commands left out because Canopy answers those names itself.
+func warnReserved(project config.Project, out io.Writer) {
+	for _, name := range project.Reserved {
+		_, _ = fmt.Fprintf(out, "warning: canopy.json's command %q is left out: /%s is one Canopy answers itself, "+
+			"so rename it to use it\n", name, name)
+	}
 }
 
 // loadCommands resolves the user-level catalog with this project's definitions.

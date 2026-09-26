@@ -123,3 +123,23 @@ func TestCommandDefinitionsThatWouldBeUnreachableAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// A project command named like one Canopy answers itself is left out and named, and the rest of
+// the file still loads: a name reserved later must not cost a project its tests and hooks.
+func TestAReservedCommandNameCostsOnlyThatCommand(t *testing.T) {
+	project, err := Parse([]byte(`{
+		"tests": [{"name": "unit", "command": {"argv": ["go", "test", "./..."]}, "required": true}],
+		"commands": [
+			{"name": "mouse", "description": "old one", "prompt": "do it"},
+			{"name": "deploy", "description": "ship it", "prompt": "deploy"}
+		]}`))
+	if err != nil {
+		t.Fatalf("the file failed to load: %v", err)
+	}
+	if len(project.Tests) != 1 || len(project.Commands) != 1 || project.Commands[0].Name != "deploy" {
+		t.Fatalf("tests %v, commands %v", project.Tests, project.Commands)
+	}
+	if len(project.Reserved) != 1 || project.Reserved[0] != "mouse" {
+		t.Fatalf("reserved %v", project.Reserved)
+	}
+}

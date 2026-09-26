@@ -599,6 +599,22 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 		t.Fatal(err)
 	}
 	child, _ := e.Session(created[0].SessionID)
+	// The agents list knows who dispatched it.
+	listed := false
+	for _, status := range e.AgentStatuses() {
+		if status.Agent.SessionID == child.ID {
+			listed = true
+			if status.Parent != "main" {
+				t.Fatalf("the dispatched agent's parent reads %q", status.Parent)
+			}
+		}
+		if status.Agent.Name == "main" && status.Parent != "" {
+			t.Fatalf("the agent a person started has a parent: %q", status.Parent)
+		}
+	}
+	if !listed {
+		t.Fatal("the dispatched agent is not in the list")
+	}
 	waitForTurn(t, e, child.ID, child.Turns[0].ID)
 	deadline := time.Now().Add(3 * time.Second)
 	for e.PendingJoins(parent.ID) == 0 && time.Now().Before(deadline) {

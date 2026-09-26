@@ -277,6 +277,36 @@ func (c *conn) handle(ctx context.Context, m message) {
 		c.prompt(ctx, m)
 	case "session/cancel":
 		h.engine.Cancel(p.SessionID)
+	case "_canopy/session":
+		// Canopy's own interface, attached, draws a conversation from the whole record rather than
+		// from the updates an editor is sent; this is that record, as the engine holds it now, from
+		// the turn the client asks for on, so a streaming turn does not resend all the ones before
+		// it. Picture bytes are left out and tool output is bounded, as it is for editors: the
+		// screen draws neither whole, and a conversation of pictures would otherwise outgrow a line.
+		var page struct {
+			From int `json:"from"`
+			// Kept is the id of the last turn the client keeps, the one before From: a record that
+			// no longer has it there has changed under the client, and is sent whole.
+			Kept string `json:"kept"`
+		}
+		_ = json.Unmarshal(m.Params, &page)
+		session, ok := h.engine.Session(p.SessionID)
+		if !ok {
+			c.reply(m.ID, nil, &rpcError{Code: -32602, Message: "there is no conversation " + p.SessionID})
+			return
+		}
+		total := len(session.Turns)
+		from := page.From
+		if from < 0 || from > total || (from > 0 && session.Turns[from-1].ID != page.Kept) {
+			from = 0
+		}
+		turns := make([]core.Turn, 0, total-from)
+		for _, turn := range session.Turns[from:] {
+			turns = append(turns, slimTurn(turn))
+		}
+		session.Turns = turns
+		c.reply(m.ID, map[string]any{"session": session, "modes": h.modes(p.SessionID), "from": from,
+			"turnCount": total}, nil)
 	default:
 		if len(m.ID) > 0 {
 			c.reply(m.ID, nil, &rpcError{Code: -32601, Message: "Canopy does not offer " + m.Method})
@@ -554,6 +584,8 @@ func (c *conn) ask(ctx context.Context, req permission.Request, decision permiss
 				map[string]any{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
 				map[string]any{"optionId": "reject", "name": "Reject: " + decision.Reason, "kind": "reject_once"},
 			},
+			// The question whole, for a Canopy client, which draws it as the engine asked it.
+			"_meta": map[string]any{"canopy": map[string]any{"request": req, "decision": decision}},
 		})
 	for {
 		h.mu.Lock()
@@ -664,4 +696,45 @@ func bounded(s string) string {
 		return s[:limit] + "\n... (cut off)"
 	}
 	return s
+}
+
+// slimTurn is a turn as an attached interface is sent it: pictures without their bytes, and tool
+// output bounded as it is for an editor.
+func slimTurn(turn core.Turn) core.Turn {
+	turn.Request = slimMessage(turn.Request)
+	if turn.ToolResults != nil {
+		results := make([]core.ToolResult, len(turn.ToolResults))
+		for i, result := range turn.ToolResults {
+			result.Content = bounded(result.Content)
+			results[i] = result
+		}
+		turn.ToolResults = results
+	}
+	if turn.Steps != nil {
+		steps := make([]core.Message, len(turn.Steps))
+		for i, step := range turn.Steps {
+			steps[i] = slimMessage(step)
+		}
+		turn.Steps = steps
+	}
+	return turn
+}
+
+func slimMessage(m core.Message) core.Message {
+	if m.Images != nil {
+		images := make([]core.Image, len(m.Images))
+		for i, image := range m.Images {
+			images[i] = core.Image{MediaType: image.MediaType}
+		}
+		m.Images = images
+	}
+	if m.ToolResults != nil {
+		results := make([]core.ToolResult, len(m.ToolResults))
+		for i, result := range m.ToolResults {
+			result.Content = bounded(result.Content)
+			results[i] = result
+		}
+		m.ToolResults = results
+	}
+	return m
 }

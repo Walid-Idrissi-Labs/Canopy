@@ -322,6 +322,7 @@ func loadProjectRaw(dir string, errOut io.Writer) config.Project {
 		_, _ = fmt.Fprintf(errOut, "warning: %v\nwarning: continuing with nothing configured\n", err)
 		return config.Project{}
 	}
+	warnReserved(project, errOut)
 	return project
 }
 

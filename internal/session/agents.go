@@ -225,6 +225,10 @@ type AgentStatus struct {
 	// Tasks is the list the agent is keeping, if it keeps one. Carried on the status rather than
 	// fetched separately by the screen, so one read of the engine answers everything a row needs.
 	Tasks []core.Task
+
+	// Parent is the name of the agent whose conversation dispatched this one, empty for an agent a
+	// person started.
+	Parent string
 }
 
 // AgentStatuses summarises every agent, the ones needing attention first.
@@ -245,6 +249,14 @@ func (e *Engine) AgentStatuses() []AgentStatus {
 			status.Usage = session.Usage()
 			status.Title = session.Title
 			status.Tasks = session.Tasks
+		}
+		e.mu.Lock()
+		parent := e.dispatchParents[agent.SessionID]
+		e.mu.Unlock()
+		if parent != "" {
+			if orchestrator, ok := e.AgentFor(parent); ok {
+				status.Parent = orchestrator.Name
+			}
 		}
 		if prompt, waiting := e.Pending(agent.SessionID); waiting {
 			// Waiting on a person is its own state rather than a flavour of working, because an

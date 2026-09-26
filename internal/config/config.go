@@ -46,6 +46,11 @@ type Test struct {
 
 // Project is the whole file.
 type Project struct {
+	// Reserved are the project's commands left out because Canopy answers that name itself. A
+	// name Canopy reserves later would otherwise make the whole file fail to load, tests, hooks and
+	// servers with it; leaving out the one command, and saying so, is the smaller loss.
+	Reserved []string `json:"-"`
+
 	// Base is the branch an agent's work is measured against. Empty means the repository's default.
 	Base string `json:"base"`
 
@@ -120,6 +125,16 @@ func Parse(content []byte) (Project, error) {
 	if err := decoder.Decode(&project); err != nil {
 		return Project{}, fmt.Errorf("this file could not be read: %w", err)
 	}
+
+	kept := project.Commands[:0]
+	for _, command := range project.Commands {
+		if IsBuiltin(command.Name) {
+			project.Reserved = append(project.Reserved, command.Name)
+			continue
+		}
+		kept = append(kept, command)
+	}
+	project.Commands = kept
 
 	if err := project.Validate(); err != nil {
 		return Project{}, err

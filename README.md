@@ -463,7 +463,10 @@ canopy attach 12         # pick one up: what happened, then what is happening
 ```
 
 `canopy serve` keeps agents working after the client that started them has gone. It listens on a
-socket only you can reach, and speaks the same protocol as `canopy acp`. A question an agent asks
+socket only you can reach, and speaks the same protocol as `canopy acp`. On a terminal,
+`canopy attach 12` opens the same interface as `canopy` on that conversation, drawn from what the
+server holds; leaving it leaves the agent working. `-lines` gives the plain line client instead, and
+LIMITATIONS lists what only the server's own terminal can do. A question an agent asks
 while nobody is attached waits for the next `canopy attach`, and the server says which conversation
 is waiting.
 
@@ -542,6 +545,9 @@ Global commands use the same `{"commands": [...]}` shape under the platform user
 project definition with the same name wins only for that project. `$ARGUMENTS` is replaced literally
 in one pass; there is no template evaluation or shell interpolation. When the placeholder is
 absent, arguments are appended under an `Arguments:` heading.
+
+A project command named like one Canopy answers itself (`/undo`, `/mouse` and the rest of `/commands`'
+built-ins) is left out with a warning at start, and the rest of `canopy.json` loads as usual.
 
 ## Pictures
 
