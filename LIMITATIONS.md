@@ -719,8 +719,10 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   signal would land on somebody else's work. In practice the common case is still covered: waiting on
   a command does not return while a child holds its output open, so an orphaned worker keeps the
   leader unreaped and the group is signalled safely. What escapes is the child that closes or
-  redirects the streams it inherited, which is to say a daemon. On Windows nothing beyond the process
-  itself is killed at all, because there are no process groups in the POSIX sense there.
+  redirects the streams it inherited, which is to say a daemon. On Windows, where Canopy is not
+  supported, a command is put in a job object once it has started and stopping it ends the job, so
+  what it started goes with it, except anything started in the moment before it joined the job or
+  started outside it on purpose.
   On supported Unix platforms, exit is observed without reaping before the actual reap and group
   signals are serialized; this is what closes the pid-reuse window rather than a flag written after
   `Wait` returns.
@@ -808,9 +810,12 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   shortcut that stays invisible until it is a headline, but an error that does not name the
   option leaves a first-time user with nothing to try. `INSTALL.md` documents it.
 
-- A Windows stub already exists in the process-handling code, and it says plainly that it is
-  incomplete rather than pretending to be finished: Windows has no process-group equivalent in
-  place, so a cancelled command there can leave children running behind it (A4-03).
+- Windows still is not supported, but it builds, and CI builds and vets it on a Windows runner and
+  checks there that stopping a command ends what it started (a job object stands in for the process
+  group). What it lacks is the rest: no sandbox (commands run unconfined, and say so), no
+  `canopy serve` (it needs a socket directory only its user can open, which is not checked there, so
+  it refuses to start), no releases, and nobody has used the interface on it. Keeping a `# note` out
+  of a symbolic link is a look and then an open there, not the single step it is on unix.
 
 ## Round two additions
 

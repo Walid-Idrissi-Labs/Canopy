@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
@@ -86,14 +85,13 @@ func rememberIn(dir string, project config.Project) func(note string) (string, e
 		// the note cannot be steered into a file somewhere else.
 		// Appended, so an append made by anything else between reading and writing is kept, and
 		// then shows up as a difference from what was expected below.
-		file, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o644)
+		file, err := openNoFollow(path)
 		if err != nil {
 			return "", errors.New("AGENTS.md could not be opened as a plain file here, so nothing was written")
 		}
 		defer func() { _ = file.Close() }()
 		info, err := file.Stat()
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if err != nil || !info.Mode().IsRegular() || !ok || stat.Nlink != 1 {
+		if err != nil || !info.Mode().IsRegular() || !singleLink(info) {
 			return "", errors.New("AGENTS.md is not a plain file with one name, so nothing was written")
 		}
 		before, err := io.ReadAll(file)

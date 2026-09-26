@@ -8317,3 +8317,18 @@ recording (VHS) of a whole session, which needs a scripted provider the product 
 choosing which image the README leads with, which is an editorial call for the owner.
 
 `verify: claude [x] 2026-09-26   codex [ ]`
+
+### Z-Z04 Windows builds, and stops a command's whole tree (part of Z-04)
+`status: review | owner: Claude | branch: feat/windows-build`
+
+cmd/canopy compiles for Windows: the note file's no-follow open and one-name check, and serve's
+ownership check and lock, moved behind platform_unix.go and platform_other.go (serve refuses to
+start where ownership cannot be checked). internal/exec gives a started command a job object on
+Windows and Stop terminates the job, so a command's children go with it; the handle is released at
+reap without ending the job, matching D-37 on unix. Unix-only tests are tagged. CI gains a
+windows-latest job that builds, vets, and runs a test there in which a batch file started with
+`start /b` stops writing once its parent is stopped. `GOOS=windows go vet ./...` is clean locally;
+the Windows test itself runs only in CI. Not done, and not claimed: a sandbox, ConPTY, releases,
+serve, and any use of the interface on Windows. README still says Windows is not supported.
+
+`verify: claude [ ]   codex [ ]`
