@@ -122,6 +122,9 @@ type Engine interface {
 	// swallowed, and somebody who thinks that types it again.
 	Steering(sessionID string) []string
 
+	// ClearSteering takes back guidance that has not been delivered, returning what it took.
+	ClearSteering(sessionID string) []string
+
 	// Aside answers a question from this conversation's context without joining it. No turn is
 	// created, nothing joins the conversation's history, and a turn in flight is undisturbed, which
 	// is what separates asking something from saying something.
@@ -1443,7 +1446,10 @@ func (m Model) send() (Model, tea.Cmd) {
 	if name, arguments, ok := builtinInvocation(trimmed); ok {
 		if handled, cmd := m.runBuiltin(name, arguments); handled {
 			m.input.Remember(typed)
-			m.input.Clear()
+			// Cleared unless the command put something in the box for the person to finish.
+			if m.input.Value() == typed {
+				m.input.Clear()
+			}
 			m.menu = menu{}
 			return m, cmd
 		}
@@ -2385,12 +2391,15 @@ func (m Model) steeringPane() []string {
 
 	// The arrival note rides the first line, and is dropped whole on a terminal too narrow to give
 	// the guidance most of the row: the guidance is the content, the note is a caption.
-	const note = "  · delivered when this turn finishes"
-	suffix := note
-	room := m.width - len(steeringChip) - len(note) - 2
-	if room < 16 {
-		suffix = ""
-		room = m.width - len(steeringChip) - 2
+	// The longest note that leaves the guidance a fair share of the row, the way to take it back
+	// included where there is room for it.
+	suffix, room := "", m.width-len(steeringChip)-2
+	for _, note := range []string{"  · delivered when this turn finishes, /steer undo takes it back",
+		"  · delivered when this turn finishes"} {
+		if left := m.width - len(steeringChip) - lipgloss.Width(note) - 2; left >= 32 {
+			suffix, room = note, left
+			break
+		}
 	}
 
 	out := make([]string, 0, len(queued))

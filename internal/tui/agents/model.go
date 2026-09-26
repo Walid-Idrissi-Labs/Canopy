@@ -95,6 +95,11 @@ type Engine interface {
 	// once: remember stays false from here, because a pane summarises the request and a standing
 	// approval must come from the full canonical prompt, which is D-35's line unmoved.
 	Answer(sessionID string, approved, remember bool) bool
+
+	// Cancel stops a conversation's turn in flight, keeping what has arrived; RemoveAgent forgets an
+	// agent, keeping its conversation on record.
+	Cancel(sessionID string)
+	RemoveAgent(name string) error
 }
 
 // SwitchMsg asks the application to open an agent's conversation.
@@ -140,8 +145,11 @@ type Model struct {
 	// with the same enter key that finished typing.
 	naming           bool
 	confirmingDirect bool
-	draft            string
-	err              string
+
+	// removing names the agent a first x asked about removing; a second x on it removes it.
+	removing string
+	draft    string
+	err      string
 	// notice is a one-keystroke outcome from the grid, such as a request disappearing before an
 	// answer arrived. The application draws it in the footer, where it cannot disturb pane geometry.
 	notice string
@@ -211,7 +219,41 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.typeName(key)
 	}
 
+	// A removal asked about lasts one keystroke, like every confirmation here.
+	asked := m.removing
+	m.removing = ""
+
 	switch pressed := key.String(); pressed {
+	case "s":
+		// Stops the selected agent's turn where it is; what it has done so far stays. One waiting on
+		// a question has a turn in flight too, and stopping it ends that turn.
+		if status, ok := m.Selected(); ok && (status.State == core.AgentWorking ||
+			status.State == core.AgentAwaitingPermission) && status.Agent.SessionID != "" {
+			m.engine.Cancel(status.Agent.SessionID)
+			m.notice = "stopped " + status.Agent.Name
+			m.refresh()
+		} else if ok {
+			m.notice = status.Agent.Name + " is not working, so there is nothing to stop"
+		}
+		return m, nil
+	case "x":
+		status, ok := m.Selected()
+		switch {
+		case !ok:
+		case status.State == core.AgentWorking || status.State == core.AgentAwaitingPermission:
+			m.notice = status.Agent.Name + " is working; stop it with s before removing it"
+		case asked != status.Agent.Name:
+			m.removing = status.Agent.Name
+			m.notice = "x again removes " + status.Agent.Name + "; its conversation stays on record"
+		default:
+			if err := m.engine.RemoveAgent(status.Agent.Name); err != nil {
+				m.err = err.Error()
+				return m, nil
+			}
+			m.notice = "removed " + status.Agent.Name
+			m.refresh()
+		}
+		return m, nil
 	case "enter":
 		// With the selected agent waiting on a person, enter answers rather than opens: yes, once,
 		// which is what somebody hovering a pane that names its request almost always means (D-50).

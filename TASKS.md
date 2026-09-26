@@ -4746,7 +4746,7 @@ which the A5-09 note now records. This is the smallest task in the phase relativ
 its absence will be noticed.
 
 ### U-08 Steering you can take back
-`status: todo | owner: none | branch: none | depends: A5-07`
+`status: review | owner: Claude | branch: feat/steering-and-agent-actions | depends: A5-07`
 `scope: internal/tui/chat/, internal/session/steer.go (caller only)`
 
 Deliverable: queued guidance can be cancelled before delivery. The steering pane that already
@@ -4839,7 +4839,7 @@ which LIMITATIONS already documents. Keyboard copy is the version that works eve
 product claims to work, ssh included.
 
 ### U-12 The agents screen grows hands
-`status: todo | owner: none | branch: none | depends: A5-11`
+`status: partial | owner: Claude | branch: feat/steering-and-agent-actions | depends: A5-11`
 `scope: internal/tui/agents/`
 
 Deliverable: acting on an agent from where you see it. Stop a running agent's turn. Remove a
@@ -8150,6 +8150,17 @@ Tests cover each action, the ranking, the box left alone, and the question. Muta
 open from V-06: sessions and agents in the palette, and pickers moved into overlays.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
+### Z-U08 Steering taken back, and agents stopped and removed where they are seen (U-08, part of U-12)
+`status: review | owner: Claude | branch: feat/steering-and-agent-actions`
+
+`/steer undo` takes back guidance not yet delivered, through Engine.ClearSteering, and puts it in the
+box to change or send again; with nothing waiting it says so. The steering pane says how, where the
+row has room. On the agents screen, s stops the selected agent's turn and x asks, then removes a
+stopped one (Engine.RemoveAgent, its conversation kept); a working agent is not removable. Help
+lists both. Tests cover each, including a second x after another key not removing. Mutation-checked.
+Still open from U-12: per-agent cost on pane borders, and kind labels in panes.
+
+`verify: claude [x] 2026-09-26   codex [ ]`
 
 ### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
 `status: review | owner: Claude | branch: feat/acp-server`

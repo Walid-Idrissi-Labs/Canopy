@@ -1013,6 +1013,12 @@ func (e *fakeEngine) Steer(_, guidance string) error {
 
 func (e *fakeEngine) Steering(string) []string { return e.queuedSteering }
 
+func (e *fakeEngine) ClearSteering(string) []string {
+	taken := e.queuedSteering
+	e.queuedSteering = nil
+	return taken
+}
+
 // asides is what this conversation was asked on the side before the screen opened, which is the
 // half that used to be thrown away.
 func (e *fakeEngine) Asides(sessionID string) []session.Aside { return e.asides[sessionID] }
