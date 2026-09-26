@@ -447,8 +447,9 @@ is waiting.
 
 ### When a turn fails
 
-Under a failed turn, with nothing typed, enter tries it again as a new turn, and the question is
-sent to the model once, not twice. A rate limit counts down the wait the provider asked for, a
+Under a failed turn, with nothing typed, enter tries it again: the failed turn stays in the
+conversation, with whatever it did before failing, and a new turn asks the model to carry on from
+it, so the question is sent once and nothing already done is forgotten. A rate limit counts down the wait the provider asked for, a
 network failure is called one, and a failure trying again cannot fix, a refused credential or a
 conversation too long for the model, says what to change instead and is not retried.
 

@@ -8,6 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 )
 
@@ -34,6 +36,18 @@ func TestAFailedTurnIsRetriedWithEnter(t *testing.T) {
 	_, _ = m.Update(keyCode(tea.KeyEnter))
 	if engine.retried != 1 || len(engine.sent) != 0 {
 		t.Fatalf("retried %d, sent %v", engine.retried, engine.sent)
+	}
+	// With another agent's question waiting on enter, enter answers that, and no card claims it.
+	visited := failed(core.ErrOverloaded, 0)
+	visited.waiting = []session.Waiting{{SessionID: "s2", Agent: "other",
+		Request: permission.Request{SessionID: "s2", Tool: "run_command", Command: "make"}}}
+	m = opened(visited)
+	if strings.Contains(plain(m.Body()), "enter tries it again") {
+		t.Fatal("the retry card offered enter while another agent's question waits on it")
+	}
+	_, _ = m.Update(keyCode(tea.KeyEnter))
+	if visited.retried != 0 {
+		t.Fatal("enter retried while another agent's question was waiting")
 	}
 	network := opened(failed(core.ErrNetwork, 0))
 	if !strings.Contains(plain(network.Body()), "the network failed") {

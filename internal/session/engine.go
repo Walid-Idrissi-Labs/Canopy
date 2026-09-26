@@ -1760,11 +1760,46 @@ func (e *Engine) Retry(sessionID string) (string, error) {
 		e.mu.Unlock()
 		return "", fmt.Errorf("the provider asked for %s more before trying again", wait)
 	}
-	last.Retried = true
-	request, ordinal, failed := last.Request, len(s.Turns)-1, *last
+	failedID, prompt := last.ID, retryPrompt(*last)
 	e.mu.Unlock()
-	e.persistTurn(sessionID, ordinal, failed)
-	return e.Send(sessionID, request.Text)
+
+	// The failed turn stays in what the model is sent, with what it did before failing, its
+	// pictures and the notes it carried, so the retry asks it to carry on rather than asking the
+	// question again, which would drop all of that.
+	turnID, err := e.Send(sessionID, prompt)
+	if err != nil {
+		// Refused (a budget, a check still running): the failure stands, and can be retried later.
+		return "", err
+	}
+	e.mu.Lock()
+	var failed core.Turn
+	ordinal := -1
+	if s := e.sessions[sessionID]; s != nil {
+		for i := range s.Turns {
+			if s.Turns[i].ID == failedID {
+				s.Turns[i].Retried = true
+				failed, ordinal = s.Turns[i], i
+			}
+		}
+	}
+	e.mu.Unlock()
+	if ordinal >= 0 {
+		e.persistTurn(sessionID, ordinal, failed)
+	}
+	return turnID, nil
+}
+
+// retryPrompt is the message a retry sends: carry on, in words that say what happened.
+func retryPrompt(failed core.Turn) string {
+	why := "an error"
+	if failed.ErrorKind != "" {
+		why = "an error (" + string(failed.ErrorKind) + ")"
+	}
+	if len(failed.Steps) == 0 && failed.Text == "" && len(failed.ToolCalls) == 0 {
+		return "That request ended in " + why + " before you answered it. Please answer it now."
+	}
+	return "Your last reply was cut off by " + why + ". Carry on from where it stopped; what you " +
+		"already did is above, so do not do it again."
 }
 
 // retryAdvice is what to do instead of retrying a failure of this kind.

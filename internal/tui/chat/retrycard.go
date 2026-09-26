@@ -15,9 +15,10 @@ import (
 // retryTickMsg redraws a countdown once a second while it runs.
 type retryTickMsg struct{ generation int }
 
-// failedTurn is the last turn when it failed and nothing is typed or running.
+// failedTurn is the last turn when it failed and nothing is typed or running, and no other
+// agent's question is waiting on the same enter.
 func (m Model) failedTurn() (core.Turn, bool) {
-	if !m.input.Empty() || m.working || m.awaiting {
+	if !m.input.Empty() || m.working || m.awaiting || len(m.visitors) > 0 {
 		return core.Turn{}, false
 	}
 	session, ok := m.engine.Session(m.sessionID)
