@@ -11,6 +11,10 @@ import (
 // captureStderr collects what is written to standard error until the returned function is called,
 // which returns it as lines and puts standard error back. For the setup before the interface opens:
 // what is said there is otherwise drawn over by the alternate screen before anybody reads it.
+//
+// It swaps the os.Stderr variable, so it is called before anything that writes from a goroutine of
+// its own starts, and what already holds the old value (log, the bell, notifications) goes on
+// writing to the terminal uncaptured.
 func captureStderr() func() []string {
 	reader, writer, err := os.Pipe()
 	if err != nil {
