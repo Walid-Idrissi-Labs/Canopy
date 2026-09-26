@@ -1,37 +1,48 @@
 package main
 
 import (
-	"path/filepath"
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
 
-type snapshotOnly struct{ snap core.ProjectSnapshot }
+type fakeStanding struct {
+	snapshot core.WorkspaceSnapshot
+	known    bool
+	head     core.RevisionKey
+	headOK   bool
+}
 
-func (s snapshotOnly) Snapshot() core.ProjectSnapshot  { return s.snap }
-func (s snapshotOnly) Events(uint64) <-chan core.Event { return nil }
+func (f fakeStanding) Snapshot(string) (core.WorkspaceSnapshot, bool) { return f.snapshot, f.known }
+func (f fakeStanding) Head(context.Context, string) (core.RevisionKey, bool) {
+	return f.head, f.headOK
+}
 
-// An agent's standing is the roll-up of the workspace it works in, found by its directory however
-// the path is spelled, and an unknown directory says there is nothing recorded rather than green.
-func TestAnAgentsStandingIsItsWorkspacesRollUp(t *testing.T) {
-	root, agent := t.TempDir(), t.TempDir()
-	store := snapshotOnly{core.ProjectSnapshot{Workspaces: []core.WorkspaceSnapshot{
-		{Path: root, Name: "main", Revision: core.RevisionKey{HeadSHA: "1111111111"}},
-		{Path: agent, Name: "agent", Revision: core.RevisionKey{HeadSHA: "abcdef1234"},
-			Tests: []core.TestSnapshot{{Name: "unit", Required: true}}},
-	}}}
-	standing := standingIn(store, root)
-	resolved, _ := filepath.EvalSymlinks(agent)
-	got := standing(resolved + "/")
-	if !strings.HasPrefix(got, "not verified at abcdef1") {
-		t.Fatalf("the agent's workspace reads %q", got)
+// An agent's standing is judged at the revision its workspace is at now, not the one the last poll
+// saw: a green run of the revision before its final edits is stale, not green.
+func TestAnAgentsStandingIsJudgedAtItsRevisionNow(t *testing.T) {
+	tested := core.RevisionKey{HeadSHA: "aaaaaaaaaa"}
+	finished := time.Now()
+	passed := core.TestRun{TestName: "unit", Revision: tested, State: core.TestPassing, FinishedAt: &finished}
+	snapshot := core.WorkspaceSnapshot{Name: "worker", Revision: tested,
+		Tests: []core.TestSnapshot{{Name: "unit", Required: true, Latest: &passed}}}
+
+	green := standingOf(fakeStanding{snapshot: snapshot, known: true, head: tested, headOK: true})("worker")
+	if !strings.HasPrefix(green, "green at aaaaaaa") {
+		t.Fatalf("tested and unchanged reads %q", green)
 	}
-	if got := standing(""); !strings.Contains(got, "at 1111111") {
-		t.Fatalf("an agent working in the repository reads %q", got)
+	moved := standingOf(fakeStanding{snapshot: snapshot, known: true,
+		head: core.RevisionKey{HeadSHA: "bbbbbbbbbb"}, headOK: true})("worker")
+	if strings.HasPrefix(moved, "green") || !strings.Contains(moved, "bbbbbbb") {
+		t.Fatalf("edited since the green run reads %q", moved)
 	}
-	if got := standing(t.TempDir()); got != "no verification recorded for its workspace" {
-		t.Fatalf("an unknown directory reads %q", got)
+	if got := standingOf(fakeStanding{snapshot: snapshot, known: true})("worker"); strings.HasPrefix(got, "green") {
+		t.Fatalf("an unreadable revision reads %q", got)
+	}
+	if got := standingOf(fakeStanding{})("nobody"); got != "no verification recorded for it" {
+		t.Fatalf("an unknown agent reads %q", got)
 	}
 }

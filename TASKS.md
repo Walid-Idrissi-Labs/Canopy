@@ -4914,12 +4914,14 @@ here are the flat dispatch A5-08 already ships, not nested agents.
 
 2026-09-26 (Claude): the join itself shipped with 7fa0793 (noteJoin: the last reply capped at 1200
 runes, delivered as Request.Reports with the next message, never starting a turn). feat/join-standing
-adds the rest: each report carries "verification: ..." from the roll-up of the agent's own workspace
-(Engine.SetStanding, wired in cmd/canopy to the verifier's store; green or not, revision, test
-state and reason, so stale reads as stale), an agent that said nothing reports so, and the transcript
+adds the rest: each report carries "verification: ..." for that agent (Engine.SetStanding, wired
+in cmd/canopy to the verifier: its snapshot judged at the revision git reports now, not the last
+poll's, so a green run from before the agent's final edits reads as stale; green or not, revision,
+test state and reason), an agent that said nothing reports so, and the transcript
 shows "with the reports of N agents" under the message that carried them. Tests cover the verdict
-travelling with the report and being asked about the agent's own directory, the empty report, the
-workspace lookup across symlinked paths, and the transcript line; mutants on each are killed.
+travelling with the report and being asked about that agent, the empty report, green only at the
+revision now (a moved head is not green, an unreadable one is not green), and the transcript line;
+mutants on each are killed.
 
 ### U-15 Cycling past a mode is not choosing it
 `status: review | owner: claude | branch: tui/mode-settle | depends: none`

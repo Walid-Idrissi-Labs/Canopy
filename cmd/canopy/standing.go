@@ -1,43 +1,45 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"path/filepath"
+	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
 
-// standingIn says how verification stands in the workspace at a directory, from the roll-up the
-// review screen shows: green or not, at which revision, and why, stale included.
-func standingIn(store core.SnapshotStore, root string) func(dir string) string {
-	return func(dir string) string {
-		if dir == "" {
-			dir = root
-		}
-		want := cleanPath(dir)
-		for _, workspace := range store.Snapshot().Workspaces {
-			if cleanPath(workspace.Path) != want {
-				continue
-			}
-			rollup := core.RollUp(workspace)
-			verdict := "not verified"
-			if rollup.Green {
-				verdict = "green"
-			}
-			line := fmt.Sprintf("%s at %s, tests %s", verdict, workspace.Revision.Short(), rollup.Tests)
-			if rollup.Reason != "" {
-				line += ": " + rollup.Reason
-			}
-			return line
-		}
-		return "no verification recorded for its workspace"
-	}
+// standingSource is the part of the verifier an agent's standing is read from.
+type standingSource interface {
+	Snapshot(agent string) (core.WorkspaceSnapshot, bool)
+	Head(ctx context.Context, agent string) (core.RevisionKey, bool)
 }
 
-// cleanPath is a directory as it is on disk, symlinks resolved where they can be.
-func cleanPath(dir string) string {
-	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
-		return resolved
+// standingOf says how verification stands for an agent: green or not, at which revision, and why.
+// The revision is read from git now rather than taken from the last poll, since a report is made
+// the moment a turn ends and the poll can still hold the revision from before its last edits; a
+// green run of that older revision would read as green for code nobody tested.
+func standingOf(source standingSource) func(agent string) string {
+	return func(agent string) string {
+		snapshot, ok := source.Snapshot(agent)
+		if !ok {
+			return "no verification recorded for it"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		head, ok := source.Head(ctx, agent)
+		if !ok {
+			return "not verified: its revision could not be read just now"
+		}
+		snapshot.Revision = head
+		rollup := core.RollUp(snapshot)
+		verdict := "not verified"
+		if rollup.Green {
+			verdict = "green"
+		}
+		line := fmt.Sprintf("%s at %s, tests %s", verdict, head.Short(), rollup.Tests)
+		if rollup.Reason != "" {
+			line += ": " + rollup.Reason
+		}
+		return line
 	}
-	return filepath.Clean(dir)
 }

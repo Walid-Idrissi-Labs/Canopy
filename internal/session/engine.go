@@ -113,9 +113,9 @@ type Engine struct {
 	// with the next message the person sends there. See noteJoin.
 	dispatchParents map[string]string
 	joinNotes       map[string][]string
-	// standing says how verification stands in a directory, for an agent's report; nil says nothing.
-	// See SetStanding.
-	standing func(dir string) string
+	// standing says how verification stands for an agent, for its report; nil says nothing. See
+	// SetStanding.
+	standing func(agent string) string
 
 	// instructions are the project's, added to the system prompt of every conversation this engine
 	// runs. Set once at startup, so the prompt stays the same for a conversation's whole life.
@@ -1676,7 +1676,7 @@ func (e *Engine) noteJoin(sessionID string) {
 	standing := e.standing
 	e.mu.Unlock()
 	if agent, found := e.AgentFor(sessionID); found && standing != nil {
-		if line := standing(agent.Dir); line != "" {
+		if line := standing(agent.Name); line != "" {
 			report += "\nverification: " + line
 		}
 	}
@@ -1690,9 +1690,9 @@ func (e *Engine) noteJoin(sessionID string) {
 	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: parent})
 }
 
-// SetStanding attaches what says how verification stands in a directory, so an agent's report to
+// SetStanding attaches what says how verification stands for an agent, by name, so its report to
 // its orchestrator carries the verifier's verdict on its work alongside its own account of it.
-func (e *Engine) SetStanding(standing func(dir string) string) {
+func (e *Engine) SetStanding(standing func(agent string) string) {
 	e.mu.Lock()
 	e.standing = standing
 	e.mu.Unlock()
