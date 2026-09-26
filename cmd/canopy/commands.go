@@ -24,6 +24,7 @@ import (
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/images"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -197,8 +198,8 @@ func runChat(resume string) error {
 		monitor, signInAware{keyStore}, engine, filepath.Base(dir), keyName, tui.AppOptions{
 			Review: review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
-			SignIn: signInRoutes,
-			Files:  projectFiles(dir), Remember: rememberIn(dir, project),
+			SignIn: signInRoutes, FindPictures: images.FindPaths, LoadPictures: images.LoadAll,
+			Files: projectFiles(dir), Remember: rememberIn(dir, project),
 		})
 	if err != nil {
 		return err

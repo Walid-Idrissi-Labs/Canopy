@@ -630,3 +630,21 @@ func TestManyMCPToolsAreDeferredBehindASearch(t *testing.T) {
 		t.Fatal("tools were deferred on a model without tool search")
 	}
 }
+
+// A picture goes ahead of the words about it, as a base64 image block.
+func TestAPictureIsSentAheadOfItsText(t *testing.T) {
+	params, err := testClient().buildParams(core.Request{Model: "claude-opus-5", Messages: []core.Message{{
+		Role: core.RoleUser, Text: "what is wrong here",
+		Images: []core.Image{{MediaType: "image/png", Data: []byte("PNGDATA")}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(params.Messages[0])
+	got := string(raw)
+	image, text := strings.Index(got, `"type":"image"`), strings.Index(got, `"what is wrong here"`)
+	if image < 0 || text < 0 || image > text || !strings.Contains(got, `"data":"UE5HREFUQQ=="`) ||
+		!strings.Contains(got, `"media_type":"image/png"`) {
+		t.Fatalf("sent %s", got)
+	}
+}

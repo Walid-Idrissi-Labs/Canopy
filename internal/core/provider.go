@@ -2,8 +2,10 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -124,6 +126,9 @@ type Message struct {
 	// Canopy's instructions: an agent's report repeats whatever it read, so adapters send each one
 	// framed as data with its markup neutralised. See ReportText.
 	Reports []string `json:",omitempty"`
+
+	// Images are pictures a person attached to a user message, a screenshot of the bug for one.
+	Images []Image `json:",omitempty"`
 
 	// ToolCalls are tool invocations the assistant requested.
 	ToolCalls []ToolCall
@@ -532,3 +537,57 @@ func (m Message) WithoutReasoning() Message {
 	out.Native = &Native{Provider: m.Native.Provider, Data: data}
 	return out
 }
+
+// Image is a picture attached to a message: its media type, image/png, image/jpeg, image/gif or
+// image/webp, and its bytes, already sized for a model to read.
+type Image struct {
+	MediaType string
+	Data      []byte
+}
+
+// DataURL is the image as a data: URL, the form the OpenAI family takes.
+func (i Image) DataURL() string {
+	return "data:" + i.MediaType + ";base64," + base64.StdEncoding.EncodeToString(i.Data)
+}
+
+// HasImages reports whether the message being sent carries a picture. Only the last: the routes
+// that ask it send only the newest message, keeping the conversation on their own side.
+func (r Request) HasImages() bool {
+	return len(r.Messages) > 0 && len(r.Messages[len(r.Messages)-1].Images) > 0
+}
+
+// PicturesKept is how many of the most recent messages with pictures keep them when a conversation
+// is sent again, and PictureBytesKept how many bytes of pictures in all.
+const (
+	PicturesKept     = 3
+	PictureBytesKept = 16 << 20
+)
+
+// KeepRecentPictures is the conversation with the pictures of all but the most recent messages
+// replaced by a line saying one was there. Every request resends the whole conversation, and a
+// provider's request has a size limit, so without this a conversation that carried pictures would
+// grow until every turn failed. The messages given are not changed.
+func KeepRecentPictures(messages []Message) []Message {
+	out := append([]Message(nil), messages...)
+	kept, bytes := 0, 0
+	for i := len(out) - 1; i >= 0; i-- {
+		if len(out[i].Images) == 0 {
+			continue
+		}
+		size := 0
+		for _, image := range out[i].Images {
+			size += len(image.Data)
+		}
+		if kept < PicturesKept && bytes+size <= PictureBytesKept {
+			kept, bytes = kept+1, bytes+size
+			continue
+		}
+		out[i].Text = strings.TrimSpace(out[i].Text + "\n\n[" + strconv.Itoa(len(out[i].Images)) +
+			" picture(s) sent here earlier are no longer attached]")
+		out[i].Images = nil
+	}
+	return out
+}
+
+// ErrNoImages is what a route that cannot pass pictures on says, rather than dropping them.
+const ErrNoImages = "this route cannot take pictures yet, so none were sent; use an API key for a conversation that needs them"

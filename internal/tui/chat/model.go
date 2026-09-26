@@ -316,6 +316,10 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
+	// findPictures and loadPictures find and read the pictures a message names; see SetPictures.
+	findPictures    func(prompt string) []string
+	readingPictures bool
+	loadPictures    func(paths []string) ([]core.Image, error)
 	// search is the find bar, on ctrl+f.
 	search search
 	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
@@ -633,6 +637,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
+	case picturesReadyMsg:
+		return m.picturesReady(msg)
 	case editedMsg:
 		if msg.err != nil {
 			m.err = "the editor did not finish: " + msg.err.Error()
@@ -1419,7 +1425,41 @@ func (m Model) send() (Model, tea.Cmd) {
 	// seconds into it. Pressing shift+tab and then enter is somebody who has chosen.
 	m.applyPendingMode()
 
-	if _, err := m.engine.Send(m.sessionID, prompt); err != nil {
+	// A picture named in the message, a screenshot dropped on the terminal for one, goes with it.
+	// Read off the update loop, since a large one takes a moment; the message is sent once it is.
+	if paths := m.picturePaths(prompt); len(paths) > 0 {
+		// One read at a time: a second enter while the first is reading would send it twice.
+		if m.readingPictures {
+			return m, nil
+		}
+		m.readingPictures = true
+		m.notice = "reading " + pictureCount(len(paths))
+		load, sessionID := m.loadPictures, m.sessionID
+		return m, func() tea.Msg {
+			images, err := load(paths)
+			return picturesReadyMsg{sessionID: sessionID, typed: typed, prompt: prompt, images: images, err: err}
+		}
+	}
+	return m.deliver(typed, prompt, nil)
+}
+
+// picturesReadyMsg carries the pictures a message named, read and ready to send with it.
+type picturesReadyMsg struct {
+	sessionID     string
+	typed, prompt string
+	images        []core.Image
+	err           error
+}
+
+// deliver sends a message, with any pictures already read, and tidies the box after it.
+func (m Model) deliver(typed, prompt string, attached []core.Image) (Model, tea.Cmd) {
+	var err error
+	if len(attached) > 0 {
+		_, err = m.engine.(imageSender).SendWithImages(m.sessionID, prompt, attached)
+	} else {
+		_, err = m.engine.Send(m.sessionID, prompt)
+	}
+	if err != nil {
 		// The message stays in the box. Clearing it on a failure would mean somebody has to retype
 		// what they just wrote because a provider was busy.
 		m.err = err.Error()
@@ -1430,13 +1470,20 @@ func (m Model) send() (Model, tea.Cmd) {
 	// rather than in the box and in the history, which is one message showing up twice.
 	// History remembers what the person typed, not the expanded body. Pressing up should offer
 	// `/review auth` again rather than a page of generated prompt text.
-	m.input.Remember(typed)
-	m.input.Clear()
+	// Only when the box still holds what was sent: pictures are read off the update loop, and
+	// somebody may have gone on typing meanwhile.
+	if m.input.Value() == typed {
+		m.input.Remember(typed)
+		m.input.Clear()
+	}
 	// Sending returns to the tail. Someone who scrolled up to read something old and then asked a
 	// question is asking about now.
 	m.scroll = 0
 	m.err = ""
 	m.notice = ""
+	if len(attached) > 0 {
+		m.notice = "sent with " + pictureCount(len(attached))
+	}
 	m.refresh()
 	return m, nil
 }
@@ -2771,6 +2818,55 @@ func (m Model) toolKind(name string) (core.ToolKind, bool) {
 // acceptsPaste reports whether pasted text belongs in the message box now: not while a permission
 // question is waiting, whose keys are answers.
 func (m Model) acceptsPaste() bool { return !m.awaiting }
+
+// imageSender is an engine that can attach pictures to a message.
+type imageSender interface {
+	SendWithImages(sessionID, prompt string, images []core.Image) (string, error)
+}
+
+// SetPictures gives the box a way to find the pictures a message names, which is quick, and to read
+// them, which may not be. Nil for either sends every message as words alone.
+func (m *Model) SetPictures(find func(prompt string) []string, load func(paths []string) ([]core.Image, error)) {
+	m.findPictures, m.loadPictures = find, load
+}
+
+// picturePaths are the pictures a message names, when the engine can send them.
+func (m Model) picturePaths(prompt string) []string {
+	if _, ok := m.engine.(imageSender); !ok || m.findPictures == nil || m.loadPictures == nil {
+		return nil
+	}
+	return m.findPictures(prompt)
+}
+
+// picturesReady sends a message once its pictures are read. A picture that cannot be read stops the
+// message, so nobody sends "look at this" with nothing attached; the box keeps it.
+func (m Model) picturesReady(msg picturesReadyMsg) (Model, tea.Cmd) {
+	m.readingPictures = false
+	// Read for a conversation that is no longer the one on screen: not sent into this one, and
+	// said, so the message is not lost without a word.
+	if msg.sessionID != m.sessionID {
+		m.err = "a message with pictures was not sent: the conversation changed while they were read"
+		return m, nil
+	}
+	if msg.err != nil {
+		m.err = msg.err.Error()
+		m.notice = ""
+		return m, nil
+	}
+	if m.input.Value() != msg.typed {
+		// The box changed while the pictures were read; what was typed then is what is sent.
+		m.notice = ""
+	}
+	return m.deliver(msg.typed, msg.prompt, msg.images)
+}
+
+// pictureCount says how many pictures, in the singular for one.
+func pictureCount(n int) string {
+	if n == 1 {
+		return "a picture"
+	}
+	return itoa(n) + " pictures"
+}
 
 // paletteKey handles a key while the palette is up.
 func (m Model) paletteKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {

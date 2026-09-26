@@ -754,6 +754,11 @@ var ErrBusy = errors.New("this session is already working on a turn")
 // arrived could not draw the answer arriving. Everything after this point reaches the caller
 // through the snapshot and the event stream.
 func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
+	return e.SendWithImages(sessionID, prompt, nil)
+}
+
+// SendWithImages is Send with pictures attached to the message, a screenshot of the bug for one.
+func (e *Engine) SendWithImages(sessionID, prompt string, images []core.Image) (turnID string, err error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return "", errors.New("an empty message has nothing to answer")
@@ -799,7 +804,7 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 	s.Turns = append(s.Turns, core.Turn{
 		ID:        turnID,
 		State:     core.TurnPending,
-		Request:   core.Message{Role: core.RoleUser, Text: prompt},
+		Request:   core.Message{Role: core.RoleUser, Text: prompt, Images: images},
 		Model:     s.Model,
 		StartedAt: now,
 	})
@@ -830,7 +835,9 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 	s.Turns[len(s.Turns)-1].Request.Reports = e.joinNotes[sessionID]
 	delete(e.joinNotes, sessionID)
 
-	history := s.History()
+	// Pictures stay with the last few messages that carried them; older ones become a line saying
+	// they were there, so a conversation with pictures cannot outgrow what a request may be.
+	history := core.KeepRecentPictures(s.History())
 	keyName, model := s.KeyName, s.Model
 
 	ctx, cancel := context.WithCancel(context.Background())

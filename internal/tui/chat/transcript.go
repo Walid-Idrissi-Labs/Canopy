@@ -146,6 +146,9 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 		}
 		lines = append(lines, prefix+t.Body.Render(line))
 	}
+	if n := len(turn.Request.Images); n > 0 {
+		lines = append(lines, "  "+t.Muted.Render("with "+pictureCount(n)))
+	}
 
 	if turn.Thinking != "" {
 		lines = append(lines, "")

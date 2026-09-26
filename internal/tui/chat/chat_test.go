@@ -21,6 +21,7 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
+	pictures        []core.Image
 	undoChanges     []string
 	undoState       string
 	previewErr      error
@@ -90,6 +91,11 @@ func (e *fakeEngine) Session(id string) (core.Session, bool) {
 		return s, ok
 	}
 	return e.session, true
+}
+
+func (e *fakeEngine) SendWithImages(sessionID, prompt string, images []core.Image) (string, error) {
+	e.pictures = append(e.pictures, images...)
+	return e.Send(sessionID, prompt)
 }
 
 func (e *fakeEngine) Send(_, prompt string) (string, error) {

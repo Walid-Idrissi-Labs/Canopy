@@ -179,6 +179,9 @@ type AppOptions struct {
 	// had just been created sat in a conversation nobody could see.
 	Session string
 
+	// FindPictures and LoadPictures find and read the pictures a message names.
+	FindPictures func(prompt string) []string
+	LoadPictures func(paths []string) ([]core.Image, error)
 	// Files lists the project's files for @ mentions, and Remember keeps a "# note" in its
 	// instructions. Either may be nil.
 	Files    func() []string
@@ -242,6 +245,7 @@ func NewAppConfigured(
 		dim:       Dimensions{Width: 80, Height: 24},
 	}
 	app.chat.SetCommands(options.Commands)
+	app.chat.SetPictures(options.FindPictures, options.LoadPictures)
 	app.chat.SetFiles(options.Files)
 	app.chat.SetRemember(options.Remember)
 	app.chat.SetAgent(options.Agent)

@@ -88,6 +88,9 @@ var ErrHistoryRewritten = errors.New(
 // session is usually open, and the caller has an error and no stream, so there is nothing else in
 // the program that could end it.
 func (c *Client) Stream(ctx context.Context, req core.Request) (core.Stream, error) {
+	if req.HasImages() {
+		return nil, &core.ProviderError{Kind: core.ErrInvalidRequest, Provider: c.Name(), Message: core.ErrNoImages}
+	}
 	stream, err := c.send(ctx, req)
 	if err != nil && c.disposable() {
 		_ = c.Close()
