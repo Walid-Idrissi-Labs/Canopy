@@ -71,6 +71,18 @@ type answer struct {
 //
 // Blocks until answered or the turn is cancelled. That is correct: the tool has not run and the
 // model is waiting for its result either way, so there is nothing useful to do in the meantime.
+// Grants are the standing approvals a conversation has been given, in the order they sort in.
+func (e *Engine) Grants(sessionID string) []permission.Scope {
+	granted := e.grantsFor(sessionID).Granted()
+	sort.Slice(granted, func(i, j int) bool { return granted[i].String() < granted[j].String() })
+	return granted
+}
+
+// Revoke takes a standing approval back, so the next call it covered is asked about again.
+func (e *Engine) Revoke(sessionID string, scope permission.Scope) {
+	e.grantsFor(sessionID).Revoke(scope)
+}
+
 func (e *Engine) Approve(
 	ctx context.Context, req permission.Request, decision permission.Decision,
 ) bool {

@@ -103,6 +103,9 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 	case "trail":
 		m.notice = m.toolTrail()
 
+	case "grants":
+		m.notice, m.err = m.grants(arguments)
+
 	case "budget":
 		m.notice, m.err = m.budget(arguments)
 
@@ -562,4 +565,31 @@ func (m Model) budget(arguments string) (string, string) {
 		return "", err.Error()
 	}
 	return "this agent: " + m.engine.Budget(m.sessionID).Status(), ""
+}
+
+// grants lists what this conversation may do without asking, numbered, or with "revoke N" takes one
+// back. In the words the prompt used when it was granted, since those are what was agreed to.
+func (m *Model) grants(arguments string) (string, string) {
+	granted := m.engine.Grants(m.sessionID)
+	if n, ok := strings.CutPrefix(strings.TrimSpace(arguments), "revoke"); ok {
+		index := 0
+		if _, err := fmt.Sscanf(strings.TrimSpace(n), "%d", &index); err != nil || index < 1 || index > len(granted) {
+			return "", "revoke which? /grants shows them numbered"
+		}
+		scope := granted[index-1]
+		m.engine.Revoke(m.sessionID, scope)
+		return "taken back: " + scope.String() + "; it is asked about again from the next call", ""
+	}
+	if strings.TrimSpace(arguments) != "" {
+		return "", "/grants lists them, and /grants revoke 2 takes the second back"
+	}
+	if len(granted) == 0 {
+		return "no standing permissions: everything the mode asks about is still asked about", ""
+	}
+	lines := []string{"allowed without asking, in this conversation:"}
+	for i, scope := range granted {
+		lines = append(lines, fmt.Sprintf("  %d  %s", i+1, scope.String()))
+	}
+	lines = append(lines, "/grants revoke N takes one back")
+	return strings.Join(lines, "\n"), ""
 }
