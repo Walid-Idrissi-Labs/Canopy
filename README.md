@@ -100,6 +100,12 @@ No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy k
 than `canopy keys add`, and read
 [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
 
+A key added on the credential screen (ctrl+k) is selected, and checked at once against the
+provider's model list, which is free, so a mistyped key is named before your first message rather
+than by it; `t` checks the selected key again. For an OpenAI-compatible endpoint Canopy has no price
+for, `p` records yours (input and output dollars per million tokens), and the header prices the next
+turn with it, marked as your own rate.
+
 A name is the one thing here you are likely to get wrong, because you choose it before the
 credential has been used for anything. Renaming moves the credential and every conversation
 recorded on it, since the name is what each one looks up on its next message. In the interface it
@@ -419,7 +425,9 @@ N times, one effort level higher each time, with the failing output: run cheap, 
 thinking only when the evidence says it was needed. `-budget 0.50` stops the run once it has spent
 fifty cents, retries included; in the interface, `/budget 2` caps one agent and `/budget all 10`
 caps every agent together. A cap is checked between steps, so the request in flight finishes and the
-next one is not made.
+next one is not made. The header shows each cap set and how much of it is spent ("a floor" when some
+requests could not be priced); a turn stopped at one says so under it, and after `/budget` raises
+the cap, enter carries on from where it stopped.
 
 ### In an editor
 
@@ -622,8 +630,10 @@ the pass.
   is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
   package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
   `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. The project's test commands run in the same
-  sandbox, and so do hooks; setup and MCP servers are not sandboxed yet, and a worktree on its own
-  is file isolation, not a security boundary. `CANOPY_SANDBOX=off` turns it off, and every command that runs
+  sandbox, and so do hooks, the setup a new worktree runs, and local MCP servers (a server that
+  needs what the sandbox withholds, a container runtime's socket for one, can be marked
+  `"unconfined": true`, which the trust prompt shows); a worktree on its own is file isolation, not a
+  security boundary. `CANOPY_SANDBOX=off` turns it off, and every command that runs
   unconfined says so in its result.
 - Windows is deferred until process group and terminal semantics are designed for it rather than
   approximated.

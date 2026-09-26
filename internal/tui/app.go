@@ -162,6 +162,8 @@ type AppOptions struct {
 	// should be working it out. Nil is a legitimate state and means the credential screen offers
 	// exactly what it offered before phase S.
 	SignIn keysui.SignIn
+	// CheckKey asks a credential's provider whether it takes it, at no cost; nil checks nothing.
+	CheckKey keysui.Check
 
 	// Agent names the agent whose conversation is being opened, for the corner of the header.
 	//
@@ -226,6 +228,7 @@ func NewAppConfigured(
 	options AppOptions,
 ) App {
 	credentials := keysui.NewWithSignIn(keyStore, options.SignIn)
+	credentials.SetCheck(options.CheckKey)
 	model := credentials.ModelFor(keyName)
 
 	// Nothing named means a fresh conversation, made here because there is nothing to show
@@ -1340,6 +1343,10 @@ func shiftMouse(msg tea.MouseMsg, dy int) tea.Msg {
 func (a App) destinations() []chat.Destination {
 	var out []chat.Destination
 	for _, status := range a.engine.AgentStatuses() {
+		// An agent with no conversation yet has nothing to open.
+		if status.Agent.SessionID == "" {
+			continue
+		}
 		detail := string(status.State)
 		if status.Title != "" {
 			detail += ": " + status.Title

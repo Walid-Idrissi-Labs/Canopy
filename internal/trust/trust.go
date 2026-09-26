@@ -92,7 +92,11 @@ func DescribeWith(dir string, project config.Project, contents map[string][]byte
 			req.MCP = append(req.MCP, line)
 			continue
 		}
-		req.MCP = append(req.MCP, m.Name+": "+strings.Join(append([]string{m.Command}, m.Args...), " "))
+		line := m.Name + ": " + strings.Join(append([]string{m.Command}, m.Args...), " ")
+		if m.Unconfined {
+			line += " (outside the sandbox)"
+		}
+		req.MCP = append(req.MCP, line)
 	}
 
 	h := sha256.New()

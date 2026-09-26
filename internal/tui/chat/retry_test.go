@@ -82,3 +82,34 @@ func TestARateLimitCountsDown(t *testing.T) {
 		t.Fatal("no timer was started to count down")
 	}
 }
+
+// A turn stopped at a spending cap says what was spent against what and how to go on; the header
+// shows every cap that is enforced, and says when its figure is only a floor.
+func TestACapIsShownAndAPauseSaysHowToGoOn(t *testing.T) {
+	engine := failed("", 0)
+	engine.budget = session.Budget{Limit: 2, Spent: 2.03, Paused: true}
+	m := opened(engine)
+	body := plain(m.Body())
+	if !strings.Contains(body, "paused at the $2.00 cap, $2.03 spent") || !strings.Contains(body, "/budget 4 raises the cap") {
+		t.Fatalf("the pause is not explained:\n%s", body)
+	}
+	if !strings.Contains(strings.Join(m.ContextParts(), " "), "paused at the $2.00 cap") {
+		t.Fatalf("header %v", m.ContextParts())
+	}
+
+	engine.budget = session.Budget{Limit: 2, Spent: 0.5, Unpriced: 1}
+	engine.overall = session.Budget{Limit: 10, Spent: 3}
+	m = opened(engine)
+	header := strings.Join(m.ContextParts(), " | ")
+	if !strings.Contains(header, "cap $0.50 of $2.00, a floor") || !strings.Contains(header, "cap for all $3.00 of $10.00") {
+		t.Fatalf("header %q", header)
+	}
+	if !strings.Contains(plain(m.Body()), "enter tries it again") {
+		t.Fatal("an unpaused cap still blocks the retry")
+	}
+
+	engine.overall = session.Budget{Limit: 10, Spent: 10.2, Paused: true}
+	if body := plain(opened(engine).Body()); !strings.Contains(body, "/budget all 20 raises") {
+		t.Fatalf("the cap across every agent is not named:\n%s", body)
+	}
+}

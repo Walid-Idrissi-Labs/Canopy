@@ -407,3 +407,33 @@ func TestASandboxedSetupSeesTheProxy(t *testing.T) {
 		t.Fatalf("the setup did not see the proxy: %s", result.Output)
 	}
 }
+
+// A new agent's worktree has no path when its environment is described, so the sandbox is given as
+// a function of the path and made once the worktree exists.
+func TestASetupConfinedByPathStaysInTheWorktree(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	r, _, workspace := prepared(t)
+	outside := t.TempDir()
+	var asked string
+	confine := func(dir string) (*sandbox.Policy, []string) {
+		asked = dir
+		root, _ := filepath.EvalSymlinks(dir)
+		return &sandbox.Policy{Writable: []string{root}, Devices: []string{"/dev/null"}, Network: sandbox.NetworkOpen}, nil
+	}
+	result, err := r.Prepare(context.Background(), workspace, Environment{
+		Setup: "touch built-here; touch " + filepath.Join(outside, "leak"), Confine: confine}, yesToEverything())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked != workspace.Path {
+		t.Fatalf("the sandbox was made for %q, not the worktree", asked)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.Path, "built-here")); err != nil {
+		t.Fatalf("the setup could not write in its worktree: %s", result.Output)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "leak")); err == nil {
+		t.Fatal("a setup confined by path wrote outside its worktree")
+	}
+}

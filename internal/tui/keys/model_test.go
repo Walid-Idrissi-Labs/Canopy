@@ -97,6 +97,16 @@ func (s *stubStore) Rename(ref core.KeyRef, to string) (core.KeyMetadata, error)
 func (s *stubStore) BackendName() string        { return "test-backend" }
 func (s *stubStore) UsingInsecureBackend() bool { return s.insecure }
 
+func (s *stubStore) SetRate(ref core.KeyRef, rate core.KeyRate) error {
+	for i := range s.keys {
+		if s.keys[i].Ref.Name == ref.Name {
+			s.keys[i].Rate = rate
+			return nil
+		}
+	}
+	return fmt.Errorf("no key %s", ref.Name)
+}
+
 func (s *stubStore) Identity(ref core.KeyRef) (Identity, error) {
 	if s.identityErr != nil {
 		return Identity{}, s.identityErr

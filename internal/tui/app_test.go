@@ -75,6 +75,8 @@ func (f *fakeKeyStore) Rename(ref core.KeyRef, to string) (core.KeyMetadata, err
 func (f *fakeKeyStore) BackendName() string        { return "test" }
 func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 
+func (f *fakeKeyStore) SetRate(core.KeyRef, core.KeyRate) error { return nil }
+
 func (f *fakeKeyStore) Identity(ref core.KeyRef) (keysui.Identity, error) {
 	return f.identities[ref.Name], nil
 }
@@ -1189,7 +1191,8 @@ func TestThePaletteOpensAgentsAndConversations(t *testing.T) {
 			"session-7": {ID: "session-7", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete}}},
 		},
 		agents: []session.AgentStatus{{Agent: session.Agent{Name: "reviewer", SessionID: "session-7"},
-			State: core.AgentWorking, Title: "review the parser"}},
+			State: core.AgentWorking, Title: "review the parser"},
+			{Agent: session.Agent{Name: "unborn"}, State: core.AgentIdle}},
 	}
 	var app tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
 		tui.AppOptions{Session: "session-1", Agent: "main"})
@@ -1209,6 +1212,9 @@ func TestThePaletteOpensAgentsAndConversations(t *testing.T) {
 	view := plain(agents.(tui.App).View().Content)
 	if !strings.Contains(view, "agent reviewer") || !strings.Contains(view, "review the parser") {
 		t.Fatalf("no agent in the palette:\n%s", view)
+	}
+	if strings.Contains(view, "agent unborn") {
+		t.Fatalf("an agent with no conversation is offered:\n%s", view)
 	}
 	conversations := typed(app, "conversation")
 	view = plain(conversations.(tui.App).View().Content)

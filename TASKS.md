@@ -4715,6 +4715,7 @@ time to arrive.
 
 ### U-06 The first run holds your hand
 `status: partial | owner: Claude | branch: feat/startup-warnings | depends: PG-M`
+`status: review | owner: Claude | branch: feat/key-check | depends: PG-M`
 `scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
 
 Deliverable: the add-key wizard ends with a selected, tested credential. Storing a key selects
@@ -4736,8 +4737,18 @@ notes: M-06 got the screens to explain themselves; this closes the two holes the
 past explanation: a stored-but-unselected key that works with one credential by coincidence and
 breaks with two, and warnings printed into a void.
 
+2026-09-26 (Claude): storing a key already selected it. feat/key-check adds the live check: the
+wizard asks the provider's model list (GET /v1/models for Anthropic, {base}/models for
+OpenAI-compatible; free, no message sent) the moment a key is stored, and `t` asks again; a refusal
+names the key and says how to redo it, an endpoint with no list says it was not checked. `p` enters
+a rate (input output [cached] per million) through Store.SetRate, which the resolver already prices
+from (D-32). Startup warnings in the interface are #117. Tests cover each check outcome against a
+fake server, the wizard asking at once, a stale answer being dropped, and the price field; mutants
+on the refusal status, the version header, the check after storing and the stale-answer guard are
+killed.
+
 ### U-07 Budgets reach the user
-`status: todo | owner: none | branch: none | depends: A5-09`
+`status: review | owner: Claude | branch: feat/budgets-ui | depends: A5-09`
 `scope: internal/tui/chat/, internal/tui/agents/`
 
 Deliverable: the interface for the caps A5-09 built and verified. Set a per-agent or per-session
@@ -4752,7 +4763,14 @@ enforced that the screen does not show.
 `verify: claude [ ]   codex [ ]`
 
 notes: the engine half was verified by Codex in July and has never once been driven by a person,
-which the A5-09 note now records. This is the smallest task in the phase relative to how often
+which the A5-09 note now records.
+
+2026-09-26 (Claude): `/budget` already set both caps. The header now shows each cap in force
+(`cap $0.50 of $2.00`, `, a floor` when requests went unpriced, `paused at the $2.00 cap`), and a
+turn stopped at a cap shows Budget.Status verbatim with the `/budget` that raises it; after raising,
+enter retries, which (#114) carries on from the stopped turn with its steps in context. Tests: the
+engine test stops at the cap, refuses a retry while paused, and carries on with all four results
+after the raise; the chat test covers each header form and both pause cards. Stacked on #114. This is the smallest task in the phase relative to how often
 its absence will be noticed.
 
 ### U-08 Steering you can take back
@@ -8123,6 +8141,15 @@ the same approval text as the engine's plan execution (A4-09). Typing revises in
 the approval sent in build, a typed revision not approving, no card outside plan mode, and a
 read-only agent refused. Mutation-checked. A4-09's stricter mechanism, where approval grants only
 what the plan described, stays unwired; this is the review step, not that enforcement.
+### Z-S65 Worktree setup and local MCP servers in the sandbox (D-65)
+`status: review | owner: Claude | branch: feat/sandbox-setup-and-mcp`
+
+git.Environment gained Confine, a sandbox made from the worktree's path once it exists, which new
+agent worktrees get from tools.Confinement. mcp.Spec gained Sandbox and SandboxEnv; local servers are
+wrapped unless canopy.json marks them unconfined, which trust shows. Tests: a real confined MCP
+server cannot write outside its workspace while the same server unconfined can; a setup confined by
+path is confined to the worktree and asked for its path; spec building confines local servers and
+not unconfined or remote ones; the trust prompt names an unconfined server. Mutation-checked.
 
 `verify: claude [x] 2026-09-26   codex [ ]`
 ### Z-V04 Find in the conversation, and copy the last reply (part of V-04)
