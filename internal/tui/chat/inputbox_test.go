@@ -101,6 +101,11 @@ func TestALongPasteShowsItsSizeAndIsSentWhole(t *testing.T) {
 	if !strings.Contains(plain(m.Body()), "200 lines pasted") {
 		t.Fatalf("the box does not say how much was pasted:\n%s", plain(m.Body()))
 	}
+	// Moved up into it, the text itself is shown, since that is what moving up is for.
+	up, _ := m.Update(keyCode(tea.KeyUp))
+	if strings.Contains(plain(up.Body()), "lines pasted") {
+		t.Fatal("the summary stayed with the caret inside the paste")
+	}
 	m, _ = m.Update(keyCode(tea.KeyEnter))
 	if len(engine.sent) != 1 || strings.Count(engine.sent[0], "line") != 200 {
 		t.Fatal("the paste was not sent whole")

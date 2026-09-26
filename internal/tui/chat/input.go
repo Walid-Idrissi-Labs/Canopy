@@ -432,9 +432,6 @@ func (i Input) Lines() []string {
 		// somebody moved up into a long draft.
 		atLine := len(wrapWithMarkers(before, head, "", width)) - 1
 		first := max(0, min(atLine-i.MaxLines+1, len(lines)-i.MaxLines))
-		if atLine < first {
-			first = atLine
-		}
 		return lines[first : first+i.MaxLines]
 	}
 	if len(lines) < i.MinLines {
