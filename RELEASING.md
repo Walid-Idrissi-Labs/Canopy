@@ -3,6 +3,30 @@
 The whole release is one pushed tag. Everything below exists so that the tag is the only thing you
 have to get right on the day.
 
+## What a release carries, and how to check one
+
+Besides the archives and `checksums.txt`, every release has:
+
+- an SBOM per archive (`*.sbom.json`, from syft), listing every module compiled in at its version;
+- `checksums.txt.sig` and `checksums.txt.pem`, a keyless cosign signature whose certificate names
+  this repository's release workflow as the signer;
+- SLSA build provenance for each archive and the checksum file, in GitHub's attestation store.
+
+None of it needs a key kept anywhere: the workflow's OIDC token (`id-token: write`) is the
+identity. To check a download:
+
+```sh
+cosign verify-blob checksums.txt \
+  --signature checksums.txt.sig --certificate checksums.txt.pem \
+  --certificate-identity-regexp '^https://github.com/Walid-Idrissi-Labs/Canopy/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum -c checksums.txt --ignore-missing
+gh attestation verify canopy_*_linux_amd64.tar.gz --repo Walid-Idrissi-Labs/Canopy
+```
+
+The macOS binary is still not notarised; that needs an Apple Developer account, which is a decision
+for the owner rather than something the pipeline can do.
+
 ## What a tag does
 
 Pushing a tag matching `v*` runs `.github/workflows/release.yml`, which runs GoReleaser, which

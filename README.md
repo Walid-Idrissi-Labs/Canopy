@@ -79,7 +79,9 @@ go install github.com/Walid-Idrissi-Labs/Canopy/cmd/canopy@latest
 ```
 
 Or take a binary from the [releases page](https://github.com/Walid-Idrissi-Labs/Canopy/releases).
-macOS and Linux, on both Intel and ARM. Windows is not supported, see below.
+macOS and Linux, on both Intel and ARM. Windows is not supported, see below. Each release carries
+an SBOM, a keyless cosign signature over its checksums and SLSA build provenance;
+[RELEASING.md](RELEASING.md) has the commands that check a download.
 
 Then give it a key. A credential is stored by name and carries its own endpoint and model, which is
 what lets you talk about agents by name later:

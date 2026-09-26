@@ -54,6 +54,27 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+# A software bill of materials for each archive, from syft, which the release workflow installs. It
+# lists every module compiled in at the version it was, so a later advisory can be checked against
+# a release without rebuilding it.
+sboms:
+  - artifacts: archive
+
+# The checksum file is signed with cosign's keyless flow: the certificate names this repository's
+# release workflow as the signer, through GitHub's OIDC token, so there is no key to keep or leak.
+# Signing checksums.txt covers every archive, since each archive's digest is in it.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+
 release:
   # Not a prerelease, and the latest release, from the beta onwards.
   #
