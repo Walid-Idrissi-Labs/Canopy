@@ -54,7 +54,9 @@ func main() {
 }
 
 func run(args []string) error {
-	// Canopy re-run as the sandbox trampoline: confine this process, then become the command.
+	// Canopy re-run as the sandbox trampoline: confine this process, then become the command. The
+	// sandbox package's own init does this before main runs (see internal/sandbox/trampoline.go);
+	// kept here for a call to run from anywhere else.
 	if len(args) > 0 && args[0] == sandbox.TrampolineArg {
 		if err := sandbox.RunTrampoline(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "canopy sandbox: %v\n", err)
