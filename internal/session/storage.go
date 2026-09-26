@@ -35,7 +35,7 @@ type Storage struct {
 }
 
 // schemaVersion is the migration this build expects. See migrations.
-const schemaVersion = 11
+const schemaVersion = 12
 
 // migrations are applied in order, and the file records how far it has got in `PRAGMA user_version`.
 //
@@ -218,13 +218,16 @@ var migrations = []string{
 	// started it was, which nothing in its own turns would show.
 	`ALTER TABLE sessions ADD COLUMN tainted INTEGER NOT NULL DEFAULT 0;`,
 
-	// Added with retrying a failed turn (U-05): what kind of failure it was, how long the provider
-	// asked to be left alone, and whether it has been tried again.
+	// Added with retrying a failed turn (U-05): what kind of failure it was, and whether it has
+	// been tried again.
 	`
 	ALTER TABLE turns ADD COLUMN error_kind TEXT NOT NULL DEFAULT '';
 	ALTER TABLE turns ADD COLUMN retried INTEGER NOT NULL DEFAULT 0;
-	ALTER TABLE turns ADD COLUMN retry_after_ms INTEGER NOT NULL DEFAULT 0;
 	`,
+
+	// How long the provider asked to be left alone, so the wait survives a restart. Its own step
+	// rather than folded into the one above, which a build had already applied.
+	`ALTER TABLE turns ADD COLUMN retry_after_ms INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // OpenStorage opens or creates the session database.

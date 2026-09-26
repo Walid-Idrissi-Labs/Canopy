@@ -739,3 +739,30 @@ func TestAFailuresKindAndRetryComeBack(t *testing.T) {
 		t.Fatalf("came back as %q, %s, retried %v", got.ErrorKind, got.RetryAfter, got.Retried)
 	}
 }
+
+// A file an earlier build left at version eleven, with the failure columns but not the wait, is
+// brought forward rather than read as current.
+func TestAFileAtVersionElevenGetsTheWait(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.db.Exec(`ALTER TABLE turns DROP COLUMN retry_after_ms; PRAGMA user_version = 11`); err != nil {
+		t.Fatal(err)
+	}
+	_ = storage.Close()
+	forward, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = forward.Close() }()
+	if err := forward.SaveSession(core.Session{ID: "s1", CreatedAt: storedAt, UpdatedAt: storedAt}); err != nil {
+		t.Fatal(err)
+	}
+	turn := storedTurn("t1", "go", "", core.TurnFailed)
+	turn.RetryAfter = time.Minute
+	if err := forward.SaveTurn("s1", 0, turn); err != nil {
+		t.Fatalf("saving on a migrated version eleven file: %v", err)
+	}
+}
