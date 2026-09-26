@@ -8304,5 +8304,16 @@ releases the mouse entirely: `/mouse` (a reserved built-in) switches the frame's
 cell motion and none, with a notice each way, so the terminal's own selection works without a
 modifier. An app test drives /mouse twice and reads the view's mouse mode and the notice.
 LIMITATIONS says what the wheel does meanwhile.
+### Z-Z02 Demo images from the golden fixtures (part of Z-02)
+`status: review | owner: Claude | branch: feat/demo-screens`
+
+The golden screen tests (chat, agents, and the app's first screen, help and keys, at three sizes)
+now also keep each frame with its colour when CANOPY_SCREENS_DIR is set (internal/tui/screens).
+scripts/screens.sh runs them and renders every frame to SVG with freeze, or keeps the ANSI frames
+where freeze is missing; .github/workflows/screens.yml does the same on request and on every tag and
+uploads the images as an artifact. Nothing reaches a model: the frames come from the tests' fakes,
+so the images are reproducible and show only what the program draws. Not done: an animated
+recording (VHS) of a whole session, which needs a scripted provider the product does not ship, and
+choosing which image the README leads with, which is an editorial call for the owner.
 
 `verify: claude [x] 2026-09-26   codex [ ]`

@@ -8,12 +8,17 @@ import (
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/screens"
 )
 
 // golden compares a rendered screen, colours stripped, with its stored snapshot; see the chat
 // package's golden. CANOPY_UPDATE_GOLDENS=1 writes the snapshots again.
 func golden(t *testing.T, name, got string) {
 	t.Helper()
+	if err := screens.Keep("agents", name, got); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join("testdata", "golden", name+".txt")
 	lines := strings.Split(plain(got), "\n")
 	for i, l := range lines {
