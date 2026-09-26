@@ -62,16 +62,41 @@ var vendorSettings = []string{
 
 // Describe builds the request for a directory and its loaded configuration.
 func Describe(dir string, project config.Project) Request {
+	return DescribeWith(dir, project, nil)
+}
+
+// DescribeWith is Describe with the named instruction files read as the contents given rather than
+// from disk: what the request would be after a change that has not been made yet. A file not on disk
+// is not added.
+func DescribeWith(dir string, project config.Project, contents map[string][]byte) Request {
 	req := Request{Dir: dir, Setup: project.Setup,
 		Instructions: strings.TrimSpace(project.Instructions) != "" || len(project.Commands) > 0}
 	for _, t := range project.Tests {
 		req.Tests = append(req.Tests, t.Name+": "+describeCommand(t.Command))
 	}
 	for _, h := range project.Hooks {
-		req.Hooks = append(req.Hooks, "on "+h.On+": "+h.Run)
+		on := h.On
+		if len(h.Tools) > 0 {
+			on += " (" + strings.Join(h.Tools, ", ") + ")"
+		}
+		req.Hooks = append(req.Hooks, "on "+on+": "+h.Run)
 	}
 	for _, m := range project.MCP {
-		req.MCP = append(req.MCP, m.Name+": "+strings.Join(append([]string{m.Command}, m.Args...), " "))
+		if m.URL != "" {
+			line := m.Name + ": " + m.URL
+			// What it sends as well as where: a header built from an environment variable carries that
+			// variable's value to this url, and the person approving must see which.
+			if vars := m.HeaderVariables(); len(vars) > 0 {
+				line += ", sending $" + strings.Join(vars, ", $")
+			}
+			req.MCP = append(req.MCP, line)
+			continue
+		}
+		line := m.Name + ": " + strings.Join(append([]string{m.Command}, m.Args...), " ")
+		if m.Unconfined {
+			line += " (outside the sandbox)"
+		}
+		req.MCP = append(req.MCP, line)
 	}
 
 	h := sha256.New()
@@ -88,6 +113,9 @@ func Describe(dir string, project config.Project) Request {
 	h.Write(canonical)
 	for _, rel := range config.InstructionFiles(dir) {
 		data, err := os.ReadFile(filepath.Join(dir, rel)) // regular files only, checked by InstructionFiles
+		if given, ok := contents[rel]; ok {
+			data, err = given, nil
+		}
 		if err != nil {
 			continue
 		}
@@ -95,6 +123,59 @@ func Describe(dir string, project config.Project) Request {
 		req.InstructionFiles = append(req.InstructionFiles, rel)
 		_, _ = fmt.Fprintf(h, "\x00%s\x00", rel)
 		h.Write(data)
+	}
+	// Project skills are instructions too, loaded into the model when a task matches them. Every
+	// file in a skill's folder counts, not only SKILL.md: the skill tool serves the others and
+	// SKILL.md tells the model to follow them.
+	for _, pattern := range []string{".claude/skills/*/SKILL.md", ".agents/skills/*/SKILL.md", ".canopy/skills/*/SKILL.md"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		sort.Strings(matches)
+		for _, path := range matches {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			rel, _ := filepath.Rel(dir, path)
+			req.Instructions = true
+			req.InstructionFiles = append(req.InstructionFiles, filepath.ToSlash(rel))
+			var files []string
+			_ = filepath.WalkDir(filepath.Dir(path), func(p string, d os.DirEntry, err error) error {
+				if err == nil && !d.IsDir() && len(files) < 200 {
+					files = append(files, p)
+				}
+				return nil
+			})
+			sort.Strings(files)
+			for _, f := range files {
+				data, err := os.ReadFile(f)
+				if err != nil {
+					continue
+				}
+				fr, _ := filepath.Rel(dir, f)
+				_, _ = fmt.Fprintf(h, "\x00%s\x00", fr)
+				h.Write(data)
+			}
+		}
+	}
+	// Agent definitions are standing instructions for the agents started from them.
+	for _, pattern := range []string{".claude/agents/*.md", ".canopy/agents/*.md"} {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		sort.Strings(matches)
+		for _, path := range matches {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			rel, _ := filepath.Rel(dir, path)
+			req.Instructions = true
+			req.InstructionFiles = append(req.InstructionFiles, filepath.ToSlash(rel))
+			_, _ = fmt.Fprintf(h, "\x00%s\x00", rel)
+			h.Write(data)
+		}
 	}
 	for _, rel := range vendorSettings {
 		data, err := os.ReadFile(filepath.Join(dir, rel))

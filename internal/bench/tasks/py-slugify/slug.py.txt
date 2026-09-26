@@ -1,0 +1,3 @@
+def slugify(text):
+    """Lowercase words joined by single hyphens, with anything but letters and digits dropped."""
+    return text.lower().replace(" ", "-")

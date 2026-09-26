@@ -270,3 +270,39 @@ func TestRestoringAnEmptyCheckpointIsRefused(t *testing.T) {
 		t.Error("restoring a checkpoint with no commit should be refused rather than attempted")
 	}
 }
+
+// The preview says exactly what a restore will do: files the turn changed, made and deleted, and
+// nothing about an untracked file that was already there when the checkpoint was taken.
+func TestThePreviewListsOnlyWhatTheUndoChanges(t *testing.T) {
+	dir := repo(t)
+	taker := NewTaker(dir)
+	ctx := context.Background()
+	write(t, dir, "notes.txt", "mine\n")
+	write(t, dir, "gone.txt", "x\n")
+	checkpoint, err := taker.Take(ctx, "turn-1", "before")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "tracked.go", "package main // ruined\n")
+	write(t, dir, "has space.go", "package invented\n")
+	if err := os.Remove(filepath.Join(dir, "gone.txt")); err != nil {
+		t.Fatal(err)
+	}
+	got, state, err := taker.Preview(ctx, checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "bring back gone.txt\nremove has space.go\nrestore tracked.go"
+	if strings.Join(got, "\n") != want {
+		t.Fatalf("preview =\n%s\nwant\n%s", strings.Join(got, "\n"), want)
+	}
+	// Editing a listed file again leaves the list alone and changes the state.
+	write(t, dir, "tracked.go", "package main // ruined again\n")
+	again, state2, err := taker.Preview(ctx, checkpoint)
+	if err != nil || strings.Join(again, "\n") != want || state2 == state || state == "" {
+		t.Fatalf("a second edit: %v %q %q %v", again, state, state2, err)
+	}
+	if status := git(t, dir, "status", "--porcelain"); strings.Contains(status, "A ") {
+		t.Fatalf("previewing staged something: %q", status)
+	}
+}

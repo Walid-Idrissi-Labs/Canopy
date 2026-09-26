@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -74,6 +75,8 @@ func (f *fakeKeyStore) Rename(ref core.KeyRef, to string) (core.KeyMetadata, err
 func (f *fakeKeyStore) BackendName() string        { return "test" }
 func (f *fakeKeyStore) UsingInsecureBackend() bool { return false }
 
+func (f *fakeKeyStore) SetRate(core.KeyRef, core.KeyRate) error { return nil }
+
 func (f *fakeKeyStore) Identity(ref core.KeyRef) (keysui.Identity, error) {
 	return f.identities[ref.Name], nil
 }
@@ -81,12 +84,17 @@ func (f *fakeKeyStore) Identity(ref core.KeyRef) (keysui.Identity, error) {
 // stubEngine stands in for the session engine. The app level tests are about routing and chrome,
 // not about conversations, so it answers with an empty session and records nothing.
 type stubEngine struct {
-	session core.Session
+	judged          []core.JudgeCandidate
+	judgedFor       string
+	budget, overall session.Budget
+	session         core.Session
 	// sessions is for the few tests that need more than one, and so need the stub to be able to
 	// tell them apart. Everything else uses the single session above and does not care which ID it
 	// is asked for.
 	sessions map[string]core.Session
-	sent     []string
+	// elsewhere are sessions recorded in another project.
+	elsewhere map[string]bool
+	sent      []string
 	// compacted and asked count the two calls that reach a provider without being a message, so a
 	// test can assert that a key started neither.
 	compacted int
@@ -113,6 +121,30 @@ func (e *stubEngine) Session(id string) (core.Session, bool) {
 		return s, ok
 	}
 	return e.session, true
+}
+
+func (e *stubEngine) Sessions() []core.Session {
+	var out []core.Session
+	for _, s := range e.sessions {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func (e *stubEngine) InThisProject(id string) bool { return !e.elsewhere[id] }
+
+func (e *stubEngine) SearchHistory(query string, _ int) []session.SearchHit {
+	var hits []session.SearchHit
+	for _, s := range e.Sessions() {
+		for _, turn := range s.Turns {
+			if strings.Contains(turn.Request.Text, query) {
+				hits = append(hits, session.SearchHit{SessionID: s.ID, SessionTitle: s.Title,
+					Excerpt: "<<" + turn.Request.Text + ">>"})
+			}
+		}
+	}
+	return hits
 }
 
 func (e *stubEngine) Send(_, prompt string) (string, error) {
@@ -198,6 +230,10 @@ func (e *stubEngine) Undo(_ context.Context, _, turnID string) error {
 	return nil
 }
 
+func (e *stubEngine) UndoPreview(context.Context, string, string) (session.UndoPlan, error) {
+	return session.UndoPlan{Changes: []string{"M main.go"}}, nil
+}
+
 // Create hands back a session that is genuinely different from the one before it, since a stub
 // returning the same ID every time would make "the screen moved to the new conversation" pass
 // without the screen having moved anywhere.
@@ -255,7 +291,7 @@ func TestFirstRunWithNoKeysOpensOnCredentials(t *testing.T) {
 	if app.Screen() != "keys" {
 		t.Errorf("first run opened on %q, want the credential screen", app.Screen())
 	}
-	view := plain(app.View())
+	view := plain(app.View().Content)
 	if !strings.Contains(view, "No credentials yet") {
 		t.Errorf("the empty state should explain itself:\n%s", view)
 	}
@@ -272,7 +308,7 @@ func TestWithKeysOpensOnChat(t *testing.T) {
 	if app.Screen() != "chat" {
 		t.Errorf("opened on %q, want chat", app.Screen())
 	}
-	view := plain(app.View())
+	view := plain(app.View().Content)
 	// The name, and what to do next. The second used to be a line of its own on the welcome block
 	// and is the frame's footer now, which was already saying the same thing one row lower: two
 	// lists of the keys is one list that goes stale the first time the other is edited. The first is
@@ -295,11 +331,11 @@ func TestSwitchingBetweenScreens(t *testing.T) {
 	if app.(tui.App).Screen() != "keys" {
 		t.Fatal("ctrl+k should open the credential screen")
 	}
-	if !strings.Contains(plain(app.View()), "claude") {
+	if !strings.Contains(plain(app.View().Content), "claude") {
 		t.Error("the credential should be listed")
 	}
 
-	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	app, _ = app.Update(keyCode(tea.KeyEsc))
 	if app.(tui.App).Screen() != "chat" {
 		t.Error("esc should go back to chat, which is home")
 	}
@@ -308,7 +344,7 @@ func TestSwitchingBetweenScreens(t *testing.T) {
 	if app.(tui.App).Screen() != "agents" {
 		t.Fatalf("ctrl+d opened %q, want the agents view", app.(tui.App).Screen())
 	}
-	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	app, _ = app.Update(keyCode(tea.KeyEsc))
 	if app.(tui.App).Screen() != "chat" {
 		t.Error("esc should return to chat from the agents view too")
 	}
@@ -355,10 +391,10 @@ func TestDashboardKeepsUpdatingBehindTheCredentialScreen(t *testing.T) {
 	}
 	app, _ = app.Update(nextMsg(t, waiting))
 
-	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	if !strings.Contains(plain(app.View()), "STALE") {
+	app, _ = app.Update(keyCode(tea.KeyEsc))
+	if !strings.Contains(plain(app.View().Content), "STALE") {
 		t.Errorf("the dashboard missed an event while another screen was in front:\n%s",
-			plain(app.View()))
+			plain(app.View().Content))
 	}
 }
 
@@ -378,7 +414,7 @@ func TestKeystrokesAreNotStolenWhileTyping(t *testing.T) {
 		}
 	}
 
-	app, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	app, cmd := app.Update(keyCode(tea.KeyEsc))
 	if cmd != nil {
 		t.Error("esc while typing should cancel the field, not quit the program")
 	}
@@ -400,12 +436,12 @@ func TestAddingAKeyInTheInterfaceReachesTheStore(t *testing.T) {
 	for _, r := range "kimi" {
 		app = key(app, string(r))
 	}
-	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter}) // anthropic
+	app, _ = app.Update(keyCode(tea.KeyEnter))
+	app, _ = app.Update(keyCode(tea.KeyEnter)) // anthropic
 	for _, r := range "sk-value-typed-in-the-tui" {
 		app = key(app, string(r))
 	}
-	app, _ = app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	app, _ = app.Update(keyCode(tea.KeyEnter))
 
 	if len(keyStore.keys) != 1 {
 		t.Fatalf("got %d stored credentials, want 1", len(keyStore.keys))
@@ -413,7 +449,7 @@ func TestAddingAKeyInTheInterfaceReachesTheStore(t *testing.T) {
 	if keyStore.keys[0].Ref.Name != "kimi" {
 		t.Errorf("stored name = %q", keyStore.keys[0].Ref.Name)
 	}
-	if strings.Contains(plain(app.View()), "sk-value-typed") {
+	if strings.Contains(plain(app.View().Content), "sk-value-typed") {
 		t.Error("the typed value is visible after storing")
 	}
 }
@@ -424,7 +460,7 @@ func TestEveryScreenSaysHowToReachCredentials(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	chatView := plain(launch(store, withOneKey()).View())
+	chatView := plain(launch(store, withOneKey()).View().Content)
 	if !strings.Contains(chatView, "keys") {
 		t.Errorf("chat should say how to reach credentials:\n%s", chatView)
 	}
@@ -432,12 +468,12 @@ func TestEveryScreenSaysHowToReachCredentials(t *testing.T) {
 	// The agents view was exempt while its footer had no room, and Phase M put K on it. Leaving the
 	// exemption behind would have quietly stopped testing a screen that had started advertising the
 	// key, which is the worst of both: no coverage and a comment saying none was wanted.
-	agentsView := plain(key(launch(store, withOneKey()), "ctrl+d").View())
+	agentsView := plain(key(launch(store, withOneKey()), "ctrl+d").View().Content)
 	if !strings.Contains(agentsView, "credentials") {
 		t.Errorf("the agents view should say how to reach credentials:\n%s", agentsView)
 	}
 
-	dashboard := plain(key(key(launch(store, withOneKey()), "ctrl+d"), "w").View())
+	dashboard := plain(key(key(launch(store, withOneKey()), "ctrl+d"), "w").View().Content)
 	if !strings.Contains(dashboard, "credentials") {
 		t.Errorf("the worktree monitor should say how to reach credentials:\n%s", dashboard)
 	}
@@ -454,7 +490,7 @@ func TestTheChatFooterKeepsHelpAndCredentialsAtEightyColumns(t *testing.T) {
 	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 	narrow, _ := app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	view := plain(narrow.(tui.App).View())
+	view := plain(narrow.(tui.App).View().Content)
 	footer := lastLine(view)
 	// `ctrl+d agents` joins the two that must survive. It is the way to the several-agents view,
 	// which is the feature the product is named for, and it used to sit behind `ctrl+n new` in the
@@ -493,8 +529,8 @@ func TestThereIsNoLaunchScreenAndTheFirstKeystrokeCounts(t *testing.T) {
 	if app.Screen() != "chat" {
 		t.Fatalf("launched on %q, want a conversation straight away", app.Screen())
 	}
-	if !strings.Contains(plain(app.View()), "canopy") {
-		t.Errorf("the opening screen does not show the name:\n%s", plain(app.View()))
+	if !strings.Contains(plain(app.View().Content), "canopy") {
+		t.Errorf("the opening screen does not show the name:\n%s", plain(app.View().Content))
 	}
 
 	next := key(app, "j")
@@ -526,7 +562,7 @@ func TestLayoutFillsAndReflows(t *testing.T) {
 		app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 		next, _ := app.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 
-		lines := strings.Split(plain(next.View()), "\n")
+		lines := strings.Split(plain(next.View().Content), "\n")
 		if len(lines) < size.h-2 {
 			t.Errorf("at %dx%d the view is %d lines, which does not fill the terminal",
 				size.w, size.h, len(lines))
@@ -549,7 +585,7 @@ func TestTooSmallSaysSoRatherThanRenderingBadly(t *testing.T) {
 	app := tui.NewApp(store, withOneKey(), &stubEngine{}, "myproject", "claude")
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
 
-	view := plain(next.View())
+	view := plain(next.View().Content)
 	if !strings.Contains(view, "too small") {
 		t.Errorf("a tiny terminal should say so:\n%s", view)
 	}
@@ -569,8 +605,8 @@ func TestHelpOpensFromAnyScreenAndLeavesOnAnyKey(t *testing.T) {
 	// From chat with a message already started, where a question mark belongs to the message box
 	// and must not open anything. Stealing a character out of the middle of a sentence somebody is
 	// writing is the thing this rule exists to prevent.
-	started, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("what is this")})
-	typed, _ := started.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	started, _ := app.Update(keyText("what is this"))
+	typed, _ := started.(tui.App).Update(keyText("?"))
 	if typed.(tui.App).Screen() == "help" {
 		t.Error("a question mark typed into a message opened the help screen")
 	}
@@ -581,22 +617,22 @@ func TestHelpOpensFromAnyScreenAndLeavesOnAnyKey(t *testing.T) {
 	// From chat with nothing typed, where there is no message for it to be part of. Chat is the
 	// screen the program opens on, and while this did not work the one key that lists every other
 	// key could not be pressed from home.
-	fromHome, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	fromHome, _ := app.Update(keyText("?"))
 	if fromHome.(tui.App).Screen() != "help" {
 		t.Errorf("? on an empty message box landed on %q", fromHome.(tui.App).Screen())
 	}
 
 	// From the agents view, where it is not being typed into anything.
-	agents, _ := app.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
-	opened, _ := agents.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	agents, _ := app.Update(keyCode('d', tea.ModCtrl))
+	opened, _ := agents.(tui.App).Update(keyText("?"))
 	if opened.(tui.App).Screen() != "help" {
 		t.Fatalf("? from the agents view landed on %q", opened.(tui.App).Screen())
 	}
-	if !strings.Contains(plain(opened.(tui.App).View()), "send") {
+	if !strings.Contains(plain(opened.(tui.App).View().Content), "send") {
 		t.Error("the overlay is on screen but does not list the bindings")
 	}
 
-	closed, _ := opened.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("z")})
+	closed, _ := opened.(tui.App).Update(keyText("z"))
 	if closed.(tui.App).Screen() != "agents" {
 		t.Errorf("leaving help landed on %q, want where it was opened from", closed.(tui.App).Screen())
 	}
@@ -635,16 +671,16 @@ func TestCreatingAnAgentFromTheInterfaceWorks(t *testing.T) {
 	engine := &stubEngine{}
 	app := launchWith(store, withOneKey(), engine)
 
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	next, _ := app.(tui.App).Update(keyCode('d', tea.ModCtrl))
 	if next.(tui.App).Screen() != "agents" {
 		t.Fatalf("ctrl+d landed on %q", next.(tui.App).Screen())
 	}
 
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune("n")},
-		{Type: tea.KeyRunes, Runes: []rune("worker")},
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyRunes, Runes: []rune("y")},
+	for _, key := range []tea.KeyPressMsg{
+		keyText("n"),
+		keyText("worker"),
+		keyCode(tea.KeyEnter),
+		keyText("y"),
 	} {
 		next, _ = next.(tui.App).Update(key)
 	}
@@ -680,12 +716,12 @@ func TestChoosingACredentialReachesTheConversation(t *testing.T) {
 	engine := &stubEngine{}
 	app := launchWith(store, keyStore, engine)
 
-	next, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	next, _ := app.(tui.App).Update(keyCode('k', tea.ModCtrl))
 	if next.(tui.App).Screen() != "keys" {
 		t.Fatalf("ctrl+k landed on %q", next.(tui.App).Screen())
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	chosen, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = next.(tui.App).Update(keyText("j"))
+	chosen, _ := next.(tui.App).Update(keyCode(tea.KeyEnter))
 	_ = chosen
 
 	if engine.using[0] != "nim" {
@@ -711,14 +747,14 @@ func TestAStoredCredentialDoesNotClaimARefusedConversationSwitch(t *testing.T) {
 	}
 	current := launchWith(store, keyStore, engine)
 
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyCtrlK},
-		{Type: tea.KeyRunes, Runes: []rune("a")},
-		{Type: tea.KeyRunes, Runes: []rune("kimi")},
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyEnter}, // Anthropic, the first provider.
-		{Type: tea.KeyRunes, Runes: []rune("test-secret")},
-		{Type: tea.KeyEnter},
+	for _, key := range []tea.KeyPressMsg{
+		keyCode('k', tea.ModCtrl),
+		keyText("a"),
+		keyText("kimi"),
+		keyCode(tea.KeyEnter),
+		keyCode(tea.KeyEnter), // Anthropic, the first provider.
+		keyText("test-secret"),
+		keyCode(tea.KeyEnter),
 	} {
 		current, _ = current.(tui.App).Update(key)
 	}
@@ -729,7 +765,7 @@ func TestAStoredCredentialDoesNotClaimARefusedConversationSwitch(t *testing.T) {
 	if engine.using != [2]string{} {
 		t.Fatalf("the refused credential reached the conversation as %v", engine.using)
 	}
-	view := plain(current.(tui.App).View())
+	view := plain(current.(tui.App).View().Content)
 	for _, want := range []string{`stored "kimi"`, "not selected", "mid answer"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the screen lost %q:\n%s", want, view)
@@ -742,7 +778,7 @@ func TestAStoredCredentialDoesNotClaimARefusedConversationSwitch(t *testing.T) {
 	// The refusal clears the pending preference. Merely moving the cursor after the turn ends must
 	// not retry and silently apply it.
 	engine.useErr = nil
-	after, _ := current.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	after, _ := current.(tui.App).Update(keyText("k"))
 	if engine.using != [2]string{} {
 		t.Errorf("an unrelated later key retried the refused switch as %v", engine.using)
 	}
@@ -784,7 +820,12 @@ func (e *stubEngine) Aside(_ context.Context, _, question string) (string, error
 
 func (e *stubEngine) Asides(string) []session.Aside { return nil }
 
-func (e *stubEngine) Steering(string) []string { return nil }
+func (e *stubEngine) Steering(string) []string         { return nil }
+func (e *stubEngine) RemoveAgent(string) error         { return nil }
+func (e *stubEngine) ClearSteering(string) []string    { return nil }
+func (e *stubEngine) Retry(string) (string, error)     { return "", nil }
+func (e *stubEngine) Grants(string) []permission.Scope { return nil }
+func (e *stubEngine) Revoke(string, permission.Scope)  {}
 
 // RenameCredential records what the application asked for, and moves the sessions the stub is
 // holding so a test can assert that a conversation followed rather than only that the call was made.
@@ -837,8 +878,8 @@ func openPicker(t *testing.T, keyStore keysui.Store, engine tui.Engine) tui.App 
 	t.Cleanup(func() { store.Close() })
 
 	app := launchWith(store, keyStore, engine)
-	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model")})
-	sent, cmd := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed, _ := app.(tui.App).Update(keyText("/model"))
+	sent, cmd := typed.(tui.App).Update(keyCode(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatal("/model produced no command, so nothing was asked of the application")
 	}
@@ -857,10 +898,10 @@ func TestTheModelCommandIsOfferedInTheSlashMenu(t *testing.T) {
 	defer store.Close()
 
 	app := launchWith(store, twoKeys(), onOpus())
-	menu, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	menu, _ := app.(tui.App).Update(keyText("/"))
 
-	if !strings.Contains(plain(menu.(tui.App).View()), "model") {
-		t.Errorf("a bare slash does not offer /model:\n%s", plain(menu.(tui.App).View()))
+	if !strings.Contains(plain(menu.(tui.App).View().Content), "model") {
+		t.Errorf("a bare slash does not offer /model:\n%s", plain(menu.(tui.App).View().Content))
 	}
 }
 
@@ -872,8 +913,8 @@ func TestOpeningTheModelPickerAndLeavingChangesNothing(t *testing.T) {
 
 	// Moved around first, because a cursor that has been walked is where an accidental apply would
 	// come from if leaving applied anything.
-	moved, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	left, _ := moved.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	moved, _ := app.Update(keyText("j"))
+	left, _ := moved.(tui.App).Update(keyCode(tea.KeyEsc))
 
 	if left.(tui.App).Screen() != "chat" {
 		t.Errorf("esc from the picker landed on %q", left.(tui.App).Screen())
@@ -891,7 +932,7 @@ func TestOpeningTheModelPickerAndLeavingChangesNothing(t *testing.T) {
 // conversation it is being read against off the top.
 func TestThePickerMarksWhereYouAreAndKeepsEmptySections(t *testing.T) {
 	app := openPicker(t, twoKeys(), onOpus())
-	view := plain(app.View())
+	view := plain(app.View().Content)
 
 	for _, want := range []string{
 		"claude (anthropic)",
@@ -913,9 +954,9 @@ func TestThePickerMarksWhereYouAreAndKeepsEmptySections(t *testing.T) {
 	// the state an unrecognised endpoint is in on the day it is added.
 	next := tea.Model(app)
 	for range 20 {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+		next, _ = next.(tui.App).Update(keyText("j"))
 	}
-	view = plain(next.(tui.App).View())
+	view = plain(next.(tui.App).View().Content)
 	for _, want := range []string{"nim (openai-compatible)", "api.moonshot.cn", "none set"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("walking to the second credential does not reach %q:\n%s", want, view)
@@ -942,18 +983,18 @@ func TestThePickerLeavesTheConversationOnScreen(t *testing.T) {
 	}}
 
 	app := launchWith(store, twoKeys(), engine)
-	before := plain(app.(tui.App).View())
+	before := plain(app.(tui.App).View().Content)
 	if !strings.Contains(before, "enter send") {
 		t.Fatalf("the conversation did not open with a message box:\n%s", before)
 	}
 
-	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model")})
-	sent, cmd := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed, _ := app.(tui.App).Update(keyText("/model"))
+	sent, cmd := typed.(tui.App).Update(keyCode(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatal("/model produced no command, so nothing was asked of the application")
 	}
 	opened, _ := sent.(tui.App).Update(cmd())
-	view := plain(opened.(tui.App).View())
+	view := plain(opened.(tui.App).View().Content)
 
 	for _, want := range []string{
 		// The header, which says whose conversation this is and what it is running.
@@ -987,8 +1028,8 @@ func TestPickingAModelMovesTheConversationAndTheHeaderSaysSo(t *testing.T) {
 	engine := onOpus()
 	app := openPicker(t, twoKeys(), engine)
 
-	moved, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	applied, _ := moved.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	moved, _ := app.Update(keyText("j"))
+	applied, _ := moved.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	if applied.(tui.App).Screen() != "chat" {
 		t.Errorf("applying landed on %q, want back where it was opened from", applied.(tui.App).Screen())
@@ -996,8 +1037,8 @@ func TestPickingAModelMovesTheConversationAndTheHeaderSaysSo(t *testing.T) {
 	if engine.using[0] != "claude" || engine.using[1] != "claude-opus-4-8" {
 		t.Fatalf("the conversation moved to %v, want the row under the one it was on", engine.using)
 	}
-	if !strings.Contains(plain(applied.(tui.App).View()), "claude-opus-4-8") {
-		t.Errorf("the header does not name the model now in use:\n%s", plain(applied.(tui.App).View()))
+	if !strings.Contains(plain(applied.(tui.App).View().Content), "claude-opus-4-8") {
+		t.Errorf("the header does not name the model now in use:\n%s", plain(applied.(tui.App).View().Content))
 	}
 }
 
@@ -1016,20 +1057,20 @@ func TestPickingUnderAnotherKeySwitchesCredentialAsWell(t *testing.T) {
 	// row above it, and that is the one the other credential offers.
 	next := tea.Model(app)
 	for range 20 {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+		next, _ = next.(tui.App).Update(keyText("j"))
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	if !strings.Contains(plain(next.(tui.App).View()), "> ") {
+	next, _ = next.(tui.App).Update(keyText("k"))
+	if !strings.Contains(plain(next.(tui.App).View().Content), "> ") {
 		t.Fatal("the cursor left the list entirely")
 	}
-	applied, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	applied, _ := next.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	if engine.using[0] != "nim" || engine.using[1] != "minimaxai/minimax-m2.7" {
 		t.Fatalf("the conversation moved to %v, want the model under the other credential", engine.using)
 	}
 	// The header follows both, since the credential is as much a fact about the next request as the
 	// model is.
-	if header := plain(applied.(tui.App).View()); !strings.Contains(header, "nim") {
+	if header := plain(applied.(tui.App).View().Content); !strings.Contains(header, "nim") {
 		t.Errorf("the header does not name the credential now in use:\n%s", header)
 	}
 }
@@ -1040,8 +1081,8 @@ func TestPickingAModelNeverRewritesTheKeysDefault(t *testing.T) {
 	keyStore := twoKeys()
 	app := openPicker(t, keyStore, onOpus())
 
-	moved, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	if _, cmd := moved.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+	moved, _ := app.Update(keyText("j"))
+	if _, cmd := moved.(tui.App).Update(keyCode(tea.KeyEnter)); cmd != nil {
 		_ = cmd
 	}
 
@@ -1061,7 +1102,7 @@ func TestThePickerReadsWithNoColour(t *testing.T) {
 	defer theme.Set(theme.Default)
 
 	app := openPicker(t, twoKeys(), onOpus())
-	view := plain(app.View())
+	view := plain(app.View().Content)
 
 	if !strings.Contains(view, "* Claude Opus 5") {
 		t.Errorf("with no colour, nothing marks the model in use:\n%s", view)
@@ -1090,7 +1131,7 @@ func TestTheCornerNamesTheConversationsAgent(t *testing.T) {
 		tui.AppOptions{Session: "session-1", Agent: "main"})
 	sized, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 
-	view := plain(sized.(tui.App).View())
+	view := plain(sized.(tui.App).View().Content)
 	if !strings.Contains(view, "main") {
 		t.Errorf("the conversation Canopy opened on is not named in the corner:\n%s", view)
 	}
@@ -1101,7 +1142,7 @@ func TestTheCornerNamesTheConversationsAgent(t *testing.T) {
 
 	// Moving to a subagent's conversation moves the name with it.
 	switched, _ := sized.(tui.App).Update(agentsui.SwitchMsg{SessionID: "session-7", AgentName: "worker-2"})
-	moved := plain(switched.(tui.App).View())
+	moved := plain(switched.(tui.App).View().Content)
 	if !strings.Contains(moved, "worker-2") {
 		t.Errorf("the corner still names the conversation that was left:\n%s", moved)
 	}
@@ -1130,9 +1171,168 @@ func TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt(t *testing.T) {
 		tui.AppOptions{Session: "session-1", Agent: "main"})
 
 	switched, _ := app.Update(chat.SwitchMsg{SessionID: "session-7", AgentName: "worker-2"})
-	view := plain(switched.(tui.App).View())
+	view := plain(switched.(tui.App).View().Content)
 	if !strings.Contains(view, "worker-2") || strings.Contains(view, "main") {
 		t.Errorf("the surfaced question did not open its owning conversation:\n%s", view)
+	}
+}
+
+// The palette opens another agent's conversation, or an earlier one of this run, by name; the one
+// on screen is not offered, and an empty conversation is not either.
+func TestThePaletteOpensAgentsAndConversations(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Title: "the current one", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete}}},
+			"session-3": {ID: "session-3", Title: "fix the lexer", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete,
+				Request: core.Message{Role: core.RoleUser, Text: "tokenise the input"}}}},
+			"session-5": {ID: "session-5", Title: "never used"},
+			"session-7": {ID: "session-7", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete}}},
+		},
+		agents: []session.AgentStatus{{Agent: session.Agent{Name: "reviewer", SessionID: "session-7"},
+			State: core.AgentWorking, Title: "review the parser"},
+			{Agent: session.Agent{Name: "unborn"}, State: core.AgentIdle}},
+	}
+	var app tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+	app, _ = app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	typed := func(app tea.Model, text string) tea.Model {
+		app, _ = app.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+		for _, r := range text {
+			if r == ' ' {
+				app, _ = app.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+				continue
+			}
+			app, _ = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		return app
+	}
+	agents := typed(app, "agent")
+	view := plain(agents.(tui.App).View().Content)
+	if !strings.Contains(view, "agent reviewer") || !strings.Contains(view, "review the parser") {
+		t.Fatalf("no agent in the palette:\n%s", view)
+	}
+	if strings.Contains(view, "agent unborn") {
+		t.Fatalf("an agent with no conversation is offered:\n%s", view)
+	}
+	conversations := typed(app, "conversation")
+	view = plain(conversations.(tui.App).View().Content)
+	if !strings.Contains(view, "conversation fix the lexer") || strings.Contains(view, "the current one") ||
+		strings.Contains(view, "never used") || strings.Contains(view, "session-7") {
+		t.Fatalf("the palette offers the conversation on screen, an empty one, or an agent's twice:\n%s", view)
+	}
+	app = typed(app, "lexer")
+	app, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("choosing a conversation asked for nothing")
+	}
+	app, _ = app.Update(cmd())
+	if view := plain(app.(tui.App).View().Content); !strings.Contains(view, "tokenise the input") {
+		t.Fatalf("the chosen conversation is not on screen:\n%s", view)
+	}
+}
+
+// typedWith opens the palette, types, and returns the command the last key started.
+func typedWith(app tea.Model, text string) (tea.Model, tea.Cmd) {
+	app, _ = app.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+	var cmd tea.Cmd
+	for _, r := range text {
+		app, cmd = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	return app, cmd
+}
+
+// A conversation from before is found by what was said in it, shows its code, cost and where it was
+// forked from, and another project's never appears.
+func TestAnEarlierConversationIsFoundByWhatWasSaid(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	done := func(text string) []core.Turn {
+		return []core.Turn{{ID: "t1", State: core.TurnComplete, Request: core.Message{Role: core.RoleUser, Text: text},
+			Usage: core.Usage{CostUSD: 0.42, CostKnown: true}}}
+	}
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Turns: done("hello")},
+			"session-4": {ID: "session-4", Title: "auth work", Turns: done("rotate the bcrypt cost")},
+			"session-6": {ID: "session-6", Title: "auth work, again", ForkedFrom: "session-4", Turns: done("try argon2")},
+			"session-9": {ID: "session-9", Title: "other repo", Turns: done("bcrypt elsewhere")},
+		},
+		elsewhere: map[string]bool{"session-9": true},
+	}
+	var app tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+	app, _ = app.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	typed := func(app tea.Model, text string) tea.Model {
+		app, _ = app.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+		for _, r := range text {
+			if r == ' ' {
+				app, _ = app.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+				continue
+			}
+			app, _ = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		return app
+	}
+	view := plain(typed(app, "conversation").(tui.App).View().Content)
+	if !strings.Contains(view, "forked from 4") || !strings.Contains(view, "$0.42") || !strings.Contains(view, "code 6") {
+		t.Fatalf("a conversation is listed without its code, cost or origin:\n%s", view)
+	}
+	if strings.Contains(view, "other repo") {
+		t.Fatalf("another project's conversation is offered:\n%s", view)
+	}
+	// The search of what was said waits for typing to pause and runs off the update loop, so the
+	// commands the last key started are run through, as the program would.
+	found, cmd := typedWith(app, "bcrypt")
+	for step := 0; cmd != nil && step < 4; step++ {
+		found, cmd = found.Update(cmd())
+	}
+	view = plain(found.(tui.App).View().Content)
+	if !strings.Contains(view, "said in auth work") || strings.Contains(view, "other repo") {
+		t.Fatalf("the search by content:\n%s", view)
+	}
+	found, cmd = found.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("choosing a found conversation asked for nothing")
+	}
+	found, _ = found.Update(cmd())
+	if view := plain(found.(tui.App).View().Content); !strings.Contains(view, "rotate the bcrypt cost") {
+		t.Fatalf("the found conversation is not on screen:\n%s", view)
+	}
+}
+
+// /mouse hands the mouse to the terminal, so its own selection works, and takes it back.
+func TestTheMouseCanBeHandedBack(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{session: core.Session{ID: "s1"}}
+	var app tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "s1"})
+	if app.(tui.App).View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("the mouse is not reported to begin with")
+	}
+	toggle := func(app tea.Model) tea.Model {
+		for _, r := range "/mouse" {
+			app, _ = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		app, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		for cmd != nil {
+			msg := cmd()
+			if _, ok := msg.(chat.ActionMsg); !ok {
+				break
+			}
+			app, cmd = app.Update(msg)
+		}
+		return app
+	}
+	app = toggle(app)
+	if app.(tui.App).View().MouseMode != tea.MouseModeNone || !strings.Contains(plain(app.(tui.App).View().Content), "the mouse is the terminal's") {
+		t.Fatal("/mouse did not hand the mouse back")
+	}
+	app = toggle(app)
+	if app.(tui.App).View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("/mouse again did not take it back")
 	}
 }
 
@@ -1157,29 +1357,29 @@ func TestARefusedPickLeavesTheNextConversationWhereItWas(t *testing.T) {
 	}
 
 	app := launchWith(store, keyStore, engine)
-	typed, _ := app.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model")})
-	sent, cmd := typed.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	typed, _ := app.(tui.App).Update(keyText("/model"))
+	sent, cmd := typed.(tui.App).Update(keyCode(tea.KeyEnter))
 	opened, _ := sent.(tui.App).Update(cmd())
 
 	// All the way down and one back up, which is the last model row: the one under the other key.
 	next := tea.Model(opened)
 	for range 20 {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+		next, _ = next.(tui.App).Update(keyText("j"))
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
-	refused, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = next.(tui.App).Update(keyText("k"))
+	refused, _ := next.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	if engine.using != [2]string{} {
 		t.Fatalf("a refused pick reached the conversation as %v", engine.using)
 	}
 
 	// The refusal is on screen rather than swallowed, or the screen looks broken.
-	if view := plain(refused.(tui.App).View()); !strings.Contains(view, "mid answer") {
+	if view := plain(refused.(tui.App).View().Content); !strings.Contains(view, "mid answer") {
 		t.Errorf("the refusal is not shown:\n%s", view)
 	}
 
 	before := engine.created
-	started, _ := refused.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	started, _ := refused.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	_ = started
 
 	if engine.created != before+1 {
@@ -1206,12 +1406,12 @@ func TestThePickerTakesAModelItHasNeverHeardOf(t *testing.T) {
 	// escape from, and the block says how much more of the list there is.
 	next := tea.Model(app)
 	for range 7 {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+		next, _ = next.(tui.App).Update(keyText("j"))
 	}
-	if !strings.Contains(plain(next.(tui.App).View()), "something else, type it") {
-		t.Fatalf("the picker offers no way to type a model:\n%s", plain(next.(tui.App).View()))
+	if !strings.Contains(plain(next.(tui.App).View().Content), "something else, type it") {
+		t.Fatalf("the picker offers no way to type a model:\n%s", plain(next.(tui.App).View().Content))
 	}
-	opened, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	opened, _ := next.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	// Enter opens the field rather than applying, since there is nothing on it yet to apply.
 	if engine.using != [2]string{} {
@@ -1220,14 +1420,14 @@ func TestThePickerTakesAModelItHasNeverHeardOf(t *testing.T) {
 
 	typing := tea.Model(opened)
 	for _, r := range "claude-something-unreleased" {
-		typing, _ = typing.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		typing, _ = typing.(tui.App).Update(keyText(string([]rune{r})))
 	}
 	// Every key belongs to the field while it is up, including the ones that would otherwise move.
-	if view := plain(typing.(tui.App).View()); !strings.Contains(view, "claude-something-unreleased") {
+	if view := plain(typing.(tui.App).View().Content); !strings.Contains(view, "claude-something-unreleased") {
 		t.Errorf("what was typed is not on screen:\n%s", view)
 	}
 
-	applied, _ := typing.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	applied, _ := typing.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	if engine.using[0] != "claude" || engine.using[1] != "claude-something-unreleased" {
 		t.Errorf("the typed model reached the conversation as %v", engine.using)
@@ -1235,7 +1435,7 @@ func TestThePickerTakesAModelItHasNeverHeardOf(t *testing.T) {
 	if applied.(tui.App).Screen() != "chat" {
 		t.Errorf("applying a typed model landed on %q", applied.(tui.App).Screen())
 	}
-	if view := plain(applied.(tui.App).View()); !strings.Contains(view, "claude-something-unreleased") {
+	if view := plain(applied.(tui.App).View().Content); !strings.Contains(view, "claude-something-unreleased") {
 		t.Errorf("the header does not name the typed model:\n%s", view)
 	}
 }
@@ -1248,26 +1448,26 @@ func TestLeavingTheTypedRowChangesNothing(t *testing.T) {
 
 	next := tea.Model(app)
 	for range 7 {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+		next, _ = next.(tui.App).Update(keyText("j"))
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = next.(tui.App).Update(keyCode(tea.KeyEnter))
 	for _, r := range "half-typed" {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next, _ = next.(tui.App).Update(keyText(string([]rune{r})))
 	}
 
-	back, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	back, _ := next.(tui.App).Update(keyCode(tea.KeyEsc))
 	if back.(tui.App).Screen() != "model" {
 		t.Errorf("esc while typing left the picker for %q", back.(tui.App).Screen())
 	}
 	if engine.using != [2]string{} {
 		t.Errorf("abandoning a half typed model applied %v", engine.using)
 	}
-	if view := plain(back.(tui.App).View()); strings.Contains(view, "half-typed") {
+	if view := plain(back.(tui.App).View().Content); strings.Contains(view, "half-typed") {
 		t.Errorf("what was abandoned is still on screen:\n%s", view)
 	}
 
 	// And a second esc leaves the picker, which is what it always meant.
-	left, _ := back.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	left, _ := back.(tui.App).Update(keyCode(tea.KeyEsc))
 	if left.(tui.App).Screen() != "chat" {
 		t.Errorf("esc from the list landed on %q", left.(tui.App).Screen())
 	}
@@ -1282,16 +1482,16 @@ func TestAKeyWithNothingToOfferCanStillBeTypedInto(t *testing.T) {
 	// The last row in the list belongs to that section, since it is the only row it has.
 	next := tea.Model(app)
 	for range 20 {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+		next, _ = next.(tui.App).Update(keyText("j"))
 	}
-	if view := plain(next.(tui.App).View()); !strings.Contains(view, "none set") {
+	if view := plain(next.(tui.App).View().Content); !strings.Contains(view, "none set") {
 		t.Fatalf("the empty section lost its warning:\n%s", view)
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = next.(tui.App).Update(keyCode(tea.KeyEnter))
 	for _, r := range "moonshot-v1-32k" {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next, _ = next.(tui.App).Update(keyText(string([]rune{r})))
 	}
-	applied, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	applied, _ := next.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	if engine.using[0] != "nim" || engine.using[1] != "moonshot-v1-32k" {
 		t.Errorf("the typed model reached the conversation as %v, want it under the empty key",
@@ -1322,18 +1522,18 @@ func TestRenamingACredentialTakesTheConversationWithIt(t *testing.T) {
 		tui.AppOptions{Session: "session-1"})
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	next, _ = next.(tui.App).Update(keyCode('k', tea.ModCtrl))
 	if next.(tui.App).Screen() != "keys" {
 		t.Fatalf("ctrl+k landed on %q", next.(tui.App).Screen())
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	next, _ = next.(tui.App).Update(keyText("e"))
 	for range len("kimi") {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		next, _ = next.(tui.App).Update(keyCode(tea.KeyBackspace))
 	}
 	for _, r := range "moonshot" {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next, _ = next.(tui.App).Update(keyText(string([]rune{r})))
 	}
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	next, _ = next.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	if keyStore.keys[0].Ref.Name != "moonshot" {
 		t.Fatalf("the credential was not renamed: %v", keyStore.keys)
@@ -1347,15 +1547,15 @@ func TestRenamingACredentialTakesTheConversationWithIt(t *testing.T) {
 
 	// The header follows too. A rename the screen does not reflect is one somebody has to take on
 	// faith, and here it would be showing a credential that no longer exists.
-	back, _ := next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
-	view := plain(back.(tui.App).View())
+	back, _ := next.(tui.App).Update(keyCode(tea.KeyEsc))
+	view := plain(back.(tui.App).View().Content)
 	if !strings.Contains(view, "moonshot") {
 		t.Errorf("the header does not name the renamed credential:\n%s", view)
 	}
 
 	// And so does what a new conversation inherits, or the next ctrl+n would open on a credential
 	// nobody can resolve.
-	fresh, _ := back.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	fresh, _ := back.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	_ = fresh
 	if engine.created == 0 {
 		t.Fatal("ctrl+n started no conversation")
@@ -1384,15 +1584,15 @@ func TestARenameIsNotRefusedByARunningTurn(t *testing.T) {
 		tui.AppOptions{Session: "session-1"})
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlK})
-	next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	next, _ = next.(tui.App).Update(keyCode('k', tea.ModCtrl))
+	next, _ = next.(tui.App).Update(keyText("e"))
 	for range len("kimi") {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyBackspace})
+		next, _ = next.(tui.App).Update(keyCode(tea.KeyBackspace))
 	}
 	for _, r := range "moonshot" {
-		next, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		next, _ = next.(tui.App).Update(keyText(string([]rune{r})))
 	}
-	_, _ = next.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, _ = next.(tui.App).Update(keyCode(tea.KeyEnter))
 
 	if engine.session.KeyName != "moonshot" {
 		t.Errorf("a running turn stopped the conversation following the rename, leaving it on %q",
@@ -1400,5 +1600,95 @@ func TestARenameIsNotRefusedByARunningTurn(t *testing.T) {
 	}
 	if engine.using != [2]string{} {
 		t.Errorf("the rename went through the credential switch as %v", engine.using)
+	}
+}
+
+func (e *stubEngine) Inventory(string) core.Inventory { return core.Inventory{} }
+
+func (e *stubEngine) Budget(string) session.Budget            { return e.budget }
+func (e *stubEngine) SetBudget(_ string, limit float64) error { e.budget.Limit = limit; return nil }
+func (e *stubEngine) OverallBudget() session.Budget           { return e.overall }
+func (e *stubEngine) SetOverallBudget(limit float64) error    { e.overall.Limit = limit; return nil }
+
+func (e *stubEngine) Judge(_ context.Context, sessionID string, candidates []core.JudgeCandidate) (string, error) {
+	e.judged, e.judgedFor = candidates, sessionID
+	return "bravo special-cases the test input \x1b]52;c;cHduZWQ=\x07", nil
+}
+
+// rankedReview is a review source with two ranked attempts, for driving the review screen whole.
+type rankedReview struct{}
+
+func (rankedReview) Rank() core.Ranking {
+	return core.Ranking{Ranked: []core.Placement{
+		{Agent: "alpha", Rank: 1, Tests: core.TestPassing}, {Agent: "bravo", Rank: 2, Tests: core.TestPassing}}}
+}
+func (rankedReview) ReadyToReview() []core.ReadyForReview { return nil }
+func (rankedReview) Changes(agent string) ([]core.FileChange, error) {
+	return []core.FileChange{{Path: agent + ".go", Status: 'M'}}, nil
+}
+func (rankedReview) Patch(agent, _ string) (string, error) { return "+changed by " + agent, nil }
+func (rankedReview) Overlaps() ([]core.Overlap, error)     { return nil, nil }
+func (rankedReview) Draft(string) (core.CommitDraft, error) {
+	return core.CommitDraft{}, nil
+}
+func (rankedReview) Commit(string, string) error { return nil }
+
+// From the chat, through the agent list, to the review ranking: o asks the reviewer about the
+// attempts for the conversation on screen, the answer comes back through the application, and it is
+// shown as an opinion with its terminal controls made visible rather than obeyed.
+func TestTheReviewScreenAsksForAnOpinionThroughTheApp(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{}
+	var model tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Review: rankedReview{}})
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = model.Update(keyCode('d', tea.ModCtrl))
+	model, _ = model.Update(keyText("r"))
+	model, _ = model.Update(keyCode(tea.KeyTab))
+	model, cmd := model.Update(keyText("o"))
+	if cmd == nil {
+		t.Fatal("o on the ranking asked nothing")
+	}
+	model, _ = model.Update(cmd())
+	if engine.judgedFor != "session-1" || len(engine.judged) != 2 || !strings.Contains(engine.judged[1].Diff, "changed by bravo") {
+		t.Fatalf("the reviewer was asked for %q about %+v", engine.judgedFor, engine.judged)
+	}
+	view := model.View().Content
+	if !strings.Contains(plain(view), "a reviewer's opinion, not verification") || !strings.Contains(view, `\x1b]52`) ||
+		strings.Contains(view, "\x1b]52") {
+		t.Fatalf("the opinion was not shown safely:\n%s", plain(view))
+	}
+}
+
+// A paste reaches the screen in front and nothing else: a key pasted into the credential screen
+// never lands in the conversation's message box, one enter from the model.
+func TestAPastedKeyStaysOnTheCredentialScreen(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{}
+	var model tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1"})
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	model, _ = model.Update(keyCode('k', tea.ModCtrl))
+	if model.(tui.App).Screen() != "keys" {
+		t.Fatalf("ctrl+k landed on %q", model.(tui.App).Screen())
+	}
+	model, _ = model.Update(tea.PasteMsg{Content: "sk-ant-api03-SECRETVALUE"})
+	model, _ = model.Update(keyCode(tea.KeyEsc))
+	if strings.Contains(model.View().Content, "SECRETVALUE") {
+		t.Fatalf("a paste on the credential screen reached the conversation:\n%s", plain(model.View().Content))
+	}
+}
+
+// What was said while starting is on screen when the interface opens.
+func TestStartupWarningsAreShownInside(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	var model tea.Model = tui.NewAppConfigured(store, withOneKey(), &stubEngine{}, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Warnings: []string{"warning: history is not being saved: disk full"}})
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !strings.Contains(plain(model.View().Content), "history is not being saved") {
+		t.Fatalf("the warning is not on screen:\n%s", plain(model.View().Content))
 	}
 }

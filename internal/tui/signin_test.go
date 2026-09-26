@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -109,13 +109,13 @@ func TestTheConversationRunsOnASignedInCredentialWithNoFurtherKeystroke(t *testi
 	}
 
 	var cmd tea.Cmd
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune("a")},
-		{Type: tea.KeyRunes, Runes: []rune("claude-code")},
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyRunes, Runes: []rune("j")},
-		{Type: tea.KeyRunes, Runes: []rune("j")},
-		{Type: tea.KeyEnter},
+	for _, key := range []tea.KeyPressMsg{
+		keyText("a"),
+		keyText("claude-code"),
+		keyCode(tea.KeyEnter),
+		keyText("j"),
+		keyText("j"),
+		keyCode(tea.KeyEnter),
 	} {
 		next, out := app.Update(key)
 		app, cmd = next.(tui.App), out
@@ -130,7 +130,7 @@ func TestTheConversationRunsOnASignedInCredentialWithNoFurtherKeystroke(t *testi
 		t.Fatalf("the conversation runs on %v after signing in, want the credential just signed in to",
 			engine.using)
 	}
-	view := plain(app.View())
+	view := plain(app.View().Content)
 	if !strings.Contains(view, "now the credential for this conversation") {
 		t.Errorf("the switch was not acknowledged:\n%s", view)
 	}
@@ -149,13 +149,13 @@ func TestASignInRefusedByTheConversationIsStoredAndNotClaimed(t *testing.T) {
 	app := launchSigningIn(t, keyStore, engine)
 
 	var cmd tea.Cmd
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune("a")},
-		{Type: tea.KeyRunes, Runes: []rune("claude-code")},
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyRunes, Runes: []rune("j")},
-		{Type: tea.KeyRunes, Runes: []rune("j")},
-		{Type: tea.KeyEnter},
+	for _, key := range []tea.KeyPressMsg{
+		keyText("a"),
+		keyText("claude-code"),
+		keyCode(tea.KeyEnter),
+		keyText("j"),
+		keyText("j"),
+		keyCode(tea.KeyEnter),
 	} {
 		next, out := app.Update(key)
 		app, cmd = next.(tui.App), out
@@ -169,7 +169,7 @@ func TestASignInRefusedByTheConversationIsStoredAndNotClaimed(t *testing.T) {
 	if len(keyStore.keys) != 1 {
 		t.Fatalf("the credential was not stored: %+v", keyStore.keys)
 	}
-	view := plain(app.View())
+	view := plain(app.View().Content)
 	for _, want := range []string{`stored "claude-code"`, "not selected", "mid answer"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the screen lost %q:\n%s", want, view)
@@ -182,7 +182,7 @@ func TestASignInRefusedByTheConversationIsStoredAndNotClaimed(t *testing.T) {
 	// And the refusal is disarmed, so a later unrelated key does not silently retry it once the turn
 	// that caused it has ended.
 	engine.useErr = nil
-	after, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	after, _ := app.Update(keyText("k"))
 	if engine.using != [2]string{} {
 		t.Errorf("an unrelated later key retried the refused switch as %v", engine.using)
 	}
@@ -196,9 +196,9 @@ func TestASignInRefusedByTheConversationIsStoredAndNotClaimed(t *testing.T) {
 	// and nothing that would notice it going. Without it, ctrl+n after a refused sign-in opens a new
 	// conversation on the credential the refusal just declined.
 	// Back to the conversation first, since ctrl+n belongs to that screen.
-	onChat, _ := after.(tui.App).Update(tea.KeyMsg{Type: tea.KeyEsc})
+	onChat, _ := after.(tui.App).Update(keyCode(tea.KeyEsc))
 	before := engine.created
-	started, _ := onChat.(tui.App).Update(tea.KeyMsg{Type: tea.KeyCtrlN})
+	started, _ := onChat.(tui.App).Update(keyCode('n', tea.ModCtrl))
 	_ = started
 	if engine.created != before+1 {
 		t.Fatalf("ctrl+n created %d conversations", engine.created-before)
@@ -226,7 +226,7 @@ func TestThePickerSaysTheVendorChoosesRatherThanShowingAnEmptyList(t *testing.T)
 	}
 
 	app := openPicker(t, keyStore, onOpus())
-	view := plain(app.View())
+	view := plain(app.View().Content)
 
 	if !strings.Contains(view, "the vendor's own agent chooses the model on this credential") {
 		t.Errorf("the picker did not say who chooses:\n%s", view)
@@ -251,7 +251,7 @@ func TestAnEndpointWithNoLineupStillSaysNoneSet(t *testing.T) {
 		}},
 	}
 
-	view := plain(openPicker(t, keyStore, onOpus()).View())
+	view := plain(openPicker(t, keyStore, onOpus()).View().Content)
 	if !strings.Contains(view, "none set, press ctrl+k") {
 		t.Errorf("an endpoint with no lineup lost its own words:\n%s", view)
 	}
@@ -266,20 +266,20 @@ func TestTheSignInStepFitsEightyColumnsInsideTheApplicationFrame(t *testing.T) {
 	app := launchSigningIn(t, keyStore, &stubEngine{session: core.Session{ID: "session-1"}})
 
 	var cmd tea.Cmd
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyRunes, Runes: []rune("a")},
-		{Type: tea.KeyRunes, Runes: []rune("claude-code")},
-		{Type: tea.KeyEnter},
-		{Type: tea.KeyRunes, Runes: []rune("j")},
-		{Type: tea.KeyRunes, Runes: []rune("j")},
-		{Type: tea.KeyEnter},
+	for _, key := range []tea.KeyPressMsg{
+		keyText("a"),
+		keyText("claude-code"),
+		keyCode(tea.KeyEnter),
+		keyText("j"),
+		keyText("j"),
+		keyCode(tea.KeyEnter),
 	} {
 		next, out := app.Update(key)
 		app, cmd = next.(tui.App), out
 	}
 	app, _ = step(t, app, cmd)
 
-	view := plain(app.View())
+	view := plain(app.View().Content)
 	for _, line := range strings.Split(view, "\n") {
 		if len([]rune(line)) > 80 {
 			t.Errorf("a line is %d columns wide at eighty:\n%s", len([]rune(line)), line)

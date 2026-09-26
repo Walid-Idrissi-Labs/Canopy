@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -21,7 +21,17 @@ var at = time.Date(2026, time.July, 26, 12, 0, 0, 0, time.UTC)
 // fakeEngine answers with whatever a test puts in it, so these tests are about what reaches the
 // screen rather than about conversations.
 type fakeEngine struct {
-	tools *core.ToolRegistry
+	// eventsEnded makes Events answer with a channel already closed, as a lost connection does.
+	eventsEnded     bool
+	pictures        []core.Image
+	retried         int
+	granted         []permission.Scope
+	undoChanges     []string
+	undoState       string
+	previewErr      error
+	budget, overall session.Budget
+	tools           *core.ToolRegistry
+	inventory       core.Inventory
 
 	subscriptions int
 
@@ -87,6 +97,11 @@ func (e *fakeEngine) Session(id string) (core.Session, bool) {
 	return e.session, true
 }
 
+func (e *fakeEngine) SendWithImages(sessionID, prompt string, images []core.Image) (string, error) {
+	e.pictures = append(e.pictures, images...)
+	return e.Send(sessionID, prompt)
+}
+
 func (e *fakeEngine) Send(_, prompt string) (string, error) {
 	if e.sendErr != nil {
 		return "", e.sendErr
@@ -100,7 +115,11 @@ func (e *fakeEngine) Cancel(string) { e.cancelled++ }
 
 func (e *fakeEngine) Events(uint64) <-chan core.Event {
 	e.subscriptions++
-	return make(chan core.Event)
+	events := make(chan core.Event)
+	if e.eventsEnded {
+		close(events)
+	}
+	return events
 }
 
 func (e *fakeEngine) Compact(context.Context, string) (session.CompactionResult, error) {
@@ -219,6 +238,19 @@ func (e *fakeEngine) Undo(_ context.Context, _, turnID string) error {
 	return nil
 }
 
+func (e *fakeEngine) UndoPreview(_ context.Context, _, _ string) (session.UndoPlan, error) {
+	if e.undoErr != nil {
+		return session.UndoPlan{}, e.undoErr
+	}
+	if e.previewErr != nil {
+		return session.UndoPlan{}, e.previewErr
+	}
+	if e.undoChanges != nil {
+		return session.UndoPlan{Changes: e.undoChanges, State: e.undoState}, nil
+	}
+	return session.UndoPlan{Changes: []string{"M main.go"}, State: e.undoState}, nil
+}
+
 func model(engine chat.Engine) chat.Model {
 	m := chat.New(engine, "s1", "myproject", "claude")
 	m.SetSize(80, 24)
@@ -228,16 +260,16 @@ func model(engine chat.Engine) chat.Model {
 func typeText(m chat.Model, s string) chat.Model {
 	for _, r := range s {
 		if r == ' ' {
-			m, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+			m, _ = m.Update(keyCode(tea.KeySpace))
 			continue
 		}
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
 	return m
 }
 
-func press(m chat.Model, key tea.KeyType) chat.Model {
-	m, _ = m.Update(tea.KeyMsg{Type: key})
+func press(m chat.Model, key tea.KeyPressMsg) chat.Model {
+	m, _ = m.Update(key)
 	return m
 }
 
@@ -313,7 +345,7 @@ func TestTypingAndSending(t *testing.T) {
 		t.Error("what is being typed should be visible in the box")
 	}
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if len(engine.sent) != 1 || engine.sent[0] != "hello there" {
 		t.Errorf("sent = %v", engine.sent)
 	}
@@ -330,13 +362,13 @@ func TestSlashCommandsExpandAtTheInputBoundary(t *testing.T) {
 	}}))
 	m = typeText(m, "/review auth and $(not-a-shell)")
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if len(engine.sent) != 1 || engine.sent[0] != "Review carefully:\nauth and $(not-a-shell)" {
 		t.Errorf("engine received %q", engine.sent)
 	}
 
 	// The reusable invocation, not its expanded body, is what up-arrow recalls.
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "/review auth and $(not-a-shell)" {
 		t.Errorf("history recalled %q", got)
 	}
@@ -346,7 +378,7 @@ func TestUnknownSlashCommandsStayInTheBoxAndNeverReachTheModel(t *testing.T) {
 	engine := &fakeEngine{}
 	m := typeText(model(engine), "/typo an argument")
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if len(engine.sent) != 0 {
 		t.Errorf("unknown command reached the model: %v", engine.sent)
 	}
@@ -360,7 +392,7 @@ func TestUnknownSlashCommandsStayInTheBoxAndNeverReachTheModel(t *testing.T) {
 
 func TestDoubleSlashSendsALiteralSlashPrompt(t *testing.T) {
 	engine := &fakeEngine{}
-	m := press(typeText(model(engine), "//not-a-command"), tea.KeyEnter)
+	m := press(typeText(model(engine), "//not-a-command"), keyCode(tea.KeyEnter))
 
 	if len(engine.sent) != 1 || engine.sent[0] != "/not-a-command" {
 		t.Errorf("sent %v", engine.sent)
@@ -378,7 +410,7 @@ func TestCommandsListsActiveDefinitionsWithoutCallingTheModel(t *testing.T) {
 		[]config.Command{{Name: "review", Description: "review it", Prompt: "review"}},
 	))
 
-	m = press(typeText(m, "/commands"), tea.KeyEnter)
+	m = press(typeText(m, "/commands"), keyCode(tea.KeyEnter))
 	if len(engine.sent) != 0 {
 		t.Errorf("the built-in listing reached the model: %v", engine.sent)
 	}
@@ -405,19 +437,19 @@ func TestTabTakesTheHighlightedCommand(t *testing.T) {
 		return m
 	}
 
-	m := press(typeText(withTwo(), "/rev"), tea.KeyTab)
+	m := press(typeText(withTwo(), "/rev"), keyCode(tea.KeyTab))
 	if m.InputValue() != "/review " || m.Notice() != "review it" {
 		t.Errorf("one match completed to input %q notice %q", m.InputValue(), m.Notice())
 	}
 
 	// Two matches, alphabetical, so the highlight starts on release.
-	m = press(typeText(withTwo(), "/re"), tea.KeyTab)
+	m = press(typeText(withTwo(), "/re"), keyCode(tea.KeyTab))
 	if m.InputValue() != "/release " {
 		t.Errorf("two matches completed to %q, want the highlighted one", m.InputValue())
 	}
 
 	// And down moves it before tab takes it, which is the whole point of there being a list.
-	m = press(press(typeText(withTwo(), "/re"), tea.KeyDown), tea.KeyTab)
+	m = press(press(typeText(withTwo(), "/re"), keyCode(tea.KeyDown)), keyCode(tea.KeyTab))
 	if m.InputValue() != "/review " {
 		t.Errorf("after moving down, tab took %q", m.InputValue())
 	}
@@ -428,7 +460,7 @@ func TestAFailedSendKeepsTheMessage(t *testing.T) {
 	engine := &fakeEngine{sendErr: errBusy{}}
 	m := typeText(model(engine), "keep me")
 
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.InputValue() != "keep me" {
 		t.Errorf("the message was lost on a failed send, got %q", m.InputValue())
 	}
@@ -443,7 +475,7 @@ func (errBusy) Error() string { return "this session is already working on a tur
 
 func TestEmptyMessagesAreNotSent(t *testing.T) {
 	engine := &fakeEngine{}
-	_ = press(typeText(model(engine), "   "), tea.KeyEnter)
+	_ = press(typeText(model(engine), "   "), keyCode(tea.KeyEnter))
 
 	if len(engine.sent) != 0 {
 		t.Errorf("whitespace was sent as a message: %v", engine.sent)
@@ -453,17 +485,17 @@ func TestEmptyMessagesAreNotSent(t *testing.T) {
 func TestBackspaceAndWordDelete(t *testing.T) {
 	m := typeText(model(&fakeEngine{}), "hello world")
 
-	m = press(m, tea.KeyBackspace)
+	m = press(m, keyCode(tea.KeyBackspace))
 	if m.InputValue() != "hello worl" {
 		t.Errorf("backspace gave %q", m.InputValue())
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+	m, _ = m.Update(keyCode('w', tea.ModCtrl))
 	if m.InputValue() != "hello " {
 		t.Errorf("ctrl+w should delete a word, got %q", m.InputValue())
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m, _ = m.Update(keyCode('u', tea.ModCtrl))
 	if m.InputValue() != "" {
 		t.Errorf("ctrl+u should clear to the start, got %q", m.InputValue())
 	}
@@ -551,7 +583,7 @@ func TestEscapeStopsARunningTurn(t *testing.T) {
 	if !m.Working() {
 		t.Fatal("a streaming turn should read as working")
 	}
-	_ = press(m, tea.KeyEsc)
+	_ = press(m, keyCode(tea.KeyEsc))
 	if engine.cancelled != 1 {
 		t.Errorf("escape cancelled %d times, want 1", engine.cancelled)
 	}
@@ -564,7 +596,7 @@ func TestEscapeWithNothingRunningDoesNotCancel(t *testing.T) {
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	_ = press(m, tea.KeyEsc)
+	_ = press(m, keyCode(tea.KeyEsc))
 	if engine.cancelled != 0 {
 		t.Error("escape with nothing running should not cancel anything")
 	}
@@ -582,12 +614,12 @@ func TestScrollingAwayFromTheTailSaysSo(t *testing.T) {
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m, _ = m.Update(keyCode(tea.KeyPgUp))
 	if !strings.Contains(plain(m.Body()), "more below") {
 		t.Errorf("scrolling up should say the view is no longer following:\n%s", plain(m.Body()))
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlEnd})
+	m, _ = m.Update(keyCode(tea.KeyEnd, tea.ModCtrl))
 	if strings.Contains(plain(m.Body()), "more below") {
 		t.Error("ctrl+end should return to following the tail")
 	}
@@ -603,9 +635,9 @@ func TestSendingReturnsToTheTail(t *testing.T) {
 
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m, _ = m.Update(keyCode(tea.KeyPgUp))
 
-	m = press(typeText(m, "next question"), tea.KeyEnter)
+	m = press(typeText(m, "next question"), keyCode(tea.KeyEnter))
 	if strings.Contains(plain(m.Body()), "more below") {
 		t.Error("sending a message should return to the tail")
 	}
@@ -757,8 +789,8 @@ func TestCompactionCanBeAskedForByHand(t *testing.T) {
 	m := model(engine)
 	// Twice, because the first press offers and the second pays. See the compaction tests for what
 	// the offer says.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
+	m, cmd := m.Update(keyCode('r', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatal("a confirmed ctrl+r should start a compaction")
 	}
@@ -797,8 +829,8 @@ func TestAFailedCompactionIsReported(t *testing.T) {
 	}
 
 	m := model(engine)
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
+	m, cmd := m.Update(keyCode('r', tea.ModCtrl))
 	m, _ = m.Update(cmd())
 
 	if len(engine.applied) != 0 {
@@ -907,11 +939,11 @@ func TestThePromptShowsTheCommandInFull(t *testing.T) {
 // finger. Every other non-answer key still refuses, which is the half of the reflex default that
 // survives: escape and anything typed at an unread prompt still cost a retry, never a repository.
 func TestAnythingOtherThanYesRefuses(t *testing.T) {
-	for _, key := range []tea.KeyMsg{
-		{Type: tea.KeyEsc},
-		{Type: tea.KeyRunes, Runes: []rune{'n'}},
-		{Type: tea.KeyRunes, Runes: []rune{'q'}},
-		{Type: tea.KeySpace},
+	for _, key := range []tea.KeyPressMsg{
+		keyCode(tea.KeyEsc),
+		keyText("n"),
+		keyText("q"),
+		keyCode(tea.KeySpace),
 	} {
 		engine := &fakeEngine{
 			session: core.Session{ID: "s1", Turns: []core.Turn{
@@ -940,7 +972,7 @@ func TestYesApprovesOnceAndAlwaysApprovesWidely(t *testing.T) {
 	}
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m, _ = m.Update(keyText(string([]rune{'y'})))
 
 	if len(engine.answers) != 1 || !engine.answers[0][0] || engine.answers[0][1] {
 		t.Errorf("y gave %v, want approved once and not remembered", engine.answers)
@@ -949,7 +981,7 @@ func TestYesApprovesOnceAndAlwaysApprovesWidely(t *testing.T) {
 	engine.prompt = pendingPrompt("make test")
 	engine.answers = nil
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	_, _ = m.Update(keyText(string([]rune{'a'})))
 
 	if len(engine.answers) != 1 || !engine.answers[0][0] || !engine.answers[0][1] {
 		t.Errorf("a gave %v, want approved and remembered", engine.answers)
@@ -966,7 +998,7 @@ func TestAQuestionTakesTheKeyboard(t *testing.T) {
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	m, _ = m.Update(keyText(string([]rune{'h'})))
 	if m.InputValue() != "" {
 		t.Errorf("a keystroke while a question was up went into the message box as %q",
 			m.InputValue())
@@ -988,6 +1020,29 @@ func (e *fakeEngine) Steer(_, guidance string) error {
 }
 
 func (e *fakeEngine) Steering(string) []string { return e.queuedSteering }
+
+func (e *fakeEngine) ClearSteering(string) []string {
+	taken := e.queuedSteering
+	e.queuedSteering = nil
+	return taken
+}
+
+func (e *fakeEngine) Retry(string) (string, error) {
+	e.retried++
+	return "turn", nil
+}
+
+func (e *fakeEngine) Grants(string) []permission.Scope { return e.granted }
+
+func (e *fakeEngine) Revoke(_ string, scope permission.Scope) {
+	kept := e.granted[:0]
+	for _, g := range e.granted {
+		if g != scope {
+			kept = append(kept, g)
+		}
+	}
+	e.granted = kept
+}
 
 // asides is what this conversation was asked on the side before the screen opened, which is the
 // half that used to be thrown away.
@@ -1038,3 +1093,10 @@ func TestEventsReuseOneSubscription(t *testing.T) {
 		t.Fatalf("the chat subscribed %d times across 1000 events; every extra one is a goroutine and an unread queue that grows for the rest of the session", engine.subscriptions)
 	}
 }
+
+func (e *fakeEngine) Inventory(string) core.Inventory { return e.inventory }
+
+func (e *fakeEngine) Budget(string) session.Budget            { return e.budget }
+func (e *fakeEngine) SetBudget(_ string, limit float64) error { e.budget.Limit = limit; return nil }
+func (e *fakeEngine) OverallBudget() session.Budget           { return e.overall }
+func (e *fakeEngine) SetOverallBudget(limit float64) error    { e.overall.Limit = limit; return nil }

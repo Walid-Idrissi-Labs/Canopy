@@ -359,7 +359,7 @@ func TestFailedToolResultsSaySo(t *testing.T) {
 	for _, msg := range built.Messages {
 		if msg.Role == "tool" {
 			found = true
-			if !strings.Contains(msg.Content, "error") {
+			if content, _ := msg.Content.(string); !strings.Contains(content, "error") {
 				t.Errorf("a failed tool result must say so, got %q", msg.Content)
 			}
 		}
@@ -535,5 +535,27 @@ func TestRetryAfterIsShownWhenTheProviderSaysIt(t *testing.T) {
 	var perr *core.ProviderError
 	if !errors.As(err, &perr) || perr.RetryAfter != 20*time.Second {
 		t.Errorf("RetryAfter = %v, want 20s", perr.RetryAfter)
+	}
+}
+
+// Chat completions carry a picture as an image_url part with a data URL; responses as input_image.
+func TestAPictureIsSentAsADataURL(t *testing.T) {
+	req := core.Request{Model: "gpt-5.2", Messages: []core.Message{{Role: core.RoleUser, Text: "look",
+		Images: []core.Image{{MediaType: "image/jpeg", Data: []byte("JPG")}}}}}
+	chat, _ := json.Marshal(New("https://api.openai.com/v1", core.NewSecret("k")).buildRequest(req))
+	if !strings.Contains(string(chat), `{"image_url":{"url":"data:image/jpeg;base64,SlBH"},"type":"image_url"}`) ||
+		!strings.Contains(string(chat), `{"text":"look","type":"text"}`) {
+		t.Fatalf("chat completions: %s", chat)
+	}
+	responses, _ := json.Marshal(New("https://api.openai.com/v1", core.NewSecret("k"), WithResponses()).
+		buildResponsesRequest(context.Background(), req))
+	if !strings.Contains(string(responses), `"image_url":"data:image/jpeg;base64,SlBH","type":"input_image"`) {
+		t.Fatalf("responses: %s", responses)
+	}
+	// Without a picture a message is still plain text, as it always was.
+	plain, _ := json.Marshal(New("https://x/v1", core.NewSecret("k")).buildRequest(core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "hi"}}}))
+	if !strings.Contains(string(plain), `"content":"hi"`) {
+		t.Fatalf("plain: %s", plain)
 	}
 }

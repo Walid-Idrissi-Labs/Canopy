@@ -9,8 +9,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
+	"io"
 	"os"
 	"time"
 
@@ -306,7 +309,7 @@ func startVerification(
 		// The revision reader is what stops a committing hook from firing on its own commit. Read
 		// live from git rather than from the verifier's last poll, because the poller has not looked
 		// yet at the moment this matters. See Q-17 and the runner's code-interval guard.
-		v.runner = hooks.New(configured, dir, hooks.Shell, v.recordHook, verifier.Head)
+		v.runner = hooks.New(configured, dir, hooks.Confined(tools.Confinement), v.recordHook, verifier.Head)
 	}
 
 	v.follow(engine)
@@ -404,7 +407,16 @@ func loadProject(dir string) config.Project {
 	if !found {
 		return config.Project{}
 	}
+	warnReserved(project, os.Stderr)
 	return gateProject(dir, project, os.Stdin, os.Stderr, isTerminal(os.Stdin) && isTerminal(os.Stderr))
+}
+
+// warnReserved names the project's commands left out because Canopy answers those names itself.
+func warnReserved(project config.Project, out io.Writer) {
+	for _, name := range project.Reserved {
+		_, _ = fmt.Fprintf(out, "warning: canopy.json's command %q is left out: /%s is one Canopy answers itself, "+
+			"so rename it to use it\n", name, name)
+	}
 }
 
 // loadCommands resolves the user-level catalog with this project's definitions.
@@ -414,7 +426,11 @@ func loadProject(dir string) config.Project {
 // one optional convenience file has a typo.
 func loadCommands(project []config.Command) config.CommandSet {
 	global, _, err := config.LoadGlobalCommands()
-	if err != nil {
+	var reserved *config.ReservedCommandsError
+	switch {
+	case errors.As(err, &reserved):
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "warning: global slash commands are not available: %v\n", err)
 	}
 	return config.ResolveCommands(global, project)
@@ -539,7 +555,22 @@ func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.To
 		return agent.KeyName
 	}
 
-	confirm := func(c session.Confirmation) bool {
+	confirm := dispatchConfirm(engine, sessionID)
+
+	for _, tool := range session.DispatchTools(source, current, confirm, projectAgents) {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dispatchScope is what always approving a dispatch covers: spawn_agents, in this conversation.
+func dispatchScope() permission.Scope { return permission.Scope{Tool: "spawn_agents"} }
+
+// dispatchConfirm asks a person before a conversation starts agents, honouring an earlier always.
+func dispatchConfirm(engine *session.Engine, sessionID string) func(session.Confirmation) bool {
+	return func(c session.Confirmation) bool {
 		// Routed through the same approver the tool calls use, so there is one place a person answers
 		// questions rather than two that behave differently. The question text carries the count, the
 		// profile, the task, the estimate and the warnings, because every one of those is a thing
@@ -548,22 +579,23 @@ func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.To
 		for _, warning := range c.Warnings {
 			question += "\n" + warning
 		}
-		return engine.Approve(context.Background(), permission.Request{
+		req := permission.Request{
 			SessionID: sessionID,
 			AgentID:   sessionID,
 			Tool:      "spawn_agents",
 			Kind:      core.ToolExecute,
 			Command:   question,
-		}, permission.Decision{
+		}
+		// "Always" here means starting agents from this conversation without asking again, and is
+		// recorded, and honoured, as exactly that; it covers no other tool.
+		scope := dispatchScope()
+		if engine.Granted(sessionID, req, scope) {
+			return true
+		}
+		return engine.Approve(context.Background(), req, permission.Decision{
 			Outcome: permission.Ask,
 			Reason:  "starting agents spends money and creates worktrees",
+			Scope:   scope,
 		})
 	}
-
-	for _, tool := range session.DispatchTools(source, current, confirm) {
-		if err := registry.Register(tool); err != nil {
-			return err
-		}
-	}
-	return nil
 }

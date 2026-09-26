@@ -135,6 +135,17 @@ type Loop struct {
 	// MaxTokens bounds the whole turn. Zero means no token bound, which is only appropriate when
 	// something above is enforcing one.
 	MaxTokens int
+	// Tainted says whether the conversation has taken in content from outside, asked before every
+	// tool call; see permission.Request.Tainted. Nil means never.
+	Tainted func() bool
+
+	// Hooks are the project's own checks around each call the permission layer lets through. Nil
+	// means none.
+	Hooks ToolHooks
+	// Gate is asked before every model call after the first, with what the turn has used so far,
+	// and a reason stops the turn there. It is how a spending cap holds inside a long turn: the
+	// request in flight finishes, and the next one is not made.
+	Gate func(used core.Usage) string
 }
 
 // TrustNow is how much this agent may do at this moment.
@@ -178,6 +189,7 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 	}
 
 	outcome := Outcome{Messages: messages}
+	repeats := map[string]int{}
 
 	for step := 1; ; step++ {
 		if step > maxSteps {
@@ -191,6 +203,14 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			outcome.LimitHit = fmt.Sprintf(
 				"stopped after %d tokens, which is this turn's budget", outcome.Usage.TotalTokens())
 			return outcome, nil
+		}
+
+		if l.Gate != nil && step > 1 {
+			if reason := l.Gate(outcome.Usage); reason != "" {
+				outcome.Stop = core.StopError
+				outcome.LimitHit = reason
+				return outcome, nil
+			}
 		}
 
 		req.Messages = outcome.Messages
@@ -215,7 +235,11 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 			reply.calls = nil
 			reply.native = nil
 		}
-		if reply.text != "" || len(reply.calls) > 0 {
+		// A reply that holds only provider-side work, a search and its results before a pause, is
+		// still part of the conversation: dropping it would have the continuation run and bill the
+		// same searches again. Any other reply with nothing to show, one cut off while still
+		// thinking above all, is not kept.
+		if reply.text != "" || len(reply.calls) > 0 || (reply.native != nil && reply.stop == core.StopPauseTurn) {
 			outcome.Messages = append(outcome.Messages, core.Message{
 				Role:      core.RoleAssistant,
 				Text:      reply.text,
@@ -236,8 +260,30 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 		}
 
 		results := make([]core.ToolResult, 0, len(reply.calls))
+		stuck := false
 		for _, call := range reply.calls {
 			result := l.invoke(ctx, call, approver, obs)
+
+			// The same call with the same answer, again: a model going round in a circle, rerunning
+			// an unchanged failing test or reading a file it just read. Said to it plainly on the
+			// third time, and the turn is stopped with a blocker on the fifth, rather than spending
+			// the whole step budget learning nothing. A call that may have changed something, a
+			// successful edit or a command not run before, starts the count again: the same build
+			// passing after each of five different edits is progress, not a circle.
+			key := call.Name + "\x00" + string(call.Input) + "\x00" + result.Content
+			repeats[key]++
+			n := repeats[key]
+			if !result.IsError && l.mayChange(call.Name, n) {
+				clear(repeats)
+			}
+			switch {
+			case n == 3:
+				result.Content += fmt.Sprintf("\n\n(Canopy: this exact call has now returned this exact "+
+					"result %d times in this turn. Doing it again will not change the answer; try a "+
+					"different approach, or stop and say precisely what is blocking you.)", n)
+			case n >= 5:
+				stuck = true
+			}
 			results = append(results, result)
 
 			// Cancellation is checked between calls rather than only around the model. A turn that
@@ -262,6 +308,12 @@ func (l *Loop) Run(ctx context.Context, req core.Request, obs Observer) (Outcome
 
 		outcome.Messages = append(outcome.Messages,
 			core.Message{Role: core.RoleUser, ToolResults: results})
+		if stuck {
+			outcome.Stop = core.StopError
+			outcome.LimitHit = "stopped because the agent was going in circles: it repeated the same call with the same result " +
+				"five times without making progress"
+			return outcome, nil
+		}
 	}
 }
 
@@ -293,6 +345,12 @@ func (l *Loop) step(ctx context.Context, req core.Request, obs Observer) (reply,
 			obs.Text(event.Text)
 		case core.EventThinking:
 			obs.Thinking(event.Text)
+		case core.EventNotice:
+			// Said about the turn rather than in it: a search the provider ran, or a route's own
+			// statement of whose permissions apply. Optional for an observer to hear.
+			if n, ok := obs.(interface{ Notice(string) }); ok {
+				n.Notice(event.Text)
+			}
 		case core.EventToolCall:
 			out.calls = append(out.calls, *event.ToolCall)
 			obs.ToolRequested(*event.ToolCall)
@@ -407,11 +465,13 @@ func (l *Loop) invoke(
 		AgentID:   l.AgentID,
 		SessionID: l.SessionID,
 		Tool:      call.Name,
+		CallID:    call.ID,
 		Kind:      tool.Kind(),
 		Paths:     pathsIn(call.Input),
 		Command:   commandIn(call.Input),
 		Arguments: canonicalArguments(call.Input),
 		Opaque:    externalArguments(tool),
+		Tainted:   l.Tainted != nil && l.Tainted(),
 	}
 
 	decision := permission.Decide(req, l.TrustNow(), l.Grants)
@@ -439,6 +499,19 @@ func (l *Loop) invoke(
 		entry.Outcome = permission.Allow
 	}
 
+	// The project's pre-tool hooks see only calls that would run, and can only take the yes away.
+	if l.Hooks != nil {
+		if why := l.Hooks.Before(ctx, req); why != "" {
+			entry.Outcome = permission.Deny
+			entry.Reason = "refused by a pre-tool hook: " + why
+			return finish(core.ToolResult{CallID: call.ID, IsError: true,
+				Content: "refused by the project's pre-tool hook: " + why})
+		}
+	}
+
+	if req.Tainted {
+		ctx = core.WithTainted(ctx)
+	}
 	result, err := tool.Run(ctx, call.Input)
 	if err != nil {
 		// A Go error from a tool means it could not run at all, which is different from it running
@@ -460,7 +533,20 @@ func (l *Loop) invoke(
 
 	entry.Ran = true
 	result.CallID = call.ID
+	if l.Hooks != nil {
+		if note := l.Hooks.After(ctx, req, result); note != "" {
+			result.Content += "\n\n[from the project's post-tool hook]\n" + note
+		}
+	}
 	return finish(result)
+}
+
+// ToolHooks are a project's own checks around a tool call. Before returns why a call is refused, or
+// "" to let it run; it cannot approve a call the permission layer would have asked about, since it
+// only runs once that layer has said yes. After returns a note for the model, or "".
+type ToolHooks interface {
+	Before(ctx context.Context, req permission.Request) string
+	After(ctx context.Context, req permission.Request, result core.ToolResult) string
 }
 
 func (l *Loop) tool(name string) (core.Tool, bool) {
@@ -707,3 +793,19 @@ func (noopObserver) Thinking(string)                             {}
 func (noopObserver) ToolRequested(core.ToolCall)                 {}
 func (noopObserver) ToolFinished(core.ToolCall, core.ToolResult) {}
 func (noopObserver) StepFinished(core.Usage)                     {}
+
+// mayChange reports whether a call could have moved the workspace on: any write, or an execute
+// seen for the first time. Reads never do, and neither does a command rerun exactly as before.
+func (l *Loop) mayChange(name string, seen int) bool {
+	tool, ok := l.tool(name)
+	if !ok {
+		return false
+	}
+	switch tool.Kind() {
+	case core.ToolWrite:
+		return true
+	case core.ToolExecute:
+		return seen == 1
+	}
+	return false
+}

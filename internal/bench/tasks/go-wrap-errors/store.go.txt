@@ -1,0 +1,15 @@
+package store
+
+import (
+	"fmt"
+	"os"
+)
+
+// Load reads a settings file.
+func Load(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("loading settings from %s: %v", path, err)
+	}
+	return data, nil
+}

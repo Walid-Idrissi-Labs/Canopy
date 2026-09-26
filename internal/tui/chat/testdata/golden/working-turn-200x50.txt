@@ -1,0 +1,50 @@
+> why does Parse return zero for "12"?
+
+Reading the parser first.
+       read_file  internal/parse/parse.go
+      ✓ no time, 5 lines
+        package parse
+
+        func Parse(s string) (int, error) {
+            return 0, nil
+        }
+
+It never converts: Parse returns 0, nil for any input.
+
+```go
+  n, err := strconv.Atoi(s)
+```
+  claude-opus-5 · 42.0s · 20k in, 340 out, 89% cached · $0.0214
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ╭─ build  claude-opus-5 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ▄▄▀▄▄  ╮
+ │                                                                                                                                                                                                     │
+ │                                                                                                                                                                                                     │
+ │                                                                                                                                                                                                     │
+ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

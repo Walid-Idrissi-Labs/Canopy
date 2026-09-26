@@ -1,0 +1,17 @@
+package span
+
+import "testing"
+
+func TestParseSpan(t *testing.T) {
+	for in, want := range map[string]int{"2h": 120, "45m": 45, "1h30m": 90, "0h5m": 5} {
+		got, err := ParseSpan(in)
+		if err != nil || got != want {
+			t.Errorf("ParseSpan(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "5", "h", "1x"} {
+		if _, err := ParseSpan(bad); err == nil {
+			t.Errorf("ParseSpan(%q) accepted a malformed span", bad)
+		}
+	}
+}

@@ -125,10 +125,37 @@ be rediscovered by getting burned by it.
   shell a containment boundary: an allowed shell command can invoke Git anywhere the user's account
   can reach (D-33).
 
-- There is no sandboxing anywhere in this design and there will not be one implied. Agent-run
-  commands execute under your own account with your own permissions. A worktree gives an agent its
-  own files; it is not a security boundary, and claiming otherwise would be the same kind of error
-  as a false green (README, "What it will not do").
+- The sandbox covers shell commands an agent runs and nothing else yet (D-56). On macOS it confines
+  writes to the workspace, temporary directories and toolchain download caches, keeps git hooks and
+  git config unwritable, and hides credential locations; on Linux it confines writes the same way
+  but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since
+  Landlock cannot carve a path out of an allowed tree. On macOS no `.git` can be made, moved or
+  replaced anywhere under the workspace, and no git config or hooks written in any repository,
+  submodule or worktree there, since a nested repository added as a gitlink is run by your own
+  `git status`; so `git init` or `git clone` into the workspace fails inside the sandbox, while a
+  clone into the temporary area or a cache, which a git dependency makes, works. On Linux none of
+  that is enforced. The writable download caches (the Go module cache, Cargo's registry, Gradle's caches,
+  npm's) are shared with your own builds, and a command can alter a file in them that a later build
+  uses; the sandbox narrows what can be planted, it does not verify caches. Network is open by
+  default. `CANOPY_SANDBOX_NETWORK=registries` sends a command's traffic through a proxy that reaches
+  package registries, GitHub and Google's storage, plus hosts in `CANOPY_SANDBOX_ALLOW`, on ports
+  80 and 443. Those are general-purpose hosts too, a repository or a bucket anybody can own, so this
+  narrows where data can go rather than stopping it. On macOS a command can still reach anything on
+  the loopback address, a test's own servers and any other local service; on Linux Landlock limits
+  connections by port, not address, so a program that ignores the proxy variables can reach any
+  address on the proxy's port, a test that starts a local server on another port cannot reach it,
+  and a kernel older than 6.7 cannot limit the network at all. `CANOPY_SANDBOX_NETWORK=off` allows
+  no connections. Commands that install into your home break inside it: `pip install --user`, `gem
+  install`, global npm installs, version managers (nvm, pyenv, rbenv), Homebrew, and anything
+  writing `~/.local/bin` or most of `~/.config`, and so do test commands that do: the project's
+  tests run in the same sandbox (D-61), so a suite that writes outside the workspace, the temporary
+  area and the caches fails there: Gradle (its wrapper and daemon directories, and its properties
+  file, which is unreadable), SwiftPM's package cache, and browser downloads for Playwright or
+  Cypress among them. In runway such a suite fails its gate and the turn is put back.
+  `CANOPY_SANDBOX=off` is the way out. Hooks run in the sandbox as well, and so does the setup
+  `canopy land` runs on an agent's merged changes. Setup for a new agent worktree, MCP servers and
+  delegated vendor agents still run unconfined. A command that runs without the sandbox says so,
+  and `CANOPY_SANDBOX=off` switches it off.
 
 - A freshly prepared worktree gets no isolated database, queue, cache, or OAuth callback. A named
   port is templated in, but a port does not isolate the service listening behind it. Only small,
@@ -509,10 +536,14 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 
 ## Tools and permissions
 
-- Web search is **cut from 0.1** (A4-07, D-40). `fetch_url` works and ships, so an agent can read a
-  page it already knows the address of, which covers checking a library version or similar. It cannot
-  discover a page it has never heard of, because no search provider or account has been chosen and
-  that choice is Q-11.
+- Web search is Anthropic's server-side search tool, offered to Anthropic keys only when
+  `CANOPY_WEB_SEARCH=on`, at most eight searches a request, billed by Anthropic per search. It runs
+  on Anthropic's side, so no approval prompt sees a search and the query can carry what the model
+  has read; each one is shown in the transcript and recorded in the audit trail afterwards. Once on,
+  it is offered in every mode of the conversation, plan and confined included, because the tools a
+  conversation is sent cannot change between turns without discarding its cache. OpenAI-compatible
+  and delegated routes have no search, only `fetch_url` for a page whose address is already known
+  (Q-11 stays open for them).
 
 - There are five modes on `shift+tab`, and each is a trust level the permission layer enforces
   rather than an instruction the model is asked to follow (M-09, D-41). Plan reads and thinks;
@@ -677,7 +708,9 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   dragging to select text no longer reaches the terminal, so copying out of Canopy means holding a
   modifier while you drag: option on macOS terminals, shift on most others. Without this the wheel
   arrives as arrow key presses, and the arrow keys walk back through what you have sent, so
-  scrolling up to reread an answer would replace what you were typing.
+  scrolling up to reread an answer would replace what you were typing. `/mouse` hands the mouse back to
+  the terminal, so a plain drag selects again, and the same command takes it back; while it is the
+  terminal's, the wheel does whatever the terminal does with it.
 
 - A process that detaches its own output and outlives the command that started it is left running
   (D-37). Canopy puts every command in its own process group and kills the group, which is what takes
@@ -686,8 +719,10 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   signal would land on somebody else's work. In practice the common case is still covered: waiting on
   a command does not return while a child holds its output open, so an orphaned worker keeps the
   leader unreaped and the group is signalled safely. What escapes is the child that closes or
-  redirects the streams it inherited, which is to say a daemon. On Windows nothing beyond the process
-  itself is killed at all, because there are no process groups in the POSIX sense there.
+  redirects the streams it inherited, which is to say a daemon. On Windows, where Canopy is not
+  supported, a command is put in a job object once it has started and stopping it ends the job, so
+  what it started goes with it, except anything started in the moment before it joined the job or
+  started outside it on purpose.
   On supported Unix platforms, exit is observed without reaping before the actual reap and group
   signals are serialized; this is what closes the pid-reuse window rather than a flag written after
   `Wait` returns.
@@ -775,6 +810,111 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   shortcut that stays invisible until it is a headline, but an error that does not name the
   option leaves a first-time user with nothing to try. `INSTALL.md` documents it.
 
-- A Windows stub already exists in the process-handling code, and it says plainly that it is
-  incomplete rather than pretending to be finished: Windows has no process-group equivalent in
-  place, so a cancelled command there can leave children running behind it (A4-03).
+- Windows still is not supported, but it builds, and CI builds and vets it on a Windows runner and
+  checks there that stopping a command ends what it started (a job object stands in for the process
+  group). What it lacks is the rest: no sandbox (commands run unconfined, and say so), no
+  `canopy serve` (it needs a socket directory only its user can open, which is not checked there, so
+  it refuses to start), no releases, and nobody has used the interface on it. Keeping a `# note` out
+  of a symbolic link is a look and then an open there, not the single step it is on unix.
+
+## Round two additions
+
+- Anthropic web search is off unless `CANOPY_WEB_SEARCH=on`. A search runs on Anthropic's side, so
+  no approval prompt sees it, and its query can carry what the model read. Each search reaches the
+  audit trail as soon as its query is complete, so one in a reply that later fails is still there.
+- The no-progress check stops a turn that repeats the same call with the same result five times
+  with nothing changing in between. A successful write, or a command not run before in the turn,
+  resets it, so rewriting a file with the same content over and over is caught only by the step
+  limit.
+- A skill's trust fingerprint covers the first 200 files in its folder.
+- An agent definition's `tools:` list becomes a trust ceiling (no shell or editing tool: read-only;
+  editing without a shell: confined; a shell: standard); tool names are not enforced one by one.
+- `canopy bench` has no published baseline yet: its tasks are small, five in Go and one in Python,
+  and a single run is one sample, so compare runs on the same tasks and model rather than reading
+  one number as a score.
+- Spending caps are priced from Canopy's table. A model with no known rate cannot be held to a cap in
+  money and says so; the step and token bounds still apply.
+- `/context` estimates tokens from bytes, about four to a token; the provider's own count, shown
+  for the last turn, is the one that was billed.
+- Language servers run only in a trusted repository, and inside the same sandbox as an agent's shell
+  commands, with their own caches writable: they read files the agent writes. Where there is no
+  sandbox there are no language servers, unless the sandbox was switched off with
+  `CANOPY_SANDBOX=off`. rust-analyzer is started with build scripts and procedural macros off, so
+  it does not run the project's code; its analysis is less complete for it. `CANOPY_LSP=off` turns
+  them off. Only servers already on PATH are used, one per language per worktree, stopped after ten
+  idle minutes; one that fails to answer twice in a row, such as one still indexing a large
+  project, is left alone for the rest of the session. Only errors and warnings for the file just
+  written are shown, up to twenty.
+- Once a conversation has read a fetched page, a provider search or an MCP result (D-57), its shell
+  commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
+  also cut off the local servers tests start), and anything whose purpose is to send data out is
+  asked about, even in runway and cruise. The project's tests run in the sandbox but a taint does
+  not limit their network, so a test a tainted agent writes can still reach the network when runway
+  runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
+  `gh`, `nslookup`, `base64`, `eval`, `sh -c` and the like. A registry is still a server on the
+  internet, and where the network cannot be limited the word list is the only guard, which a
+  determined script can get around. Files in the workspace do not taint a conversation, though they
+  can carry instructions too.
+- At most half the machine's CPUs worth of test runs execute at once, across every agent; the rest
+  wait, shown as queued. `CANOPY_MAX_TESTS` changes the number. Agents' own shell commands are not
+  limited this way.
+- OpenAI's Responses API, which keeps a reasoning model's thinking between requests and names the
+  conversation as the prompt cache key, is used for OpenAI's own endpoint only when
+  `CANOPY_OPENAI_RESPONSES=on`. It has been tested against a fake of the service, not the service
+  itself, which is why it is not the default yet; every other OpenAI-compatible endpoint uses chat
+  completions, where reasoning is not carried between requests.
+- `canopy acp` (D-62) serves one project per process, the one it is started in. It does not take
+  images or use the editor's own file system or terminal: edits are written to disk by Canopy's
+  tools, and an editor with unsaved changes to the same file sees them only when it reloads.
+  Approvals from the editor are once only. Runway and cruise are not offered, since they need the
+  interface's checkpoints and verification. MCP servers the editor names are ignored; the project's
+  own canopy.json servers are used. A linked resource reaches the model as a reference it can read,
+  not as its contents. It has been tested against a scripted client, not against an editor.
+- `canopy serve` and `canopy attach` (D-63) keep agents working with no client attached. On a
+  terminal, `canopy attach CODE` opens the interface on the server's conversation (`-lines` keeps
+  the plain line client). Attached, the conversation, its questions, its mode and ctrl+n work; what
+  the protocol has no way to ask for is refused in words rather than faked: compacting, undo, fork,
+  steering, retry, side questions, budgets, grants, switching credentials and the agents screen,
+  which run in `canopy` or in the server's own terminal. "Always" on a question is answered as
+  this once, since the protocol carries only allow and reject. A picture named in a message is sent
+  as its path, not attached, and tool output is drawn bounded to 8,000 characters; `/grants` and the
+  agents screen show nothing, since the server's are not sent. A running `canopy` and a running `canopy serve` in one project are two engines working in the same
+  checkout. The server does not start itself or survive a reboot; run it under tmux, nohup or a
+  service manager. A question waiting for a client is announced on the server's error output only,
+  with no desktop notification.
+- Pictures (X-09) are sent only on Anthropic and OpenAI-compatible keys; the subscription routes
+  refuse a message that carries one. A conversation resends only the pictures of its last three
+  messages that had any, up to 16 MB in all; older ones are replaced by a line saying one was there,
+  so the model no longer sees them, and the provider's cache of the conversation is read again from
+  that point the one time it happens. A picture is read as its bytes say, whatever it is called, and a
+  canvas over 40 megapixels is refused unread. A photo's EXIF orientation is not applied when it is
+  scaled, so a sideways phone photo arrives sideways. A WebP larger than 3 MB is refused, since
+  Canopy cannot scale one. Any picture file a message names by path is attached.
+- `canopy init` proposes `.venv/bin/python -m pytest` where the project has a `.venv`. An agent's
+  worktree has none unless canopy.json's `copy` or `setup` makes one, so the test fails there until
+  it does.
+- A pre-tool hook (D-64) runs for every call it matches, so a slow one slows every such call; the
+  default timeout is 30 seconds, after which the call is refused. It sees a call's arguments as the
+  model wrote them, and the result it is given by post-tool is cut at 16 KB. A turn-end hook's
+  failure is reported on the way out in the interface and as a warning in `canopy run`, `acp` and
+  `serve`, not on screen as it happens.
+- Trust covers a hook's command, not the script it runs (D-64). An agent that may write files can edit
+  a guard script kept in the repository, so a pre-tool guard meant to hold against the agent belongs
+  outside it. On the subscription routes, which run the vendor's own tools, tool hooks do not run at
+  all. A tool name in a hook's `tools` that Canopy does not have is warned about at start and never
+  matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
+  running after that is left to finish on its own.
+- A `!command` typed in the box, and confirmed, runs outside the sandbox, as the person's own
+  terminal would, since they typed it; it has two minutes, and the last 16 KB of what it printed goes with the next
+  message.
+- Answering always to the question before agents are started (D-66) lets that conversation start
+  agents, at whatever each costs, without asking again until it is closed; the cost estimate is not
+  shown again for the later ones.
+- Local MCP servers run in the sandbox (D-65), which lets them write only in the workspace, the
+  temporary area, the toolchain caches, and the npm and uv directories Canopy keeps for that
+  server under its cache directory, one set per project and server name, so one repository's server
+  cannot plant a package another project's server runs. Nothing prunes them: each server keeps its
+  own npm and uv downloads, often around 100 MB, until
+  `~/Library/Caches/canopy/mcp-servers` (`~/.cache/canopy/mcp-servers` on Linux) is deleted. A server that needs more, one run through a container
+  runtime for instance, fails to start until canopy.json marks it `"unconfined": true`. Remote servers
+  start nothing and are unaffected.

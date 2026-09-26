@@ -17,12 +17,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
 
 // DefaultTestTimeout is how long a test command is given before it is treated as unable to finish.
@@ -95,6 +99,12 @@ type Target struct {
 	// would let a caller compute it early, hand it around, and bind a result to code that had
 	// already been edited by the time the command ran.
 	Revision func(ctx context.Context) (core.RevisionKey, string)
+
+	// Sandbox confines the test command, as an agent's shell commands are confined: a test is code
+	// in the repository, which an agent may have written. Nil runs it unconfined.
+	Sandbox *sandbox.Policy
+	// Env replaces the environment the command gets, when set; the network proxy's variables, for one.
+	Env []string
 }
 
 // Outcome is a finished run and what the command printed.
@@ -162,6 +172,8 @@ func runPreparedTest(ctx context.Context, test Test, target Target, run core.Tes
 	result, err := Run(ctx, name, args, Options{
 		Dir:     target.Dir,
 		Timeout: timeout,
+		Sandbox: target.Sandbox,
+		Env:     target.Env,
 	})
 
 	switch {
@@ -247,6 +259,22 @@ type Runner struct {
 	live   map[string]*liveRun
 	done   map[string]core.TestRun
 	output map[string]string
+
+	// slots bounds how many runs execute at once. Eight agents each starting a suite would otherwise
+	// run eight suites together, each slower than running them in turn, on a machine a person is
+	// also trying to use. A run waiting for a slot stays queued.
+	slots chan struct{}
+}
+
+// MaxTestsEnvVar sets how many test runs may execute at once; half the CPUs when unset.
+const MaxTestsEnvVar = "CANOPY_MAX_TESTS"
+
+// testSlots is how many runs may execute at once.
+func testSlots() int {
+	if n, err := strconv.Atoi(os.Getenv(MaxTestsEnvVar)); err == nil && n > 0 {
+		return n
+	}
+	return max(1, runtime.NumCPU()/2)
 }
 
 // shutdownGrace bounds how long CancelAll waits for the runs it stopped.
@@ -271,6 +299,7 @@ func NewRunner(onUpdate func(core.TestRun)) *Runner {
 		live:     make(map[string]*liveRun),
 		done:     make(map[string]core.TestRun),
 		output:   make(map[string]string),
+		slots:    make(chan struct{}, testSlots()),
 	}
 }
 
@@ -312,6 +341,21 @@ func (r *Runner) Start(ctx context.Context, test Test, target Target) (string, e
 		// waits for the whole run to have unwound rather than for its last observable step.
 		defer r.running.Done()
 		defer cancel()
+
+		// Queued until a slot is free; stopped while waiting, it ends cancelled without running.
+		select {
+		case r.slots <- struct{}{}:
+			defer func() { <-r.slots }()
+		case <-runCtx.Done():
+			outcome := finishTest(queued, "", core.TestCancelled, nil, "stopped before it started")
+			r.mu.Lock()
+			delete(r.live, runID)
+			r.done[runID] = outcome.Run
+			r.output[runID] = outcome.Output
+			r.mu.Unlock()
+			r.onUpdate(outcome.Run)
+			return
+		}
 
 		running := queued
 		running.State = core.TestRunning

@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,6 +92,19 @@ type resolverCloser interface {
 
 // Engine holds every session and runs their turns.
 type Engine struct {
+	// webSearch offers the provider's own web search on every request; see SetWebSearch.
+	webSearch bool
+
+	// toolHooks are the project's hooks around tool calls and at the end of a turn; see SetToolHooks.
+	toolHooks ToolHooks
+
+	// agentNotes are standing instructions from an agent definition, waiting for that agent's first
+	// message.
+	agentNotes map[string]string
+
+	// effort is the thinking depth every request asks for; empty leaves it to the provider.
+	effort core.Effort
+
 	// maxSteps bounds the model calls in one turn; zero means the loop's default.
 	maxSteps int
 
@@ -99,6 +113,9 @@ type Engine struct {
 	// with the next message the person sends there. See noteJoin.
 	dispatchParents map[string]string
 	joinNotes       map[string][]string
+	// standing says how verification stands for an agent, for its report; nil says nothing. See
+	// SetStanding.
+	standing func(agent string) string
 
 	// instructions are the project's, added to the system prompt of every conversation this engine
 	// runs. Set once at startup, so the prompt stays the same for a conversation's whole life.
@@ -109,8 +126,10 @@ type Engine struct {
 
 	mu       sync.Mutex
 	sessions map[string]*core.Session
-	order    []string
-	cancels  map[string]context.CancelFunc
+	// taint marks conversations known to have taken in outside content; see tainted.
+	taint   map[string]bool
+	order   []string
+	cancels map[string]context.CancelFunc
 
 	resolver Resolver
 	events   *store.Broker
@@ -394,6 +413,31 @@ func (e *Engine) ProjectOf(sessionID string) string {
 	return e.projects[sessionID]
 }
 
+// InThisProject reports whether a conversation may be opened here: one recorded in this project, or
+// in none, the same rule `canopy pickup` follows.
+func (e *Engine) InThisProject(sessionID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	owner := e.projects[sessionID]
+	return owner == "" || e.projectID == "" || owner == e.projectID
+}
+
+// SearchHistory finds this project's stored turns matching a query, its last word as a prefix;
+// nothing without storage attached.
+func (e *Engine) SearchHistory(query string, limit int) []SearchHit {
+	e.mu.Lock()
+	storage, project := e.storage, e.projectID
+	e.mu.Unlock()
+	if storage == nil {
+		return nil
+	}
+	hits, err := storage.SearchProject(query, project, limit)
+	if err != nil {
+		return nil
+	}
+	return hits
+}
+
 // SetProjectID scopes new sessions and cost analysis to one project.
 func (e *Engine) SetProjectID(projectID string) {
 	e.mu.Lock()
@@ -438,7 +482,17 @@ func (e *Engine) WithStorage(storage *Storage, onError func(error)) error {
 	if err != nil {
 		return err
 	}
+	tainted, err := storage.taintedSessions()
+	if err != nil {
+		return err
+	}
 	e.mu.Lock()
+	for _, sessionID := range tainted {
+		if e.taint == nil {
+			e.taint = map[string]bool{}
+		}
+		e.taint[sessionID] = true
+	}
 	for sessionID, projectID := range projects {
 		e.projects[sessionID] = projectID
 	}
@@ -728,6 +782,11 @@ var ErrBusy = errors.New("this session is already working on a turn")
 // arrived could not draw the answer arriving. Everything after this point reaches the caller
 // through the snapshot and the event stream.
 func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
+	return e.SendWithImages(sessionID, prompt, nil)
+}
+
+// SendWithImages is Send with pictures attached to the message, a screenshot of the bug for one.
+func (e *Engine) SendWithImages(sessionID, prompt string, images []core.Image) (turnID string, err error) {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
 		return "", errors.New("an empty message has nothing to answer")
@@ -773,7 +832,7 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 	s.Turns = append(s.Turns, core.Turn{
 		ID:        turnID,
 		State:     core.TurnPending,
-		Request:   core.Message{Role: core.RoleUser, Text: prompt},
+		Request:   core.Message{Role: core.RoleUser, Text: prompt, Images: images},
 		Model:     s.Model,
 		StartedAt: now,
 	})
@@ -787,11 +846,26 @@ func (e *Engine) Send(sessionID, prompt string) (turnID string, err error) {
 
 	// The mode travels as a note on the message where it took effect, never as a change to the
 	// system prompt. See core.SystemPrompt.
-	s.Turns[len(s.Turns)-1].Request.Note = pendingModeNote(*s, e.modeLocked(sessionID))
+	note := pendingModeNote(*s, e.modeLocked(sessionID))
+	// The task list outlives a compaction in the conversation's record but not in what the model
+	// sees, so the first message after one carries it again.
+	if tasks := pendingTaskNote(*s); tasks != "" {
+		note = strings.TrimSpace(tasks + "\n\n" + note)
+	}
+	// An agent started from a definition gets its standing instructions with its first message, in
+	// Canopy's own channel, since the person chose the definition.
+	// Kept, and sent again with the first message after a compaction, which replaces the turn that
+	// carried them.
+	if standing := e.agentNotes[sessionID]; standing != "" && (len(s.Turns) == 1 || firstSinceCompaction(*s)) {
+		note = strings.TrimSpace(standing + "\n\n" + note)
+	}
+	s.Turns[len(s.Turns)-1].Request.Note = note
 	s.Turns[len(s.Turns)-1].Request.Reports = e.joinNotes[sessionID]
 	delete(e.joinNotes, sessionID)
 
-	history := s.History()
+	// Pictures stay with the last few messages that carried them; older ones become a line saying
+	// they were there, so a conversation with pictures cannot outgrow what a request may be.
+	history := core.KeepRecentPictures(s.History())
 	keyName, model := s.KeyName, s.Model
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -882,6 +956,9 @@ func (e *Engine) run(
 		AgentID:   sessionID,
 		SessionID: sessionID,
 		MaxSteps:  e.maxStepsSetting(),
+		Gate:      e.budgetGate(sessionID, id),
+		Tainted:   func() bool { return e.tainted(sessionID) },
+		Hooks:     e.toolHooksSet(),
 	}
 
 	// The mode's own prompt, sent as the system prompt. Without it the level is enforced and never
@@ -889,7 +966,8 @@ func (e *Engine) run(
 	// thrashing against a boundary nobody told it about. Read at the top of the turn rather than per
 	// call, because a system prompt that changed mid conversation would rewrite what the model
 	// believes it was told earlier.
-	request := core.Request{Model: model, Messages: history, System: e.systemPrompt()}
+	request := core.Request{Model: model, Messages: history, System: e.systemPrompt(),
+		WebSearch: e.webSearchOn(), Effort: e.effortSetting()}
 
 	// Tools learn which conversation epoch they serve, so a repeated read can be answered with a
 	// reference to what this conversation was already sent. A compaction starts a new epoch.
@@ -1087,6 +1165,27 @@ func (o *turnObserver) Text(chunk string) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Text += chunk })
 }
 
+func (o *turnObserver) Notice(text string) {
+	// A search the provider ran is recorded in the audit trail like any tool call, marked as run by
+	// the provider, since no approval prompt saw it. It taints the conversation now, and the taint is
+	// saved now: the notice itself is not kept across a restart.
+	if query, ok := strings.CutPrefix(text, anthropic.WebSearchNotice); ok {
+		o.engine.markTainted(o.sessionID)
+		o.engine.mu.Lock()
+		trail := o.engine.trail
+		o.engine.mu.Unlock()
+		if trail != nil {
+			trail.Record(permission.Entry{At: time.Now(), AgentID: o.sessionID, SessionID: o.sessionID,
+				Tool: "web_search", Arguments: query, Result: "run by the provider"})
+		}
+	}
+	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
+		if n := len(t.Notices); n == 0 || t.Notices[n-1] != text {
+			t.Notices = append(t.Notices, text)
+		}
+	})
+}
+
 func (o *turnObserver) Thinking(chunk string) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) { t.Thinking += chunk })
 }
@@ -1100,11 +1199,20 @@ func (o *turnObserver) ToolRequested(call core.ToolCall) {
 	})
 }
 
-func (o *turnObserver) ToolFinished(_ core.ToolCall, result core.ToolResult) {
+func (o *turnObserver) ToolFinished(call core.ToolCall, result core.ToolResult) {
 	o.engine.update(o.sessionID, o.turnID, func(t *core.Turn) {
 		t.ToolResults = append(t.ToolResults, result)
 		t.State = core.TurnStreaming
 	})
+	// Outside content taints the conversation when it arrives, and the taint is saved then, rather
+	// than worked out later from a record that may not show it after a restart (an MCP server not
+	// started again, for one).
+	o.engine.mu.Lock()
+	tools, _ := o.engine.toolsForLocked(o.sessionID)
+	o.engine.mu.Unlock()
+	if taintSource(tools, call.Name) {
+		o.engine.markTainted(o.sessionID)
+	}
 	o.engine.refreshTasks(o.sessionID)
 }
 
@@ -1209,6 +1317,10 @@ func (e *Engine) finish(
 	}
 	if err != nil {
 		turn.Error = err.Error()
+		var provider *core.ProviderError
+		if errors.As(err, &provider) {
+			turn.ErrorKind, turn.RetryAfter = provider.Kind, provider.RetryAfter
+		}
 	}
 	// Validate requires a reason on a failed turn, and a turn that failed with no error attached
 	// would otherwise be an invalid state nobody could explain.
@@ -1228,7 +1340,41 @@ func (e *Engine) finish(
 
 	e.persistTurn(sessionID, ordinal, finished)
 	e.persistSession(saved)
+
+	// Told before the turn is published as finished, so a reader woken by that event finds the hooks
+	// started. The way out does not rely on this alone: it waits for them after the engine has
+	// closed, which is when every turn has ended and told them.
+	e.mu.Lock()
+	hooks := e.toolHooks
+	e.mu.Unlock()
+	if hooks != nil {
+		hooks.TurnEnded(sessionID, finished)
+	}
 	e.publishTurn(sessionID, turnID, true)
+}
+
+// ToolHooks are a project's hooks around each tool call and at the end of each turn.
+type ToolHooks interface {
+	agent.ToolHooks
+	// TurnEnded is told of every turn that ends, however it ended, and must not block.
+	TurnEnded(sessionID string, turn core.Turn)
+}
+
+// SetToolHooks gives every agent the project's tool hooks from its next turn on. Nil removes them.
+func (e *Engine) SetToolHooks(hooks ToolHooks) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.toolHooks = hooks
+}
+
+// toolHooksSet is the hooks for a new turn's loop, as an interface that is nil when there are none.
+func (e *Engine) toolHooksSet() agent.ToolHooks {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.toolHooks == nil {
+		return nil
+	}
+	return e.toolHooks
 }
 
 func indexOfLocked(session *core.Session, turnID string) int {
@@ -1394,13 +1540,54 @@ func pendingModeNote(s core.Session, mode core.Mode) string {
 	}
 	for i := len(s.Turns) - 2; i >= first; i-- {
 		if note := s.Turns[i].Request.Note; note != "" {
-			if note == mode.Prompt {
+			if strings.HasSuffix(note, mode.Prompt) {
 				return ""
 			}
 			break
 		}
 	}
 	return mode.Prompt
+}
+
+// pendingTaskNote is the agent's task list, for the first message after a compaction, or "". The
+// summary says what happened; the list says what the agent meant to do next, in its own words, and
+// a summary that paraphrased it would lose exactly the items still open.
+func pendingTaskNote(s core.Session) string {
+	if len(s.Tasks) == 0 || !firstSinceCompaction(s) {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Your task list, as you left it before the conversation was summarised:\n")
+	for _, task := range s.Tasks {
+		mark := " "
+		switch task.State {
+		case core.TaskDone:
+			mark = "x"
+		case core.TaskInProgress:
+			mark = "~"
+		}
+		fmt.Fprintf(&b, "- [%s] %s", mark, task.Text)
+		if task.Outcome != "" {
+			b.WriteString(" (" + task.Outcome + ")")
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// firstSinceCompaction reports whether the newest turn is the first one begun since the latest
+// compaction, the message that has to carry again what the summary replaced.
+func firstSinceCompaction(s core.Session) bool {
+	compaction, ok := s.Compacted()
+	if !ok || len(s.Turns) == 0 {
+		return false
+	}
+	for _, turn := range s.Turns[:len(s.Turns)-1] {
+		if turn.StartedAt.After(compaction.At) {
+			return false
+		}
+	}
+	return true
 }
 
 // tooLong reports whether a turn ended because the conversation outgrew the model's window.
@@ -1438,6 +1625,21 @@ func (e *Engine) systemPrompt() string {
 	return core.SystemPrompt + "\n\n" + core.InstructionsPreamble + "\n\n" + instructions
 }
 
+// Inventory is what the next request in a conversation will carry, part by part, taken from the
+// same system prompt, tools and history a turn sends.
+func (e *Engine) Inventory(sessionID string) core.Inventory {
+	system := e.systemPrompt()
+	e.mu.Lock()
+	tools, _ := e.toolsForLocked(sessionID)
+	e.mu.Unlock()
+	var definitions []core.ToolDefinition
+	if tools != nil {
+		definitions = tools.Definitions()
+	}
+	instructions := strings.TrimPrefix(system, core.SystemPrompt)
+	return core.TakeInventory(core.SystemPrompt, instructions, definitions, e.snapshot(sessionID).History())
+}
+
 // SetMaxSteps bounds the model calls in each turn, for unattended runs.
 func (e *Engine) SetMaxSteps(n int) {
 	e.mu.Lock()
@@ -1466,6 +1668,7 @@ func (e *Engine) noteJoin(sessionID string) {
 	if parent == "" {
 		return
 	}
+	e.taintParent(sessionID, parent)
 	s, ok := e.Session(sessionID)
 	if !ok || len(s.Turns) == 0 {
 		return
@@ -1483,10 +1686,25 @@ func (e *Engine) noteJoin(sessionID string) {
 	if runes := []rune(text); len(runes) > joinExcerpt {
 		text = "..." + string(runes[len(runes)-joinExcerpt:])
 	}
-	if text == "" && turn.Error != "" {
+	switch {
+	case text == "" && turn.Error != "":
 		text = "error: " + turn.Error
+	case text == "":
+		// Said rather than left blank, so an agent that produced nothing is not read as one whose
+		// report went missing.
+		text = "(it ended without saying anything)"
 	}
 	report := fmt.Sprintf("agent %s, state %s.%s\n%s", name, turn.State, where, text)
+	// How its work stands by the project's own checks, from the verifier and never from what the
+	// agent said about it.
+	e.mu.Lock()
+	standing := e.standing
+	e.mu.Unlock()
+	if agent, found := e.AgentFor(sessionID); found && standing != nil {
+		if line := standing(agent.Name); line != "" {
+			report += "\nverification: " + line
+		}
+	}
 
 	e.mu.Lock()
 	if e.joinNotes == nil {
@@ -1497,10 +1715,160 @@ func (e *Engine) noteJoin(sessionID string) {
 	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: parent})
 }
 
+// SetStanding attaches what says how verification stands for an agent, by name, so its report to
+// its orchestrator carries the verifier's verdict on its work alongside its own account of it.
+func (e *Engine) SetStanding(standing func(agent string) string) {
+	e.mu.Lock()
+	e.standing = standing
+	e.mu.Unlock()
+}
+
 // PendingJoins is how many dispatched agents' reports are waiting to go with the next message in a
 // conversation, for the screen to say so.
 func (e *Engine) PendingJoins(sessionID string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.joinNotes[sessionID])
+}
+
+// UndoPlan is what an undo would change, and the state of the workspace it was worked out from.
+type UndoPlan struct {
+	Changes []string
+	// State identifies the workspace's content when the plan was made; two plans with the same
+	// state were made from the same files.
+	State string
+}
+
+// UndoPreview lists what Undo would change for a turn, without changing anything.
+func (e *Engine) UndoPreview(ctx context.Context, sessionID, turnID string) (UndoPlan, error) {
+	e.mu.Lock()
+	taker := e.checkpoints
+	session, ok := e.sessions[sessionID]
+	var commit string
+	if ok {
+		for _, turn := range session.Turns {
+			if turn.ID == turnID {
+				commit = turn.Checkpoint
+			}
+		}
+	}
+	e.mu.Unlock()
+	switch {
+	case !ok:
+		return UndoPlan{}, fmt.Errorf("no session %q", sessionID)
+	case taker == nil:
+		return UndoPlan{}, errors.New("this directory is not a git repository, so nothing was checkpointed")
+	case commit == "":
+		return UndoPlan{}, fmt.Errorf("turn %s has no checkpoint, so there is nothing to restore", turnID)
+	}
+	changes, state, err := taker.Preview(ctx, git.Checkpoint{Commit: commit})
+	return UndoPlan{Changes: changes, State: state}, err
+}
+
+// SetWebSearch offers the provider's own web search to every conversation, where the provider has
+// one. Set once at startup: the tools a request carries are part of what the provider caches.
+func (e *Engine) SetWebSearch(on bool) {
+	e.mu.Lock()
+	e.webSearch = on
+	e.mu.Unlock()
+}
+
+func (e *Engine) webSearchOn() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.webSearch
+}
+
+// SetEffort sets how hard the model thinks on every later request. A change invalidates the
+// provider's cache of the conversation from that point, so it is for deliberate steps, escalating
+// after a failure for instance, not for every turn.
+func (e *Engine) SetEffort(effort core.Effort) {
+	e.mu.Lock()
+	e.effort = effort
+	e.mu.Unlock()
+}
+
+func (e *Engine) effortSetting() core.Effort {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.effort
+}
+
+// Retry tries a failed turn again as a new one, with the same question, and marks the
+// failed one so it is not sent to the model twice. Refused for a failure trying again cannot fix:
+// a credential that was refused, a request the provider called malformed, or a conversation too
+// long for the model, each of which needs something changed first.
+func (e *Engine) Retry(sessionID string) (string, error) {
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok || len(s.Turns) == 0 {
+		e.mu.Unlock()
+		return "", errors.New("there is nothing to retry")
+	}
+	last := &s.Turns[len(s.Turns)-1]
+	switch {
+	case last.State != core.TurnFailed:
+		e.mu.Unlock()
+		return "", errors.New("the last turn did not fail, so there is nothing to retry")
+	case last.ErrorKind != "" && !last.ErrorKind.Retryable():
+		e.mu.Unlock()
+		return "", fmt.Errorf("trying again will fail the same way: %s", retryAdvice(last.ErrorKind))
+	case last.RetryAfter > 0 && !last.EndedAt.IsZero() && time.Since(last.EndedAt) < last.RetryAfter:
+		wait := (last.RetryAfter - time.Since(last.EndedAt)).Round(time.Second)
+		e.mu.Unlock()
+		return "", fmt.Errorf("the provider asked for %s more before trying again", wait)
+	}
+	failedID, prompt := last.ID, retryPrompt(*last)
+	e.mu.Unlock()
+
+	// The failed turn stays in what the model is sent, with what it did before failing, its
+	// pictures and the notes it carried, so the retry asks it to carry on rather than asking the
+	// question again, which would drop all of that.
+	turnID, err := e.Send(sessionID, prompt)
+	if err != nil {
+		// Refused (a budget, a check still running): the failure stands, and can be retried later.
+		return "", err
+	}
+	e.mu.Lock()
+	var failed core.Turn
+	ordinal := -1
+	if s := e.sessions[sessionID]; s != nil {
+		for i := range s.Turns {
+			if s.Turns[i].ID == failedID {
+				s.Turns[i].Retried = true
+				failed, ordinal = s.Turns[i], i
+			}
+		}
+	}
+	e.mu.Unlock()
+	if ordinal >= 0 {
+		e.persistTurn(sessionID, ordinal, failed)
+	}
+	return turnID, nil
+}
+
+// retryPrompt is the message a retry sends: carry on, in words that say what happened.
+func retryPrompt(failed core.Turn) string {
+	why := "an error"
+	if failed.ErrorKind != "" {
+		why = "an error (" + string(failed.ErrorKind) + ")"
+	}
+	if len(failed.Steps) == 0 && failed.Text == "" && len(failed.ToolCalls) == 0 {
+		return "That request ended in " + why + " before you answered it. Please answer it now."
+	}
+	return "Your last reply was cut off by " + why + ". Carry on from where it stopped; what you " +
+		"already did is above, so do not do it again."
+}
+
+// retryAdvice is what to do instead of retrying a failure of this kind.
+func retryAdvice(kind core.ProviderErrorKind) string {
+	switch kind {
+	case core.ErrAuthentication:
+		return "the credential was refused; check it with canopy keys test, or add a new one"
+	case core.ErrContextLength:
+		return "the conversation is too long for the model; compact it with /compact"
+	case core.ErrInvalidRequest:
+		return "the provider refused the request as malformed"
+	}
+	return "the provider's answer was not one trying again can fix"
 }

@@ -1,7 +1,7 @@
 package chat
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"encoding/json"
 	"fmt"
@@ -146,6 +146,18 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 		}
 		lines = append(lines, prefix+t.Body.Render(line))
 	}
+	if n := len(turn.Request.Images); n > 0 {
+		lines = append(lines, "  "+t.Muted.Render("with "+pictureCount(n)))
+	}
+	// What agents reported back went with this message, and is said, so the model's answer to it is
+	// not a mystery to whoever reads the transcript.
+	if n := len(turn.Request.Reports); n > 0 {
+		reports := "with the report of 1 agent"
+		if n > 1 {
+			reports = "with the reports of " + itoa(n) + " agents"
+		}
+		lines = append(lines, "  "+t.Muted.Render(reports))
+	}
 
 	if turn.Thinking != "" {
 		lines = append(lines, "")
@@ -153,6 +165,46 @@ func renderTurn(turn core.Turn, width int, spinner string, kinds KindOf, detail 
 		for _, line := range wrap(turn.Thinking, width) {
 			lines = append(lines, t.Muted.Render(line))
 		}
+	}
+
+	for _, notice := range turn.Notices {
+		for _, line := range wrap("· "+terminalSafe(notice), width-2) {
+			lines = append(lines, t.Muted.Render(line))
+		}
+	}
+
+	// A finished turn with its steps recorded is drawn in the order it happened: what the model
+	// said, the tools it called and what they returned, then what it said next. Drawing the whole
+	// reply above every tool call put a conclusion written after reading a file above the read.
+	// A turn stopped part way through also has what streamed after its last recorded step, which
+	// only the running text holds; it is drawn after the steps, or the ordered view is skipped when
+	// the two do not line up.
+	var recorded strings.Builder
+	for _, step := range turn.Steps {
+		if step.Role == core.RoleAssistant {
+			recorded.WriteString(step.Text)
+		}
+	}
+	if len(turn.Steps) > 0 && terminal(turn.State) && strings.HasPrefix(turn.Text, recorded.String()) {
+		for _, step := range turn.Steps {
+			if step.Role != core.RoleAssistant {
+				continue
+			}
+			if text := terminalSafe(step.Text); text != "" {
+				lines = append(lines, "")
+				lines = append(lines, RenderMarkdown(text, width)...)
+			}
+			for _, call := range step.ToolCalls {
+				lines = append(lines, renderToolCall(
+					call, resultFor(turn, call), turn.State, width, kinds, detail)...)
+			}
+		}
+		if rest := terminalSafe(strings.TrimPrefix(turn.Text, recorded.String())); strings.TrimSpace(rest) != "" {
+			lines = append(lines, "")
+			lines = append(lines, RenderMarkdown(rest, width)...)
+		}
+		lines = append(lines, statusLines(turn, spinner, width)...)
+		return lines
 	}
 
 	if turn.Text != "" {
@@ -569,6 +621,9 @@ func statusLines(turn core.Turn, spinner string, width int) []string {
 			// between "this did not work" and "this worked and was not kept".
 			return one(t.Warning.Render("[" + firstLine(turn.RolledBack) + "]"))
 		}
+		if footer := turnFooter(turn); footer != "" {
+			return one(t.Muted.Render(truncate(footer, width)))
+		}
 		return nil
 
 	case core.TurnInterrupted:
@@ -617,3 +672,43 @@ func firstLine(s string) string {
 // What an empty conversation shows used to live here, as a welcome block that flowed from the top
 // of the transcript with the message box pinned to the floor below it. It is a composed screen now
 // and lives in opening.go, because where the box sits is the whole point of it.
+
+// turnFooter is the quiet line under a finished turn: which model answered, how long it took, what
+// it read and wrote, how much of that came from the provider's cache, and what it cost. Where the
+// tokens go is the thing a person running several agents most needs to see and least often does.
+func turnFooter(turn core.Turn) string {
+	u := turn.Usage
+	input := u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens
+	if input == 0 && u.OutputTokens == 0 {
+		return ""
+	}
+	parts := []string{}
+	if turn.Model != "" {
+		parts = append(parts, turn.Model)
+	}
+	if !turn.StartedAt.IsZero() && turn.EndedAt.After(turn.StartedAt) {
+		parts = append(parts, formatDuration(turn.EndedAt.Sub(turn.StartedAt)))
+	}
+	io := fmt.Sprintf("%s in, %s out", compactCount(input), compactCount(u.OutputTokens))
+	if input > 0 && u.CacheReadTokens > 0 {
+		io += fmt.Sprintf(", %d%% cached", u.CacheReadTokens*100/input)
+	}
+	parts = append(parts, io)
+	if u.CostKnown {
+		parts = append(parts, fmt.Sprintf("$%.4f", u.CostUSD))
+	}
+	return "  " + strings.Join(parts, " · ")
+}
+
+func compactCount(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 10_000:
+		return fmt.Sprintf("%dk", n/1000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"io"
 	"os"
 	"os/signal"
@@ -17,6 +19,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
@@ -26,6 +29,7 @@ const (
 	exitOK        = 0
 	exitFailed    = 1   // the turn failed, was refused, or was cut off
 	exitUsage     = 2   // the command line or configuration is wrong
+	exitRed       = 3   // the turn completed and the project's tests do not pass
 	exitTimeout   = 124 // what timeout(1) uses
 	exitCancelled = 130
 )
@@ -44,6 +48,10 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	yes := flags.Bool("yes", false, "approve the calls this mode would ask a person about")
 	maxSteps := flags.Int("max-steps", 0, "stop after this many model calls")
 	timeout := flags.Duration("timeout", 30*time.Minute, "stop after this long")
+	effortName := flags.String("effort", "", "low, medium, high, xhigh or max; the provider's default when omitted")
+	verify := flags.Bool("verify", false, "run the project's tests after the turn; exit 3 when they fail")
+	budget := flags.Float64("budget", 0, "stop once the run has spent this many dollars, retries included")
+	escalate := flags.Int("escalate", 0, "with -verify, retry up to this many times at a higher effort when the tests fail")
 	if err := flags.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -80,6 +88,10 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	resolver := session.NewKeyResolver(keyStore, version)
 	resolver.Renews(signInSources())
 	engine := session.New(resolver)
+	// Turn-end hooks are waited for after the engine has closed, which is when the last turn has
+	// ended and told them.
+	var toolHooks *hooks.ToolRunner
+	defer func() { toolHooks.Wait(hookShutdownLimit) }()
 	defer engine.Close()
 	// One prompt and done: a summary compacted at the end would be paid for and never read.
 	engine.SetAutoCompact(false)
@@ -96,12 +108,21 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	// No one is there to answer a trust prompt, so an untrusted repository's configuration is
 	// withheld and the warning says how to trust it.
 	project := gateProject(dir, loadProjectRaw(dir, errOut), stdin, errOut, false)
-	if project.Trusted {
-		instructions, err := config.LoadInstructions(dir, project)
-		if err != nil {
-			_, _ = fmt.Fprintf(errOut, "warning: project instructions are not being sent: %v\n", err)
-		}
-		engine.WithInstructions(instructions.Text)
+	engine.WithInstructions(projectInstructions(dir, project, errOut))
+	enableLanguageServers(project)
+	defer closeLanguageServers()
+	engine.SetWebSearch(webSearchWanted())
+
+	// Checked before anything is spent: -verify with nothing to verify against would exit 0 on
+	// a run nobody checked, and a script reading that status would take it for green.
+	if *escalate > 0 && !*verify {
+		_, _ = fmt.Fprintln(errOut, "-escalate retries when the tests fail, so it needs -verify")
+		return exitUsage
+	}
+	if *verify && len(testsFor(project)) == 0 {
+		_, _ = fmt.Fprintln(errOut, "-verify needs the project's tests, and none are configured or the "+
+			"repository is not trusted; run canopy trust, or add tests to canopy.json")
+		return exitUsage
 	}
 
 	registry, err := toolsFor(dir)
@@ -116,6 +137,11 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	}
 	stopServers := attachMCP(engine, dir, project)
 	defer stopServers()
+	toolHooks = attachToolHooks(engine, dir, project, func(r hooks.Report) {
+		if r.Failed() {
+			_, _ = fmt.Fprintln(errOut, "warning: "+terminalText(r.Summary()))
+		}
+	}, errOut)
 
 	if *keyName == "" {
 		*keyName = resolver.DefaultKeyName()
@@ -141,6 +167,20 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 	if *maxSteps > 0 {
 		engine.SetMaxSteps(*maxSteps)
 	}
+	if *budget < 0 {
+		_, _ = fmt.Fprintln(errOut, "-budget is an amount in dollars")
+		return exitUsage
+	}
+	if *budget > 0 {
+		// Across every agent, so agents the run starts are held to it as well.
+		_ = engine.SetOverallBudget(*budget)
+	}
+	effort := core.Effort(*effortName)
+	if !effort.Valid() {
+		_, _ = fmt.Fprintf(errOut, "unknown effort %q\n", *effortName)
+		return exitUsage
+	}
+	engine.SetEffort(effort)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -154,14 +194,39 @@ func runHeadless(args []string, stdin io.Reader, out, errOut io.Writer) int {
 		return exitFailed
 	}
 	turn := follow(ctx, engine, events, main.SessionID, turnID, *format, out)
-	if ctx.Err() != nil && !turn.State.Terminal() {
-		engine.Cancel(main.SessionID)
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return exitTimeout
+	for attempt := 0; ; attempt++ {
+		if ctx.Err() != nil && !turn.State.Terminal() {
+			engine.Cancel(main.SessionID)
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return exitTimeout
+			}
+			return exitCancelled
 		}
-		return exitCancelled
+		if !*verify || turn.State != core.TurnComplete {
+			return reportRun(turn, main.SessionID, *format, out, errOut)
+		}
+		failures, ok := verifyWorkspace(ctx, dir, project, errOut)
+		if ok {
+			return reportRun(turn, main.SessionID, *format, out, errOut)
+		}
+		if attempt >= *escalate {
+			_ = reportRun(turn, main.SessionID, *format, out, errOut)
+			_, _ = fmt.Fprintln(errOut, "the project's tests do not pass")
+			return exitRed
+		}
+		// Escalate on red: the cheap attempt failed its own evidence, so the next one thinks harder.
+		// Running cheap first and paying for depth only on failure is where the saving comes from.
+		effort = nextEffort(effort)
+		engine.SetEffort(effort)
+		_, _ = fmt.Fprintf(errOut, "tests failed; trying again at %s effort\n", effort)
+		next, err := engine.Send(main.SessionID, "The project's tests fail after your change. What failed:\n\n"+
+			failures+"\n\nFix the cause, then say what you changed.")
+		if err != nil {
+			_, _ = fmt.Fprintf(errOut, "sending the retry: %v\n", err)
+			return exitFailed
+		}
+		turn = follow(ctx, engine, events, main.SessionID, next, *format, out)
 	}
-	return reportRun(turn, main.SessionID, *format, out, errOut)
 }
 
 // follow streams a turn as it happens and returns it once it has ended.
@@ -257,5 +322,50 @@ func loadProjectRaw(dir string, errOut io.Writer) config.Project {
 		_, _ = fmt.Fprintf(errOut, "warning: %v\nwarning: continuing with nothing configured\n", err)
 		return config.Project{}
 	}
+	warnReserved(project, errOut)
 	return project
+}
+
+// verifyWorkspace runs the project's configured tests in dir and returns the tail of each failing
+// required test's output.
+func verifyWorkspace(ctx context.Context, dir string, project config.Project, errOut io.Writer) (string, bool) {
+	tests := testsFor(project)
+	if len(tests) == 0 {
+		return "no tests are configured", false
+	}
+	var failures []string
+	for i, test := range tests {
+		outcome := execpkg.RunTest(ctx, test, confinedTarget(dir), fmt.Sprintf("verify-%d", i))
+		if outcome.Run.State == core.TestPassing || !test.Required {
+			continue
+		}
+		tail := outcome.Output
+		if len(tail) > 3000 {
+			tail = "..." + tail[len(tail)-3000:]
+		}
+		failures = append(failures, fmt.Sprintf("%s (%s):\n%s", test.Name, outcome.Run.State, tail))
+	}
+	return strings.Join(failures, "\n\n"), len(failures) == 0
+}
+
+// nextEffort is one step up the effort ladder, from the provider's default to high.
+func nextEffort(e core.Effort) core.Effort {
+	switch e {
+	case core.EffortLow:
+		return core.EffortMedium
+	case core.EffortMedium:
+		return core.EffortHigh
+	case core.EffortHigh, core.EffortDefault:
+		// The default is already high on current models, so stepping from it to high would
+		// retry at the same depth and pay again for the same answer.
+		return core.EffortXHigh
+	default:
+		return core.EffortMax
+	}
+}
+
+// confinedTarget is where a project's test runs: dir, in the workspace's sandbox where there is one.
+func confinedTarget(dir string) execpkg.Target {
+	policy, env := tools.Confinement(dir)
+	return execpkg.Target{Dir: dir, Sandbox: policy, Env: env}
 }

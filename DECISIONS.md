@@ -1359,6 +1359,177 @@ shortening now happens by compaction, by server-side context management, or by m
 results smaller. D-42's visibility rules stand. Supersedes the parts of D-41 and M-09 that sent a
 mode's prompt as the system prompt and hid tools a mode forbids.
 
+## D-56 Canopy sandboxes what it runs, and says exactly what the sandbox covers. Decided 2026-09-25.
+
+Supersedes the README and FEATURES stance that Canopy makes no sandboxing claims. That stance was
+right while nothing enforced a boundary; it stopped being a reason not to build one. Shell commands
+an agent runs now go through the operating system's sandbox where one exists: Seatbelt on macOS
+(writes confined to the workspace, shared git directory, temporary directories and toolchain
+caches; credential locations unreadable), Landlock on Linux (writes confined; reads not, which
+Landlock cannot express). Network is left open by default because package managers and fetches
+are ordinary work; an egress allowlist is the next step. A command that runs unconfined, because
+no sandbox is available or `CANOPY_SANDBOX=off`, says so in its result. D-33's direct and isolated
+contracts are unchanged; what changed is that the shell now has an enforced boundary on the two
+platforms Canopy supports, stated per platform rather than implied.
+
+## D-57 Outside content taints a conversation, and a tainted conversation cannot freely send data out. Decided 2026-09-25.
+
+Extends D-33's approval scope; nothing it grants is withdrawn for a conversation that has read
+nothing from outside. A conversation is tainted once it has taken in content Canopy did not produce
+and the person did not type: a page from `fetch_url`, a web search the provider ran, or any MCP
+tool's result, counted once the result has come back. Such content can carry instructions aimed at
+the model. The taint is saved with the conversation, so it holds across compaction, a restart and
+a pickup; agents a tainted conversation starts inherit it, and a tainted agent passes it to the
+conversation it reports to.
+
+From then on two things hold, in every mode and past earlier approvals. Every shell command runs
+with its network limited to package registries through the egress proxy (D-60) where the sandbox
+limits by address, which is macOS, so a script the model writes cannot post what it read anywhere
+but a registry; on Linux, where the limit would be by port and cut off the local servers tests
+start, it is not forced. And an action whose purpose is to send data out is asked about: network tools, every MCP tool, a git push, fetch,
+clone or change of remote, and a shell command whose command word, in any stage of a pipeline, is a
+network program or runs text the line does not show (curl, ssh, `gh`, `nslookup`, `base64`, `eval`,
+a shell reading `-c` or its input, publishing commands). Only command words count, so building a
+package called `mail` or grepping for `curl` is not asked about. Reading, editing, building and
+testing keep their level. Enforced in the permission layer and the sandbox, never left to the
+model. Where the network is not limited, the word list is the only guard, and it narrows
+exfiltration rather than preventing it. The project's tests run in the sandbox (D-61), but a taint
+does not limit their network, and setup and hook commands run outside it, so a test a tainted agent
+writes, and runway then runs, can still reach the network.
+
+## D-58 Language servers are back, for diagnostics and navigation, and only confined. Decided 2026-09-25.
+
+Supersedes D-27. The condition D-27 named was agent quality on real repositories, and the cheapest
+lever on it turned out to be hearing about a type error in the step that made it rather than
+several steps later from a failing build. The subsystem it feared is kept small: one client for
+every server, a server per language per worktree started only when a file of that language is
+written or looked up, diagnostics for the file just written added to the edit's result, and two
+read tools, `find_definition` and `find_references`. A language server runs the repository's own
+toolchain, so it starts only in a trusted repository, inside the same sandbox as the agent's shell
+commands, and not at all where there is no sandbox, unless the sandbox was switched off with
+`CANOPY_SANDBOX=off`, in which case it runs unconfined like everything else; rust-analyzer starts
+with build scripts and procedural macros off. `CANOPY_LSP=off` turns them off.
+
+## D-59 Web search, skills and agent definitions are in. Decided 2026-09-25.
+
+Supersedes D-40's rows for A4-07 and A8-09, and the part of A8-01 that is dispatch by name. Web
+search is the provider's own, Anthropic's server-side search, so Q-11's question of which search
+account to hold does not arise; it is opt-in with `CANOPY_WEB_SEARCH=on`, each search is audited,
+and it taints the conversation (D-57). Skills are the Agent Skills format that already exists,
+folders with a `SKILL.md`, loaded by progressive disclosure: names in the prompt, bodies on demand.
+Agent definitions are markdown files in `.claude/agents` or `.canopy/agents`, dispatched by name,
+and a definition's tools list becomes a trust ceiling. Project skills and definitions are covered
+by repository trust. The distribution-format worry D-40 recorded is answered by adopting a format
+others already use rather than inventing one. A8-01's nested sub-agents, agents that spawn agents,
+remain out.
+
+## D-60 The sandbox's network can be narrowed to package registries. Decided 2026-09-25.
+
+Follows D-56, which left the network open and named an egress allow list as the next step. Open
+stays the default, since a build that cannot fetch its dependencies is a build that fails for
+reasons nobody can see. `CANOPY_SANDBOX_NETWORK=registries` confines a command to the loopback
+address, where Canopy runs an HTTP proxy that forwards only to package registries and GitHub, and
+to hosts named in `CANOPY_SANDBOX_ALLOW`; everything else is refused, and the command's result says
+which hosts. `off` allows no connections. The proxy decides by host name, so the list is readable,
+and reaches those hosts on ports 80 and 443 only. What a program that ignores the proxy variables
+can reach differs by platform and is stated as such: on macOS, Seatbelt allows the loopback address
+only, so it reaches local services and nothing beyond the machine; on Linux, Landlock names ports
+rather than addresses, so it can reach any address on the proxy's one port. The list includes
+general-purpose hosts, GitHub and Google's storage among them, because dependencies are fetched
+from them, which is why this narrows where data can go rather than stopping it.
+
+## D-61 A project's tests run in the sandbox too. Decided 2026-09-25.
+
+Extends D-56. A test command is code in the repository, which an agent may have written, and runway
+runs it after every turn without asking; leaving it unconfined made the shell's boundary one step
+deep. The project's tests now run in the same sandbox as an agent's shell commands, wherever that
+sandbox is available, for the verification the interface runs, `canopy run -verify` and `canopy
+land`, with the network narrowed as `CANOPY_SANDBOX_NETWORK` narrows the shell's; a taint (D-57)
+does not narrow it, since a verification belongs to no one conversation. A suite that writes outside the workspace, the temporary area and the toolchain caches fails
+there and says why; `CANOPY_SANDBOX=off` is the way out, for everything at once. Hooks run there
+too, since a hook usually runs a script in the repository an agent can have edited, and so does the
+setup `canopy land` runs in its scratch worktree, which holds the agent's merged changes. Setup for a
+new agent worktree and MCP servers remain unconfined for now: that setup runs from the trusted
+configuration before any agent has touched the worktree, and servers commonly need to write where
+the sandbox does not allow.
+
+## D-62 An editor can drive Canopy over ACP, and answers its questions. Decided 2026-09-25.
+
+`canopy acp` serves the project it is started in to an editor over the Agent Client Protocol, the
+reverse of D-51's delegation: there Canopy is the client of someone else's agent, here Canopy is the
+agent and the editor is the client. Everything behind a turn is Canopy's own, the key, the mode, the
+permission layer, the sandbox and the language servers, so an editor gets the same boundaries the
+interface has. A question the permission layer would ask a person in the interface is sent to the
+editor as `session/request_permission`, with allow once and reject as the only answers; only an
+explicit allow runs the call, and a cancelled, unreadable or unrecognised answer refuses it. No
+standing approval can be given from the editor, since ACP's allow-always has no scope Canopy could
+hold it to. A session starts in build, the interface's default, where the project's trust allows it,
+and otherwise in the mode its trust gives; the editor is offered only the modes the conversation
+could be switched to, so runway and cruise, which need the interface's checkpoints and verification,
+are not offered. The trust gate cannot prompt,
+because the editor owns stdin, so an untrusted repository's configuration is withheld exactly as
+for `canopy run`. One process serves one project: a session asked for in another directory is
+refused, since the tools are rooted in the first.
+
+## D-63 Agents can outlive their client: `canopy serve`. Decided 2026-09-25.
+
+`canopy serve` holds this project's engine in a process of its own and serves it over the same
+protocol as D-62, on a unix socket in a directory only the user can open (created 0700, checked for
+owner and mode on every start, refused if either is wrong; the socket itself is 0600). Every
+connection is a client; a conversation belongs to the client that started, loaded or last prompted
+it. A client leaving stops nothing: its agents keep working, and a question one of them asks while
+no client holds its conversation waits, is announced on the server's error output with the command
+that picks it up, and goes to the next client that loads the conversation. It is never answered by
+default in either direction, and it is refused only when the call it belongs to is cancelled. A
+client that leaves with a question open has not answered it, so the question moves on rather than
+being taken as a refusal, and a conversation loaded by another client takes its open question with
+it. `canopy attach` is the terminal client: it lists, picks up with a replay of
+what happened, prompts, and answers y or n. The interface is not yet a client of the server, so a
+conversation started in `canopy` and one started under `canopy serve` are not live in each other.
+
+## D-64 A project's hooks can refuse a tool call, and never approve one. Decided 2026-09-25.
+
+Hooks gain three events around an agent's work: `pre-tool` before each call the permission layer
+has let through, `post-tool` after it, and `turn-end`. They are given the call or the turn as JSON on
+stdin and run in the sandbox, like every hook since D-61. A pre-tool hook can only take a yes away:
+it runs after the permission layer has decided and after a person has answered, so it never sees a
+call that was refused or not approved, and nothing it answers can approve anything. It fails closed,
+refusing the call when it crashes, times out, exits with anything but 0 or 2, or answers something
+other than allow or deny, because a guard that fails open stops guarding without anybody noticing.
+A refusal is returned to the model with its reason and audited as a denial. A post-tool hook can add
+a note to the result the model is told; a turn-end hook changes nothing and nothing waits on it.
+Their failures are reported the way the other hooks' are. They arrive through canopy.json, so they
+are part of what a person trusts, the tools each is limited to included. A hook runs in the
+directory of the agent its call belongs to, and is told that directory, so a guard for an agent in
+its own worktree looks at that worktree. Trust covers the command a hook runs, not the script it
+names: an agent allowed to write files can edit a guard script in its workspace, so a guard worth
+the name lives outside the repository or in a path the agent cannot write. The subscription routes
+of D-51 run their vendor's own tools, which these hooks never see.
+
+## D-66 Always on starting agents means starting agents, in that conversation. Decided 2026-09-26.
+
+The confirmation before spawn_agents offered "always" with an empty scope, which recorded a grant
+nothing could match. It now carries the scope spawn_agents, shown as "every spawn_agents call in this
+conversation", and the confirmation checks that grant before asking, so always means what it says.
+The grant covers that tool in that conversation only: no other tool, and no other conversation. A
+scope naming only a tool now renders in those words everywhere, so no prompt can offer an always
+with nothing after it.
+## D-65 A new worktree's setup and local MCP servers run in the sandbox too. Decided 2026-09-26.
+
+Completes D-61, which left both unconfined. The setup a new agent's worktree runs is the project's
+own install, and the branch it runs on can hold what earlier agents merged; a local MCP server is a
+program the repository names and often ships. Both now run in the sandbox the project's tests run
+in, with the network as `CANOPY_SANDBOX_NETWORK` sets it. The worktree's sandbox is made once the
+worktree exists, since its path is not known before. A local server that cannot work inside it can
+be marked `"unconfined": true` in canopy.json; that is part of what a person trusts, and the trust
+prompt names it as running outside the sandbox. A server whose sandbox cannot be made is not
+started; where there is no sandbox at all, it runs as every other command then does, and a warning
+says so. npx and uv install a confined server into directories of Canopy's own, under its cache
+directory (`npm_config_cache`, `UV_CACHE_DIR`, `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR` and
+`UV_PYTHON_INSTALL_DIR` point there, one set per project and server), not into the person's: their `~/.npm/_npx` and uv's tool and
+Python directories are what their own later npx and uv runs use outside the sandbox, so a writable
+one would be a way out of it.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

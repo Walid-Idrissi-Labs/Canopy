@@ -41,7 +41,12 @@ things follow from taking that seriously:
   tested, and three agents on one task are ranked by whose code passes rather than by which one
   sounded most confident. Fanning out is not new. Using test evidence to settle it appears to be.
 
-What Canopy does not have: a sandbox, a language server, web search, or agents that spawn agents.
+What Canopy does not have yet: agents that spawn agents. In a trusted repository a language server
+found on PATH (gopls, typescript-language-server, pyright, rust-analyzer, clangd) checks every file
+an agent edits, the errors coming back with the edit, and answers `find_definition` and
+`find_references`. Web search is
+Anthropic's own server-side search, offered on Anthropic keys when `CANOPY_WEB_SEARCH=on`; other
+providers have `fetch_url` only.
 Those are stated plainly rather than deferred quietly, and
 [LIMITATIONS.md](LIMITATIONS.md) is the honest list.
 
@@ -55,8 +60,11 @@ Those are stated plainly rather than deferred quietly, and
 - [Watch them, and steer without stopping them](#watch-them-and-steer-without-stopping-them)
 - [Git as a real tool, not a shell string](#git-as-a-real-tool-not-a-shell-string)
 - [Know which agent was actually right](#know-which-agent-was-actually-right)
+- [Where the tokens go](#where-the-tokens-go)
 - [Reusable prompt commands](#reusable-prompt-commands)
+- [Writing a message](#writing-a-message)
 - [Modes, on shift+tab](#modes-on-shifttab)
+- [Themes](#themes)
 - [A report for the pull request](#a-report-for-the-pull-request)
 - [What it will not do](#what-it-will-not-do)
 - [Requirements](#requirements)
@@ -71,7 +79,9 @@ go install github.com/Walid-Idrissi-Labs/Canopy/cmd/canopy@latest
 ```
 
 Or take a binary from the [releases page](https://github.com/Walid-Idrissi-Labs/Canopy/releases).
-macOS and Linux, on both Intel and ARM. Windows is not supported, see below.
+macOS and Linux, on both Intel and ARM. Windows is not supported, see below. Each release carries
+an SBOM, a keyless cosign signature over its checksums and SLSA build provenance;
+[RELEASING.md](RELEASING.md) has the commands that check a download.
 
 Then give it a key. A credential is stored by name and carries its own endpoint and model, which is
 what lets you talk about agents by name later:
@@ -84,9 +94,19 @@ canopy keys list                             # the MODEL column says NOT SET whe
 canopy keys rename nim minimax               # the value is not asked for again
 ```
 
+Already have `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set for another tool? `canopy keys import`
+shows what it found, by fingerprint and never by value, and stores them as named keys once you say
+yes.
+
 No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy keys signin` rather
 than `canopy keys add`, and read
 [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
+
+A key added on the credential screen (ctrl+k) is selected, and checked at once against the
+provider's model list, which is free, so a mistyped key is named before your first message rather
+than by it; `t` checks the selected key again. For an OpenAI-compatible endpoint Canopy has no price
+for, `p` records yours (input and output dollars per million tokens), and the header prices the next
+turn with it, marked as your own rate.
 
 A name is the one thing here you are likely to get wrong, because you choose it before the
 credential has been used for anything. Renaming moves the credential and every conversation
@@ -106,6 +126,11 @@ The keys screen offers a dated catalog where Canopy knows both the endpoint and 
 transport, while still accepting an unlisted model id. OpenAI's offered list is intentionally
 limited to models the current Chat Completions adapter can invoke; models that require the
 Responses API need a transport Canopy does not yet ship.
+
+In a project with no canopy.json, `canopy init` writes one with the tests its go.mod, Cargo.toml,
+package.json or pytest setup suggests, for you to read and `canopy trust`. `canopy doctor` checks
+git, the key store, the sandbox, the project's configuration, language servers, the programs the
+subscription routes need, and the terminal, and says what to do about each that is missing.
 
 Now run `canopy` in a git repository. Press `?` for every key binding.
 
@@ -189,6 +214,12 @@ they are isolated into their own worktree and branch.
 It confirms the plan before spawning anything, because spawning agents spends real money against
 real keys, and a misread number should be a question rather than an invoice.
 
+When an agent finishes, the conversation that started it hears back with the next message you send
+there: the end of the agent's last reply (bounded), and how verification stands on its work, from
+the project's own tests rather than from what the agent claimed; stale is said as stale. Nothing is
+sent on its own, so an agent finishing never spends on the orchestrator's key unasked, and the
+transcript marks the message that carried the reports.
+
 ## Watch them, and steer without stopping them
 
 Split panes show several agents working at once. Move between them by keyboard or by clicking.
@@ -223,7 +254,12 @@ screen, not only on the one that lists agents, and no screen is ever locked beca
 waiting: leaving a conversation is not answering it, and the question is still there when you come
 back. Scrolling a permission prompt to read what is above it does not answer it either. Set
 `CANOPY_BELL=1` to have the terminal beep the moment an agent starts needing you, which is off
-unless you ask for it.
+unless you ask for it. `CANOPY_NOTIFY=1` posts a desktop notification instead, saying which agent
+wants what, and another when a turn finishes while the terminal is behind another window; it uses
+the sequence your terminal understands (iTerm2, WezTerm, Ghostty, kitty, foot and Windows Terminal
+among them) and passes through tmux when `allow-passthrough` is on. The window title always says how
+many agents are working and how many are waiting on you, and Ghostty, WezTerm and Windows Terminal
+show the same as a progress indicator on the tab.
 
 ## Git as a real tool, not a shell string
 
@@ -295,6 +331,11 @@ unknown provider costs, names the sample size, and refuses a conclusion until at
 have three exact samples each. The result is an association in local history, not a claim that the
 model caused the outcome.
 
+On the ranking, `o` asks a model for a second look at the attempts: whether any of them passes its
+tests without doing the work (a test edited, an input special-cased, a failure silenced), and which
+it would choose among those that pass. It is shown under the ranking as an opinion, never in the
+ranking's place, and it costs one request.
+
 ## Project instructions
 
 Canopy sends a project's standing instructions with every request: your own
@@ -305,6 +346,23 @@ conversation, so they are cached rather than paid for again on every step. Overs
 (over 48 KB together) are refused by name rather than cut. Like the rest of a repository's
 configuration, they are only sent once the repository is trusted.
 
+## Skills
+
+Canopy reads Agent Skills: folders holding a `SKILL.md` whose frontmatter has a `name` and a
+`description`. Only the name and description go into the system prompt; the model loads a skill's
+full instructions, and any file beside it, with the `skill` tool when a task calls for it, so a
+hundred skills cost a hundred lines. Your own skills are read from `skills/` in the Canopy config
+directory, `~/.claude/skills` and `~/.agents/skills`; a repository's from `.canopy/skills`,
+`.claude/skills` and `.agents/skills`, once the repository is trusted.
+
+## Agent definitions
+
+An agent can be defined once and dispatched by name: a markdown file with `name`, `description` and
+optionally `model` in its frontmatter, and its standing instructions as the body. "Use the reviewer
+agent on this branch" starts it with those instructions and that model. Definitions are read from
+`agents/` in the Canopy config directory and `~/.claude/agents`, and, once a repository is trusted,
+from its `.canopy/agents` and `.claude/agents`, so definitions written for Claude Code work here.
+
 ## A repository has to be trusted before it runs anything
 
 canopy.json can name a setup command, test commands, hooks and MCP servers, and carry instructions
@@ -314,6 +372,152 @@ and asks once; `canopy trust` reviews it later, `canopy trust revoke` takes it b
 covers that exact configuration: change a hook, add an MCP server or add vendor agent settings such as
 `.claude/settings.json`, and Canopy asks again. A repository's `"trust"` field may lower its agents to
 read-only or confined; it can never raise them above standard.
+
+An MCP server is a local program started over stdio, or a remote one reached over HTTP:
+
+```json
+{"mcp": [
+  {"name": "files", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]},
+  {"name": "issues", "url": "https://mcp.example.com/mcp",
+   "headers": {"Authorization": "Bearer ${ISSUES_TOKEN}"}}
+]}
+```
+
+A remote server's url must be https, or http to this machine, and a redirect is never followed. A
+header names its token as `${NAME}`, read from the environment Canopy starts in, so the committed
+file never holds it; the trust prompt shows which variables go to which url, a server whose variable
+is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
+cloud's) is never sent to a server a repository names.
+
+A hook runs on something that happened: `tests-passed`, `tests-failed`, `verified`, `agent-idle` and
+`agent-blocked` for the project's state, and `pre-tool`, `post-tool` and `turn-end` around an agent's
+work. The last three are given what happened as JSON on stdin. A `pre-tool` hook can refuse a call,
+by answering `{"decision": "deny", "reason": "..."}` or exiting 2 with the reason on stderr, and the
+model is told why; it can never approve one, since it runs only after the permission layer has said
+yes. One that cannot answer, by crashing, timing out or saying something else, refuses the call too.
+A `post-tool` hook can answer `{"note": "..."}`, which is added to what the model is told of the
+result. `"tools": ["run_command"]` narrows either to some tools. Every hook runs in the sandbox, in
+the directory of the agent the call belongs to, which its input names as `workspace`.
+
+```json
+{"hooks": [
+  {"on": "pre-tool", "tools": ["run_command"], "run": "./scripts/guard.sh", "timeout": "10s"},
+  {"on": "post-tool", "tools": ["write_file", "edit_file"], "run": "./scripts/lint-note.sh"},
+  {"on": "turn-end", "run": "osascript -e 'display notification \"turn done\"'"}
+]}
+```
+
+## Landing an agent's work
+
+```sh
+canopy land agent/parser-fix        # merge into the branch you are on, only if the result passes
+canopy land -pr agent/parser-fix    # or push the agent's branch and open a pull request
+```
+
+The merge is made in a scratch worktree, never in your checkout, and the project's tests run on the
+merged result, which is what will exist afterwards, since two branches that each pass can fail
+together. Your branch moves only if every required test passed and it still points where it did when
+the merge was made. A checkout with uncommitted changes is refused, and the agent's branch is kept
+either way.
+
+## Headless runs, and escalating on red
+
+```sh
+canopy run -p "fix the flaky parser test" -output stream-json
+canopy run -p "..." -effort low -verify -escalate 2
+```
+
+`canopy run` is the full agent without the interface, for scripts and CI. With `-verify` the
+project's own tests decide the exit code (3 when they fail). `-escalate N` retries a red result up to
+N times, one effort level higher each time, with the failing output: run cheap, and pay for more
+thinking only when the evidence says it was needed. `-budget 0.50` stops the run once it has spent
+fifty cents, retries included; in the interface, `/budget 2` caps one agent and `/budget all 10`
+caps every agent together. A cap is checked between steps, so the request in flight finishes and the
+next one is not made. The header shows each cap set and how much of it is spent ("a floor" when some
+requests could not be priced); a turn stopped at one says so under it, and after `/budget` raises
+the cap, enter carries on from where it stopped.
+
+### In an editor
+
+```sh
+canopy acp
+```
+
+`canopy acp` speaks the Agent Client Protocol on stdin and stdout, so an editor that runs agents
+over ACP, Zed among them, can run Canopy in the project it opens. The editor sends prompts and draws
+the replies, tool calls and results as they stream; the questions Canopy would ask in the interface
+are asked in the editor, and its mode menu offers the Canopy modes the project allows. In Zed, add it under
+`agent_servers` in settings:
+
+```json
+{ "agent_servers": { "Canopy": { "type": "custom", "command": "canopy", "args": ["acp"] } } }
+```
+
+### In the background
+
+```sh
+canopy serve &           # keeps this project's agents running
+canopy attach new        # start a conversation; ctrl+d leaves it working
+canopy attach            # what is running, and what is waiting on you
+canopy attach 12         # pick one up: what happened, then what is happening
+```
+
+`canopy serve` keeps agents working after the client that started them has gone. It listens on a
+socket only you can reach, and speaks the same protocol as `canopy acp`. On a terminal,
+`canopy attach 12` opens the same interface as `canopy` on that conversation, drawn from what the
+server holds; leaving it leaves the agent working. `-lines` gives the plain line client instead, and
+LIMITATIONS lists what only the server's own terminal can do. A question an agent asks
+while nobody is attached waits for the next `canopy attach`, and the server says which conversation
+is waiting.
+
+### Running a command yourself
+
+`!go test ./...` typed in the box, and confirmed with a second enter, runs the command in the
+project with sh, as your terminal would, with the provider keys Canopy holds kept out of its
+environment; a pasted line is sent as a message instead. What it printed is shown,
+and goes with your next message, marked as command output, so "why does this fail" needs no pasting.
+### Approving a plan
+
+In plan mode the agent reads and writes nothing, and answers with a plan. Under a finished plan
+that sets out steps, with nothing typed and no other question waiting, enter twice carries it out: the conversation moves to build mode and the agent is told
+the plan is approved, and to stop and say so if the plan turns out not to fit. Typing instead
+changes the plan.
+### Finding and copying
+
+ctrl+f finds text in the conversation, newest first: the view moves to each match and marks it, enter
+goes to an older one and down to a newer one, and esc leaves the view where the search took it.
+ctrl+y copies the last code block of the latest reply, or the whole reply when it has none.
+### When a turn fails
+
+Under a failed turn, with nothing typed, enter tries it again: the failed turn stays in the
+conversation, with whatever it did before failing, and a new turn asks the model to carry on from
+it, so the question is sent once and nothing already done is forgotten. A rate limit counts down the wait the provider asked for, a
+network failure is called one, and a failure trying again cannot fix, a refused credential or a
+conversation too long for the model, says what to change instead and is not retried.
+
+## Where the tokens go
+
+Every request resends the conversation, so what it costs is decided by how much of that is read
+from the provider's cache and how much is sent fresh. Canopy keeps the conversation append-only
+until it is compacted, when a summary takes the place of the older part: a turn's messages, tool
+calls and the model's signed thinking are replayed exactly as they were exchanged, the system prompt and tools never change mid-conversation, and a test holds every request
+to beginning, byte for byte, with the one before it. What that buys is visible:
+
+- Under each finished turn, a quiet line gives the model, the time, the tokens read and written,
+  the share that came from the cache, and the cost where the price is known.
+- `/context` breaks the next request into its parts (system prompt, project instructions, tool
+  definitions, summary, messages, replies, replayed thinking, tool calls and results) and says how
+  much of the last turn came from the cache, with a plain warning when a later turn got nothing
+  from it.
+- On Anthropic's current models, once MCP servers bring more than about five thousand tokens of
+  tool definitions, those are held back and the model finds the ones it needs through a tool
+  search, so a request does not carry forty tools to use one.
+- A read of a file already sent and unchanged is answered with a short reference instead of the
+  file again, and long tool output is kept aside with its head and tail shown and the rest one
+  `read_output` away.
+- `canopy bench` runs built-in tasks, each a small project whose check fails until the work is
+  done, and reports the pass rate, tokens, cache reads and cost per passing task; `-compare` sets
+  one run against another. It calls the model, so it only runs when you type it.
 
 ## Reusable prompt commands
 
@@ -342,6 +546,33 @@ project definition with the same name wins only for that project. `$ARGUMENTS` i
 in one pass; there is no template evaluation or shell interpolation. When the placeholder is
 absent, arguments are appended under an `Arguments:` heading.
 
+A project command named like one Canopy answers itself (`/undo`, `/mouse` and the rest of `/commands`'
+built-ins) is left out with a warning at start, and the rest of `canopy.json` loads as usual.
+
+## Pictures
+
+Name a picture in a message, or drop a screenshot on the terminal, which types its path, and it is
+sent with the message: PNG, JPEG and GIF are scaled so the long side is at most 1280 pixels, and a
+small WebP goes as it is. Up to five a message. A picture that cannot be read stops the message
+rather than sending the words without it, and the transcript says a message carried one. Anthropic
+and OpenAI-compatible keys take pictures; the subscription routes refuse them with a message rather
+than dropping them.
+## Writing a message
+
+ctrl+p opens a palette of every command, mode, theme, agent, conversation and file, narrowed as you
+type (letters in order are enough: `thn` finds `theme nord`); enter runs a built-in, puts one of the
+project's own commands in the box to be sent, opens an agent's conversation or an earlier one of
+this project (with its pickup code, cost and what it was forked from), and mentions a file. Three
+letters or more also search what was said in this project's conversations, so yesterday's is found
+by what you remember of it. `@` at the start of a word offers the project's files as git lists them, ignored ones left out,
+best match first; tab or enter puts the path in. ctrl+x ctrl+e opens the message in `$VISUAL` or
+`$EDITOR` and takes back what you wrote. A single typed line that begins with `# ` is kept, after a
+second enter, as a line in AGENTS.md, which every conversation started afterwards reads; a paste, or
+anything over more than one line, is sent as an ordinary message. Since AGENTS.md is part of what
+you trusted, trust follows your note only when the repository is, after the note, exactly what you
+trusted plus that line; anything else that changed, an agent's edit included, is asked about at the
+next start.
+
 ## Modes, on shift+tab
 
 Five postures, and each one is a trust level the permission layer enforces rather than a paragraph
@@ -356,6 +587,11 @@ stopped, which is the only kind of instruction worth relying on.
   afterwards. Needs a git repository and a configured test, and refuses to engage without them.
 - **cruise** runs everything without asking. Needs a git repository, so there is a way back.
 
+One exception holds in every mode: once a conversation has read a fetched page, a web search or an
+MCP tool's result, which can carry instructions aimed at the model, anything that could send data
+out (a network tool, an MCP tool, a git push, a shell command such as curl, ssh or `base64`) is
+asked about from then on. Reading, editing, building and testing are not.
+
 `shift+tab` cycles them, and it works while a turn is running: tightening takes hold on the next
 tool call rather than on the next message.
 
@@ -365,6 +601,23 @@ plan for a fraction of a second on its way from cruise to build. The box says bo
 `cruise → plan`, so the mode in effect is never the one being claimed. Sending a message, naming a
 mode with `/mode`, leaving the conversation or quitting all apply it at once, and `/mode plan` skips
 the wait entirely. The key is not the emergency stop, and never was: `esc` ends the turn now.
+
+## Themes
+
+`/theme` lists the palettes and `/theme nord` switches to one; `CANOPY_THEME=nord` starts in it.
+Canopy's own palette ships with catppuccin, dracula, gruvbox, nord, solarized and tokyonight, each in
+a light and a dark form that follow the terminal's background, and `mono`, which is what `NO_COLOR`
+gives. Every shipped palette is checked for contrast against the background it was made for (text
+4.5:1, outcomes and quiet text 3:1, code 2.5:1, borders just visible), which deepened a few of the
+upstream colours, as each theme's own description says. A test fails if a colour is made outside the
+theme package in any of the ways it knows to look for, so a theme reaches the whole interface.
+
+A theme of your own is a JSON file in `canopy/themes` under your config directory
+(`~/Library/Application Support` on macOS, `~/.config` on Linux, or `CANOPY_THEMES_DIR`), one colour
+per role, each either
+`"#rrggbb"` or `{"light": "#rrggbb", "dark": "#rrggbb"}`. The shipped ones in
+`internal/tui/theme/themes` are complete examples. A file that does not load is named, with the
+reason, by a bare `/theme`.
 
 ## A report for the pull request
 
@@ -384,9 +637,18 @@ the pass.
   the Copilot route Canopy obtains a token from github.com and hands it to GitHub's own runtime, and
   on the other two the vendor's program holds the grant. See "Sign in with a subscription".
 - No unattended merging. A human stays in the loop on anything destructive.
-- **No sandboxing claims.** Canopy runs agent-generated commands under your account. A worktree is
-  file isolation, not a security boundary, and pretending otherwise would be the same class of
-  error as a false green. There is a permission model. It is not a sandbox.
+- **No sandboxing claims beyond what the sandbox does.** Shell commands an agent runs are confined
+  by the operating system where it can: on macOS they can write only in the workspace, temporary
+  directories and toolchain caches, and cannot read `~/.ssh`, `~/.aws`, keychains and the like; on
+  Linux, Landlock confines writes the same way but cannot hide files from reading. Network access
+  is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
+  package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
+  `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. The project's test commands run in the same
+  sandbox, and so do hooks, the setup a new worktree runs, and local MCP servers (a server that
+  needs what the sandbox withholds, a container runtime's socket for one, can be marked
+  `"unconfined": true`, which the trust prompt shows); a worktree on its own is file isolation, not a
+  security boundary. `CANOPY_SANDBOX=off` turns it off, and every command that runs
+  unconfined says so in its result.
 - Windows is deferred until process group and terminal semantics are designed for it rather than
   approximated.
 

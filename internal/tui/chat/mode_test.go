@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -48,7 +48,7 @@ func TestTheKeyWalksTheLadderInOrder(t *testing.T) {
 		core.ModeRunway, core.ModeCruise, core.ModePlan, core.ModeConfined, core.ModeBuild,
 	}
 	for i, expected := range want {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 		got, selecting := m.Selecting()
 		if !selecting {
 			t.Fatalf("press %d left the key on nothing, want %q", i+1, expected)
@@ -124,7 +124,7 @@ func TestTheModeKeyCannotPromoteAConfinedAgent(t *testing.T) {
 		t.Fatalf("a read-only conversation opens in %q", got)
 	}
 	for range len(core.Modes()) + 1 {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+		m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 		if got := engine.Mode("s1").Trust; got != core.TrustReadOnly {
 			t.Fatalf("a keystroke promoted a read-only agent to %q", got)
 		}
@@ -225,15 +225,15 @@ func TestTheKeySkipsModesThisAgentCannotEnter(t *testing.T) {
 		return got
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := landing(); got != core.ModePlan {
 		t.Errorf("the key landed on %q, want it to skip past what it cannot enter", got)
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := landing(); got != core.ModeConfined {
 		t.Errorf("the key landed on %q, want the confined posture between plan and build", got)
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(keyCode(tea.KeyTab, tea.ModShift))
 	if got := landing(); got != core.ModeBuild {
 		t.Errorf("the key landed on %q after confined, want build", got)
 	}
@@ -266,5 +266,37 @@ func TestQueuedSteeringStaysOnScreenUntilDelivered(t *testing.T) {
 	engine.queuedSteering = nil
 	if strings.Contains(plain(next.Body()), "use the existing parser") {
 		t.Errorf("the pane outlived the queue:\n%s", plain(next.Body()))
+	}
+}
+
+// Queued guidance can be taken back before it is delivered, and comes back into the box.
+func TestSteeringCanBeTakenBack(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{{
+		ID: "turn-1", Request: core.Message{Text: "build it"}, Text: "on it", State: core.TurnStreaming,
+	}}}}
+	m := boxed(engine)
+	m.SetSize(140, 30)
+	next, _ := run(m, "/steer use the existing parser")
+	if !strings.Contains(plain(next.Body()), "/steer undo takes it back") {
+		t.Fatalf("the pane does not say how to take it back:\n%s", plain(next.Body()))
+	}
+	next, _ = run(next, "/steer undo")
+	if len(engine.queuedSteering) != 0 || next.InputValue() != "/steer use the existing parser" {
+		t.Fatalf("queue %v, box %q", engine.queuedSteering, next.InputValue())
+	}
+	if strings.Contains(plain(next.Body()), "delivered when this turn finishes") {
+		t.Fatal("taken-back guidance is still shown as waiting")
+	}
+	// Two queued come back one to a line, not run together.
+	engine.queuedSteering = []string{"use the parser", "and keep the tests"}
+	next, _ = next.Update(keyCode('u', tea.ModCtrl))
+	next, _ = run(next, "/steer undo")
+	if next.InputValue() != "/steer use the parser\nand keep the tests" {
+		t.Fatalf("box %q", next.InputValue())
+	}
+	next, _ = next.Update(keyCode('u', tea.ModCtrl))
+	next, _ = run(next, "/steer undo")
+	if !strings.Contains(next.Notice(), "no guidance waiting") {
+		t.Fatalf("notice %q", next.Notice())
 	}
 }

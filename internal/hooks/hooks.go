@@ -36,10 +36,27 @@ const (
 	// Blocked means an agent asked to do something and is waiting on an answer, which is the state
 	// worth a notification because nothing moves until somebody looks.
 	Blocked Event = "agent-blocked"
+
+	// PreTool runs before a tool call the permission layer has let through, and can refuse it. It is
+	// the one hook that decides something, so it fails closed: a hook that cannot give its answer
+	// refuses the call. It can never approve one; the permission layer's question still stands.
+	PreTool Event = "pre-tool"
+
+	// PostTool runs after a tool call, and can add a note to what the model is told of its result.
+	PostTool Event = "post-tool"
+
+	// TurnEnd runs when an agent's turn ends, however it ended.
+	TurnEnd Event = "turn-end"
 )
 
 // Events returns the whole vocabulary, for validation and for the error message that lists it.
-func Events() []Event { return []Event{TestsPassed, TestsFailed, Verified, Idle, Blocked} }
+func Events() []Event {
+	return []Event{TestsPassed, TestsFailed, Verified, Idle, Blocked, PreTool, PostTool, TurnEnd}
+}
+
+// AboutTools reports whether an event is one of the two around a tool call, which alone take a list
+// of tools to run for.
+func AboutTools(event Event) bool { return event == PreTool || event == PostTool }
 
 // ValidEvent reports whether a name is one Canopy will act on.
 //
@@ -69,6 +86,8 @@ type Hook struct {
 	On      Event
 	Run     string
 	Timeout time.Duration
+	// Tools limits a pre-tool or post-tool hook to these tools; empty means every tool.
+	Tools []string
 }
 
 // Observation is everything the runner needs to know about one subject right now.

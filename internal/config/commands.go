@@ -91,12 +91,15 @@ func Builtins() []Builtin {
 		{"compact", "summarise what has been said, to buy back context"},
 		{"context", "how full this conversation is, before it has to be compacted"},
 		{"cost", "tokens and money spent, and which of the two is a guess"},
+		{"budget", "cap what this agent may spend: /budget 2, or /budget all 10 across every agent"},
 		{"trail", "every tool call this agent made, and what was allowed or refused"},
+		{"grants", "what this conversation may do without asking; /grants revoke 2 takes one back"},
 		{"tasks", "what the agent says it is working through"},
 		{"fork", "branch the conversation here, keeping everything said so far"},
 		{"agents", "every agent running, and the state of its worktree"},
 		{"pickup", "the code that brings you back to this conversation later"},
 		{"theme", "the palette, including one with no colour in it at all"},
+		{"mouse", "hand the mouse back to the terminal to select text, and take it again"},
 		{"keys", "the credentials Canopy can use"},
 	}
 }
@@ -228,10 +231,36 @@ func LoadGlobalCommands() ([]Command, bool, error) {
 		}
 		return nil, true, fmt.Errorf("%s: trailing content: %w", path, err)
 	}
-	if err := validateCommandList(file.Commands); err != nil {
+	// A command named like one Canopy answers itself costs only that command, as it does in a
+	// project's file: the rest of the global commands are kept, and the caller is told.
+	var reserved []string
+	kept := file.Commands[:0]
+	for _, command := range file.Commands {
+		if IsBuiltin(command.Name) {
+			reserved = append(reserved, command.Name)
+			continue
+		}
+		kept = append(kept, command)
+	}
+	if err := validateCommandList(kept); err != nil {
 		return nil, true, fmt.Errorf("%s: %w", path, err)
 	}
-	return file.Commands, true, nil
+	if len(reserved) > 0 {
+		return kept, true, &ReservedCommandsError{Path: path, Names: reserved}
+	}
+	return kept, true, nil
+}
+
+// ReservedCommandsError names commands left out of a file because Canopy answers those names
+// itself. The commands returned beside it are the rest, and usable.
+type ReservedCommandsError struct {
+	Path  string
+	Names []string
+}
+
+func (e *ReservedCommandsError) Error() string {
+	return fmt.Sprintf("%s: %s left out, since Canopy answers /%s itself; rename to use",
+		e.Path, strings.Join(e.Names, ", "), strings.Join(e.Names, ", /"))
 }
 
 // validateCommands checks what can be checked without running anything.

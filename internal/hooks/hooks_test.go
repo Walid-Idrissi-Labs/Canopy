@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -630,5 +633,25 @@ func TestAHookThatCommitsNothingClaimsNothing(t *testing.T) {
 	defer mu.Unlock()
 	if runs != 2 {
 		t.Errorf("the hook ran %d times, want 2: once for r1 and once for r2", runs)
+	}
+}
+
+// A confined hook runs in the sandbox it is given: a script that writes outside its directory is
+// refused, while one writing inside it works.
+func TestAConfinedHookRunsInTheSandbox(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	outside := t.TempDir()
+	run := Confined(func(d string) (*sandbox.Policy, []string) {
+		return &sandbox.Policy{Writable: []string{d}, Devices: []string{"/dev/null"}, Network: sandbox.NetworkOpen}, nil
+	})
+	if _, err := run(context.Background(), "echo ok > inside.txt", dir, nil); err != nil {
+		t.Fatalf("a hook could not write in its own directory: %v", err)
+	}
+	_, _ = run(context.Background(), "echo leaked > "+filepath.Join(outside, "leak"), dir, nil)
+	if _, err := os.Stat(filepath.Join(outside, "leak")); err == nil {
+		t.Fatal("a confined hook wrote outside its directory")
 	}
 }

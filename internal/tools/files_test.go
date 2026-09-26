@@ -579,3 +579,69 @@ func TestGrepOptionsOnBothPaths(t *testing.T) {
 		})
 	}
 }
+
+type fixedDiagnoser struct{ paths []string }
+
+func (d *fixedDiagnoser) Check(_ context.Context, path, content string) string {
+	d.paths = append(d.paths, path)
+	if strings.Contains(content, "BROKEN") {
+		return "fakels reports:\nx.go:1:1: error: undefined: BROKEN"
+	}
+	return ""
+}
+
+// What a language server says about an edit comes back with the edit, so a type error is heard in
+// the step that made it.
+func TestEditsCarryTheLanguageServersReport(t *testing.T) {
+	dir := t.TempDir()
+	w, err := OpenWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := &fixedDiagnoser{}
+	w.SetDiagnoser(d)
+	tools := FileTools(w)
+	write, edit := tools[2], tools[1]
+	res, _ := write.Run(context.Background(), []byte(`{"path":"x.go","content":"package x\n"}`))
+	if res.IsError || strings.Contains(res.Content, "reports") {
+		t.Fatalf("a clean write: %+v", res)
+	}
+	res, _ = edit.Run(context.Background(), []byte(`{"path":"x.go","old_text":"package x","new_text":"package x // BROKEN"}`))
+	if res.IsError || !strings.Contains(res.Content, "undefined: BROKEN") || !strings.HasPrefix(res.Content, "Edited x.go.") {
+		t.Fatalf("the edit's result lacks the report: %+v", res)
+	}
+	if len(d.paths) != 2 || filepath.Base(d.paths[1]) != "x.go" || !filepath.IsAbs(d.paths[1]) {
+		t.Fatalf("checked %v", d.paths)
+	}
+}
+
+type fixedNavigator struct{ path, content string }
+
+func (n *fixedNavigator) Find(_ context.Context, kind, path, content string, line int, symbol string) (string, error) {
+	n.path, n.content = path, content
+	return kind + " of " + symbol, nil
+}
+
+// The navigation tools read the file through the workspace, so a path outside it is refused before
+// any language server hears of it.
+func TestNavigationStaysInTheWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, err := OpenWorkspace(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := &fixedNavigator{}
+	def := NavigationTools(w, n)[0]
+	res, _ := def.Run(context.Background(), []byte(`{"path":"a.go","line":1,"symbol":"a"}`))
+	if res.IsError || res.Content != "definition of a" || n.content != "package a\n" {
+		t.Fatalf("result %+v, navigator saw %q", res, n.content)
+	}
+	n.path = ""
+	res, _ = def.Run(context.Background(), []byte(`{"path":"../outside.go","line":1,"symbol":"x"}`))
+	if !res.IsError || n.path != "" {
+		t.Fatalf("a path outside the workspace reached the navigator: %+v", res)
+	}
+}

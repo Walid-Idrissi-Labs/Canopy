@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,5 +122,44 @@ func TestCommandDefinitionsThatWouldBeUnreachableAreRefused(t *testing.T) {
 				t.Errorf("error = %v, want %q", err, tc.says)
 			}
 		})
+	}
+}
+
+// A project command named like one Canopy answers itself is left out and named, and the rest of
+// the file still loads: a name reserved later must not cost a project its tests and hooks.
+func TestAReservedCommandNameCostsOnlyThatCommand(t *testing.T) {
+	project, err := Parse([]byte(`{
+		"tests": [{"name": "unit", "command": {"argv": ["go", "test", "./..."]}, "required": true}],
+		"commands": [
+			{"name": "mouse", "description": "old one", "prompt": "do it"},
+			{"name": "deploy", "description": "ship it", "prompt": "deploy"}
+		]}`))
+	if err != nil {
+		t.Fatalf("the file failed to load: %v", err)
+	}
+	if len(project.Tests) != 1 || len(project.Commands) != 1 || project.Commands[0].Name != "deploy" {
+		t.Fatalf("tests %v, commands %v", project.Tests, project.Commands)
+	}
+	if len(project.Reserved) != 1 || project.Reserved[0] != "mouse" {
+		t.Fatalf("reserved %v", project.Reserved)
+	}
+}
+
+// The global file keeps its other commands when one is named like a built-in, and says which.
+func TestAReservedGlobalCommandCostsOnlyThatCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "commands.json")
+	if err := os.WriteFile(path, []byte(`{"commands": [
+		{"name": "mouse", "description": "old", "prompt": "do it"},
+		{"name": "deploy", "description": "ship it", "prompt": "deploy"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(GlobalCommandsEnv, path)
+	commands, found, err := LoadGlobalCommands()
+	var reserved *ReservedCommandsError
+	if !found || !errors.As(err, &reserved) || len(reserved.Names) != 1 || reserved.Names[0] != "mouse" {
+		t.Fatalf("found %v, error %v", found, err)
+	}
+	if len(commands) != 1 || commands[0].Name != "deploy" {
+		t.Fatalf("kept %+v", commands)
 	}
 }

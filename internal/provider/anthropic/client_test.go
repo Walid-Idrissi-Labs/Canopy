@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -511,5 +513,138 @@ func TestClassifiedErrorsKeepTheProviderOwnWords(t *testing.T) {
 		if !strings.Contains(got.Message, want) {
 			t.Errorf("the message %q lost %q", got.Message, want)
 		}
+	}
+}
+
+// Web search is Anthropic's server tool, the filtering version on models that have it, and is only
+// offered when asked for.
+func TestWebSearchIsOfferedOnlyWhenAsked(t *testing.T) {
+	req := userRequest("what changed in go 1.26")
+	off, _ := testClient().buildParams(req)
+	if body, _ := json.Marshal(off); strings.Contains(string(body), "web_search") {
+		t.Fatalf("web search offered without being asked:\n%s", body)
+	}
+	req.WebSearch = true
+	on, _ := testClient().buildParams(req)
+	if body, _ := json.Marshal(on); !strings.Contains(string(body), `"web_search_20260209"`) {
+		t.Fatalf("web search was not offered:\n%s", body)
+	}
+}
+
+// A reply cut off while thinking has a thinking block with no signature. Sent back, it has the API
+// refuse every later request in the conversation, so it is never kept; signed thinking and big
+// numbers in a tool input come back exactly as received.
+func TestAnUnsignedThinkingBlockIsNeverReplayed(t *testing.T) {
+	var s stream
+	if err := json.Unmarshal([]byte(`{"id":"m","type":"message","role":"assistant","model":"x",
+		"content":[{"type":"thinking","thinking":"half a thou","signature":""}],
+		"stop_reason":"max_tokens"}`), &s.message); err != nil {
+		t.Fatal(err)
+	}
+	if n := s.nativeMessage(); n != nil {
+		t.Fatalf("a reply holding only unsigned thinking was kept: %s", n.Data)
+	}
+
+	if err := json.Unmarshal([]byte(`{"id":"m","type":"message","role":"assistant","model":"x",
+		"content":[{"type":"thinking","thinking":"done","signature":"sig"},
+		{"type":"tool_use","id":"t","name":"f","input":{"n":12345678901234567890}}],
+		"stop_reason":"tool_use"}`), &s.message); err != nil {
+		t.Fatal(err)
+	}
+	n := s.nativeMessage()
+	if n == nil || !strings.Contains(string(n.Data), `"signature":"sig"`) ||
+		!strings.Contains(string(n.Data), "12345678901234567890") {
+		t.Fatalf("a signed reply was not replayed exactly: %v", n)
+	}
+}
+
+// A search is reported with its query as soon as its block ends, so a reply that fails afterwards
+// still leaves the search it was billed for in the audit trail.
+func TestASearchIsReportedBeforeTheReplyEnds(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, e := range []string{
+			`{"type":"message_start","message":{"id":"m","type":"message","role":"assistant","model":"claude-opus-5","content":[],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":1}}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`,
+			`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"go 1.26 release\"}"}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
+		} {
+			var head struct{ Type string }
+			_ = json.Unmarshal([]byte(e), &head)
+			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", head.Type, e)
+		}
+	}))
+	defer server.Close()
+	client := New(core.NewSecret("k"), WithBaseURL(server.URL))
+	stream, err := client.Stream(context.Background(), core.Request{Model: "claude-opus-5", WebSearch: true,
+		Messages: []core.Message{{Role: core.RoleUser, Text: "look it up"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stream.Close() }()
+	var notices []string
+	for stream.Next() {
+		if e := stream.Event(); e.Kind == core.EventNotice {
+			notices = append(notices, e.Text)
+		}
+	}
+	if !strings.Contains(strings.Join(notices, "|"), WebSearchNotice+"go 1.26 release") {
+		t.Fatalf("the search was not reported before the reply failed: %q (err %v)", notices, stream.Err())
+	}
+	if n := strings.Count(strings.Join(notices, "|"), WebSearchNotice); n != 1 {
+		t.Fatalf("the search was reported %d times", n)
+	}
+}
+
+// MCP tools past a size are held back behind a tool search, and Canopy's own tools never are; below
+// the size, or on a model without tool search, everything is sent as before.
+func TestManyMCPToolsAreDeferredBehindASearch(t *testing.T) {
+	own := core.ToolDefinition{Name: "read_file", Description: "reads", InputSchema: []byte(`{"type":"object"}`)}
+	var many []core.ToolDefinition
+	for i := 0; i < 40; i++ {
+		many = append(many, core.ToolDefinition{Name: fmt.Sprintf("mcp__srv__tool%d", i), External: true,
+			Description: strings.Repeat("does a thing ", 60), InputSchema: []byte(`{"type":"object"}`)})
+	}
+	encode := func(tools []sdk.ToolUnionParam) string {
+		b, err := json.Marshal(tools)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	deferred := encode(buildTools(append([]core.ToolDefinition{own}, many...), true))
+	if strings.Count(deferred, `"defer_loading":true`) != 40 || !strings.Contains(deferred, "tool_search_tool_bm25") {
+		t.Fatalf("forty large MCP tools were not deferred behind a search: %.300s", deferred)
+	}
+	var first []map[string]any
+	_ = json.Unmarshal([]byte(deferred), &first)
+	if _, held := first[0]["defer_loading"]; held {
+		t.Fatal("Canopy's own tool was held back")
+	}
+	if few := encode(buildTools(append([]core.ToolDefinition{own}, many[:2]...), true)); strings.Contains(few, "defer_loading") ||
+		strings.Contains(few, "tool_search") {
+		t.Fatalf("two small MCP tools were deferred: %s", few)
+	}
+	if old := encode(buildTools(append([]core.ToolDefinition{own}, many...), false)); strings.Contains(old, "defer_loading") {
+		t.Fatal("tools were deferred on a model without tool search")
+	}
+}
+
+// A picture goes ahead of the words about it, as a base64 image block.
+func TestAPictureIsSentAheadOfItsText(t *testing.T) {
+	params, err := testClient().buildParams(core.Request{Model: "claude-opus-5", Messages: []core.Message{{
+		Role: core.RoleUser, Text: "what is wrong here",
+		Images: []core.Image{{MediaType: "image/png", Data: []byte("PNGDATA")}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(params.Messages[0])
+	got := string(raw)
+	image, text := strings.Index(got, `"type":"image"`), strings.Index(got, `"what is wrong here"`)
+	if image < 0 || text < 0 || image > text || !strings.Contains(got, `"data":"UE5HREFUQQ=="`) ||
+		!strings.Contains(got, `"media_type":"image/png"`) {
+		t.Fatalf("sent %s", got)
 	}
 }

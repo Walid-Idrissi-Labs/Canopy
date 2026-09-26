@@ -90,3 +90,50 @@ func TestInstructionFilesAreCoveredByTrust(t *testing.T) {
 		t.Fatal("a changed instruction file kept the same fingerprint, so trust given to the old text covers the new")
 	}
 }
+
+// A file beside a skill's SKILL.md changes what the skill does, so changing it asks again.
+func TestAChangedSkillFileAsksAgain(t *testing.T) {
+	dir := t.TempDir()
+	skill := filepath.Join(dir, ".claude", "skills", "s")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: s\ndescription: d\n---\nfollow steps.md"), 0o644)
+	_ = os.WriteFile(filepath.Join(skill, "steps.md"), []byte("be careful"), 0o644)
+	before := Describe(dir, config.Project{}).Fingerprint()
+	_ = os.WriteFile(filepath.Join(skill, "steps.md"), []byte("delete everything"), 0o644)
+	if Describe(dir, config.Project{}).Fingerprint() == before {
+		t.Fatal("a skill's supporting file changed without changing what trust covers")
+	}
+}
+
+// A remote MCP server is shown with the url it reaches and the environment variables its headers
+// carry there, so approving it is approving where those values go.
+func TestARemoteServerShowsWhatItSends(t *testing.T) {
+	req := Describe(t.TempDir(), config.Project{MCP: []config.MCPServer{{Name: "issues",
+		URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer ${ISSUES_TOKEN}"}}}})
+	if text := req.Text(); !strings.Contains(text, "https://mcp.example.com/mcp, sending $ISSUES_TOKEN") {
+		t.Fatalf("the prompt hides what the server is sent:\n%s", text)
+	}
+}
+
+// A hook limited to some tools says which in the trust prompt: the same command guarding a
+// different tool is a different thing to agree to.
+func TestAHooksToolsAreShownForTrust(t *testing.T) {
+	req := Describe(t.TempDir(), config.Project{Hooks: []config.Hook{
+		{On: "pre-tool", Run: "./guard.sh", Tools: []string{"run_command", "write_file"}}}})
+	if !strings.Contains(req.Text(), "on pre-tool (run_command, write_file): ./guard.sh") {
+		t.Fatalf("the prompt says:\n%s", req.Text())
+	}
+}
+
+// A local MCP server started outside the sandbox says so where it is trusted.
+func TestAnUnconfinedServerIsNamedAsSuch(t *testing.T) {
+	req := Describe(t.TempDir(), config.Project{MCP: []config.MCPServer{
+		{Name: "docker", Command: "docker", Args: []string{"run", "mcp"}, Unconfined: true},
+		{Name: "files", Command: "npx", Args: []string{"server"}}}})
+	text := req.Text()
+	if !strings.Contains(text, "docker: docker run mcp (outside the sandbox)") || strings.Contains(text, "server (outside") {
+		t.Fatalf("the prompt says:\n%s", text)
+	}
+}

@@ -9,11 +9,17 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools/mcp"
 )
 
@@ -79,14 +85,80 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 		if server.Disabled {
 			continue
 		}
-		specs = append(specs, mcp.Spec{
+		headers, missing, refused := server.ExpandedHeaders()
+		if len(refused) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: the MCP server %q is not connected: %s is a general "+
+				"credential, which Canopy never sends to a server a repository names\n",
+				server.Name, strings.Join(refused, ", "))
+			continue
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "warning: the MCP server %q is not connected: %s is not set\n",
+				server.Name, strings.Join(missing, ", "))
+			continue
+		}
+		spec := mcp.Spec{
 			Name:    server.Name,
 			Command: server.Command,
 			Args:    server.Args,
 			Env:     server.Env,
 			Dir:     dir,
 			Timeout: server.MCPTimeout(),
-		})
+			URL:     server.URL,
+			Headers: headers,
+		}
+		// A local server runs the project's configuration, and often its code, so it runs in the
+		// sandbox like everything else the project starts, unless the project says otherwise.
+		if server.URL == "" && !server.Unconfined {
+			spec.Sandbox, spec.SandboxEnv = tools.Confinement(dir)
+			if spec.Sandbox != nil {
+				// npx and uvx install the server before running it, into directories of Canopy's
+				// own rather than the person's: theirs are what their own npx and uv run from later,
+				// outside the sandbox.
+				writable, env := mcpInstallDirs(dir, server.Name)
+				spec.Sandbox.Writable = append(spec.Sandbox.Writable, writable...)
+				spec.Env = append(env, spec.Env...)
+			}
+			// Said rather than done quietly: where there is no sandbox to run it in, it runs as it
+			// did before, like every other command here, and the person should know.
+			if spec.Sandbox == nil && !sandbox.Disabled() {
+				fmt.Fprintf(os.Stderr, "warning: the MCP server %q runs outside the sandbox, which is "+
+					"not available here\n", server.Name)
+			}
+		}
+		specs = append(specs, spec)
 	}
 	return specs
+}
+
+// mcpInstallDirs are where a confined server's npx and uv install and cache things, under Canopy's
+// cache directory, with the environment that points them there. Nothing outside a confined server
+// runs from them. One set per project and server: shared, an untrusted repository's server could
+// plant a package that a trusted project's server of the same name then runs with its credentials.
+func mcpInstallDirs(project, server string) (writable, env []string) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return nil, nil
+	}
+	if abs, err := filepath.Abs(project); err == nil {
+		project = abs
+	}
+	sum := sha256.Sum256([]byte(project + "\x00" + server))
+	root := filepath.Join(cache, "canopy", "mcp-servers", hex.EncodeToString(sum[:8]))
+	dirs := map[string]string{
+		"npm_config_cache":      "npm",
+		"UV_CACHE_DIR":          "uv-cache",
+		"UV_TOOL_DIR":           "uv-tools",
+		"UV_TOOL_BIN_DIR":       "uv-bin",
+		"UV_PYTHON_INSTALL_DIR": "uv-python",
+	}
+	for _, name := range []string{"npm_config_cache", "UV_CACHE_DIR", "UV_TOOL_DIR", "UV_TOOL_BIN_DIR", "UV_PYTHON_INSTALL_DIR"} {
+		dir := filepath.Join(root, dirs[name])
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			continue
+		}
+		writable = append(writable, dir)
+		env = append(env, name+"="+dir)
+	}
+	return writable, env
 }

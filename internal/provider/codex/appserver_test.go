@@ -8,6 +8,7 @@ import (
 	"io"
 	"sync"
 	"testing"
+	"time"
 )
 
 // A fake Codex app server, in process, so that not one test in this package needs the Codex CLI
@@ -337,13 +338,37 @@ func (s *appServer) sentMethod(method string) (message, bool) {
 }
 
 // answered returns the client's reply to a server-initiated request.
-func (s *appServer) answered(id int64) (message, bool) {
-	for _, m := range s.sent() {
-		if m.ID != nil && *m.ID == id && m.Method == "" {
+//
+// The client can finish the turn before this server has read the reply it wrote just ahead of
+// that, so the reply is waited for briefly rather than looked for once.
+// awaitMethod is sentMethod for a frame the client wrote just before stopping the server: this
+// fake reads it on its own goroutine, so it is waited for briefly rather than looked for once.
+func (s *appServer) awaitMethod(method string) (message, bool) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if m, ok := s.sentMethod(method); ok {
 			return m, true
 		}
+		if time.Now().After(deadline) {
+			return message{}, false
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	return message{}, false
+}
+
+func (s *appServer) answered(id int64) (message, bool) {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, m := range s.sent() {
+			if m.ID != nil && *m.ID == id && m.Method == "" {
+				return m, true
+			}
+		}
+		if time.Now().After(deadline) {
+			return message{}, false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // wasStopped reports whether the client shut the process down.

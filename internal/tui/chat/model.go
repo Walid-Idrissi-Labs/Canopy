@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
@@ -66,6 +66,16 @@ type Engine interface {
 	// things to want, and doing both would throw away the record of what was tried along with the
 	// attempt, which is the half worth keeping when something did not work.
 	Undo(ctx context.Context, sessionID, turnID string) error
+	UndoPreview(ctx context.Context, sessionID, turnID string) (session.UndoPlan, error)
+
+	// Inventory is what the next request will carry, part by part, for /context.
+	Inventory(sessionID string) core.Inventory
+
+	// Budget and SetBudget are this agent's spending cap; the overall pair caps every agent.
+	Budget(sessionID string) session.Budget
+	SetBudget(sessionID string, limit float64) error
+	OverallBudget() session.Budget
+	SetOverallBudget(limit float64) error
 
 	// Mode is what this conversation's agent is doing, and SetMode changes it. This pair is what a
 	// mode is made of: the permission layer decides against the mode's level and the tool list the
@@ -111,6 +121,14 @@ type Engine interface {
 	// delivered, because a correction that vanishes the moment it is typed reads as one that was
 	// swallowed, and somebody who thinks that types it again.
 	Steering(sessionID string) []string
+
+	// ClearSteering takes back guidance that has not been delivered, returning what it took.
+	ClearSteering(sessionID string) []string
+	// Retry tries a failed turn again as a new one, refusing a failure trying again cannot fix.
+	Retry(sessionID string) (string, error)
+	// Grants are the standing approvals this conversation holds, and Revoke takes one back.
+	Grants(sessionID string) []permission.Scope
+	Revoke(sessionID string, scope permission.Scope)
 
 	// Aside answers a question from this conversation's context without joining it. No turn is
 	// created, nothing joins the conversation's history, and a turn in flight is undisturbed, which
@@ -306,6 +324,41 @@ type Model struct {
 	// second command language.
 	commands config.CommandSet
 
+	// findPictures and loadPictures find and read the pictures a message names; see SetPictures.
+	findPictures    func(prompt string) []string
+	readingPictures bool
+	loadPictures    func(paths []string) ([]core.Image, error)
+	// shell runs "!command" in the project, and shellContext is what those commands said since the
+	// last message, which goes with the next one. See shell.go.
+	shell        func(ctx context.Context, command string) ShellResult
+	shellContext []shellRun
+	// shellAsked is a "!command" waiting for the second enter that runs it.
+	shellAsked string
+	// search is the find bar, on ctrl+f.
+	search search
+	// destinations lists the agents the palette can open, and history the conversations.
+	destinations func() []Destination
+	history      History
+	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
+	// SetRemember.
+	files    func() []string
+	remember func(note string) (string, error)
+
+	// noteAsked is a "# note" waiting for the second enter that keeps it.
+	noteAsked string
+
+	// chordX is set by ctrl+x, the first half of ctrl+x ctrl+e, which opens the box in $EDITOR.
+	chordX bool
+
+	// planAsked is the first of the two enters that carry a plan out.
+	planAsked bool
+
+	// palette is the command palette, on ctrl+p.
+	palette palette
+	// retryTicking and retryGeneration run the countdown under a failed turn; see retrycard.go.
+	retryTicking    bool
+	retryGeneration int
+
 	// markStep is where the mark in the corner of the opening screen has got to, and markGeneration
 	// says which conversation its ticker belongs to. See markTickMsg.
 	markStep       int
@@ -313,6 +366,12 @@ type Model struct {
 	// True only while a mark tick is outstanding. A completed conversation draws static coals,
 	// so keeping a second animation timer alive there would redraw identical pixels forever.
 	markRunning bool
+
+	// undoArmed is the turn an undo preview was shown for, and when; a second /undo for the same
+	// turn within a minute performs it.
+	undoArmed   string
+	undoArmedAt time.Time
+	undoShown   string
 
 	// ticking says the spinner's timer is scheduled; tickGeneration retires stale timers.
 	ticking        bool
@@ -457,11 +516,15 @@ func (m Model) subscribe() tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-events
 		if !ok {
-			return nil
+			return eventsEndedMsg{}
 		}
 		return EventMsg{Event: ev}
 	}
 }
+
+// eventsEndedMsg is the engine's events ending: at exit for the engine in this process, and when
+// the connection goes for one reached over a socket, where it is the only sign of it.
+type eventsEndedMsg struct{}
 
 func tick(generation int) tea.Cmd {
 	return tea.Tick(spinnerInterval, func(time.Time) tea.Msg { return tickMsg{generation: generation} })
@@ -482,8 +545,21 @@ func (m *Model) SetSize(width, height int) {
 // Update handles one message.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case retryTickMsg:
+		if msg.generation != m.retryGeneration {
+			return m, nil
+		}
+		m.retryTicking = false
+		return m, m.retryCountdown()
+
 	case EventMsg:
 		m.refresh()
+		// Something happened between the two enters that carry a plan out, so the first no longer
+		// stands: the second is asked for again, over whatever is on screen now.
+		m.planAsked = false
+		if countdown := m.retryCountdown(); countdown != nil {
+			return m, tea.Batch(m.subscribe(), countdown)
+		}
 		// The spinner only turns while something is running; an idle screen redrew itself eight
 		// times a second for nothing. An event that starts work starts it again.
 		if m.working && !m.ticking {
@@ -550,6 +626,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.err = ""
 		return m, nil
 
+	case undoPreviewMsg:
+		m.notice = ""
+		if msg.err != nil {
+			m.err = msg.err.Error()
+			return m, nil
+		}
+		m.notice = describeUndo(msg.changes)
+		if msg.moved {
+			m.notice = "the workspace changed since that preview, so nothing was undone; " + m.notice
+		}
+		if len(msg.changes) > 0 {
+			m.undoArmed, m.undoArmedAt, m.undoShown = msg.turnID, time.Now(), msg.state
+		}
+		return m, nil
+
 	case undoneMsg:
 		m.notice = ""
 		if msg.err != nil {
@@ -583,8 +674,41 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+
+	case paletteSearchMsg:
+		return m, m.paletteSearch(msg)
+	case paletteFoundMsg:
+		return m.paletteFound(msg), nil
+	case eventsEndedMsg:
+		m.events = nil
+		m.err = "the connection to what runs this conversation has ended; nothing more will arrive here"
+		return m, nil
+	case picturesReadyMsg:
+		return m.picturesReady(msg)
+	case shellDoneMsg:
+		return m.shellDone(msg), nil
+	case editedMsg:
+		if msg.err != nil {
+			m.err = "the editor did not finish: " + msg.err.Error()
+			return m, nil
+		}
+		m.input.SetValue(msg.text)
+		m.err = ""
+		m.refreshMenu()
+		return m, nil
+
+	case tea.PasteMsg:
+		// Pasted text goes into the message box whole: an enter inside a paste is a line break in
+		// what was pasted, not a request to send half of it.
+		// Like typing, it ends an offer to compact and a complaint about what was typed before.
+		if m.acceptsPaste() {
+			m.input.Paste(msg.Content)
+			m.compactAsked, m.err = false, ""
+			m.refreshMenu()
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -605,23 +729,28 @@ const wheelStep = 3
 // which is the whole reason this exists — and it is also what takes the terminal's own
 // drag-to-select away, which the drag handling below gives back. See select.go.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	switch msg.Action {
-	case tea.MouseActionPress:
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
+	mouse := msg.Mouse()
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		switch mouse.Button {
+		case tea.MouseWheelUp:
 			m.scrollBy(wheelStep)
-		case tea.MouseButtonWheelDown:
+		case tea.MouseWheelDown:
 			m.scrollBy(-wheelStep)
-		case tea.MouseButtonLeft:
-			m.beginSelection(msg.X, msg.Y)
 		}
 		return m, nil
 
-	case tea.MouseActionMotion:
-		m.extendSelection(msg.X, msg.Y)
+	case tea.MouseClickMsg:
+		if mouse.Button == tea.MouseLeft {
+			m.beginSelection(mouse.X, mouse.Y)
+		}
 		return m, nil
 
-	case tea.MouseActionRelease:
+	case tea.MouseMotionMsg:
+		m.extendSelection(mouse.X, mouse.Y)
+		return m, nil
+
+	case tea.MouseReleaseMsg:
 		if m.sel.dragging {
 			return m.finishSelection()
 		}
@@ -705,7 +834,7 @@ func NavigationKeys() []string {
 // never do is remember: the widest approval still takes the deliberate key.
 //
 // Everything except the navigation set, which the caller has already dealt with. See navigation.
-func (m Model) answerPrompt(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) answerPrompt(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "enter", "y":
 		m.engine.Answer(m.sessionID, true, false)
@@ -1026,14 +1155,64 @@ func roughTokens(n int) string {
 	}
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// An offer to spend money lasts exactly one keystroke. Anything other than the same key again is
 	// a change of mind, and an offer that outlived it would eventually be taken up by a keystroke
 	// somebody meant for something else entirely, which is the failure the confirmation exists to
 	// prevent arriving a few seconds later. The same rule the application applies to ctrl+n.
+	if m.planAsked && msg.String() != "enter" {
+		m.planAsked = false
+	}
 	if m.compactAsked && msg.String() != "ctrl+r" {
 		m.compactAsked = false
 		m.notice = ""
+	}
+
+	// The find bar takes every key while it is up, unless a question has arrived, which takes the
+	// keyboard back; ctrl+f opens it on a conversation with something to find.
+	if m.search.open {
+		if !m.awaiting {
+			return m.searchKey(msg)
+		}
+		m.search = search{}
+		m.sel = selection{}
+	}
+	if msg.String() == "ctrl+f" && !m.awaiting && !m.blank() {
+		m.openSearch()
+		return m, nil
+	}
+	if msg.String() == "ctrl+y" && !m.awaiting {
+		return m.copyReply()
+	}
+
+	// The palette takes every key while it is up; ctrl+p opens it when no question is.
+	if m.palette.open {
+		// A question that arrived while the palette was up takes the keyboard back: its keys are
+		// answers, and a "y" meant for it must not land in the palette's query.
+		if !m.awaiting {
+			return m.paletteKey(msg)
+		}
+		m.palette = palette{}
+	}
+	if msg.String() == "ctrl+p" && !m.awaiting {
+		m.openPalette()
+		return m, nil
+	}
+
+	// ctrl+x ctrl+e opens the box in $EDITOR, the chord shells use. The first half only waits for
+	// the second; any other key after it is itself, so ctrl+x never eats a keystroke.
+	if !m.awaiting {
+		if m.chordX {
+			m.chordX = false
+			if msg.String() == "ctrl+e" {
+				m.notice = ""
+				return m, openEditor(m.input.Value())
+			}
+		} else if msg.String() == "ctrl+x" {
+			m.chordX = true
+			m.notice = "ctrl+e opens the message in your editor"
+			return m, nil
+		}
 	}
 
 	// A question takes the keyboard while it is up. Everything else is a keystroke that would go
@@ -1116,7 +1295,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			// not. Without the second half, typing a command out in full and pressing enter would
 			// put the name you already typed back in the box and do nothing, which reads as the
 			// key having stopped working.
-			if chosen, ok := m.menu.chosen(); ok && m.input.Value() != "/"+chosen.name {
+			if chosen, ok := m.menu.chosen(); ok && m.menu.sigil == "@" {
+				m.acceptFromMenu()
+				return m, nil
+			} else if ok && m.input.Value() != "/"+chosen.name {
 				m.acceptFromMenu()
 				return m, nil
 			}
@@ -1144,6 +1326,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "enter":
+		// Twice, since it spends and changes code: the first press asks.
+		if m.planReady() {
+			if !m.planAsked {
+				m.planAsked = true
+				return m, nil
+			}
+			m.planAsked = false
+			return m.carryOutPlan()
+		}
+		if turn, ok := m.failedTurn(); ok && (turn.ErrorKind == "" || turn.ErrorKind.Retryable()) {
+			return m.retry()
+		}
 		return m.send()
 
 	case "tab":
@@ -1215,6 +1409,16 @@ func (m *Model) acceptFromMenu() bool {
 	if !ok {
 		return false
 	}
+	if m.menu.sigil == "@" {
+		// The mention being typed is replaced by the whole path, and the rest of the box kept on
+		// either side of it.
+		before := m.input.BeforeCursor()
+		at := strings.LastIndexAny(before, " \t\n")
+		m.input.Splice(before[:at+1]+"@"+chosen.name+" ", m.input.AfterCursor())
+		m.menu = menu{}
+		m.err = ""
+		return true
+	}
 	m.input.SetValue("/" + chosen.name + " ")
 	m.menu = menu{}
 	m.notice = chosen.description
@@ -1230,12 +1434,60 @@ func (m Model) send() (Model, tea.Cmd) {
 	typed := m.input.Value()
 	trimmed := strings.TrimSpace(typed)
 
+	// "!command" runs in the project, like a terminal, and costs nothing. Only a single line typed
+	// here, never a paste, and asked once: it runs outside the sandbox, so a pasted "!curl ... | sh"
+	// must not run on one keystroke.
+	if command, ok := strings.CutPrefix(trimmed, "!"); ok && m.shell != nil && strings.TrimSpace(command) != "" &&
+		!strings.Contains(command, "\n") && !m.input.Pasted() {
+		if m.shellAsked != trimmed {
+			m.shellAsked = trimmed
+			m.notice = "enter again runs this in the project, outside the sandbox, as your terminal would"
+			return m, nil
+		}
+		m.shellAsked = ""
+		m.input.Remember(typed)
+		m.input.Clear()
+		m.menu = menu{}
+		return m.runShell(strings.TrimSpace(command))
+	}
+
+	// "# note" is kept in the project's instructions rather than sent: the quick way to tell every
+	// later conversation something once.
+	// Only a single line typed here, never a paste: a pasted markdown document beginning with a
+	// heading is a message, not an instruction for every later agent. And asked once, since what is
+	// kept is read by every conversation after it.
+	if note, ok := strings.CutPrefix(trimmed, "# "); ok && m.remember != nil && strings.TrimSpace(note) != "" &&
+		!strings.Contains(note, "\n") && !m.input.Pasted() {
+		if m.noteAsked != trimmed {
+			m.noteAsked = trimmed
+			m.notice = "enter again keeps this line in AGENTS.md, which every later conversation here reads; " +
+				"change it to send it as a message instead"
+			return m, nil
+		}
+		m.noteAsked = ""
+		path, err := m.remember(strings.TrimSpace(note))
+		if err != nil {
+			m.err = "the note was not kept: " + err.Error()
+			return m, nil
+		}
+		m.input.Remember(typed)
+		m.input.Clear()
+		m.menu = menu{}
+		m.notice = "kept in " + path + " for every conversation in this project"
+		return m, nil
+	}
+
 	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
 	// and never cost anything, so they are decided before the path that does either.
 	if name, arguments, ok := builtinInvocation(trimmed); ok {
+		m.err = ""
 		if handled, cmd := m.runBuiltin(name, arguments); handled {
 			m.input.Remember(typed)
-			m.input.Clear()
+			// Cleared unless the command put something in the box for the person to finish, or
+			// refused it: a refused command stays to be corrected rather than typed again.
+			if m.input.Value() == typed && m.err == "" {
+				m.input.Clear()
+			}
 			m.menu = menu{}
 			return m, cmd
 		}
@@ -1260,24 +1512,66 @@ func (m Model) send() (Model, tea.Cmd) {
 	// seconds into it. Pressing shift+tab and then enter is somebody who has chosen.
 	m.applyPendingMode()
 
-	if _, err := m.engine.Send(m.sessionID, prompt); err != nil {
+	// A picture named in the message, a screenshot dropped on the terminal for one, goes with it.
+	// Read off the update loop, since a large one takes a moment; the message is sent once it is.
+	if paths := m.picturePaths(prompt); len(paths) > 0 {
+		// One read at a time: a second enter while the first is reading would send it twice.
+		if m.readingPictures {
+			return m, nil
+		}
+		m.readingPictures = true
+		m.notice = "reading " + pictureCount(len(paths))
+		load, sessionID := m.loadPictures, m.sessionID
+		return m, func() tea.Msg {
+			images, err := load(paths)
+			return picturesReadyMsg{sessionID: sessionID, typed: typed, prompt: prompt, images: images, err: err}
+		}
+	}
+	return m.deliver(typed, prompt, nil)
+}
+
+// picturesReadyMsg carries the pictures a message named, read and ready to send with it.
+type picturesReadyMsg struct {
+	sessionID     string
+	typed, prompt string
+	images        []core.Image
+	err           error
+}
+
+// deliver sends a message, with any pictures already read, and tidies the box after it.
+func (m Model) deliver(typed, prompt string, attached []core.Image) (Model, tea.Cmd) {
+	var err error
+	if len(attached) > 0 {
+		_, err = m.engine.(imageSender).SendWithImages(m.sessionID, m.withShellContext(prompt), attached)
+	} else {
+		_, err = m.engine.Send(m.sessionID, m.withShellContext(prompt))
+	}
+	if err != nil {
 		// The message stays in the box. Clearing it on a failure would mean somebody has to retype
 		// what they just wrote because a provider was busy.
 		m.err = err.Error()
 		return m, nil
 	}
+	m.shellContext = nil
 
 	// Filed only once the engine has accepted it, so a message that was refused is still in the box
 	// rather than in the box and in the history, which is one message showing up twice.
 	// History remembers what the person typed, not the expanded body. Pressing up should offer
 	// `/review auth` again rather than a page of generated prompt text.
-	m.input.Remember(typed)
-	m.input.Clear()
+	// Only when the box still holds what was sent: pictures are read off the update loop, and
+	// somebody may have gone on typing meanwhile.
+	if m.input.Value() == typed {
+		m.input.Remember(typed)
+		m.input.Clear()
+	}
 	// Sending returns to the tail. Someone who scrolled up to read something old and then asked a
 	// question is asking about now.
 	m.scroll = 0
 	m.err = ""
 	m.notice = ""
+	if len(attached) > 0 {
+		m.notice = "sent with " + pictureCount(len(attached))
+	}
 	m.refresh()
 	return m, nil
 }
@@ -1425,6 +1719,13 @@ func (m *Model) SetNotice(text string) { m.notice = text }
 
 // SetCommands installs the already resolved global and project command catalog.
 func (m *Model) SetCommands(commands config.CommandSet) { m.commands = commands }
+
+// SetFiles gives the box the project's files, for completing an @ mention. Nil turns mentions off.
+func (m *Model) SetFiles(files func() []string) { m.files = files }
+
+// SetRemember gives the box somewhere to keep a "# note": the note is written, and the returned
+// path named. Nil makes "#" an ordinary message.
+func (m *Model) SetRemember(remember func(note string) (string, error)) { m.remember = remember }
 
 // Notice is what is currently being said. For tests.
 func (m Model) Notice() string { return m.notice }
@@ -1704,6 +2005,10 @@ func (m Model) transcriptHeight() int {
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+	h -= len(m.planCard())
+	h -= m.search.height()
+	h -= m.palette.height()
+	h -= len(m.retryCard())
 
 	// The btw panel and the queued steering take their rows from the conversation too, for the
 	// same reason, and so does another agent's question.
@@ -1763,7 +2068,7 @@ func (m Model) Body() string {
 			// agent's question: a fresh conversation is exactly where somebody sits while agents they
 			// started are working, so it is the last screen that should hide one asking for a hand.
 			panel: append(m.visitorPanel(), m.btwPanel()...),
-			menu:  m.menu.lines(m.width, m.menuFilter()),
+			menu:  append(m.menu.lines(m.width, m.menuFilter()), m.palette.lines(m.width)...),
 		}.render()
 	}
 
@@ -1798,6 +2103,10 @@ func (m Model) Body() string {
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
+	rows = append(rows, m.planCard()...)
+	rows = append(rows, m.search.line()...)
+	rows = append(rows, m.palette.lines(m.width)...)
+	rows = append(rows, m.retryCard()...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
 	// is about to type into. See jumpPill.
 	rows = append(rows, m.jumpPill(len(lines)-end)...)
@@ -2122,12 +2431,15 @@ func (m Model) steeringPane() []string {
 
 	// The arrival note rides the first line, and is dropped whole on a terminal too narrow to give
 	// the guidance most of the row: the guidance is the content, the note is a caption.
-	const note = "  · delivered when this turn finishes"
-	suffix := note
-	room := m.width - len(steeringChip) - len(note) - 2
-	if room < 16 {
-		suffix = ""
-		room = m.width - len(steeringChip) - 2
+	// The longest note that leaves the guidance a fair share of the row, the way to take it back
+	// included where there is room for it.
+	suffix, room := "", m.width-len(steeringChip)-2
+	for _, note := range []string{"  · delivered when this turn finishes, /steer undo takes it back",
+		"  · delivered when this turn finishes"} {
+		if left := m.width - len(steeringChip) - lipgloss.Width(note) - 2; left >= 32 {
+			suffix, room = note, left
+			break
+		}
 	}
 
 	out := make([]string, 0, len(queued))
@@ -2517,6 +2829,14 @@ func (m Model) ContextParts() []string {
 		}
 		parts = append(parts, fmt.Sprintf("%d tokens, %s", usage.TotalTokens(), spent))
 	}
+	// A cap is shown wherever it is enforced: one the screen did not show would stop an agent for a
+	// reason nobody could see coming.
+	if part := capPart("cap", m.engine.Budget(m.sessionID)); part != "" {
+		parts = append(parts, part)
+	}
+	if part := capPart("cap for all", m.engine.OverallBudget()); part != "" {
+		parts = append(parts, part)
+	}
 
 	// The context meter is always here, not only when it is nearly full.
 	//
@@ -2527,6 +2847,20 @@ func (m Model) ContextParts() []string {
 		parts = append(parts, m.contextMeter())
 	}
 	return parts
+}
+
+// capPart is a spending cap in the header: how much of it is spent, and whether the figure is only
+// a floor because some requests could not be costed. Empty when there is no cap.
+func capPart(label string, b session.Budget) string {
+	switch {
+	case !b.Capped():
+		return ""
+	case b.Paused:
+		return fmt.Sprintf("paused at the $%.2f %s", b.Limit, label)
+	case !b.Reliable():
+		return fmt.Sprintf("%s $%.2f of $%.2f, a floor", label, b.Spent, b.Limit)
+	}
+	return fmt.Sprintf("%s $%.2f of $%.2f", label, b.Spent, b.Limit)
 }
 
 // contextMeter is the "how full is this conversation" figure in the header.
@@ -2596,4 +2930,116 @@ func (m Model) toolKind(name string) (core.ToolKind, bool) {
 		return "", false
 	}
 	return tool.Kind(), true
+}
+
+// acceptsPaste reports whether pasted text belongs in the message box now: not while a permission
+// question is waiting, whose keys are answers.
+func (m Model) acceptsPaste() bool { return !m.awaiting }
+
+// imageSender is an engine that can attach pictures to a message.
+type imageSender interface {
+	SendWithImages(sessionID, prompt string, images []core.Image) (string, error)
+}
+
+// SetPictures gives the box a way to find the pictures a message names, which is quick, and to read
+// them, which may not be. Nil for either sends every message as words alone.
+func (m *Model) SetPictures(find func(prompt string) []string, load func(paths []string) ([]core.Image, error)) {
+	m.findPictures, m.loadPictures = find, load
+}
+
+// picturePaths are the pictures a message names, when the engine can send them.
+func (m Model) picturePaths(prompt string) []string {
+	if _, ok := m.engine.(imageSender); !ok || m.findPictures == nil || m.loadPictures == nil {
+		return nil
+	}
+	return m.findPictures(prompt)
+}
+
+// picturesReady sends a message once its pictures are read. A picture that cannot be read stops the
+// message, so nobody sends "look at this" with nothing attached; the box keeps it.
+func (m Model) picturesReady(msg picturesReadyMsg) (Model, tea.Cmd) {
+	m.readingPictures = false
+	// Read for a conversation that is no longer the one on screen: not sent into this one, and
+	// said, so the message is not lost without a word.
+	if msg.sessionID != m.sessionID {
+		m.err = "a message with pictures was not sent: the conversation changed while they were read"
+		return m, nil
+	}
+	if msg.err != nil {
+		m.err = msg.err.Error()
+		m.notice = ""
+		return m, nil
+	}
+	if m.input.Value() != msg.typed {
+		// The box changed while the pictures were read; what was typed then is what is sent.
+		m.notice = ""
+	}
+	return m.deliver(msg.typed, msg.prompt, msg.images)
+}
+
+// pictureCount says how many pictures, in the singular for one.
+func pictureCount(n int) string {
+	if n == 1 {
+		return "a picture"
+	}
+	return itoa(n) + " pictures"
+}
+
+// paletteKey handles a key while the palette is up.
+func (m Model) paletteKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+p":
+		m.palette = palette{}
+	case "up":
+		m.palette.move(-1)
+	case "down":
+		m.palette.move(1)
+	case "backspace":
+		if runes := []rune(m.palette.query); len(runes) > 0 {
+			m.palette.query = string(runes[:len(runes)-1])
+			m.palette.refresh()
+			return m, m.searchSaid()
+		}
+	case "space":
+		m.palette.query += " "
+		m.palette.refresh()
+		return m, m.searchSaid()
+	case "enter":
+		if m.palette.selected >= len(m.palette.matches) {
+			return m, nil
+		}
+		chosen := m.palette.matches[m.palette.selected]
+		m.palette = palette{}
+		switch chosen.action {
+		case paletteRun:
+			// Through the same path as typing it, so a command run from here is the command.
+			kept := m.input.Value()
+			m.input.SetValue(chosen.text)
+			next, cmd := m.send()
+			if next.input.Empty() {
+				next.input.SetValue(kept)
+			}
+			return next, cmd
+		case paletteFill:
+			m.input.SetValue(chosen.text)
+			m.refreshMenu()
+		case paletteGo:
+			// The application owns which conversation is on screen; this only asks for one.
+			to := chosen.to
+			return m, func() tea.Msg { return SwitchMsg{SessionID: to.SessionID, AgentName: to.AgentName} }
+		case paletteMention:
+			value := m.input.Value()
+			if value != "" && !strings.HasSuffix(value, " ") && !strings.HasSuffix(value, "\n") {
+				value += " "
+			}
+			m.input.SetValue(value + chosen.text)
+		}
+	default:
+		if msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
+			m.palette.query += msg.Text
+			m.palette.refresh()
+			return m, m.searchSaid()
+		}
+	}
+	return m, nil
 }

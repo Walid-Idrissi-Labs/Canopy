@@ -30,6 +30,10 @@ type Child struct {
 	// of a reap that began after the check.
 	mu     sync.Mutex
 	reaped bool
+
+	// tree is what holds everything the command started, where the platform needs more than the
+	// process group Contain makes: a job object on Windows. See process_windows.go.
+	tree tree
 }
 
 // Contain puts a command in its own process group, and must be called before Start.
@@ -39,7 +43,11 @@ type Child struct {
 func Contain(cmd *exec.Cmd) { setProcessGroup(cmd) }
 
 // Started returns a Child for a command that has already been started.
-func Started(cmd *exec.Cmd) *Child { return &Child{cmd: cmd} }
+func Started(cmd *exec.Cmd) *Child {
+	c := &Child{cmd: cmd}
+	c.tree = holdTree(cmd)
+	return c
+}
 
 // alive runs f with the process id, but only while that id is still this command's.
 //

@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/agentdefs"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/skills"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -21,6 +24,8 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	execpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	gitpkg "github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/hooks"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/images"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/provider/anthropic"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -51,13 +56,19 @@ func runChat(resume string) error {
 	// grant is too old to send.
 	resolver.Renews(signInSources())
 	engine := session.New(resolver)
+	// Turn-end hooks are waited for after the engine has closed, which is when the last turn has
+	// ended and told them.
+	var toolHooks *hooks.ToolRunner
+	defer func() { toolHooks.Wait(hookShutdownLimit) }()
 	defer engine.Close()
 
 	// History is attached if it can be, and the program runs without it if it cannot. A disk
 	// problem should cost you the ability to look back at old conversations, not the ability to
 	// have a new one.
+	var early []string
 	if err := attachHistory(engine); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: history is not being saved: %v\n", err)
+		early = append(early, fmt.Sprintf("warning: history is not being saved: %v", err))
 	}
 
 	dir, err := os.Getwd()
@@ -88,14 +99,23 @@ func runChat(resume string) error {
 	}
 
 	project := loadProject(dir)
-	commands := loadCommands(project.Commands)
-	if project.Trusted {
-		instructions, err := config.LoadInstructions(dir, project)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: project instructions are not being sent: %v\n", err)
+	// From here to the interface opening, what is said on standard error is also kept and shown
+	// inside it; the trust question above is asked before this, on the terminal as it is.
+	captured := captureStderr()
+	stopCapture := func() []string {
+		if captured == nil {
+			return nil
 		}
-		engine.WithInstructions(instructions.Text)
+		lines := captured()
+		captured = nil
+		return lines
 	}
+	defer stopCapture()
+	commands := loadCommands(project.Commands)
+	engine.WithInstructions(projectInstructions(dir, project, os.Stderr))
+	enableLanguageServers(project)
+	defer closeLanguageServers()
+	engine.SetWebSearch(webSearchWanted())
 
 	if err := attachTools(engine, dir, project); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: tools are not available: %v\n", err)
@@ -150,6 +170,13 @@ func runChat(resume string) error {
 	}
 	defer verification.Close()
 
+	// Failures are said on the way out with the other hooks'; a refusal is in the transcript.
+	report := func(hooks.Report) {}
+	if verification != nil {
+		report = verification.recordHook
+	}
+	toolHooks = attachToolHooks(engine, dir, project, report, os.Stderr)
+
 	// The worktree monitor reads the verifier, the same one the review screen reads. Outside a
 	// repository there is nothing to read and the screen says so, which is the honest answer and
 	// the one this used to lie about: it was handed four invented worktrees and a timer that
@@ -176,17 +203,22 @@ func runChat(resume string) error {
 		review = insights
 		costs = insights
 		monitor = verification.store
+		engine.SetStanding(standingOf(verification.verifier))
 	}
 	defer monitor.Close()
 
 	// The conversation the interface opens is the one the main agent was given, which is made fresh
 	// on every run. Leaving this out is what made `canopy` reopen the oldest chat in the history
 	// database while the agent it had just started talked to nobody.
+	warnings := append(early, stopCapture()...)
 	last, err := tui.RunAppConfigured(
 		monitor, signInAware{keyStore}, engine, filepath.Base(dir), keyName, tui.AppOptions{
-			Review: review, Commands: commands, Costs: costs,
+			Warnings: warnings,
+			Review:   review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
-			SignIn: signInRoutes,
+			SignIn: signInRoutes, CheckKey: checkKey(keyStore, http.DefaultClient), FindPictures: images.FindPaths, LoadPictures: images.LoadAll,
+			Shell: shellIn(dir),
+			Files: projectFiles(dir), Remember: rememberIn(dir, project),
 		})
 	if err != nil {
 		return err
@@ -203,7 +235,7 @@ func runChat(resume string) error {
 	// somebody has stopped watching, so one that quietly stopped working is one they would go on not
 	// watching indefinitely.
 	for _, failure := range verification.HookFailures() {
-		fmt.Fprintf(os.Stderr, "warning: %s\n", failure)
+		fmt.Fprintf(os.Stderr, "warning: %s\n", terminalText(failure))
 	}
 
 	if last != "" {
@@ -263,6 +295,8 @@ func attachTools(engine *session.Engine, dir string, project config.Project) err
 					Setup:        project.Setup,
 					SetupTimeout: project.SetupDuration(),
 					Copy:         project.Copy,
+					// The setup runs the project's own scripts in the new worktree, so in the sandbox.
+					Confine: tools.Confinement,
 				},
 			}); err != nil {
 				return err
@@ -282,12 +316,21 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 	if err != nil {
 		return nil, err
 	}
+	navigation := attachLanguageServers(workspace)
 
 	registry := core.NewToolRegistry()
+	for _, tool := range navigation {
+		if err := registry.Register(tool); err != nil {
+			return nil, err
+		}
+	}
 	for _, tool := range tools.FileTools(workspace) {
 		if err := registry.Register(tool); err != nil {
 			return nil, err
 		}
+	}
+	if err := registry.Register(tools.RepoMapTool(workspace)); err != nil {
+		return nil, err
 	}
 	for _, tool := range tools.GitTools(workspace) {
 		if err := registry.Register(tool); err != nil {
@@ -307,6 +350,12 @@ func toolsFor(dir string) (*core.ToolRegistry, error) {
 
 	// The shell goes last, deliberately. Models weight earlier tool definitions more heavily, and
 	// the ones that can be governed per argument should be reached for before the one that cannot.
+	if projectSkills != nil && !projectSkills.Empty() {
+		if err := registry.Register(skills.Tool(projectSkills)); err != nil {
+			return nil, err
+		}
+	}
+
 	outputs := tools.NewOutputStore()
 	if err := registry.Register(tools.ReadOutputTool(outputs)); err != nil {
 		return nil, err
@@ -640,3 +689,40 @@ func projectTrust(project config.Project) core.TrustLevel {
 	}
 	return level
 }
+
+// projectSkills is the skill set tools are built with; set once the project's trust is known, so a
+// repository's own skills are only offered when it is trusted.
+var projectSkills *skills.Set
+
+// projectAgents are the agent definitions dispatch can start by name.
+var projectAgents *agentdefs.Set
+
+// projectInstructions gathers what the system prompt carries beyond the core prompt: the project's
+// instructions when it is trusted, and the list of skills.
+func projectInstructions(dir string, project config.Project, warn io.Writer) string {
+	projectSkills = skills.Load(dir, project.Trusted)
+	var parts []string
+	if project.Trusted {
+		instructions, err := config.LoadInstructions(dir, project)
+		if err != nil {
+			_, _ = fmt.Fprintf(warn, "warning: project instructions are not being sent: %v\n", err)
+		}
+		if instructions.Text != "" {
+			parts = append(parts, instructions.Text)
+		}
+	}
+	if listing := projectSkills.Listing(); listing != "" {
+		parts = append(parts, listing)
+	}
+	projectAgents = agentdefs.Load(dir, project.Trusted)
+	if listing := projectAgents.Listing(); listing != "" {
+		parts = append(parts, listing)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// webSearchWanted reports whether the provider's own web search is offered: only when
+// CANOPY_WEB_SEARCH=on. A server-side search is run by the provider, not by Canopy, so no approval
+// prompt sees it, and the query can carry what the model read; it is something to switch on
+// knowingly. Only providers that have one use it, and each search is billed by them.
+func webSearchWanted() bool { return strings.EqualFold(os.Getenv("CANOPY_WEB_SEARCH"), "on") }

@@ -10,6 +10,7 @@ package anthropic
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -117,7 +118,7 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 		params.System = []sdk.TextBlockParam{{Text: req.System}}
 	}
 
-	if effort := mapEffort(req.Effort); effort != "" {
+	if effort := mapEffort(req.Effort); effort != "" && effortSupported(model) {
 		params.OutputConfig = sdk.OutputConfigParam{Effort: effort}
 	}
 
@@ -148,7 +149,11 @@ func (c *Client) buildParams(req core.Request) (sdk.MessageNewParams, error) {
 	}
 	params.Messages = messages
 
-	if tools := buildTools(req.Tools); len(tools) > 0 {
+	tools := buildTools(req.Tools, adaptiveThinking(model))
+	if req.WebSearch {
+		tools = append(tools, webSearchTool(model))
+	}
+	if len(tools) > 0 {
 		params.Tools = tools
 	}
 
@@ -184,6 +189,11 @@ func (c *Client) buildMessages(messages []core.Message) ([]sdk.MessageParam, err
 		}
 		for _, report := range msg.Reports {
 			blocks = append(blocks, sdk.NewTextBlock(core.ReportText(report)))
+		}
+		// Pictures ahead of the words about them, which is the order the API's guidance gives.
+		for _, image := range msg.Images {
+			blocks = append(blocks, sdk.NewImageBlockBase64(image.MediaType,
+				base64.StdEncoding.EncodeToString(image.Data)))
 		}
 		if msg.Text != "" {
 			blocks = append(blocks, sdk.NewTextBlock(msg.Text))
@@ -230,11 +240,25 @@ func (c *Client) buildMessages(messages []core.Message) ([]sdk.MessageParam, err
 	return out, nil
 }
 
-func buildTools(tools []core.ToolDefinition) []sdk.ToolUnionParam {
+// deferThreshold is how large MCP tools' definitions may grow before they are held back behind a
+// tool search, in bytes: about five thousand tokens, which several servers' worth of tools pass
+// quickly and which every request would otherwise carry whether any of them is used or not.
+const deferThreshold = 20 * 1024
+
+func buildTools(tools []core.ToolDefinition, searchable bool) []sdk.ToolUnionParam {
 	if len(tools) == 0 {
 		return nil
 	}
-	out := make([]sdk.ToolUnionParam, 0, len(tools))
+	// Decided from the tool set alone, so it is the same on every request of a conversation and the
+	// cached prefix holds.
+	var externalBytes int
+	for _, tool := range tools {
+		if tool.External {
+			externalBytes += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
+		}
+	}
+	deferred := searchable && externalBytes > deferThreshold
+	out := make([]sdk.ToolUnionParam, 0, len(tools)+1)
 	for _, tool := range tools {
 		var schema sdk.ToolInputSchemaParam
 		if len(tool.InputSchema) > 0 {
@@ -243,11 +267,21 @@ func buildTools(tools []core.ToolDefinition) []sdk.ToolUnionParam {
 			// silently dropped here.
 			_ = json.Unmarshal(tool.InputSchema, &schema)
 		}
-		out = append(out, sdk.ToolUnionParam{OfTool: &sdk.ToolParam{
+		param := &sdk.ToolParam{
 			Name:        tool.Name,
 			Description: sdk.String(tool.Description),
 			InputSchema: schema,
-		}})
+		}
+		if deferred && tool.External {
+			param.DeferLoading = sdk.Bool(true)
+		}
+		out = append(out, sdk.ToolUnionParam{OfTool: param})
+	}
+	if deferred {
+		// The model finds a held-back tool by searching for it in words, and the provider then loads
+		// the definitions that matched.
+		out = append(out, sdk.ToolUnionParam{OfToolSearchToolBm25_20251119: &sdk.ToolSearchToolBm25_20251119Param{
+			Type: sdk.ToolSearchToolBm25_20251119TypeToolSearchToolBm25_20251119}})
 	}
 	return out
 }
@@ -493,4 +527,23 @@ func (c *Client) scrub(text string) string {
 		return text
 	}
 	return strings.ReplaceAll(text, value, core.Redacted)
+}
+
+// webSearchTool is Anthropic's server-side search. The dynamic-filtering version, which keeps page
+// boilerplate out of the context, where the model has it; the basic one elsewhere. Bounded per
+// request, since each search is billed.
+func webSearchTool(model string) sdk.ToolUnionParam {
+	if adaptiveThinking(model) {
+		return sdk.ToolUnionParam{OfWebSearchTool20260209: &sdk.WebSearchTool20260209Param{MaxUses: sdk.Int(8)}}
+	}
+	return sdk.ToolUnionParam{OfWebSearchTool20250305: &sdk.WebSearchTool20250305Param{MaxUses: sdk.Int(8)}}
+}
+
+// WebSearchNotice begins the notice a completed server-side search is reported with; the query
+// follows it.
+const WebSearchNotice = "searched the web for: "
+
+// effortSupported reports whether a model takes the effort setting; older models reject it.
+func effortSupported(model string) bool {
+	return adaptiveThinking(model) || strings.HasPrefix(model, "claude-opus-4-5")
 }

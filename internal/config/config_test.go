@@ -157,3 +157,19 @@ func TestAnUnknownPlaceholderIsReportedRatherThanLeftInPlace(t *testing.T) {
 		t.Errorf("a command with no templates reported %v", got)
 	}
 }
+
+// Only the hooks around a tool call run for particular tools; a list on any other is refused, since
+// a filter that silently does nothing reads as one that works.
+func TestToolsOnlyNarrowToolHooks(t *testing.T) {
+	ok := Project{Hooks: []Hook{{On: "pre-tool", Run: "guard", Tools: []string{"run_command"}}}}
+	if err := ok.validateHooks(); err != nil {
+		t.Fatalf("a pre-tool hook for one tool was refused: %v", err)
+	}
+	bad := Project{Hooks: []Hook{{On: "turn-end", Run: "notify", Tools: []string{"run_command"}}}}
+	if err := bad.validateHooks(); err == nil {
+		t.Fatal("a turn-end hook naming tools was accepted")
+	}
+	if got := ok.Runnable(); len(got) != 1 || len(got[0].Tools) != 1 {
+		t.Fatalf("the tool list did not reach the runner: %+v", got)
+	}
+}

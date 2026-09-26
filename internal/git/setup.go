@@ -39,6 +39,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
 
 // LargeCopy is the size above which a copy is worth mentioning out loud before it is confirmed.
@@ -73,6 +74,18 @@ type Environment struct {
 	// find out about later, which is the wrong way round for the one feature here that moves
 	// secrets.
 	Copy []string
+
+	// Sandbox, when set, confines the setup command: where the worktree holds an agent's changes,
+	// as the scratch worktree canopy land prepares does, setup runs install scripts the agent may
+	// have edited.
+	Sandbox *sandbox.Policy
+	// SandboxEnv is added to the setup's environment with the sandbox: the network proxy's variables,
+	// when the sandbox limits the network to it.
+	SandboxEnv []string
+
+	// Confine gives the sandbox for a worktree once its path is known, where Sandbox is not set: a
+	// new agent's worktree does not exist when its environment is described.
+	Confine func(dir string) (*sandbox.Policy, []string)
 }
 
 // CopyRequest is one allow list entry, measured, ready to be asked about.
@@ -222,12 +235,16 @@ func (r *Repo) Prepare(
 	}
 
 	prepared.Ran = true
+	if env.Sandbox == nil && env.Confine != nil {
+		env.Sandbox, env.SandboxEnv = env.Confine(workspace.Path)
+	}
 	// Through a shell, because a setup command is written the way somebody would type it and
 	// frequently contains a pipe or a conditional.
 	result, err := exec.Run(ctx, "/bin/sh", []string{"-c", env.Setup}, exec.Options{
 		Dir:     workspace.Path,
-		Env:     setupEnv(),
+		Env:     append(setupEnv(), proxyVars(env.SandboxEnv)...),
 		Timeout: timeout,
+		Sandbox: env.Sandbox,
 	})
 	if err != nil {
 		return prepared, fmt.Errorf("running the setup command: %w", err)
@@ -473,6 +490,19 @@ func setupEnv() []string {
 		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY":
 			continue
 		default:
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+// proxyVars keeps only the proxy settings from a sandbox's environment, since the rest of it is the
+// inherited environment setupEnv has already given, less what setup must not see.
+func proxyVars(env []string) []string {
+	var out []string
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasSuffix(strings.ToUpper(name), "_PROXY") {
 			out = append(out, entry)
 		}
 	}

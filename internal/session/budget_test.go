@@ -241,3 +241,112 @@ func TestRemovingACapLetsAPausedAgentGoAgain(t *testing.T) {
 		t.Errorf("removing the cap did not resume the session: %v", err)
 	}
 }
+
+// A cap holds inside a long turn: the request in flight finishes, and the next step is not made
+// once the turn's own spend reaches the cap. Checking only between turns let one turn of fifty
+// steps spend fifty times what was allowed.
+func TestACapStopsALongTurnBetweenSteps(t *testing.T) {
+	step := []core.StreamEvent{
+		{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: "c", Name: "reader", Input: []byte(`{}`)}},
+		{Kind: core.EventDone, StopReason: core.StopToolUse, Usage: core.Usage{OutputTokens: 12000}},
+	}
+	client := &scriptedClient{name: "claude", events: step}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	reader := &kindTool{name: "reader", kind: core.ToolRead}
+	registry := core.NewToolRegistry()
+	registry.MustRegister(reader)
+	e.WithTools(registry, core.TrustStandard, nil)
+	e.SetMaxSteps(10)
+
+	session := e.Create("claude", "claude-opus-5")
+	if err := e.SetBudget(session.ID, 1.00); err != nil {
+		t.Fatal(err)
+	}
+	turnID, err := e.Send(session.ID, "keep reading")
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := waitForTurn(t, e, session.ID, turnID)
+	// $0.30 a step: after the fourth, $1.20 has been spent and the fifth is not made.
+	if runs := reader.runs.Load(); runs != 4 {
+		t.Fatalf("%d steps ran against a $1.00 cap at $0.30 each; want 4", runs)
+	}
+	if turn.State != core.TurnFailed || !strings.Contains(turn.Error, "spending cap") {
+		t.Fatalf("the turn ended %s: %q", turn.State, turn.Error)
+	}
+	if !e.Budget(session.ID).Paused {
+		t.Error("the agent is not marked paused")
+	}
+
+	// Refused while paused; raised, a retry carries on with the steps it already took in context.
+	if _, err := e.Retry(session.ID); err == nil {
+		t.Fatal("a paused agent was retried")
+	}
+	if err := e.SetBudget(session.ID, 5); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	client.events = reply("finished")
+	client.mu.Unlock()
+	next, err := e.Retry(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waitForTurn(t, e, session.ID, next).Text != "finished" {
+		t.Fatal("the raised agent did not carry on")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	results := 0
+	for _, m := range client.history {
+		results += len(m.ToolResults)
+	}
+	if results < 4 {
+		t.Fatalf("the carried-on turn was sent %d of the 4 results the stopped one had", results)
+	}
+}
+
+// The cap across every agent counts what the others' running turns have spent, not only finished
+// turns: otherwise each of several agents at once could spend the whole remainder.
+func TestTheOverallCapSeesTurnsStillRunning(t *testing.T) {
+	e := New(nil)
+	t.Cleanup(e.Close)
+	if err := e.SetOverallBudget(1.00); err != nil {
+		t.Fatal(err)
+	}
+	sixty := core.Usage{OutputTokens: 24000} // $0.60 on Opus 5
+	a, b := e.budgetGate("a", anthropicID()), e.budgetGate("b", anthropicID())
+	if reason := a(sixty); reason != "" {
+		t.Fatalf("one agent at $0.60 of $1.00 was stopped: %s", reason)
+	}
+	if reason := b(sixty); !strings.Contains(reason, "across every agent") {
+		t.Fatalf("a second agent took the total to $1.20 and was not stopped: %q", reason)
+	}
+	// Once a turn ends its spend is recorded and no longer counted as running.
+	e.recordSpend("a", core.Usage{CostUSD: 0.60, CostKnown: true})
+	if got := e.OverallBudget().Spent; got != 0.60 {
+		t.Fatalf("spent %v after one turn ended", got)
+	}
+	e.budgets.mu.Lock()
+	running := e.budgets.runningLocked()
+	e.budgets.mu.Unlock()
+	if running != 0.60 {
+		t.Fatalf("running spend is %v; only b's turn is still going", running)
+	}
+}
+
+// A new message is refused when finished turns and turns still running together reach the cap
+// across every agent, not only when finished ones do.
+func TestANewMessageCountsTurnsStillRunning(t *testing.T) {
+	e := New(nil)
+	t.Cleanup(e.Close)
+	if err := e.SetOverallBudget(1.00); err != nil {
+		t.Fatal(err)
+	}
+	e.recordSpend("done", core.Usage{CostUSD: 0.50, CostKnown: true})
+	e.budgetGate("running", anthropicID())(core.Usage{OutputTokens: 24000}) // $0.60, still going
+	if err := e.checkBudget("new"); !errors.Is(err, ErrPaused) {
+		t.Fatalf("$0.50 recorded and $0.60 running against $1.00 let a new message through: %v", err)
+	}
+}
