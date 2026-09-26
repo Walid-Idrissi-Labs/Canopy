@@ -10,6 +10,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/screens"
 )
 
 // golden compares a rendered screen, colours stripped, with its stored snapshot. The layout is
@@ -17,6 +18,9 @@ import (
 // CANOPY_UPDATE_GOLDENS=1 to write the snapshots again after a change that is meant.
 func golden(t *testing.T, name, got string) {
 	t.Helper()
+	if err := screens.Keep(name, got); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join("testdata", "golden", name+".txt")
 	got = strings.Join(trimRight(strings.Split(plain(got), "\n")), "\n") + "\n"
 	if os.Getenv("CANOPY_UPDATE_GOLDENS") == "1" {
