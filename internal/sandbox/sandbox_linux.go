@@ -36,9 +36,14 @@ func (p Policy) Wrap(name string, args []string) (string, []string, error) {
 	if err := Available(); err != nil {
 		return "", nil, err
 	}
-	self, err := os.Executable()
-	if err != nil {
-		return "", nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	// The running image itself, through /proc, rather than the path it was started from: Canopy
+	// upgraded in place while it runs would otherwise be re-run as the new binary, reading a policy
+	// the old one wrote.
+	self := "/proc/self/exe"
+	if _, err := os.Stat(self); err != nil {
+		if self, err = os.Executable(); err != nil {
+			return "", nil, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
 	}
 	encoded, err := json.Marshal(p)
 	if err != nil {
