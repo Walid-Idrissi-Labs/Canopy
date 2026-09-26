@@ -9,6 +9,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/skills"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -214,7 +215,7 @@ func runChat(resume string) error {
 			Warnings: warnings,
 			Review:   review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
-			SignIn: signInRoutes, FindPictures: images.FindPaths, LoadPictures: images.LoadAll,
+			SignIn: signInRoutes, CheckKey: checkKey(keyStore, http.DefaultClient), FindPictures: images.FindPaths, LoadPictures: images.LoadAll,
 			Shell: shellIn(dir),
 			Files: projectFiles(dir), Remember: rememberIn(dir, project),
 		})

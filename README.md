@@ -100,6 +100,12 @@ No API key, and a Claude, Copilot or ChatGPT subscription instead? Use `canopy k
 than `canopy keys add`, and read
 [Sign in with a subscription instead of a key](#sign-in-with-a-subscription-instead-of-a-key) first.
 
+A key added on the credential screen (ctrl+k) is selected, and checked at once against the
+provider's model list, which is free, so a mistyped key is named before your first message rather
+than by it; `t` checks the selected key again. For an OpenAI-compatible endpoint Canopy has no price
+for, `p` records yours (input and output dollars per million tokens), and the header prices the next
+turn with it, marked as your own rate.
+
 A name is the one thing here you are likely to get wrong, because you choose it before the
 credential has been used for anything. Renaming moves the credential and every conversation
 recorded on it, since the name is what each one looks up on its next message. In the interface it
