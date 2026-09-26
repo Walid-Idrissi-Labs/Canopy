@@ -99,6 +99,7 @@ func Builtins() []Builtin {
 		{"agents", "every agent running, and the state of its worktree"},
 		{"pickup", "the code that brings you back to this conversation later"},
 		{"theme", "the palette, including one with no colour in it at all"},
+		{"mouse", "hand the mouse back to the terminal to select text, and take it again"},
 		{"keys", "the credentials Canopy can use"},
 	}
 }

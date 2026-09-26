@@ -708,7 +708,9 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   dragging to select text no longer reaches the terminal, so copying out of Canopy means holding a
   modifier while you drag: option on macOS terminals, shift on most others. Without this the wheel
   arrives as arrow key presses, and the arrow keys walk back through what you have sent, so
-  scrolling up to reread an answer would replace what you were typing.
+  scrolling up to reread an answer would replace what you were typing. `/mouse` hands the mouse back to
+  the terminal, so a plain drag selects again, and the same command takes it back; while it is the
+  terminal's, the wheel does whatever the terminal does with it.
 
 - A process that detaches its own output and outlives the command that started it is left running
   (D-37). Canopy puts every command in its own process group and kills the group, which is what takes

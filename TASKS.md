@@ -8296,5 +8296,13 @@ it. `goreleaser check` validates the configuration and a snapshot release (signi
 skipped, since neither tool is installed locally) builds all four archives. Not done, and not the
 pipeline's to do: macOS notarisation (an Apple Developer account) and the tag itself, which is the
 owner's call. The `go install` path was already documented.
+### Z-V09 The mouse can be handed back (part of V-09)
+`status: review | owner: Claude | branch: feat/mouse-toggle`
+
+In-app drag selection with OSC 52 copy came with #99. What V-09 still asked for was a toggle that
+releases the mouse entirely: `/mouse` (a reserved built-in) switches the frame's mouse mode between
+cell motion and none, with a notice each way, so the terminal's own selection works without a
+modifier. An app test drives /mouse twice and reads the view's mouse mode and the notice.
+LIMITATIONS says what the wheel does meanwhile.
 
 `verify: claude [x] 2026-09-26   codex [ ]`

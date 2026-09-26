@@ -140,6 +140,10 @@ type App struct {
 	// blurred is whether the terminal has said it is not the window in front.
 	blurred bool
 
+	// mouseReleased hands the mouse back to the terminal, on /mouse, so its own selection works
+	// without a modifier; the wheel then does whatever the terminal does with it, often arrow keys.
+	mouseReleased bool
+
 	chat      chat.Model
 	agents    agentsui.Model
 	dashboard Model
@@ -951,6 +955,14 @@ func (a App) runAction(action string) (tea.Model, tea.Cmd) {
 		a.leaveChat(screenKeys)
 	case chat.ActionModel:
 		a.openModelPicker(screenChat)
+	case chat.ActionMouse:
+		a.mouseReleased = !a.mouseReleased
+		if a.mouseReleased {
+			a.chat.SetNotice("the mouse is the terminal's now: drag selects text as it always does. " +
+				"/mouse again takes it back, which the wheel needs to scroll the conversation")
+		} else {
+			a.chat.SetNotice("the wheel scrolls the conversation again; hold option or shift to select text")
+		}
 	}
 	// The same visibility bookkeeping the key routing does, for the same reason: the agents
 	// screen animates only while it is in front.
@@ -1084,6 +1096,9 @@ func (a App) View() tea.View {
 	view := tea.NewView(a.render())
 	view.AltScreen = true
 	view.MouseMode = tea.MouseModeCellMotion
+	if a.mouseReleased {
+		view.MouseMode = tea.MouseModeNone
+	}
 	view.ReportFocus = true
 	view.WindowTitle = windowTitle(filepath.Base(a.dir), len(a.waiting), len(a.working))
 	if progressSupported() {
