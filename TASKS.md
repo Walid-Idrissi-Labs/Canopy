@@ -4839,7 +4839,7 @@ which LIMITATIONS already documents. Keyboard copy is the version that works eve
 product claims to work, ssh included.
 
 ### U-12 The agents screen grows hands
-`status: todo | owner: none | branch: none | depends: A5-11`
+`status: review | owner: Claude | branch: feat/pane-costs | depends: A5-11`
 `scope: internal/tui/agents/`
 
 Deliverable: acting on an agent from where you see it. Stop a running agent's turn. Remove a

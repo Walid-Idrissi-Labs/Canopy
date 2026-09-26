@@ -399,13 +399,12 @@ func (m Model) paneBody(status session.AgentStatus, width, height int, focused b
 			t.Muted.Render("nothing said yet")}
 	} else {
 		// Only the turns whose tail can fit are rendered, because rendering a long transcript to
-		// throw most of it away is markdown work done per pane per frame. The tool kinds are not
-		// threaded through here, so a pane draws tool calls without their kind labels; the full
-		// labels are one keystroke away in the view this pane is a miniature of.
+		// throw most of it away is markdown work done per pane per frame. Tool calls carry their
+		// kind labels, from the same registry the chat asks, so a call reads the same in a pane.
 		if keep := 3; len(s.Turns) > keep {
 			s.Turns = s.Turns[len(s.Turns)-keep:]
 		}
-		conversation = chat.Transcript(s, width, spinnerFrames[m.step%len(spinnerFrames)], nil)
+		conversation = chat.Transcript(s, width, spinnerFrames[m.step%len(spinnerFrames)], m.toolKind)
 	}
 
 	lines := append(top, conversation...)
@@ -532,4 +531,20 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// toolKind is the kind of a tool by name, for the labels a pane draws.
+func (m Model) toolKind(name string) (core.ToolKind, bool) {
+	if m.engine == nil {
+		return "", false
+	}
+	registry, ok := m.engine.Tools()
+	if !ok || registry == nil {
+		return "", false
+	}
+	tool, found := registry.Get(name)
+	if !found {
+		return "", false
+	}
+	return tool.Kind(), true
 }
