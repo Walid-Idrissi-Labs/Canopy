@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/permission"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 )
 
@@ -16,8 +18,8 @@ func TestAlwaysStartingAgentsIsHonoured(t *testing.T) {
 	go func() { done <- confirm(session.Confirmation{}) }()
 	for {
 		if waiting := engine.PendingAll(); len(waiting) == 1 {
-			if waiting[0].Decision.Scope.String() == "" {
-				t.Fatal("the question offers always with nothing after it")
+			if got := waiting[0].Decision.Scope; got != (permission.Scope{Tool: "spawn_agents"}) || got.String() == "" {
+				t.Fatalf("always would cover %+v (%q), not starting agents alone", got, got.String())
 			}
 			break
 		}
@@ -26,6 +28,11 @@ func TestAlwaysStartingAgentsIsHonoured(t *testing.T) {
 	engine.Answer("s1", true, true)
 	if !<-done {
 		t.Fatal("the approval was lost")
+	}
+	// And nothing else: the same conversation's commands are still asked about.
+	command := permission.Request{SessionID: "s1", AgentID: "s1", Tool: "run_command", Kind: core.ToolExecute, Command: "rm -rf build"}
+	if engine.Granted("s1", command, permission.Scope{Tool: "run_command"}) {
+		t.Fatal("always on starting agents approved a shell command too")
 	}
 	answered := make(chan bool, 1)
 	go func() { answered <- confirm(session.Confirmation{}) }()
