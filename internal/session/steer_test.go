@@ -94,15 +94,23 @@ func TestGuidanceIsDeliveredAtTheNextTurnBoundary(t *testing.T) {
 	}
 
 	// Visibly part of the next turn's context, which is the other half of the acceptance criterion.
-	// A correction the model never sees is a correction that did not happen.
-	var carried bool
-	for _, message := range client.History() {
-		if strings.Contains(message.Text, "use the existing helper") {
-			carried = true
+	// A correction the model never sees is a correction that did not happen. Waited for, since the
+	// turn is registered before its request goes out.
+	carried := func() bool {
+		for _, message := range client.History() {
+			if strings.Contains(message.Text, "use the existing helper") {
+				return true
+			}
 		}
+		return false
 	}
-	if !carried {
-		t.Errorf("the guidance is not in what was sent to the provider: %+v", client.History())
+	sent := time.After(3 * time.Second)
+	for !carried() {
+		select {
+		case <-sent:
+			t.Fatalf("the guidance is not in what was sent to the provider: %+v", client.History())
+		case <-time.After(2 * time.Millisecond):
+		}
 	}
 }
 
