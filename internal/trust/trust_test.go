@@ -126,3 +126,14 @@ func TestAHooksToolsAreShownForTrust(t *testing.T) {
 		t.Fatalf("the prompt says:\n%s", req.Text())
 	}
 }
+
+// A local MCP server started outside the sandbox says so where it is trusted.
+func TestAnUnconfinedServerIsNamedAsSuch(t *testing.T) {
+	req := Describe(t.TempDir(), config.Project{MCP: []config.MCPServer{
+		{Name: "docker", Command: "docker", Args: []string{"run", "mcp"}, Unconfined: true},
+		{Name: "files", Command: "npx", Args: []string{"server"}}}})
+	text := req.Text()
+	if !strings.Contains(text, "docker: docker run mcp (outside the sandbox)") || strings.Contains(text, "server (outside") {
+		t.Fatalf("the prompt says:\n%s", text)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"os/exec"
 	"strings"
 	"sync"
@@ -64,6 +65,11 @@ type Spec struct {
 	// sent on every request. Nothing is started.
 	URL     string
 	Headers map[string]string
+
+	// Sandbox confines a local server, with SandboxEnv the environment it needs; nil runs it as it
+	// is. A server that cannot be confined is not started.
+	Sandbox    *sandbox.Policy
+	SandboxEnv []string
 }
 
 // Session is a live connection to one server.
@@ -143,10 +149,22 @@ func Connect(ctx context.Context, spec Spec) (*Session, error) {
 
 	// The process outlives this function, so it is tied to the background rather than to startCtx,
 	// which is about to expire. Close is what ends it.
-	cmd := exec.Command(spec.Command, spec.Args...)
+	name, args := spec.Command, spec.Args
+	base := childenv.Inherited()
+	if spec.Sandbox != nil {
+		wrapped, wrappedArgs, err := spec.Sandbox.Wrap(name, args)
+		if err != nil {
+			return nil, fmt.Errorf("%q was not started, since it could not be confined: %w", spec.Name, err)
+		}
+		name, args = wrapped, wrappedArgs
+		if spec.SandboxEnv != nil {
+			base = spec.SandboxEnv
+		}
+	}
+	cmd := exec.Command(name, args...)
 	cmd.Dir = spec.Dir
 	// Always set: a nil Env inherits the whole environment, provider keys included.
-	cmd.Env = append(childenv.Inherited(), spec.Env...)
+	cmd.Env = append(append([]string(nil), base...), spec.Env...)
 	// Without this, a server that keeps its stdout open after being asked to stop makes Wait block
 	// forever and the shutdown path never returns.
 	cmd.WaitDelay = 5 * time.Second

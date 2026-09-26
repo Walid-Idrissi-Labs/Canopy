@@ -293,6 +293,8 @@ func attachTools(engine *session.Engine, dir string, project config.Project) err
 					Setup:        project.Setup,
 					SetupTimeout: project.SetupDuration(),
 					Copy:         project.Copy,
+					// The setup runs the project's own scripts in the new worktree, so in the sandbox.
+					Confine: tools.Confinement,
 				},
 			}); err != nil {
 				return err

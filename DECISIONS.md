@@ -1514,6 +1514,21 @@ conversation", and the confirmation checks that grant before asking, so always m
 The grant covers that tool in that conversation only: no other tool, and no other conversation. A
 scope naming only a tool now renders in those words everywhere, so no prompt can offer an always
 with nothing after it.
+## D-65 A new worktree's setup and local MCP servers run in the sandbox too. Decided 2026-09-26.
+
+Completes D-61, which left both unconfined. The setup a new agent's worktree runs is the project's
+own install, and the branch it runs on can hold what earlier agents merged; a local MCP server is a
+program the repository names and often ships. Both now run in the sandbox the project's tests run
+in, with the network as `CANOPY_SANDBOX_NETWORK` sets it. The worktree's sandbox is made once the
+worktree exists, since its path is not known before. A local server that cannot work inside it can
+be marked `"unconfined": true` in canopy.json; that is part of what a person trusts, and the trust
+prompt names it as running outside the sandbox. A server whose sandbox cannot be made is not
+started; where there is no sandbox at all, it runs as every other command then does, and a warning
+says so. npx and uv install a confined server into directories of Canopy's own, under its cache
+directory (`npm_config_cache`, `UV_CACHE_DIR`, `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR` and
+`UV_PYTHON_INSTALL_DIR` point there, one set per project and server), not into the person's: their `~/.npm/_npx` and uv's tool and
+Python directories are what their own later npx and uv runs use outside the sandbox, so a writable
+one would be a way out of it.
 
 ## Appendix: where the settled scope comes from
 
