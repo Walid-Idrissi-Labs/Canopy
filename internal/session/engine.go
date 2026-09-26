@@ -410,6 +410,30 @@ func (e *Engine) ProjectOf(sessionID string) string {
 	return e.projects[sessionID]
 }
 
+// InThisProject reports whether a conversation may be opened here: one recorded in this project, or
+// in none, the same rule `canopy pickup` follows.
+func (e *Engine) InThisProject(sessionID string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	owner := e.projects[sessionID]
+	return owner == "" || e.projectID == "" || owner == e.projectID
+}
+
+// SearchHistory finds stored turns matching a full text query, nothing without storage attached.
+func (e *Engine) SearchHistory(query string, limit int) []SearchHit {
+	e.mu.Lock()
+	storage := e.storage
+	e.mu.Unlock()
+	if storage == nil {
+		return nil
+	}
+	hits, err := storage.Search(query, limit)
+	if err != nil {
+		return nil
+	}
+	return hits
+}
+
 // SetProjectID scopes new sessions and cost analysis to one project.
 func (e *Engine) SetProjectID(projectID string) {
 	e.mu.Lock()

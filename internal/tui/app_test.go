@@ -90,7 +90,9 @@ type stubEngine struct {
 	// tell them apart. Everything else uses the single session above and does not care which ID it
 	// is asked for.
 	sessions map[string]core.Session
-	sent     []string
+	// elsewhere are sessions recorded in another project.
+	elsewhere map[string]bool
+	sent      []string
 	// compacted and asked count the two calls that reach a provider without being a message, so a
 	// test can assert that a key started neither.
 	compacted int
@@ -126,6 +128,21 @@ func (e *stubEngine) Sessions() []core.Session {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func (e *stubEngine) InThisProject(id string) bool { return !e.elsewhere[id] }
+
+func (e *stubEngine) SearchHistory(query string, _ int) []session.SearchHit {
+	var hits []session.SearchHit
+	for _, s := range e.Sessions() {
+		for _, turn := range s.Turns {
+			if strings.Contains(turn.Request.Text, query) {
+				hits = append(hits, session.SearchHit{SessionID: s.ID, SessionTitle: s.Title,
+					Excerpt: "<<" + turn.Request.Text + ">>"})
+			}
+		}
+	}
+	return hits
 }
 
 func (e *stubEngine) Send(_, prompt string) (string, error) {
@@ -1207,6 +1224,60 @@ func TestThePaletteOpensAgentsAndConversations(t *testing.T) {
 	app, _ = app.Update(cmd())
 	if view := plain(app.(tui.App).View().Content); !strings.Contains(view, "tokenise the input") {
 		t.Fatalf("the chosen conversation is not on screen:\n%s", view)
+	}
+}
+
+// A conversation from before is found by what was said in it, shows its code, cost and where it was
+// forked from, and another project's never appears.
+func TestAnEarlierConversationIsFoundByWhatWasSaid(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	done := func(text string) []core.Turn {
+		return []core.Turn{{ID: "t1", State: core.TurnComplete, Request: core.Message{Role: core.RoleUser, Text: text},
+			Usage: core.Usage{CostUSD: 0.42, CostKnown: true}}}
+	}
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Turns: done("hello")},
+			"session-4": {ID: "session-4", Title: "auth work", Turns: done("rotate the bcrypt cost")},
+			"session-6": {ID: "session-6", Title: "auth work, again", ForkedFrom: "session-4", Turns: done("try argon2")},
+			"session-9": {ID: "session-9", Title: "other repo", Turns: done("bcrypt elsewhere")},
+		},
+		elsewhere: map[string]bool{"session-9": true},
+	}
+	var app tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+	app, _ = app.Update(tea.WindowSizeMsg{Width: 140, Height: 40})
+	typed := func(app tea.Model, text string) tea.Model {
+		app, _ = app.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+		for _, r := range text {
+			if r == ' ' {
+				app, _ = app.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+				continue
+			}
+			app, _ = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		return app
+	}
+	view := plain(typed(app, "conversation").(tui.App).View().Content)
+	if !strings.Contains(view, "forked from 4") || !strings.Contains(view, "$0.42") || !strings.Contains(view, "code 6") {
+		t.Fatalf("a conversation is listed without its code, cost or origin:\n%s", view)
+	}
+	if strings.Contains(view, "other repo") {
+		t.Fatalf("another project's conversation is offered:\n%s", view)
+	}
+	found := typed(app, "bcrypt")
+	view = plain(found.(tui.App).View().Content)
+	if !strings.Contains(view, "said in auth work") || strings.Contains(view, "other repo") {
+		t.Fatalf("the search by content:\n%s", view)
+	}
+	found, cmd := found.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("choosing a found conversation asked for nothing")
+	}
+	found, _ = found.Update(cmd())
+	if view := plain(found.(tui.App).View().Content); !strings.Contains(view, "rotate the bcrypt cost") {
+		t.Fatalf("the found conversation is not on screen:\n%s", view)
 	}
 }
 

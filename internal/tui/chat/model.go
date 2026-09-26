@@ -336,8 +336,9 @@ type Model struct {
 	shellAsked string
 	// search is the find bar, on ctrl+f.
 	search search
-	// destinations lists the agents and conversations the palette can open.
+	// destinations lists the agents the palette can open, and history the conversations.
 	destinations func() []Destination
+	history      History
 	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
 	// SetRemember.
 	files    func() []string
