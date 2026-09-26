@@ -39,7 +39,7 @@ func TestAnAgentsStandingIsJudgedAtItsRevisionNow(t *testing.T) {
 	if strings.HasPrefix(moved, "green") || !strings.Contains(moved, "bbbbbbb") {
 		t.Fatalf("edited since the green run reads %q", moved)
 	}
-	if got := standingOf(fakeStanding{snapshot: snapshot, known: true})("worker"); strings.HasPrefix(got, "green") {
+	if got := standingOf(fakeStanding{snapshot: snapshot, known: true})("worker"); !strings.Contains(got, "could not be read") {
 		t.Fatalf("an unreadable revision reads %q", got)
 	}
 	if got := standingOf(fakeStanding{})("nobody"); got != "no verification recorded for it" {
