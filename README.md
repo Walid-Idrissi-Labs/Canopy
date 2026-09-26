@@ -457,6 +457,12 @@ is waiting.
 project with sh, as your terminal would, with the provider keys Canopy holds kept out of its
 environment; a pasted line is sent as a message instead. What it printed is shown,
 and goes with your next message, marked as command output, so "why does this fail" needs no pasting.
+### Approving a plan
+
+In plan mode the agent reads and writes nothing, and answers with a plan. Under a finished plan
+that sets out steps, with nothing typed and no other question waiting, enter twice carries it out: the conversation moves to build mode and the agent is told
+the plan is approved, and to stop and say so if the plan turns out not to fit. Typing instead
+changes the plan.
 ### Finding and copying
 
 ctrl+f finds text in the conversation, newest first: the view moves to each match and marks it, enter

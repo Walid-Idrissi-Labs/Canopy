@@ -339,6 +339,9 @@ type Model struct {
 	// chordX is set by ctrl+x, the first half of ctrl+x ctrl+e, which opens the box in $EDITOR.
 	chordX bool
 
+	// planAsked is the first of the two enters that carry a plan out.
+	planAsked bool
+
 	// palette is the command palette, on ctrl+p.
 	palette palette
 
@@ -526,6 +529,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case EventMsg:
 		m.refresh()
+		// Something happened between the two enters that carry a plan out, so the first no longer
+		// stands: the second is asked for again, over whatever is on screen now.
+		m.planAsked = false
 		// The spinner only turns while something is running; an idle screen redrew itself eight
 		// times a second for nothing. An event that starts work starts it again.
 		if m.working && !m.ticking {
@@ -1118,6 +1124,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// a change of mind, and an offer that outlived it would eventually be taken up by a keystroke
 	// somebody meant for something else entirely, which is the failure the confirmation exists to
 	// prevent arriving a few seconds later. The same rule the application applies to ctrl+n.
+	if m.planAsked && msg.String() != "enter" {
+		m.planAsked = false
+	}
 	if m.compactAsked && msg.String() != "ctrl+r" {
 		m.compactAsked = false
 		m.notice = ""
@@ -1281,6 +1290,15 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "enter":
+		// Twice, since it spends and changes code: the first press asks.
+		if m.planReady() {
+			if !m.planAsked {
+				m.planAsked = true
+				return m, nil
+			}
+			m.planAsked = false
+			return m.carryOutPlan()
+		}
 		return m.send()
 
 	case "tab":
@@ -1943,6 +1961,7 @@ func (m Model) transcriptHeight() int {
 	// The command list takes its rows from the conversation rather than from the box. Taking them
 	// from the box would shrink what somebody is typing into at the exact moment they are typing.
 	h -= m.menu.height()
+	h -= len(m.planCard())
 	h -= m.search.height()
 	h -= m.palette.height()
 
@@ -2039,6 +2058,7 @@ func (m Model) Body() string {
 	// Above the box, because on a conversation in progress the box is already on the floor of the
 	// screen and there is nothing below it to drop into.
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
+	rows = append(rows, m.planCard()...)
 	rows = append(rows, m.search.line()...)
 	rows = append(rows, m.palette.lines(m.width)...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody

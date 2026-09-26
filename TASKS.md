@@ -8103,6 +8103,15 @@ Its output (control characters removed) is shown and goes with the next message 
 <shell-output> frame whose closing tag cannot be forged from the output, then is dropped. Without a
 shell attached, "!" is an ordinary message. Tests cover the run, the frame, the one-message lifetime,
 a command that cannot finish, and the keys being withheld. Mutation-checked.
+### Z-V08 Approving a plan from plan mode (part of V-08)
+`status: review | owner: Claude | branch: feat/plan-card`
+
+Under a finished reply in plan mode, with the box empty and nothing waiting, a line offers to carry
+the plan out; enter switches to build (refused where build is not usable, with the reason) and sends
+the same approval text as the engine's plan execution (A4-09). Typing revises instead. Tests cover
+the approval sent in build, a typed revision not approving, no card outside plan mode, and a
+read-only agent refused. Mutation-checked. A4-09's stricter mechanism, where approval grants only
+what the plan described, stays unwired; this is the review step, not that enforcement.
 
 `verify: claude [x] 2026-09-26   codex [ ]`
 ### Z-V04 Find in the conversation, and copy the last reply (part of V-04)
