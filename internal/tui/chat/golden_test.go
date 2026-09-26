@@ -18,7 +18,7 @@ import (
 // CANOPY_UPDATE_GOLDENS=1 to write the snapshots again after a change that is meant.
 func golden(t *testing.T, name, got string) {
 	t.Helper()
-	if err := screens.Keep(name, got); err != nil {
+	if err := screens.Keep("chat", name, got); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join("testdata", "golden", name+".txt")

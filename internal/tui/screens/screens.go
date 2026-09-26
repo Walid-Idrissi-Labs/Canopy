@@ -12,8 +12,10 @@ import (
 // DirEnvVar names the directory frames are written to.
 const DirEnvVar = "CANOPY_SCREENS_DIR"
 
-// Keep writes a frame as name.ansi when DirEnvVar is set, and does nothing otherwise.
-func Keep(name, frame string) error {
+// Keep writes a frame as package-name.ansi when DirEnvVar is set, and does nothing otherwise. The
+// package that drew it leads the name, since three packages write into one directory at once and
+// two screens of the same name would otherwise overwrite each other without a word.
+func Keep(pkg, name, frame string) error {
 	dir := os.Getenv(DirEnvVar)
 	if dir == "" {
 		return nil
@@ -21,5 +23,5 @@ func Keep(name, frame string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, name+".ansi"), []byte(frame), 0o644)
+	return os.WriteFile(filepath.Join(dir, pkg+"-"+name+".ansi"), []byte(frame), 0o644)
 }
