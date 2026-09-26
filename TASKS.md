@@ -8094,6 +8094,17 @@ the rest as PNG (JPEG when a PNG stays over 3 MB), and passes a small WebP throu
 them through an injected loader (the interface imports no file reading) and sends with
 Engine.SendWithImages; the transcript says "with a picture". Tests cover each of those, the engine
 keeping a picture with its message across turns, and a broken picture stopping the message.
+### Z-V05b `!command` in the box (part of V-05)
+`status: review | owner: Claude | branch: feat/shell-passthrough`
+
+"!command" runs through the person's shell in the project, unconfined as their terminal would be,
+with childenv's inherited environment so provider keys are left out, two minutes and 64 KB bounded.
+Its output (control characters removed) is shown and goes with the next message inside a
+<shell-output> frame whose closing tag cannot be forged from the output, then is dropped. Without a
+shell attached, "!" is an ordinary message. Tests cover the run, the frame, the one-message lifetime,
+a command that cannot finish, and the keys being withheld. Mutation-checked.
+
+`verify: claude [x] 2026-09-26   codex [ ]`
 ### Z-V04 Find in the conversation, and copy the last reply (part of V-04)
 `status: review | owner: Claude | branch: feat/transcript-search`
 

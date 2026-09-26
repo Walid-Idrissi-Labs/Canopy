@@ -320,6 +320,12 @@ type Model struct {
 	findPictures    func(prompt string) []string
 	readingPictures bool
 	loadPictures    func(paths []string) ([]core.Image, error)
+	// shell runs "!command" in the project, and shellContext is what those commands said since the
+	// last message, which goes with the next one. See shell.go.
+	shell        func(ctx context.Context, command string) ShellResult
+	shellContext []shellRun
+	// shellAsked is a "!command" waiting for the second enter that runs it.
+	shellAsked string
 	// search is the find bar, on ctrl+f.
 	search search
 	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
@@ -639,6 +645,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case picturesReadyMsg:
 		return m.picturesReady(msg)
+	case shellDoneMsg:
+		return m.shellDone(msg), nil
 	case editedMsg:
 		if msg.err != nil {
 			m.err = "the editor did not finish: " + msg.err.Error()
@@ -1369,6 +1377,23 @@ func (m Model) send() (Model, tea.Cmd) {
 	typed := m.input.Value()
 	trimmed := strings.TrimSpace(typed)
 
+	// "!command" runs in the project, like a terminal, and costs nothing. Only a single line typed
+	// here, never a paste, and asked once: it runs outside the sandbox, so a pasted "!curl ... | sh"
+	// must not run on one keystroke.
+	if command, ok := strings.CutPrefix(trimmed, "!"); ok && m.shell != nil && strings.TrimSpace(command) != "" &&
+		!strings.Contains(command, "\n") && !m.input.Pasted() {
+		if m.shellAsked != trimmed {
+			m.shellAsked = trimmed
+			m.notice = "enter again runs this in the project, outside the sandbox, as your terminal would"
+			return m, nil
+		}
+		m.shellAsked = ""
+		m.input.Remember(typed)
+		m.input.Clear()
+		m.menu = menu{}
+		return m.runShell(strings.TrimSpace(command))
+	}
+
 	// "# note" is kept in the project's instructions rather than sent: the quick way to tell every
 	// later conversation something once.
 	// Only a single line typed here, never a paste: a pasted markdown document beginning with a
@@ -1455,9 +1480,9 @@ type picturesReadyMsg struct {
 func (m Model) deliver(typed, prompt string, attached []core.Image) (Model, tea.Cmd) {
 	var err error
 	if len(attached) > 0 {
-		_, err = m.engine.(imageSender).SendWithImages(m.sessionID, prompt, attached)
+		_, err = m.engine.(imageSender).SendWithImages(m.sessionID, m.withShellContext(prompt), attached)
 	} else {
-		_, err = m.engine.Send(m.sessionID, prompt)
+		_, err = m.engine.Send(m.sessionID, m.withShellContext(prompt))
 	}
 	if err != nil {
 		// The message stays in the box. Clearing it on a failure would mean somebody has to retype
@@ -1465,6 +1490,7 @@ func (m Model) deliver(typed, prompt string, attached []core.Image) (Model, tea.
 		m.err = err.Error()
 		return m, nil
 	}
+	m.shellContext = nil
 
 	// Filed only once the engine has accepted it, so a message that was refused is still in the box
 	// rather than in the box and in the history, which is one message showing up twice.

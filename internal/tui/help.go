@@ -58,6 +58,7 @@ func bindings() []section {
 			{"mouse drag", "select conversation text, copied when you let go"},
 			{"ctrl+home / ctrl+end", "the top, and back to following"},
 			{"alt+enter", "a line break instead of sending"},
+			{"!command", "run it here; its output goes with your next message"},
 			{"ctrl+f", "find in the conversation; enter older, down newer"},
 			{"ctrl+y", "copy the last code block, or the last reply"},
 			{"ctrl+p", "every command, mode, theme and file, as you type"},

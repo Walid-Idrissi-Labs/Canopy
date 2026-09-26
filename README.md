@@ -451,6 +451,12 @@ socket only you can reach, and speaks the same protocol as `canopy acp`. A quest
 while nobody is attached waits for the next `canopy attach`, and the server says which conversation
 is waiting.
 
+### Running a command yourself
+
+`!go test ./...` typed in the box, and confirmed with a second enter, runs the command in the
+project with sh, as your terminal would, with the provider keys Canopy holds kept out of its
+environment; a pasted line is sent as a message instead. What it printed is shown,
+and goes with your next message, marked as command output, so "why does this fail" needs no pasting.
 ### Finding and copying
 
 ctrl+f finds text in the conversation, newest first: the view moves to each match and marks it, enter

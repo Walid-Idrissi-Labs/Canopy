@@ -182,6 +182,8 @@ type AppOptions struct {
 	// FindPictures and LoadPictures find and read the pictures a message names.
 	FindPictures func(prompt string) []string
 	LoadPictures func(paths []string) ([]core.Image, error)
+	// Shell runs a "!command" typed in the box.
+	Shell func(ctx context.Context, command string) chat.ShellResult
 	// Files lists the project's files for @ mentions, and Remember keeps a "# note" in its
 	// instructions. Either may be nil.
 	Files    func() []string
@@ -246,6 +248,7 @@ func NewAppConfigured(
 	}
 	app.chat.SetCommands(options.Commands)
 	app.chat.SetPictures(options.FindPictures, options.LoadPictures)
+	app.chat.SetShell(options.Shell)
 	app.chat.SetFiles(options.Files)
 	app.chat.SetRemember(options.Remember)
 	app.chat.SetAgent(options.Agent)
