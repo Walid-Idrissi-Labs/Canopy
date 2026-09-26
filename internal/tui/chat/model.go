@@ -2842,8 +2842,10 @@ func (m Model) picturePaths(prompt string) []string {
 // message, so nobody sends "look at this" with nothing attached; the box keeps it.
 func (m Model) picturesReady(msg picturesReadyMsg) (Model, tea.Cmd) {
 	m.readingPictures = false
-	// Read for a conversation that is no longer the one on screen: not sent into this one.
+	// Read for a conversation that is no longer the one on screen: not sent into this one, and
+	// said, so the message is not lost without a word.
 	if msg.sessionID != m.sessionID {
+		m.err = "a message with pictures was not sent: the conversation changed while they were read"
 		return m, nil
 	}
 	if msg.err != nil {

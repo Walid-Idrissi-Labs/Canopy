@@ -62,3 +62,30 @@ func TestCompactionSendsOnlyRecentPictures(t *testing.T) {
 		t.Fatalf("compaction sent %d pictures", pictures)
 	}
 }
+
+// A side question sends the conversation as well, with the same limit on its pictures.
+func TestAnAsideSendsOnlyRecentPictures(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("ok")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	defer e.Close()
+	session := e.Create("claude", "claude-opus-5")
+	for i := 0; i < 10; i++ {
+		id, err := e.SendWithImages(session.ID, "look", []core.Image{{MediaType: "image/png", Data: []byte("x")}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		waitForTurn(t, e, session.ID, id)
+	}
+	if _, err := e.Aside(context.Background(), session.ID, "which one is it"); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	pictures := 0
+	for _, m := range client.history {
+		pictures += len(m.Images)
+	}
+	if pictures == 0 || pictures > core.PicturesKept {
+		t.Fatalf("the aside sent %d pictures", pictures)
+	}
+}

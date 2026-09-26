@@ -59,6 +59,34 @@ func TestAPictureNamedInAMessageIsAttached(t *testing.T) {
 	}
 }
 
+// Pictures read for a conversation left meanwhile are not sent into the new one, and it is said.
+func TestPicturesReadAfterASwitchAreNotSentElsewhere(t *testing.T) {
+	dir := t.TempDir()
+	var data bytes.Buffer
+	_ = png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 4, 4)))
+	shot := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(shot, data.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	m.SetPictures(images.FindPaths, images.LoadAll)
+	m, _ = m.Update(tea.PasteMsg{Content: "look " + shot})
+	m, cmd := m.Update(keyCode(tea.KeyEnter))
+	if cmd == nil {
+		t.Fatal("nothing was read")
+	}
+	m.SetSession("s2", "other")
+	m, _ = m.Update(cmd())
+	if len(engine.sent) != 0 {
+		t.Fatalf("sent %v into the other conversation", engine.sent)
+	}
+	if !strings.Contains(m.Error(), "not sent") {
+		t.Fatalf("error %q", m.Error())
+	}
+}
+
 // The transcript says a message carried pictures.
 func TestTheTranscriptSaysAMessageHadPictures(t *testing.T) {
 	session := core.Session{ID: "s1", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete, Text: "ok",
