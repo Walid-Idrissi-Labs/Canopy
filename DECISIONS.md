@@ -1518,7 +1518,7 @@ prompt names it as running outside the sandbox. A server whose sandbox cannot be
 started; where there is no sandbox at all, it runs as every other command then does, and a warning
 says so. npx and uv install a confined server into directories of Canopy's own, under its cache
 directory (`npm_config_cache`, `UV_CACHE_DIR`, `UV_TOOL_DIR`, `UV_TOOL_BIN_DIR` and
-`UV_PYTHON_INSTALL_DIR` point there), not into the person's: their `~/.npm/_npx` and uv's tool and
+`UV_PYTHON_INSTALL_DIR` point there, one set per project and server), not into the person's: their `~/.npm/_npx` and uv's tool and
 Python directories are what their own later npx and uv runs use outside the sandbox, so a writable
 one would be a way out of it.
 

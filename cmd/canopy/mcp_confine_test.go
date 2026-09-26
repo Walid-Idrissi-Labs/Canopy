@@ -63,6 +63,19 @@ func TestConfinedServersInstallIntoDirectoriesOfTheirOwn(t *testing.T) {
 			t.Errorf("%s (%s) is not writable", name, dir)
 		}
 	}
+	// Another project's server of the same name, and another server in this project, install apart.
+	other := mcpSpecs(t.TempDir(), config.Project{MCP: []config.MCPServer{{Name: "files", Command: "npx"},
+		{Name: "time", Command: "uvx"}}})
+	for _, spec := range other {
+		for _, kv := range spec.Env {
+			if strings.HasPrefix(kv, "npm_config_cache=") && strings.TrimPrefix(kv, "npm_config_cache=") == env["npm_config_cache"] {
+				t.Errorf("%s shares its npm directory with another project's server", spec.Name)
+			}
+		}
+	}
+	if other[0].Env[0] == other[1].Env[0] {
+		t.Error("two servers of one project share an install directory")
+	}
 	for _, mine := range []string{".npm/_npx", ".local/share/uv", ".cache/uv", "Library/Caches/uv"} {
 		if slices.Contains(specs[0].Sandbox.Writable, filepath.Join(home, mine)) {
 			t.Errorf("the person's %s is writable", mine)

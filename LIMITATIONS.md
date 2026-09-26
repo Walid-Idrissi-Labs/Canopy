@@ -885,8 +885,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   matches. Turn-end hooks still running when Canopy exits are waited for up to ten seconds, and one still
   running after that is left to finish on its own.
 - Local MCP servers run in the sandbox (D-65), which lets them write only in the workspace, the
-  temporary area, the toolchain caches, and the npm and uv directories Canopy keeps for servers
-  under its cache directory. Those are shared by every confined server, so one server can change
-  what another installs there; nothing outside a confined server runs from them. A server that needs more, one run through a container
+  temporary area, the toolchain caches, and the npm and uv directories Canopy keeps for that
+  server under its cache directory, one set per project and server name, so one repository's server
+  cannot plant a package another project's server runs. A server that needs more, one run through a container
   runtime for instance, fails to start until canopy.json marks it `"unconfined": true`. Remote servers
   start nothing and are unaffected.

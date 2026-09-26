@@ -9,6 +9,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,7 +115,7 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 				// npx and uvx install the server before running it, into directories of Canopy's
 				// own rather than the person's: theirs are what their own npx and uv run from later,
 				// outside the sandbox.
-				writable, env := mcpInstallDirs()
+				writable, env := mcpInstallDirs(dir, server.Name)
 				spec.Sandbox.Writable = append(spec.Sandbox.Writable, writable...)
 				spec.Env = append(env, spec.Env...)
 			}
@@ -131,13 +133,18 @@ func mcpSpecs(dir string, project config.Project) []mcp.Spec {
 
 // mcpInstallDirs are where a confined server's npx and uv install and cache things, under Canopy's
 // cache directory, with the environment that points them there. Nothing outside a confined server
-// runs from them.
-func mcpInstallDirs() (writable, env []string) {
+// runs from them. One set per project and server: shared, an untrusted repository's server could
+// plant a package that a trusted project's server of the same name then runs with its credentials.
+func mcpInstallDirs(project, server string) (writable, env []string) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return nil, nil
 	}
-	root := filepath.Join(cache, "canopy", "mcp-servers")
+	if abs, err := filepath.Abs(project); err == nil {
+		project = abs
+	}
+	sum := sha256.Sum256([]byte(project + "\x00" + server))
+	root := filepath.Join(cache, "canopy", "mcp-servers", hex.EncodeToString(sum[:8]))
 	dirs := map[string]string{
 		"npm_config_cache":      "npm",
 		"UV_CACHE_DIR":          "uv-cache",
