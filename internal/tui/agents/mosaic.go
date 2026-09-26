@@ -404,7 +404,7 @@ func (m Model) paneBody(status session.AgentStatus, width, height int, focused b
 		if keep := 3; len(s.Turns) > keep {
 			s.Turns = s.Turns[len(s.Turns)-keep:]
 		}
-		conversation = chat.Transcript(s, width, spinnerFrames[m.step%len(spinnerFrames)], m.toolKind)
+		conversation = chat.Transcript(s, width, spinnerFrames[m.step%len(spinnerFrames)], m.toolKinds())
 	}
 
 	lines := append(top, conversation...)
@@ -533,18 +533,21 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// toolKind is the kind of a tool by name, for the labels a pane draws.
-func (m Model) toolKind(name string) (core.ToolKind, bool) {
+// toolKinds names the kind of a tool, for the labels a pane draws, with the registry looked up
+// once per pane rather than once per call drawn.
+func (m Model) toolKinds() func(name string) (core.ToolKind, bool) {
 	if m.engine == nil {
-		return "", false
+		return nil
 	}
 	registry, ok := m.engine.Tools()
 	if !ok || registry == nil {
-		return "", false
+		return nil
 	}
-	tool, found := registry.Get(name)
-	if !found {
-		return "", false
+	return func(name string) (core.ToolKind, bool) {
+		tool, found := registry.Get(name)
+		if !found {
+			return "", false
+		}
+		return tool.Kind(), true
 	}
-	return tool.Kind(), true
 }
