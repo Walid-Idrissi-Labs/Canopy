@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -116,6 +117,15 @@ func (e *stubEngine) Session(id string) (core.Session, bool) {
 		return s, ok
 	}
 	return e.session, true
+}
+
+func (e *stubEngine) Sessions() []core.Session {
+	var out []core.Session
+	for _, s := range e.sessions {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 func (e *stubEngine) Send(_, prompt string) (string, error) {
@@ -1145,6 +1155,58 @@ func TestASurfacedQuestionSwitchesToTheConversationThatOwnsIt(t *testing.T) {
 	view := plain(switched.(tui.App).View().Content)
 	if !strings.Contains(view, "worker-2") || strings.Contains(view, "main") {
 		t.Errorf("the surfaced question did not open its owning conversation:\n%s", view)
+	}
+}
+
+// The palette opens another agent's conversation, or an earlier one of this run, by name; the one
+// on screen is not offered, and an empty conversation is not either.
+func TestThePaletteOpensAgentsAndConversations(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{
+		sessions: map[string]core.Session{
+			"session-1": {ID: "session-1", Title: "the current one", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete}}},
+			"session-3": {ID: "session-3", Title: "fix the lexer", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete,
+				Request: core.Message{Role: core.RoleUser, Text: "tokenise the input"}}}},
+			"session-5": {ID: "session-5", Title: "never used"},
+			"session-7": {ID: "session-7", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete}}},
+		},
+		agents: []session.AgentStatus{{Agent: session.Agent{Name: "reviewer", SessionID: "session-7"},
+			State: core.AgentWorking, Title: "review the parser"}},
+	}
+	var app tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Agent: "main"})
+	app, _ = app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	typed := func(app tea.Model, text string) tea.Model {
+		app, _ = app.Update(tea.KeyPressMsg{Code: 'p', Mod: tea.ModCtrl})
+		for _, r := range text {
+			if r == ' ' {
+				app, _ = app.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
+				continue
+			}
+			app, _ = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		return app
+	}
+	agents := typed(app, "agent")
+	view := plain(agents.(tui.App).View().Content)
+	if !strings.Contains(view, "agent reviewer") || !strings.Contains(view, "review the parser") {
+		t.Fatalf("no agent in the palette:\n%s", view)
+	}
+	conversations := typed(app, "conversation")
+	view = plain(conversations.(tui.App).View().Content)
+	if !strings.Contains(view, "conversation fix the lexer") || strings.Contains(view, "the current one") ||
+		strings.Contains(view, "never used") || strings.Contains(view, "session-7") {
+		t.Fatalf("the palette offers the conversation on screen, an empty one, or an agent's twice:\n%s", view)
+	}
+	app = typed(app, "lexer")
+	app, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("choosing a conversation asked for nothing")
+	}
+	app, _ = app.Update(cmd())
+	if view := plain(app.(tui.App).View().Content); !strings.Contains(view, "tokenise the input") {
+		t.Fatalf("the chosen conversation is not on screen:\n%s", view)
 	}
 }
 

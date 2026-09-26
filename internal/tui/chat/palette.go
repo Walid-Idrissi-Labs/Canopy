@@ -28,12 +28,28 @@ const (
 	paletteFill
 	// paletteMention adds the text to what is in the box.
 	paletteMention
+	// paletteGo opens another conversation, an agent's or one from before.
+	paletteGo
 )
 
 type paletteItem struct {
 	label, detail, text string
 	action              paletteAction
+	// to is where paletteGo goes.
+	to Destination
 }
+
+// Destination is somewhere the palette can take a person: an agent, or a conversation.
+type Destination struct {
+	// Label is what the entry says, Detail what it says beside it.
+	Label, Detail string
+	// SessionID and AgentName are what opening it asks the application for; see SwitchMsg.
+	SessionID, AgentName string
+}
+
+// SetDestinations gives the palette the agents and conversations it can open, read each time it
+// opens so it lists who is there now. Nil lists none.
+func (m *Model) SetDestinations(list func() []Destination) { m.destinations = list }
 
 type palette struct {
 	open     bool
@@ -62,6 +78,14 @@ func (m Model) paletteItems() []paletteItem {
 	for _, name := range theme.Names() {
 		items = append(items, paletteItem{label: "theme " + name, detail: "switch the palette",
 			text: "/theme " + name, action: paletteRun})
+	}
+	if m.destinations != nil {
+		for _, to := range m.destinations() {
+			if to.SessionID == m.sessionID {
+				continue
+			}
+			items = append(items, paletteItem{label: to.Label, detail: to.Detail, action: paletteGo, to: to})
+		}
 	}
 	if m.files != nil {
 		for _, path := range m.files() {

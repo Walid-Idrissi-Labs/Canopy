@@ -8148,7 +8148,14 @@ substring or letters in order. Enter runs a built-in through the same path as ty
 whatever was in the box; a project command is only put in the box, since it sends a prompt; a file
 is mentioned. It takes every key while up, esc closes it, and it does not open over a question.
 Tests cover each action, the ranking, the box left alone, and the question. Mutation-checked. Still
-open from V-06: sessions and agents in the palette, and pickers moved into overlays.
+open from V-06: pickers moved into overlays.
+
+2026-09-26 (Claude, feat/palette-destinations): agents and this run's conversations are in the
+palette. The application supplies them (chat.SetDestinations, read on each open): every agent with
+its state and title, then conversations with turns that are nobody's agent, latest first; the one
+on screen is left out. Choosing one sends SwitchMsg, so the application still decides what is on
+screen. An app-level test opens a conversation by name through the palette; mutants on each filter
+and on the switch are killed.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 ### Z-U08 Steering taken back, and agents stopped and removed where they are seen (U-08, part of U-12)
