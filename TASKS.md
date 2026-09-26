@@ -4662,7 +4662,7 @@ repository they happen to have open. It rings once per agent that starts needing
 second agent joining the queue rings again; only the same agent going on waiting is silent.
 
 ### U-04 A way back to every conversation
-`status: todo | owner: none | branch: none | depends: A3-02`
+`status: review | owner: Claude | branch: feat/conversation-picker | depends: A3-02`
 `scope: internal/tui/, internal/tui/chat/, internal/session (read interfaces only)`
 
 Deliverable: the session picker whose absence the code already apologises for in two comments. A
@@ -4680,6 +4680,18 @@ the pickup rule.
 notes: sessions persist, survive quit, and are unreachable from inside the product; the only
 handle is a code printed on exit. The picker is also where A3-07's fork-point display finally
 gets its screen, which that task's notes deferred to exactly here.
+
+2026-09-26 (Claude): the picker is the palette (ctrl+p) rather than a screen of its own, stacked on
+feat/palette-destinations. chat.History (Sessions, InThisProject, SearchHistory) lists this
+project's conversations with turns, most recently active first, each with its pickup code, turns,
+cost, last activity and "forked from"; three letters or more also search the full-text index and
+offer "said in <title>" entries: searched once typing pauses (150 ms) off the update loop, the last
+word as a prefix, filtered to this project in SQL so the limit counts only its own matches
+(Storage.SearchProject), and an answer to a query typed over is dropped. Another project's conversations are left out by the rule pickup
+uses (Engine.InThisProject). Enter opens one in place through SwitchMsg. Tests: an app-level test
+finds a conversation by its content and opens it, shows code, cost and fork origin, and never shows
+another project's; the engine's project rule is tested; mutants on each filter, the fork line and
+the search threshold are killed.
 
 ### U-05 A failed turn can be retried
 `status: review | owner: Claude | branch: feat/retry-failed-turn | depends: PG-M`

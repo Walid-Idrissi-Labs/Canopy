@@ -336,8 +336,9 @@ type Model struct {
 	shellAsked string
 	// search is the find bar, on ctrl+f.
 	search search
-	// destinations lists the agents and conversations the palette can open.
+	// destinations lists the agents the palette can open, and history the conversations.
 	destinations func() []Destination
+	history      History
 	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
 	// SetRemember.
 	files    func() []string
@@ -672,6 +673,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
+	case paletteSearchMsg:
+		return m, m.paletteSearch(msg)
+	case paletteFoundMsg:
+		return m.paletteFound(msg), nil
 	case picturesReadyMsg:
 		return m.picturesReady(msg)
 	case shellDoneMsg:
@@ -2983,10 +2988,12 @@ func (m Model) paletteKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if runes := []rune(m.palette.query); len(runes) > 0 {
 			m.palette.query = string(runes[:len(runes)-1])
 			m.palette.refresh()
+			return m, m.searchSaid()
 		}
 	case "space":
 		m.palette.query += " "
 		m.palette.refresh()
+		return m, m.searchSaid()
 	case "enter":
 		if m.palette.selected >= len(m.palette.matches) {
 			return m, nil
@@ -3021,6 +3028,7 @@ func (m Model) paletteKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0 {
 			m.palette.query += msg.Text
 			m.palette.refresh()
+			return m, m.searchSaid()
 		}
 	}
 	return m, nil

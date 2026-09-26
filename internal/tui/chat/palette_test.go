@@ -9,6 +9,7 @@ import (
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
@@ -132,5 +133,57 @@ func TestThePaletteMentionsAfterTheDraftAndScrolls(t *testing.T) {
 	m, _ = m.Update(keyCode(tea.KeyEnter))
 	if m.InputValue() != "see @pkg/file12.go " {
 		t.Fatalf("box %q", m.InputValue())
+	}
+}
+
+type fakeHistory struct{ hits []session.SearchHit }
+
+func (h fakeHistory) Sessions() []core.Session  { return nil }
+func (h fakeHistory) InThisProject(string) bool { return true }
+func (h fakeHistory) SearchHistory(string, int) []session.SearchHit {
+	return h.hits
+}
+
+// What was said is searched once typing pauses, from three letters, never finds the conversation on
+// screen, and an answer to a query typed over since is dropped.
+func TestThePaletteSearchesWhatWasSaidWhenTypingPauses(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(120, 40)
+	m.SetHistory(fakeHistory{hits: []session.SearchHit{
+		{SessionID: "s1", SessionTitle: "this one", Excerpt: "bcrypt here"},
+		{SessionID: "s4", SessionTitle: "auth work", Excerpt: "<<bcrypt>> cost"},
+	}})
+	m, _ = m.Update(keyCode('p', tea.ModCtrl))
+	m, _ = m.Update(keyText("b"))
+	if _, cmd := m.Update(keyText("c")); cmd != nil {
+		t.Fatal("two letters started a search")
+	}
+	m, _ = m.Update(keyText("c"))
+	m, stale := m.Update(keyText("r"))
+	m, fresh := m.Update(keyText("y"))
+	if stale == nil || fresh == nil {
+		t.Fatal("no search was started")
+	}
+	if _, cmd := m.Update(stale()); cmd != nil {
+		t.Fatal("a search typed over was still run")
+	}
+	m, run := m.Update(fresh())
+	answer := run()
+	// An answer that arrives after the palette was closed and opened on other words is dropped, as
+	// is one for a query typed over, even where the generation happens to agree.
+	reopened, _ := m.Update(keyCode(tea.KeyEscape))
+	reopened, _ = reopened.Update(keyCode('p', tea.ModCtrl))
+	for _, r := range "xyzw" {
+		reopened, _ = reopened.Update(keyText(string(r)))
+	}
+	reopened, _ = reopened.Update(answer)
+	if strings.Contains(plain(reopened.Body()), "said in auth work") {
+		t.Fatal("an answer for other words landed in a reopened palette")
+	}
+	m, _ = m.Update(answer)
+	body := plain(m.Body())
+	if !strings.Contains(body, "said in auth work") || strings.Contains(body, "this one") {
+		t.Fatalf("found:\n%s", body)
 	}
 }

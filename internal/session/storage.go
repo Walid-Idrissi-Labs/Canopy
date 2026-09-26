@@ -771,8 +771,22 @@ type SearchHit struct {
 
 // Search finds turns matching a full text query across every session.
 func (s *Storage) Search(query string, limit int) ([]SearchHit, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
+	return s.search(escapeFTS(query), "", false, limit)
+}
+
+// SearchProject finds turns in one project's conversations, and in those recorded with no project,
+// the last word matched as a prefix so a search typed a letter at a time finds something before the
+// word is finished. The project is filtered in the query, so the limit counts only its matches.
+func (s *Storage) SearchProject(query, projectID string, limit int) ([]SearchHit, error) {
+	match := escapeFTS(query)
+	if match != "" {
+		match += "*"
+	}
+	return s.search(match, projectID, projectID != "", limit)
+}
+
+func (s *Storage) search(match, projectID string, scoped bool, limit int) ([]SearchHit, error) {
+	if match == "" {
 		return nil, nil
 	}
 	if limit <= 0 {
@@ -786,9 +800,9 @@ func (s *Storage) Search(query string, limit int) ([]SearchHit, error) {
 		FROM turns_fts
 		JOIN turns t ON t.rowid = turns_fts.rowid
 		JOIN sessions s ON s.id = t.session_id
-		WHERE turns_fts MATCH ?
+		WHERE turns_fts MATCH ? AND (? = 0 OR s.project_id = ? OR s.project_id = '')
 		ORDER BY rank
-		LIMIT ?`, escapeFTS(query), limit)
+		LIMIT ?`, match, boolToInt(scoped), projectID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("searching history: %w", err)
 	}

@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -35,8 +34,6 @@ type Engine interface {
 	// Create starts a fresh conversation and returns it. The old one is left alone: it keeps its
 	// history, keeps running any turn that is in flight, and is still in the session list.
 	Create(keyName, model string) core.Session
-	// Sessions are the conversations this run holds, oldest first.
-	Sessions() []core.Session
 
 	// RenameCredential re-points every conversation and agent naming a credential at its new name,
 	// and reports how many conversations moved.
@@ -259,6 +256,11 @@ func NewAppConfigured(
 	}
 	app.chat.SetCommands(options.Commands)
 	app.chat.SetDestinations(app.destinations)
+	// The engine's history, where it has one: the chat lists this project's conversations from it
+	// and searches what was said in them.
+	if history, ok := engine.(chat.History); ok {
+		app.chat.SetHistory(history)
+	}
 	app.chat.SetPictures(options.FindPictures, options.LoadPictures)
 	app.chat.SetShell(options.Shell)
 	if len(options.Warnings) > 0 {
@@ -1336,36 +1338,21 @@ func shiftMouse(msg tea.MouseMsg, dy int) tea.Msg {
 	return msg
 }
 
-// destinations are what the palette can open: every agent, then the conversations of this run
-// that are nobody's agent, the latest first.
+// destinations are what the palette can open beyond the conversations the chat finds itself:
+// every agent, with its state and what it is doing.
 func (a App) destinations() []chat.Destination {
 	var out []chat.Destination
-	agents := map[string]bool{}
 	for _, status := range a.engine.AgentStatuses() {
 		// An agent with no conversation yet has nothing to open.
 		if status.Agent.SessionID == "" {
 			continue
 		}
-		agents[status.Agent.SessionID] = true
 		detail := string(status.State)
 		if status.Title != "" {
 			detail += ": " + status.Title
 		}
 		out = append(out, chat.Destination{Label: "agent " + status.Agent.Name, Detail: detail,
 			SessionID: status.Agent.SessionID, AgentName: status.Agent.Name})
-	}
-	sessions := a.engine.Sessions()
-	for i := len(sessions) - 1; i >= 0; i-- {
-		s := sessions[i]
-		if agents[s.ID] || len(s.Turns) == 0 {
-			continue
-		}
-		title := s.Title
-		if title == "" {
-			title = s.ID
-		}
-		out = append(out, chat.Destination{Label: "conversation " + title,
-			Detail: strconv.Itoa(len(s.Turns)) + " turns, " + s.UpdatedAt.Format("Jan 2 15:04"), SessionID: s.ID})
 	}
 	return out
 }
