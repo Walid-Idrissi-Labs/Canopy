@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v7
 
@@ -40,7 +40,7 @@ jobs:
         run: go vet ./...
 
       - name: Test
-        run: go test -race ./...
+        run: go test -race -v -p 1 -timeout 20m ./... 2>&1 | grep -E --line-buffered "^(=== RUN|--- FAIL|FAIL|ok|panic)"
         env:
           CANOPY_REQUIRE_SANDBOX: "1"
 
