@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
@@ -425,7 +426,11 @@ func warnReserved(project config.Project, out io.Writer) {
 // one optional convenience file has a typo.
 func loadCommands(project []config.Command) config.CommandSet {
 	global, _, err := config.LoadGlobalCommands()
-	if err != nil {
+	var reserved *config.ReservedCommandsError
+	switch {
+	case errors.As(err, &reserved):
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	case err != nil:
 		fmt.Fprintf(os.Stderr, "warning: global slash commands are not available: %v\n", err)
 	}
 	return config.ResolveCommands(global, project)

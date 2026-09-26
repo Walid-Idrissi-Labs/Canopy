@@ -162,6 +162,10 @@ func diagnose(env doctorEnv) []check {
 		default:
 			add("ok", "canopy.json", "trusted, "+count(len(project.Tests), "test"))
 		}
+		if len(project.Reserved) > 0 {
+			add("warn", "canopy.json", "the commands /"+strings.Join(project.Reserved, ", /")+
+				" are left out, since Canopy answers those names itself; rename them to use them")
+		}
 	}
 
 	// Language servers, for diagnostics after edits and navigation.

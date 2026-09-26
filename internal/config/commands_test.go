@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,5 +142,24 @@ func TestAReservedCommandNameCostsOnlyThatCommand(t *testing.T) {
 	}
 	if len(project.Reserved) != 1 || project.Reserved[0] != "mouse" {
 		t.Fatalf("reserved %v", project.Reserved)
+	}
+}
+
+// The global file keeps its other commands when one is named like a built-in, and says which.
+func TestAReservedGlobalCommandCostsOnlyThatCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "commands.json")
+	if err := os.WriteFile(path, []byte(`{"commands": [
+		{"name": "mouse", "description": "old", "prompt": "do it"},
+		{"name": "deploy", "description": "ship it", "prompt": "deploy"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(GlobalCommandsEnv, path)
+	commands, found, err := LoadGlobalCommands()
+	var reserved *ReservedCommandsError
+	if !found || !errors.As(err, &reserved) || len(reserved.Names) != 1 || reserved.Names[0] != "mouse" {
+		t.Fatalf("found %v, error %v", found, err)
+	}
+	if len(commands) != 1 || commands[0].Name != "deploy" {
+		t.Fatalf("kept %+v", commands)
 	}
 }
