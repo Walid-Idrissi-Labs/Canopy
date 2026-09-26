@@ -8334,5 +8334,16 @@ non-terminal, keeps the line client. Tests: a remote engine against a hub runs a
 the exact question, answers it, and sees the turn end; a refused prompt says why; the interface
 draws the attached question. Race-clean; mutants on the meta, the answered question and the refusal
 are killed.
+### Z-V12 The agent tree and branch labels (part of V-12)
+`status: review | owner: Claude | branch: feat/agent-tree`
+
+AgentStatus carries Parent, the agent whose conversation dispatched it (from dispatchParents). The
+agents list nests each dispatched agent under its orchestrator with tree lines (├─, └─, │), keeping
+the engine's attention order among roots and among siblings; an agent whose orchestrator is gone,
+or that sits in a loop of parents, is still listed once, at the top. An isolated agent's row leads
+with "on <branch>", since that is where its work is reviewed and landed. Tests: the engine fills
+Parent for a dispatched agent and not for a started one; the list draws children under their
+orchestrator in any given order, with the lines and the branch, and keeps an orphan and a loop.
+Still open from V-12: the rest of the look (accent family, gutters, border rules, motion, icons).
 
 `verify: claude [x] 2026-09-26   codex [ ]`

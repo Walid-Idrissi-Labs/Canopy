@@ -645,3 +645,53 @@ func TestAPaneLabelsToolCallsByKind(t *testing.T) {
 		t.Fatalf("the pane's tool call has no kind label:\n%s", plain(m.Body()))
 	}
 }
+
+// A dispatched agent is drawn under the agent that dispatched it, with the tree's lines, and one on
+// its own branch says which; an agent whose orchestrator is gone stands at the top.
+func TestDispatchedAgentsSitUnderTheirOrchestrator(t *testing.T) {
+	main := status("main", core.AgentIdle, "plan the work")
+	first := status("lexer", core.AgentWorking, "split the lexer")
+	first.Parent = "main"
+	first.Agent.Isolated, first.Agent.Branch = true, "canopy/lexer"
+	second := status("tests", core.AgentWorking, "write the tests")
+	second.Parent = "main"
+	orphan := status("stray", core.AgentFailed, "left behind")
+	orphan.Parent = "gone"
+	// Given in attention order, children before their parent, as the engine may.
+	m := model(engine(orphan, first, main, second))
+	body := plain(m.Body())
+	lines := strings.Split(body, "\n")
+	index := func(word string) int {
+		for i, l := range lines {
+			if strings.Contains(l, word) {
+				return i
+			}
+		}
+		t.Fatalf("%s is not listed:\n%s", word, body)
+		return -1
+	}
+	if index("main") >= index("lexer") || index("lexer") >= index("tests") {
+		t.Fatalf("children are not under their orchestrator:\n%s", body)
+	}
+	if !strings.Contains(lines[index("lexer")], "├─ lexer") || !strings.Contains(lines[index("tests")], "└─ tests") {
+		t.Fatalf("no tree lines:\n%s", body)
+	}
+	if !strings.Contains(lines[index("lexer")], "on canopy/lexer") {
+		t.Fatalf("the branch is not named:\n%s", body)
+	}
+	if strings.Contains(lines[index("stray")], "─") {
+		t.Fatalf("an agent whose orchestrator is gone is drawn as a child:\n%s", body)
+	}
+}
+
+// Agents whose parents name each other are still all listed, once each.
+func TestALoopOfParentsLosesNobody(t *testing.T) {
+	a := status("a", core.AgentIdle, "")
+	a.Parent = "b"
+	b := status("b", core.AgentIdle, "")
+	b.Parent = "a"
+	body := plain(model(engine(a, b)).Body())
+	if strings.Count(body, " a ")+strings.Count(body, "─ a")+strings.Count(body, "> a") == 0 || !strings.Contains(body, "b") {
+		t.Fatalf("an agent was lost:\n%s", body)
+	}
+}
