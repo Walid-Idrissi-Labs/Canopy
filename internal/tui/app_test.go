@@ -1216,6 +1216,40 @@ func TestThePaletteOpensAgentsAndConversations(t *testing.T) {
 	}
 }
 
+// /mouse hands the mouse to the terminal, so its own selection works, and takes it back.
+func TestTheMouseCanBeHandedBack(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	engine := &stubEngine{session: core.Session{ID: "s1"}}
+	var app tea.Model = tui.NewAppConfigured(store, withOneKey(), engine, "myproject", "claude",
+		tui.AppOptions{Session: "s1"})
+	if app.(tui.App).View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("the mouse is not reported to begin with")
+	}
+	toggle := func(app tea.Model) tea.Model {
+		for _, r := range "/mouse" {
+			app, _ = app.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+		}
+		app, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+		for cmd != nil {
+			msg := cmd()
+			if _, ok := msg.(chat.ActionMsg); !ok {
+				break
+			}
+			app, cmd = app.Update(msg)
+		}
+		return app
+	}
+	app = toggle(app)
+	if app.(tui.App).View().MouseMode != tea.MouseModeNone || !strings.Contains(plain(app.(tui.App).View().Content), "the mouse is the terminal's") {
+		t.Fatal("/mouse did not hand the mouse back")
+	}
+	app = toggle(app)
+	if app.(tui.App).View().MouseMode != tea.MouseModeCellMotion {
+		t.Fatal("/mouse again did not take it back")
+	}
+}
+
 // A pick the engine declines must change nothing at all, including the note the application keeps of
 // which credential to start the next conversation on.
 //
