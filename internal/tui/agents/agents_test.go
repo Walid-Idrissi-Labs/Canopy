@@ -602,4 +602,17 @@ func TestAnAgentIsStoppedAndRemovedFromTheList(t *testing.T) {
 	if len(e.removed) != 1 || e.removed[0] != "worker" {
 		t.Fatalf("removed %v", e.removed)
 	}
+
+	// One waiting on a question has a turn in flight: it is stopped, and not removed.
+	asking := engine(status("asker", core.AgentAwaitingPermission, "waiting"))
+	asking.statuses[0].Agent.SessionID = "s-asker"
+	m = model(asking)
+	m = key(key(m, "x"), "x")
+	if len(asking.removed) != 0 {
+		t.Fatal("an agent waiting on a question was removed")
+	}
+	_ = key(m, "s")
+	if len(asking.cancelled) != 1 || asking.cancelled[0] != "s-asker" {
+		t.Fatalf("stop cancelled %v", asking.cancelled)
+	}
 }

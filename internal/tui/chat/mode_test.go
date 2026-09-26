@@ -287,6 +287,13 @@ func TestSteeringCanBeTakenBack(t *testing.T) {
 	if strings.Contains(plain(next.Body()), "delivered when this turn finishes") {
 		t.Fatal("taken-back guidance is still shown as waiting")
 	}
+	// Two queued come back one to a line, not run together.
+	engine.queuedSteering = []string{"use the parser", "and keep the tests"}
+	next, _ = next.Update(keyCode('u', tea.ModCtrl))
+	next, _ = run(next, "/steer undo")
+	if next.InputValue() != "/steer use the parser\nand keep the tests" {
+		t.Fatalf("box %q", next.InputValue())
+	}
 	next, _ = next.Update(keyCode('u', tea.ModCtrl))
 	next, _ = run(next, "/steer undo")
 	if !strings.Contains(next.Notice(), "no guidance waiting") {

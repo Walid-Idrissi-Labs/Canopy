@@ -195,7 +195,8 @@ func (m *Model) steer(guidance string) {
 			m.notice = "there is no guidance waiting to take back"
 			return
 		}
-		m.input.SetValue("/steer " + strings.Join(taken, " "))
+		// One line each, as they were queued, rather than run together into one.
+		m.input.SetValue("/steer " + strings.Join(taken, "\n"))
 		m.notice = "took back what was waiting; it is in the box to change or send again"
 		m.refresh()
 		return

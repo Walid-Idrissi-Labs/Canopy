@@ -225,8 +225,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	switch pressed := key.String(); pressed {
 	case "s":
-		// Stops the selected agent's turn where it is; what it has done so far stays.
-		if status, ok := m.Selected(); ok && status.State == core.AgentWorking && status.Agent.SessionID != "" {
+		// Stops the selected agent's turn where it is; what it has done so far stays. One waiting on
+		// a question has a turn in flight too, and stopping it ends that turn.
+		if status, ok := m.Selected(); ok && (status.State == core.AgentWorking ||
+			status.State == core.AgentAwaitingPermission) && status.Agent.SessionID != "" {
 			m.engine.Cancel(status.Agent.SessionID)
 			m.notice = "stopped " + status.Agent.Name
 			m.refresh()
