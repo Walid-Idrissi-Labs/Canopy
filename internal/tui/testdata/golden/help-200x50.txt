@@ -29,7 +29,7 @@ chat                                                                            
   alt+k                 delete to the end of the line; ctrl+u to its start           K                     credentials
   ctrl+f                find in the conversation; enter older, down newer            esc / tab / q         agents
   ctrl+y                copy the last code block, or the last reply
-  ctrl+p                every command, mode, theme and file, as you type           the model picker, on /model
+  ctrl+p                every command, agent, conversation and file, as you type   the model picker, on /model
   @                     a file in this project, which narrows as you type            j / k                 move, across credentials as well as within one
   ctrl+x ctrl+e         write the message in your editor                             enter                 run this conversation on it from the next message
   # note                keep a note in AGENTS.md for later conversations             ctrl+k                credentials, to change what a key defaults to

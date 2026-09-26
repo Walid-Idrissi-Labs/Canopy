@@ -336,6 +336,8 @@ type Model struct {
 	shellAsked string
 	// search is the find bar, on ctrl+f.
 	search search
+	// destinations lists the agents and conversations the palette can open.
+	destinations func() []Destination
 	// files lists the project's files for an @ mention; remember keeps a "# note". See SetFiles and
 	// SetRemember.
 	files    func() []string
@@ -3004,6 +3006,10 @@ func (m Model) paletteKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		case paletteFill:
 			m.input.SetValue(chosen.text)
 			m.refreshMenu()
+		case paletteGo:
+			// The application owns which conversation is on screen; this only asks for one.
+			to := chosen.to
+			return m, func() tea.Msg { return SwitchMsg{SessionID: to.SessionID, AgentName: to.AgentName} }
 		case paletteMention:
 			value := m.input.Value()
 			if value != "" && !strings.HasSuffix(value, " ") && !strings.HasSuffix(value, "\n") {
