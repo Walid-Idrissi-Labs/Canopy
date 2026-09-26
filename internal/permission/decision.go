@@ -151,7 +151,9 @@ func (s Scope) String() string {
 		// not this tool again.
 		return fmt.Sprintf("%s with exactly these arguments", s.Tool)
 	default:
-		return s.Tool
+		// A whole tool, which is what an approval outside the tool loop covers: every call of it in
+		// this conversation, said in those words so "always" is never a blank.
+		return "every " + s.Tool + " call in this conversation"
 	}
 }
 

@@ -1506,6 +1506,15 @@ names: an agent allowed to write files can edit a guard script in its workspace,
 the name lives outside the repository or in a path the agent cannot write. The subscription routes
 of D-51 run their vendor's own tools, which these hooks never see.
 
+## D-66 Always on starting agents means starting agents, in that conversation. Decided 2026-09-26.
+
+The confirmation before spawn_agents offered "always" with an empty scope, which recorded a grant
+nothing could match. It now carries the scope spawn_agents, shown as "every spawn_agents call in this
+conversation", and the confirmation checks that grant before asking, so always means what it says.
+The grant covers that tool in that conversation only: no other tool, and no other conversation. A
+scope naming only a tool now renders in those words everywhere, so no prompt can offer an always
+with nothing after it.
+
 ## Appendix: where the settled scope comes from
 
 The repository has two current authorities:

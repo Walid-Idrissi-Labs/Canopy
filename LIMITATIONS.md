@@ -895,3 +895,6 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - A `!command` typed in the box, and confirmed, runs outside the sandbox, as the person's own
   terminal would, since they typed it; it has two minutes, and the last 16 KB of what it printed goes with the next
   message.
+- Answering always to the question before agents are started (D-66) lets that conversation start
+  agents, at whatever each costs, without asking again until it is closed; the cost estimate is not
+  shown again for the later ones.

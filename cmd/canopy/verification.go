@@ -540,7 +540,22 @@ func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.To
 		return agent.KeyName
 	}
 
-	confirm := func(c session.Confirmation) bool {
+	confirm := dispatchConfirm(engine, sessionID)
+
+	for _, tool := range session.DispatchTools(source, current, confirm, projectAgents) {
+		if err := registry.Register(tool); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// dispatchScope is what always approving a dispatch covers: spawn_agents, in this conversation.
+func dispatchScope() permission.Scope { return permission.Scope{Tool: "spawn_agents"} }
+
+// dispatchConfirm asks a person before a conversation starts agents, honouring an earlier always.
+func dispatchConfirm(engine *session.Engine, sessionID string) func(session.Confirmation) bool {
+	return func(c session.Confirmation) bool {
 		// Routed through the same approver the tool calls use, so there is one place a person answers
 		// questions rather than two that behave differently. The question text carries the count, the
 		// profile, the task, the estimate and the warnings, because every one of those is a thing
@@ -549,22 +564,23 @@ func attachDispatch(engine *session.Engine, store *keys.Store, registry *core.To
 		for _, warning := range c.Warnings {
 			question += "\n" + warning
 		}
-		return engine.Approve(context.Background(), permission.Request{
+		req := permission.Request{
 			SessionID: sessionID,
 			AgentID:   sessionID,
 			Tool:      "spawn_agents",
 			Kind:      core.ToolExecute,
 			Command:   question,
-		}, permission.Decision{
+		}
+		// "Always" here means starting agents from this conversation without asking again, and is
+		// recorded, and honoured, as exactly that; it covers no other tool.
+		scope := dispatchScope()
+		if engine.Granted(sessionID, req, scope) {
+			return true
+		}
+		return engine.Approve(context.Background(), req, permission.Decision{
 			Outcome: permission.Ask,
 			Reason:  "starting agents spends money and creates worktrees",
+			Scope:   scope,
 		})
 	}
-
-	for _, tool := range session.DispatchTools(source, current, confirm, projectAgents) {
-		if err := registry.Register(tool); err != nil {
-			return err
-		}
-	}
-	return nil
 }

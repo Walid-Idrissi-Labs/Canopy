@@ -67,6 +67,12 @@ type answer struct {
 	remember bool
 }
 
+// Granted reports whether an approval given earlier in a conversation covers a request, for a
+// question asked outside the tool loop, which checks its own.
+func (e *Engine) Granted(sessionID string, req permission.Request, scope permission.Scope) bool {
+	return e.grantsFor(sessionID).Covers(req, scope)
+}
+
 // Approve implements agent.Approver by asking whoever is watching.
 //
 // Blocks until answered or the turn is cancelled. That is correct: the tool has not run and the
