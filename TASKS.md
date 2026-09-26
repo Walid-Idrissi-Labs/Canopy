@@ -4799,7 +4799,7 @@ agrees to cannot drift from what they get. A conversation too short to compact i
 first press rather than being offered a compaction of nothing.
 
 ### U-10 The input box under your fingers
-`status: todo | owner: none | branch: none | depends: M-02`
+`status: review | owner: Claude | branch: feat/input-box | depends: M-02`
 `scope: internal/tui/chat/input.go`
 
 Deliverable: the editing keys a multiline box implies. Vertical caret movement inside a draft,

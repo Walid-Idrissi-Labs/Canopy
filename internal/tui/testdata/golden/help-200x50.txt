@@ -25,26 +25,26 @@ chat                                                                            
   mouse drag            select conversation text, copied when you let go           worktrees
   ctrl+home / ctrl+end  the top, and back to following                               j / k                 move
   alt+enter             a line break instead of sending                              g / G                 top and end, as do home and end
-  ctrl+f                find in the conversation; enter older, down newer            r                     refresh
-  ctrl+y                copy the last code block, or the last reply                  K                     credentials
-  ctrl+p                every command, mode, theme and file, as you type             esc / tab / q         agents
-  @                     a file in this project, which narrows as you type
-  ctrl+x ctrl+e         write the message in your editor                           the model picker, on /model
-  # note                keep a note in AGENTS.md for later conversations             j / k                 move, across credentials as well as within one
-  enter / y             allow a tool call once, while a question is up               enter                 run this conversation on it from the next message
-  a                     allow it for the rest of the session                         ctrl+k                credentials, to change what a key defaults to
-  arrows / pgup         read on with a question up, deciding nothing                 any other key         back, with nothing changed
-  any other key         refuse it
-                                                                                   credentials
-another agent's question, above the box                                              j / k                 move
-  enter                 approve it once, while the box is empty                      enter                 use this one for the conversation
-  backspace             decline it, while the box is empty                           m                     set which model it talks to
-  ctrl+g                open its conversation and full request                       e                     rename it. the value is not asked for again
-  a                     always is answered on that full prompt only                  a / n                 add one
-                                                                                     d / x                 remove one
-agents                                                                               r                     reload the list
-  1 to 8                jump to that pane, and again to open it                      esc / tab             back to where you were
-  enter                 open the selected agent, or approve its question once        q                     quit
+  alt+k                 delete to the end of the line; ctrl+u to its start           r                     refresh
+  ctrl+f                find in the conversation; enter older, down newer            K                     credentials
+  ctrl+y                copy the last code block, or the last reply                  esc / tab / q         agents
+  ctrl+p                every command, mode, theme and file, as you type
+  @                     a file in this project, which narrows as you type          the model picker, on /model
+  ctrl+x ctrl+e         write the message in your editor                             j / k                 move, across credentials as well as within one
+  # note                keep a note in AGENTS.md for later conversations             enter                 run this conversation on it from the next message
+  enter / y             allow a tool call once, while a question is up               ctrl+k                credentials, to change what a key defaults to
+  a                     allow it for the rest of the session                         any other key         back, with nothing changed
+  arrows / pgup         read on with a question up, deciding nothing
+  any other key         refuse it                                                  credentials
+                                                                                     j / k                 move
+another agent's question, above the box                                              enter                 use this one for the conversation
+  enter                 approve it once, while the box is empty                      m                     set which model it talks to
+  backspace             decline it, while the box is empty                           e                     rename it. the value is not asked for again
+  ctrl+g                open its conversation and full request                       a / n                 add one
+  a                     always is answered on that full prompt only                  d / x                 remove one
+                                                                                     r                     reload the list
+agents                                                                               esc / tab             back to where you were
+  1 to 8                jump to that pane, and again to open it                      q                     quit
+  enter                 open the selected agent, or approve its question once
   backspace             decline the selected agent's question
-  h / j / k / l         move around the grid, as do the arrows
   j/k scroll   any other key back
