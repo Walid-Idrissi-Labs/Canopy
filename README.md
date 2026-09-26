@@ -419,7 +419,9 @@ N times, one effort level higher each time, with the failing output: run cheap, 
 thinking only when the evidence says it was needed. `-budget 0.50` stops the run once it has spent
 fifty cents, retries included; in the interface, `/budget 2` caps one agent and `/budget all 10`
 caps every agent together. A cap is checked between steps, so the request in flight finishes and the
-next one is not made.
+next one is not made. The header shows each cap set and how much of it is spent ("a floor" when some
+requests could not be priced); a turn stopped at one says so under it, and after `/budget` raises
+the cap, enter carries on from where it stopped.
 
 ### In an editor
 
