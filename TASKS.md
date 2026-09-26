@@ -4704,7 +4704,7 @@ with the user retyping. The taxonomy was built for this task; it just took a yea
 time to arrive.
 
 ### U-06 The first run holds your hand
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: partial | owner: Claude | branch: feat/startup-warnings | depends: PG-M`
 `scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
 
 Deliverable: the add-key wizard ends with a selected, tested credential. Storing a key selects

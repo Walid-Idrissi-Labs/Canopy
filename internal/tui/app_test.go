@@ -1487,3 +1487,15 @@ func TestAPastedKeyStaysOnTheCredentialScreen(t *testing.T) {
 		t.Fatalf("a paste on the credential screen reached the conversation:\n%s", plain(model.View().Content))
 	}
 }
+
+// What was said while starting is on screen when the interface opens.
+func TestStartupWarningsAreShownInside(t *testing.T) {
+	store := fake.New()
+	defer store.Close()
+	var model tea.Model = tui.NewAppConfigured(store, withOneKey(), &stubEngine{}, "myproject", "claude",
+		tui.AppOptions{Session: "session-1", Warnings: []string{"warning: history is not being saved: disk full"}})
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !strings.Contains(plain(model.View().Content), "history is not being saved") {
+		t.Fatalf("the warning is not on screen:\n%s", plain(model.View().Content))
+	}
+}
