@@ -231,10 +231,36 @@ func LoadGlobalCommands() ([]Command, bool, error) {
 		}
 		return nil, true, fmt.Errorf("%s: trailing content: %w", path, err)
 	}
-	if err := validateCommandList(file.Commands); err != nil {
+	// A command named like one Canopy answers itself costs only that command, as it does in a
+	// project's file: the rest of the global commands are kept, and the caller is told.
+	var reserved []string
+	kept := file.Commands[:0]
+	for _, command := range file.Commands {
+		if IsBuiltin(command.Name) {
+			reserved = append(reserved, command.Name)
+			continue
+		}
+		kept = append(kept, command)
+	}
+	if err := validateCommandList(kept); err != nil {
 		return nil, true, fmt.Errorf("%s: %w", path, err)
 	}
-	return file.Commands, true, nil
+	if len(reserved) > 0 {
+		return kept, true, &ReservedCommandsError{Path: path, Names: reserved}
+	}
+	return kept, true, nil
+}
+
+// ReservedCommandsError names commands left out of a file because Canopy answers those names
+// itself. The commands returned beside it are the rest, and usable.
+type ReservedCommandsError struct {
+	Path  string
+	Names []string
+}
+
+func (e *ReservedCommandsError) Error() string {
+	return fmt.Sprintf("%s: %s left out, since Canopy answers /%s itself; rename to use",
+		e.Path, strings.Join(e.Names, ", "), strings.Join(e.Names, ", /"))
 }
 
 // validateCommands checks what can be checked without running anything.

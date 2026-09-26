@@ -188,6 +188,14 @@ func TestDoctorSaysWhatIsMissingAndWhatToDo(t *testing.T) {
 	if !strings.Contains(got, "fail git:") || !strings.Contains(got, "ok keys: 1 stored") {
 		t.Errorf("after the changes:\n%s", got)
 	}
+	// A project command named like a built-in is named as left out.
+	if err := os.WriteFile(filepath.Join(dir, "canopy.json"), []byte(`{"commands": [
+		{"name": "mouse", "description": "old", "prompt": "do it"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := said(); !strings.Contains(got, "warn canopy.json: the commands /mouse are left out") {
+		t.Errorf("a reserved command is not named:\n%s", got)
+	}
 	env.keyStore = func() (*keys.Store, error) { return nil, errors.New("no keychain") }
 	if got := said(); !strings.Contains(got, "fail key store: no keychain") || !strings.Contains(got, keys.BackendEnvVar+"=file") {
 		t.Errorf("a missing keychain does not name the way out:\n%s", got)
