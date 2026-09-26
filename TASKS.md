@@ -4899,7 +4899,7 @@ five minutes later. A standing permission nobody can enumerate is a small lie of
 who can do what, which is the exact class of thing this product exists to refuse.
 
 ### U-14 Dispatch comes back with an answer
-`status: todo | owner: none | branch: none | depends: A5-08, A6-04`
+`status: review | owner: Claude | branch: feat/join-standing | depends: A5-08, A6-04`
 `scope: internal/session/, internal/tui/chat/`
 
 Deliverable: the fan-out gets a join. When a dispatched agent reaches a terminal state, the
@@ -4922,6 +4922,17 @@ delivery reuses A5-07's queue semantics on purpose: one mechanism for things tha
 the model is thinking. The cap plus the roll-up keeps this from becoming the context leak
 sub-agents were deferred for in D-40, and it deliberately does not resurrect A8-01; the children
 here are the flat dispatch A5-08 already ships, not nested agents.
+
+2026-09-26 (Claude): the join itself shipped with 7fa0793 (noteJoin: the last reply capped at 1200
+runes, delivered as Request.Reports with the next message, never starting a turn). feat/join-standing
+adds the rest: each report carries "verification: ..." for that agent (Engine.SetStanding, wired
+in cmd/canopy to the verifier: its snapshot judged at the revision git reports now, not the last
+poll's, so a green run from before the agent's final edits reads as stale; green or not, revision,
+test state and reason), an agent that said nothing reports so, and the transcript
+shows "with the reports of N agents" under the message that carried them. Tests cover the verdict
+travelling with the report and being asked about that agent, the empty report, green only at the
+revision now (a moved head is not green, an unreadable one is not green), and the transcript line;
+mutants on each are killed.
 
 ### U-15 Cycling past a mode is not choosing it
 `status: review | owner: claude | branch: tui/mode-settle | depends: none`
