@@ -543,6 +543,9 @@ project definition with the same name wins only for that project. `$ARGUMENTS` i
 in one pass; there is no template evaluation or shell interpolation. When the placeholder is
 absent, arguments are appended under an `Arguments:` heading.
 
+A project command named like one Canopy answers itself (`/undo`, `/mouse` and the rest of `/commands`'
+built-ins) is left out with a warning at start, and the rest of `canopy.json` loads as usual.
+
 ## Pictures
 
 Name a picture in a message, or drop a screenshot on the terminal, which types its path, and it is
