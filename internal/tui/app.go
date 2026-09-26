@@ -1339,6 +1339,10 @@ func (a App) destinations() []chat.Destination {
 	var out []chat.Destination
 	agents := map[string]bool{}
 	for _, status := range a.engine.AgentStatuses() {
+		// An agent with no conversation yet has nothing to open.
+		if status.Agent.SessionID == "" {
+			continue
+		}
 		agents[status.Agent.SessionID] = true
 		detail := string(status.State)
 		if status.Title != "" {
