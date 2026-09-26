@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	tea "charm.land/bubbletea/v2"
@@ -184,6 +185,10 @@ type AppOptions struct {
 	LoadPictures func(paths []string) ([]core.Image, error)
 	// Shell runs a "!command" typed in the box.
 	Shell func(ctx context.Context, command string) chat.ShellResult
+	// Warnings are what was said while Canopy was starting, shown when the interface opens since
+	// the alternate screen hides the terminal they were written to.
+	Warnings []string
+
 	// Files lists the project's files for @ mentions, and Remember keeps a "# note" in its
 	// instructions. Either may be nil.
 	Files    func() []string
@@ -249,6 +254,9 @@ func NewAppConfigured(
 	app.chat.SetCommands(options.Commands)
 	app.chat.SetPictures(options.FindPictures, options.LoadPictures)
 	app.chat.SetShell(options.Shell)
+	if len(options.Warnings) > 0 {
+		app.chat.SetNotice("while starting:\n" + strings.Join(options.Warnings, "\n"))
+	}
 	app.chat.SetFiles(options.Files)
 	app.chat.SetRemember(options.Remember)
 	app.chat.SetAgent(options.Agent)

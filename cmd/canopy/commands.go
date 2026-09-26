@@ -64,8 +64,10 @@ func runChat(resume string) error {
 	// History is attached if it can be, and the program runs without it if it cannot. A disk
 	// problem should cost you the ability to look back at old conversations, not the ability to
 	// have a new one.
+	var early []string
 	if err := attachHistory(engine); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: history is not being saved: %v\n", err)
+		early = append(early, fmt.Sprintf("warning: history is not being saved: %v", err))
 	}
 
 	dir, err := os.Getwd()
@@ -96,6 +98,18 @@ func runChat(resume string) error {
 	}
 
 	project := loadProject(dir)
+	// From here to the interface opening, what is said on standard error is also kept and shown
+	// inside it; the trust question above is asked before this, on the terminal as it is.
+	captured := captureStderr()
+	stopCapture := func() []string {
+		if captured == nil {
+			return nil
+		}
+		lines := captured()
+		captured = nil
+		return lines
+	}
+	defer stopCapture()
 	commands := loadCommands(project.Commands)
 	engine.WithInstructions(projectInstructions(dir, project, os.Stderr))
 	enableLanguageServers(project)
@@ -194,9 +208,11 @@ func runChat(resume string) error {
 	// The conversation the interface opens is the one the main agent was given, which is made fresh
 	// on every run. Leaving this out is what made `canopy` reopen the oldest chat in the history
 	// database while the agent it had just started talked to nobody.
+	warnings := append(early, stopCapture()...)
 	last, err := tui.RunAppConfigured(
 		monitor, signInAware{keyStore}, engine, filepath.Base(dir), keyName, tui.AppOptions{
-			Review: review, Commands: commands, Costs: costs,
+			Warnings: warnings,
+			Review:   review, Commands: commands, Costs: costs,
 			Session: main.SessionID, Agent: main.Name,
 			SignIn: signInRoutes, FindPictures: images.FindPaths, LoadPictures: images.LoadAll,
 			Shell: shellIn(dir),
