@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -28,7 +28,7 @@ func TestOnePressOfControlRSpendsNothing(t *testing.T) {
 	engine := worthCompacting()
 	m := model(engine)
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	_, cmd := m.Update(keyCode('r', tea.ModCtrl))
 
 	if engine.compacted != 0 {
 		t.Errorf("one press reached the provider %d times", engine.compacted)
@@ -48,7 +48,7 @@ func TestTheOfferNamesTheTurnsTheCostTheBoundAndTheKey(t *testing.T) {
 	engine := worthCompacting()
 	m := model(engine)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
 
 	view := plain(m.Body())
 	for what, want := range map[string]string{
@@ -76,8 +76,8 @@ func TestTheSecondPressCompactsAndTheOfferGoesWithIt(t *testing.T) {
 	engine := worthCompacting()
 	m := model(engine)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
+	m, cmd := m.Update(keyCode('r', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatal("the confirmed press asked for nothing")
 	}
@@ -97,9 +97,9 @@ func TestAnOfferLapsesOnAnyOtherKey(t *testing.T) {
 	engine := worthCompacting()
 	m := model(engine)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
 	m = typeText(m, "no thanks")
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, cmd := m.Update(keyCode('r', tea.ModCtrl))
 	if cmd != nil {
 		cmd()
 	}
@@ -119,7 +119,7 @@ func TestSlashCompactGoesThroughTheSameConfirmation(t *testing.T) {
 	m := model(engine)
 
 	m = typeText(m, "/compact")
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd := m.Update(keyCode(tea.KeyEnter))
 	if cmd != nil {
 		cmd()
 	}
@@ -132,7 +132,7 @@ func TestSlashCompactGoesThroughTheSameConfirmation(t *testing.T) {
 		t.Errorf("/compact did not offer anything:\n%s", view)
 	}
 
-	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, cmd = m.Update(keyCode('r', tea.ModCtrl))
 	if cmd == nil {
 		t.Fatal("the key named in the offer did not go ahead with it")
 	}
@@ -151,7 +151,7 @@ func TestAShortConversationIsToldThereIsNothingToSummarise(t *testing.T) {
 	m := model(engine)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m, _ = m.Update(keyCode('r', tea.ModCtrl))
 
 	view := plain(m.Body())
 	if !strings.Contains(view, "not enough of this conversation") {

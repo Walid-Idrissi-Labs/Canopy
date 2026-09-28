@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -46,7 +46,7 @@ func nextMsg(t *testing.T, cmd tea.Cmd) tea.Msg {
 }
 
 func key(m tea.Model, k string) tea.Model {
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+	next, _ := m.Update(keyText(k))
 	return next
 }
 
@@ -55,7 +55,7 @@ func TestRendersTheFourWorkspaces(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	view := plain(tui.New(store).View())
+	view := plain(tui.New(store).View().Content)
 
 	for _, name := range []string{"feat-login", "fix-cache", "refactor-api", "spike-search"} {
 		if !strings.Contains(view, name) {
@@ -194,7 +194,7 @@ func TestEditingAWorkspaceTurnsItStaleOnScreen(t *testing.T) {
 	// gone. Subscribing afterwards waits forever for an event that already happened.
 	waiting := model.(tui.Model).Init()
 
-	before := plain(model.View())
+	before := plain(model.View().Content)
 	if !strings.Contains(before, "PASS") {
 		t.Fatalf("expected a passing workspace to start with:\n%s", before)
 	}
@@ -208,7 +208,7 @@ func TestEditingAWorkspaceTurnsItStaleOnScreen(t *testing.T) {
 
 	model, _ = model.Update(nextMsg(t, waiting))
 
-	after := plain(model.View())
+	after := plain(model.View().Content)
 	if !strings.Contains(after, "STALE") {
 		t.Errorf("the edited workspace should read as stale:\n%s", after)
 	}
@@ -224,7 +224,7 @@ func TestStatesAreDistinguishableWithoutColour(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	view := plain(tui.New(store).View())
+	view := plain(tui.New(store).View().Content)
 	if strings.Contains(view, "\x1b[") {
 		t.Fatal("the plain view still contains escape sequences, the test is not testing anything")
 	}
@@ -244,7 +244,7 @@ func TestSelectedRowExplainsItself(t *testing.T) {
 	store := fake.New()
 	defer store.Close()
 
-	view := plain(tui.New(store).View())
+	view := plain(tui.New(store).View().Content)
 	if !strings.Contains(view, "all required evidence is current and passing") {
 		t.Errorf("the dashboard should explain the selected workspace's verdict:\n%s", view)
 	}
@@ -257,7 +257,7 @@ func TestFailingWorkspaceExplainsWhy(t *testing.T) {
 	var model tea.Model = tui.New(store)
 	model = key(model, "j") // fix-cache, the failing one
 
-	view := plain(model.View())
+	view := plain(model.View().Content)
 	if !strings.Contains(view, "unit") {
 		t.Errorf("the reason should name the test that failed:\n%s", view)
 	}
@@ -375,7 +375,7 @@ func TestEmptyStateExplainsWhatToDo(t *testing.T) {
 		}
 	}
 
-	view := plain(tui.New(store).View())
+	view := plain(tui.New(store).View().Content)
 	if !strings.Contains(view, "No worktrees found") {
 		t.Errorf("the empty state should say so:\n%s", view)
 	}
@@ -392,7 +392,7 @@ func TestUntrustedProjectIsVisible(t *testing.T) {
 
 	store.SetTrust(core.TrustPending)
 
-	view := plain(tui.New(store).View())
+	view := plain(tui.New(store).View().Content)
 	if !strings.Contains(view, "not approved") {
 		t.Errorf("an untrusted project should be visible in the header:\n%s", view)
 	}
@@ -406,11 +406,11 @@ func TestQuitKeys(t *testing.T) {
 		var msg tea.Msg
 		switch k {
 		case "q":
-			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")}
+			msg = keyText("q")
 		case "esc":
-			msg = tea.KeyMsg{Type: tea.KeyEsc}
+			msg = keyCode(tea.KeyEsc)
 		case "ctrl+c":
-			msg = tea.KeyMsg{Type: tea.KeyCtrlC}
+			msg = keyCode('c', tea.ModCtrl)
 		}
 
 		_, cmd := model.Update(msg)
@@ -430,7 +430,7 @@ func TestFitsIn80Columns(t *testing.T) {
 	model := tui.New(store)
 	next, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 
-	for i, line := range strings.Split(plain(next.View()), "\n") {
+	for i, line := range strings.Split(plain(next.View().Content), "\n") {
 		if len([]rune(line)) > 80 {
 			t.Errorf("line %d is %d columns wide, over the 80 column budget:\n%s",
 				i, len([]rune(line)), line)

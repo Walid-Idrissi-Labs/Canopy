@@ -3,7 +3,7 @@ package chat
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Text wrapping, done here rather than by lipgloss, because two things need it and neither is a

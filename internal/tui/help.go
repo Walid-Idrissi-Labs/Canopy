@@ -14,7 +14,7 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // binding is one key and what it does.
@@ -58,6 +58,15 @@ func bindings() []section {
 			{"mouse drag", "select conversation text, copied when you let go"},
 			{"ctrl+home / ctrl+end", "the top, and back to following"},
 			{"alt+enter", "a line break instead of sending"},
+			{"!command", "run it here; its output goes with your next message"},
+			{"alt+k", "delete to the end of the line; ctrl+u to its start"},
+			{"ctrl+f", "find in the conversation; enter older, down newer"},
+			{"ctrl+y", "copy the last code block, or the last reply"},
+			{"ctrl+p", "every command, agent, conversation and file, as you type"},
+			{"@", "a file in this project, which narrows as you type"},
+			{"ctrl+x ctrl+e", "write the message in your editor"},
+			{"# note", "keep a note in AGENTS.md for later conversations"},
+			{"enter, box empty", "try a failed turn again, where that can work"},
 			{"enter / y", "allow a tool call once, while a question is up"},
 			{"a", "allow it for the rest of the session"},
 			{"arrows / pgup", "read on with a question up, deciding nothing"},
@@ -78,6 +87,8 @@ func bindings() []section {
 			{"[ / ]", "page, when there are more agents than panes"},
 			{"tab", "next agent, or into the mosaic from the list"},
 			{"n", "new agent"},
+			{"s", "stop the selected agent's turn"},
+			{"x", "remove the selected agent, asked twice; history is kept"},
 			{"y", "create it, on the direct mode confirmation"},
 			{"w", "worktree monitor"},
 			{"r", "review"},
@@ -89,6 +100,7 @@ func bindings() []section {
 			{"enter", "open the changes, then a file"},
 			{"tab", "cycle the queue, ranking, cost outcome and overlap"},
 			{"c", "commit, from the file list"},
+			{"o", "a reviewer's opinion, from the ranking"},
 			{"K", "credentials"},
 			{"esc", "back one level"},
 		}},

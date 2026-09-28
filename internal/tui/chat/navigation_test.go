@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -16,23 +16,23 @@ import (
 
 // keyMsg turns a key's name into the message the program receives for it.
 //
-// Written from the names rather than from tea.KeyType values so a test can drive the same strings
+// Written from the names rather than from tea.KeyPressMsg values so a test can drive the same strings
 // the handler switches on and the help table prints, which is what makes an enumeration of the
 // bindings an enumeration of the behaviour rather than of a parallel list.
-func keyMsg(name string) tea.KeyMsg {
-	named := map[string]tea.KeyType{
-		"up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight,
-		"pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown,
-		"ctrl+home": tea.KeyCtrlHome, "ctrl+end": tea.KeyCtrlEnd, "ctrl+down": tea.KeyCtrlDown,
-		"enter": tea.KeyEnter, "esc": tea.KeyEsc, "tab": tea.KeyTab, "shift+tab": tea.KeyShiftTab,
-		"space": tea.KeySpace, "ctrl+c": tea.KeyCtrlC, "ctrl+d": tea.KeyCtrlD,
-		"ctrl+g": tea.KeyCtrlG, "ctrl+k": tea.KeyCtrlK, "ctrl+n": tea.KeyCtrlN,
-		"ctrl+r": tea.KeyCtrlR, "ctrl+s": tea.KeyCtrlS,
+func keyMsg(name string) tea.KeyPressMsg {
+	named := map[string]tea.KeyPressMsg{
+		"up": keyCode(tea.KeyUp), "down": keyCode(tea.KeyDown), "left": keyCode(tea.KeyLeft), "right": keyCode(tea.KeyRight),
+		"pgup": keyCode(tea.KeyPgUp), "pgdown": keyCode(tea.KeyPgDown),
+		"ctrl+home": keyCode(tea.KeyHome, tea.ModCtrl), "ctrl+end": keyCode(tea.KeyEnd, tea.ModCtrl), "ctrl+down": keyCode(tea.KeyDown, tea.ModCtrl),
+		"enter": keyCode(tea.KeyEnter), "esc": keyCode(tea.KeyEsc), "tab": keyCode(tea.KeyTab), "shift+tab": keyCode(tea.KeyTab, tea.ModShift),
+		"space": keyCode(tea.KeySpace), "ctrl+c": keyCode('c', tea.ModCtrl), "ctrl+d": keyCode('d', tea.ModCtrl),
+		"ctrl+g": keyCode('g', tea.ModCtrl), "ctrl+k": keyCode('k', tea.ModCtrl), "ctrl+n": keyCode('n', tea.ModCtrl),
+		"ctrl+r": keyCode('r', tea.ModCtrl), "ctrl+s": keyCode('s', tea.ModCtrl),
 	}
 	if key, ok := named[name]; ok {
-		return tea.KeyMsg{Type: key}
+		return key
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+	return keyText(name)
 }
 
 // asking is a long conversation with a question waiting on it, which is the situation the whole of

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui"
@@ -32,7 +32,7 @@ func TestResizingInSequenceKeepsEveryLineInsideTheFrame(t *testing.T) {
 
 	for _, size := range sizes {
 		model, _ = model.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
-		view := model.View()
+		view := model.View().Content
 
 		for i, line := range strings.Split(view, "\n") {
 			if got := lipgloss.Width(line); got > size.w {
@@ -61,7 +61,7 @@ func TestAShortTerminalStillDrawsItsHeaderAndFooter(t *testing.T) {
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
 	model, _ = model.Update(tea.WindowSizeMsg{Width: 60, Height: 12})
 
-	view := plain(model.View())
+	view := plain(model.View().Content)
 	lines := strings.Split(view, "\n")
 	if len(lines) > 12 {
 		t.Fatalf("the view is %d rows tall on a 12 row terminal:\n%s", len(lines), view)

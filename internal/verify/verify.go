@@ -23,6 +23,8 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tools"
 )
 
 // Subject is one agent, as far as verification is concerned.
@@ -42,6 +44,8 @@ type Subject struct {
 type Verifier struct {
 	repo   *git.Repo
 	runner *exec.Runner
+	// confine is the sandbox a test runs in, for a directory; tools.Confinement outside tests.
+	confine func(dir string) (*sandbox.Policy, []string)
 
 	// base is the branch an agent's work is measured against, usually the default branch.
 	base string
@@ -86,6 +90,7 @@ func New(repo *git.Repo, base string, tests []exec.Test, publish func(core.Event
 		shared:   make(map[string]string),
 	}
 	v.runner = exec.NewRunner(v.record)
+	v.confine = tools.Confinement
 	return v
 }
 
@@ -326,6 +331,7 @@ func (v *Verifier) Verify(ctx context.Context, agent string) error {
 			return v.repo.Revision(ctx, subject.Dir)
 		},
 	}
+	target.Sandbox, target.Env = v.confine(subject.Dir)
 	for _, test := range tests {
 		if _, err := v.runner.Start(ctx, test, target); err != nil {
 			return fmt.Errorf("starting %s for %s: %w", test.Name, agent, err)

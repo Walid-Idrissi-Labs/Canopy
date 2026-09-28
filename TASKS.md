@@ -4610,7 +4610,7 @@ The keys are named on the question's own panel, since the footer goes quiet whil
 key that is safe and unmentioned is a key nobody risks.
 
 ### U-02 The always that grants nothing
-`status: todo | owner: none | branch: none | depends: A5-08`
+`status: review | owner: Claude | branch: fix/dispatch-scope-and-retry | depends: A5-08`
 `scope: cmd/canopy/verification.go, internal/session/dispatch.go, internal/permission/`
 
 Deliverable: the `spawn_agents` confirmation gets a real scope. Today it is built with an empty
@@ -4662,7 +4662,7 @@ repository they happen to have open. It rings once per agent that starts needing
 second agent joining the queue rings again; only the same agent going on waiting is silent.
 
 ### U-04 A way back to every conversation
-`status: todo | owner: none | branch: none | depends: A3-02`
+`status: review | owner: Claude | branch: feat/conversation-picker | depends: A3-02`
 `scope: internal/tui/, internal/tui/chat/, internal/session (read interfaces only)`
 
 Deliverable: the session picker whose absence the code already apologises for in two comments. A
@@ -4681,8 +4681,20 @@ notes: sessions persist, survive quit, and are unreachable from inside the produ
 handle is a code printed on exit. The picker is also where A3-07's fork-point display finally
 gets its screen, which that task's notes deferred to exactly here.
 
+2026-09-26 (Claude): the picker is the palette (ctrl+p) rather than a screen of its own, stacked on
+feat/palette-destinations. chat.History (Sessions, InThisProject, SearchHistory) lists this
+project's conversations with turns, most recently active first, each with its pickup code, turns,
+cost, last activity and "forked from"; three letters or more also search the full-text index and
+offer "said in <title>" entries: searched once typing pauses (150 ms) off the update loop, the last
+word as a prefix, filtered to this project in SQL so the limit counts only its own matches
+(Storage.SearchProject), and an answer to a query typed over is dropped. Another project's conversations are left out by the rule pickup
+uses (Engine.InThisProject). Enter opens one in place through SwitchMsg. Tests: an app-level test
+finds a conversation by its content and opens it, shows code, cost and fork origin, and never shows
+another project's; the engine's project rule is tested; mutants on each filter, the fork line and
+the search threshold are killed.
+
 ### U-05 A failed turn can be retried
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/retry-failed-turn | depends: PG-M`
 `scope: internal/tui/chat/, internal/session/`
 
 Deliverable: recovery affordances for the failure taxonomy A2 built and nothing consumes. A
@@ -4704,7 +4716,8 @@ with the user retyping. The taxonomy was built for this task; it just took a yea
 time to arrive.
 
 ### U-06 The first run holds your hand
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/startup-warnings, feat/key-check | depends: PG-M`
+`status: review | owner: Claude | branch: feat/key-check | depends: PG-M`
 `scope: internal/tui/keys/, internal/tui/, cmd/canopy/`
 
 Deliverable: the add-key wizard ends with a selected, tested credential. Storing a key selects
@@ -4726,8 +4739,18 @@ notes: M-06 got the screens to explain themselves; this closes the two holes the
 past explanation: a stored-but-unselected key that works with one credential by coincidence and
 breaks with two, and warnings printed into a void.
 
+2026-09-26 (Claude): storing a key already selected it. feat/key-check adds the live check: the
+wizard asks the provider's model list (GET /v1/models for Anthropic, {base}/models for
+OpenAI-compatible; free, no message sent) the moment a key is stored, and `t` asks again; a refusal
+names the key and says how to redo it, an endpoint with no list says it was not checked. `p` enters
+a rate (input output [cached] per million) through Store.SetRate, which the resolver already prices
+from (D-32). Startup warnings in the interface are #117. Tests cover each check outcome against a
+fake server, the wizard asking at once, a stale answer being dropped, and the price field; mutants
+on the refusal status, the version header, the check after storing and the stale-answer guard are
+killed.
+
 ### U-07 Budgets reach the user
-`status: todo | owner: none | branch: none | depends: A5-09`
+`status: review | owner: Claude | branch: feat/budgets-ui | depends: A5-09`
 `scope: internal/tui/chat/, internal/tui/agents/`
 
 Deliverable: the interface for the caps A5-09 built and verified. Set a per-agent or per-session
@@ -4742,11 +4765,18 @@ enforced that the screen does not show.
 `verify: claude [ ]   codex [ ]`
 
 notes: the engine half was verified by Codex in July and has never once been driven by a person,
-which the A5-09 note now records. This is the smallest task in the phase relative to how often
+which the A5-09 note now records.
+
+2026-09-26 (Claude): `/budget` already set both caps. The header now shows each cap in force
+(`cap $0.50 of $2.00`, `, a floor` when requests went unpriced, `paused at the $2.00 cap`), and a
+turn stopped at a cap shows Budget.Status verbatim with the `/budget` that raises it; after raising,
+enter retries, which (#114) carries on from the stopped turn with its steps in context. Tests: the
+engine test stops at the cap, refuses a retry while paused, and carries on with all four results
+after the raise; the chat test covers each header form and both pause cards. Stacked on #114. This is the smallest task in the phase relative to how often
 its absence will be noticed.
 
 ### U-08 Steering you can take back
-`status: todo | owner: none | branch: none | depends: A5-07`
+`status: review | owner: Claude | branch: feat/steering-and-agent-actions | depends: A5-07`
 `scope: internal/tui/chat/, internal/session/steer.go (caller only)`
 
 Deliverable: queued guidance can be cancelled before delivery. The steering pane that already
@@ -4799,7 +4829,7 @@ agrees to cannot drift from what they get. A conversation too short to compact i
 first press rather than being offered a compaction of nothing.
 
 ### U-10 The input box under your fingers
-`status: todo | owner: none | branch: none | depends: M-02`
+`status: review | owner: Claude | branch: feat/input-box | depends: M-02`
 `scope: internal/tui/chat/input.go`
 
 Deliverable: the editing keys a multiline box implies. Vertical caret movement inside a draft,
@@ -4820,7 +4850,7 @@ honesty as much as ergonomics: a box showing six lines of a 200 line paste is a 
 under-reporting what is about to be sent, to a model, at a price.
 
 ### U-11 Copy and find without the mouse
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/transcript-search | depends: PG-M`
 `scope: internal/tui/chat/, internal/tui/clipboard/`
 
 Deliverable: the transcript's contents reachable by keyboard. Copy the last reply. Copy the last
@@ -4838,8 +4868,14 @@ notes: drag-to-copy exists and costs native terminal selection while mouse repor
 which LIMITATIONS already documents. Keyboard copy is the version that works everywhere the
 product claims to work, ssh included.
 
+2026-09-26 (Claude): delivered as Z-V04 (#108): ctrl+f finds in the conversation (enter older,
+down newer, as the find bar's own keys, since n and N would be typed into it), ctrl+y copies the
+last code block or the last reply through the same OSC 52 path and notice the mouse copy uses, and
+neither needs mouse reporting. The scroll position is kept when find closes.
+
 ### U-12 The agents screen grows hands
-`status: todo | owner: none | branch: none | depends: A5-11`
+`status: review | owner: Claude | branch: feat/steering-and-agent-actions, feat/pane-costs | depends: A5-11`
+`status: review | owner: Claude | branch: feat/pane-costs | depends: A5-11`
 `scope: internal/tui/agents/`
 
 Deliverable: acting on an agent from where you see it. Stop a running agent's turn. Remove a
@@ -4860,7 +4896,7 @@ notes: the screen for watching several agents currently cannot act on any of the
 is a screen switch away, which at six agents is the difference between a glance and a tour.
 
 ### U-13 Grants on the table
-`status: todo | owner: none | branch: none | depends: PG-M`
+`status: review | owner: Claude | branch: feat/grants-view | depends: PG-M`
 `scope: internal/tui/chat/, internal/permission (callers only)`
 
 Deliverable: what has been allowed this session, visible and revocable. A `/grants` view backed
@@ -4880,7 +4916,7 @@ five minutes later. A standing permission nobody can enumerate is a small lie of
 who can do what, which is the exact class of thing this product exists to refuse.
 
 ### U-14 Dispatch comes back with an answer
-`status: todo | owner: none | branch: none | depends: A5-08, A6-04`
+`status: review | owner: Claude | branch: feat/join-standing | depends: A5-08, A6-04`
 `scope: internal/session/, internal/tui/chat/`
 
 Deliverable: the fan-out gets a join. When a dispatched agent reaches a terminal state, the
@@ -4903,6 +4939,17 @@ delivery reuses A5-07's queue semantics on purpose: one mechanism for things tha
 the model is thinking. The cap plus the roll-up keeps this from becoming the context leak
 sub-agents were deferred for in D-40, and it deliberately does not resurrect A8-01; the children
 here are the flat dispatch A5-08 already ships, not nested agents.
+
+2026-09-26 (Claude): the join itself shipped with 7fa0793 (noteJoin: the last reply capped at 1200
+runes, delivered as Request.Reports with the next message, never starting a turn). feat/join-standing
+adds the rest: each report carries "verification: ..." for that agent (Engine.SetStanding, wired
+in cmd/canopy to the verifier: its snapshot judged at the revision git reports now, not the last
+poll's, so a green run from before the agent's final edits reads as stale; green or not, revision,
+test state and reason), an agent that said nothing reports so, and the transcript
+shows "with the reports of N agents" under the message that carried them. Tests cover the verdict
+travelling with the report and being asked about that agent, the empty report, green only at the
+revision now (a moved head is not green, an unreadable one is not green), and the transcript line;
+mutants on each are killed.
 
 ### U-15 Cycling past a mode is not choosing it
 `status: review | owner: claude | branch: tui/mode-settle | depends: none`
@@ -7994,6 +8041,234 @@ command output stored behind a handle with its failures and ending kept inline.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 
+### Z-R Round two: the AAA plan, built and reviewed
+`status: review | owner: Claude | branch: integration/round-2 (PR #78)`
+
+Each item below went branch, pull request, review by an independent Opus reviewing agent with
+mutation testing, fixes, re-review, then into the integration branch that lands as one merge.
+
+- Z-R1 OS sandbox for agent shell commands (D-56): Seatbelt and Landlock, nested repositories
+  guarded in the workspace and shared git directories. PR #64.
+- Z-R2 Code blocks highlighted by a real lexer, cached. PR #65.
+- Z-R3 Agent Skills with progressive disclosure, folders pinned at load (D-59). PR #66.
+- Z-R4 Anthropic web search, opt-in, audited as it happens; notices on screen (D-59). PRs #67, #84.
+- Z-R5 No-progress detection that resets when the workspace changes. PR #68.
+- Z-R6 Agent definitions as files, tools list as a trust ceiling (D-59). PR #69.
+- Z-R7 Undo preview from a snapshot, taken again on confirmation. PRs #70, #85.
+- Z-R8 `canopy land`: merge only a result that passes, prepared like an agent worktree. PR #71.
+- Z-R9 `canopy run -verify -escalate`, refusing -verify with nothing to verify. PR #72.
+- Z-R10 A finished turn drawn in the order it happened; a per-turn footer. PRs #73, #74.
+- Z-R11 `/context` request inventory, and a byte-level prefix test. PRs #75, #76.
+- Z-R12 `canopy bench`, scored only on the task's own tests seen passing. PR #77.
+- Z-R13 Spending caps between steps and across running agents; `/budget`, `run -budget`. PR #79.
+- Z-R14 `repo_map`. PR #80.
+- Z-R15 Golden screen snapshots. PR #82.
+- Z-R16 Language servers: diagnostics after edits, navigation tools, confined (D-58). PR #83.
+### Z-V07 Desktop notifications, the window title and tab progress (part of V-07)
+`status: review | owner: Claude | branch: feat/notifications`
+
+`CANOPY_NOTIFY=1` posts a desktop notification when an agent starts needing a person (who, and the
+command it asks to run) and when a turn finishes while the terminal is not in front, which focus
+reporting tells. The sequence suits the terminal: OSC 9 by default, kitty's OSC 99, OSC 777 for foot
+and urxvt, wrapped for tmux passthrough; its text has every control character removed and field
+separators replaced, so a name or command a model wrote cannot end it early. The window title says
+how many are working and waiting. OSC 9;4 progress is drawn only on Ghostty, WezTerm, Windows
+Terminal and ConEmu, since an older iTerm2 shows any OSC 9 as a notification. Tests cover each
+sequence, the escaping, the title, where progress is drawn, and the app announcing who waits once
+and a finish only while blurred; off unless asked for. Mutation-checked.
+### Z-V10 First run: keys import, canopy init, canopy doctor (V-10)
+`status: review | owner: Claude | branch: feat/doctor-and-first-run`
+
+`canopy keys import` stores ANTHROPIC_API_KEY and OPENAI_API_KEY as named keys after one
+confirmation, showing fingerprints and never values; a key already stored under any name, or a name
+already taken, is left alone. `canopy init` writes a canopy.json with the tests the build files
+suggest (go.mod, Cargo.toml, a package.json test script other than npm's placeholder, a pytest
+setup), never over an existing one, and says it must be trusted before it runs. `canopy doctor`
+reports git, repository, key store (naming CANOPY_KEY_BACKEND=file where there is no keychain),
+keys, sandbox, canopy.json and its trust, language servers, the subscription routes' programs, the
+terminal and tmux clipboard, and exits 1 when something needed is missing. After review: the key
+store is probed rather than listed, so a missing keychain fails; the Claude bridge is found the way
+the route finds it; a subdirectory is named as one; runners run the project's script (`bun run
+test`), pytest runs under python3 or the project's .venv; import leaves alone a key whose
+*_BASE_URL points elsewhere and stores one value once. Tests cover the detection per ecosystem, init
+never overwriting, import's answer, endpoint and duplicate handling, and doctor's key store, sandbox
+switch, trust, repository and exit code; 24 mutants killed across the two review rounds.
+### Z-X11 Hooks around tool calls: pre-tool, post-tool, turn-end (X-11, D-64)
+`status: review | owner: Claude | branch: feat/tool-hooks`
+
+Three hook events, given JSON on stdin and run in the sandbox: pre-tool can refuse a call (a deny
+answer, or exit 2 with the reason on stderr) and fails closed; post-tool can add a note to the
+result; turn-end runs in the background. `"tools"` narrows the first two, is refused on any other
+event, and shows in the trust prompt. exec.Run gained stdin and a separate stderr. Tests: the answer
+is read strictly (silence, allow, deny, exit 2, other exits, no answer, not JSON, unknown words);
+hooks run in order for their tools and the first refusal stands; post-tool notes gather and failures
+report; turn-end runs in the background; a real shell hook reads stdin and answers; in the loop, a
+refusal stops the call, reaches the model and is audited as denied, a note reaches the model, and a
+call refused by the level or not approved never reaches a hook; the engine tells turn-end hooks of
+every turn. Mutation-checked.
+### Z-V02 Themes as data, a person's own themes, and the colour gate (part of V-02)
+`status: review | owner: Claude | branch: feat/themes-as-data`
+
+Themes beyond canopy and mono are JSON files: catppuccin, dracula, gruvbox, nord, solarized and
+tokyonight ship embedded, each light and dark, and a person's own load from `canopy/themes` in the
+config directory. A file is checked colour by colour (every role present, each `#rrggbb`, no unknown
+keys, a plain name); one that fails, or takes a name already used, is skipped and named by a bare
+`/theme`, which also reads the files again and shows the current palette's description. A pipe, a
+device or a file over 64 KB is refused without being read, the reading happens outside the lock, and
+a file's name is quoted where it is shown. Tests: every shipped theme loads; each way a file can be
+wrong is refused and the missing colour named (a key twice, a key in other case, a stray half, a bad
+dark half, trailing data; a byte order mark is accepted); a person's theme loads beside the shipped
+ones in file-name order and cannot replace one, canopy and mono included; a pipe and /dev/zero do
+not hang the load; every palette clears WCAG contrast against the background it was made for (text
+4.5, outcomes and quiet text 3, code 2.5, borders 1.2), which moved a few upstream colours, each said
+in the theme's description; nothing in internal or cmd outside the theme package makes a colour,
+checked by planting four kinds of one. Still open from V-02: the
+component set (Card, Badge, StatusPill, KeyHint and the rest), since the screens already draw these
+through theme styles and a rewrite needs its own golden review.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-X09 Pictures in a message (X-09)
+`status: review | owner: Claude | branch: feat/image-input`
+
+core.Message carries Images; the Anthropic adapter sends base64 image blocks ahead of the text, chat
+completions an image_url part with a data URL, the Responses API an input_image. The delegated
+routes refuse a request with pictures (core.ErrNoImages) instead of dropping them. internal/images
+finds picture paths in a message the way a terminal types a dropped file (escaped spaces, quotes,
+~), reads at most 20 MB of a regular file, refuses a canvas over 100 megapixels from its header,
+scales PNG, JPEG and GIF with a box filter so the long side is at most 1280, keeps JPEG as JPEG and
+the rest as PNG (JPEG when a PNG stays over 3 MB), and passes a small WebP through. The chat loads
+them through an injected loader (the interface imports no file reading) and sends with
+Engine.SendWithImages; the transcript says "with a picture". Tests cover each of those, the engine
+keeping a picture with its message across turns, and a broken picture stopping the message.
+### Z-V05b `!command` in the box (part of V-05)
+`status: review | owner: Claude | branch: feat/shell-passthrough`
+
+"!command" runs through the person's shell in the project, unconfined as their terminal would be,
+with childenv's inherited environment so provider keys are left out, two minutes and 64 KB bounded.
+Its output (control characters removed) is shown and goes with the next message inside a
+<shell-output> frame whose closing tag cannot be forged from the output, then is dropped. Without a
+shell attached, "!" is an ordinary message. Tests cover the run, the frame, the one-message lifetime,
+a command that cannot finish, and the keys being withheld. Mutation-checked.
+### Z-V08 Approving a plan from plan mode (part of V-08)
+`status: review | owner: Claude | branch: feat/plan-card`
+
+Under a finished reply in plan mode, with the box empty and nothing waiting, a line offers to carry
+the plan out; enter switches to build (refused where build is not usable, with the reason) and sends
+the same approval text as the engine's plan execution (A4-09). Typing revises instead. Tests cover
+the approval sent in build, a typed revision not approving, no card outside plan mode, and a
+read-only agent refused. Mutation-checked. A4-09's stricter mechanism, where approval grants only
+what the plan described, stays unwired; this is the review step, not that enforcement.
+### Z-S65 Worktree setup and local MCP servers in the sandbox (D-65)
+`status: review | owner: Claude | branch: feat/sandbox-setup-and-mcp`
+
+git.Environment gained Confine, a sandbox made from the worktree's path once it exists, which new
+agent worktrees get from tools.Confinement. mcp.Spec gained Sandbox and SandboxEnv; local servers are
+wrapped unless canopy.json marks them unconfined, which trust shows. Tests: a real confined MCP
+server cannot write outside its workspace while the same server unconfined can; a setup confined by
+path is confined to the worktree and asked for its path; spec building confines local servers and
+not unconfined or remote ones; the trust prompt names an unconfined server. Mutation-checked.
+
+`verify: claude [x] 2026-09-26   codex [ ]`
+### Z-V04 Find in the conversation, and copy the last reply (part of V-04)
+`status: review | owner: Claude | branch: feat/transcript-search`
+
+ctrl+f opens a find bar that takes every key: matches are found case-insensitively across the
+rendered transcript, the view scrolls to the newest and marks it with the selection highlight, enter
+and up walk to older ones, down to newer, esc closes and leaves the view there; it does not open on
+an empty conversation. ctrl+y copies the last fenced code block of the latest reply, or the reply.
+Tests cover the walk, the count, no match, the empty case and both copies. Mutation-checked. Still
+open from V-04: collapsible tool cards beyond ctrl+o, side-by-side diffs, virtualised rendering.
+### Z-V05 Input: @ mentions, $EDITOR, # notes (part of V-05)
+`status: review | owner: Claude | branch: feat/input-extras`
+
+`@` at a word start opens the command list's file mode over `git ls-files --cached --others
+--exclude-standard` (cached ten seconds, capped at 20,000), ranked name match, path match, letters in
+order, shorter first; tab and enter complete. ctrl+x ctrl+e hands the box to $VISUAL/$EDITOR through
+tea.ExecProcess and reads the file back; ctrl+x alone never eats the next key. `# note` appends to
+AGENTS.md (refused through a link), re-granting trust only where AGENTS.md still matches what was
+trusted. Tests: ranking, completion by tab and enter, no menu inside a word or without a source, the
+chord, notes kept not sent and a failed note kept in the box, trust kept for your own note and not
+for an unreviewed edit, the link refused, git's file list with ignored files left out.
+Mutation-checked. Still open from V-05: ctrl+r history search (ctrl+r is compaction, Q-21), `!`
+shell passthrough, large paste chips, vim mode.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-V06 Command palette on ctrl+p (part of V-06)
+`status: review | owner: Claude | branch: feat/command-palette (stacked on feat/input-extras)`
+
+ctrl+p opens a palette of every built-in, project command, mode, theme and file, narrowed by prefix,
+substring or letters in order. Enter runs a built-in through the same path as typing it, keeping
+whatever was in the box; a project command is only put in the box, since it sends a prompt; a file
+is mentioned. It takes every key while up, esc closes it, and it does not open over a question.
+Tests cover each action, the ranking, the box left alone, and the question. Mutation-checked. Still
+open from V-06: pickers moved into overlays.
+
+2026-09-26 (Claude, feat/palette-destinations): agents and this run's conversations are in the
+palette. The application supplies them (chat.SetDestinations, read on each open): every agent with
+its state and title, then conversations with turns that are nobody's agent, latest first; the one
+on screen is left out. Choosing one sends SwitchMsg, so the application still decides what is on
+screen. An app-level test opens a conversation by name through the palette; mutants on each filter
+and on the switch are killed.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+### Z-U08 Steering taken back, and agents stopped and removed where they are seen (U-08, part of U-12)
+`status: review | owner: Claude | branch: feat/steering-and-agent-actions`
+
+`/steer undo` takes back guidance not yet delivered, through Engine.ClearSteering, and puts it in the
+box to change or send again; with nothing waiting it says so. The steering pane says how, where the
+row has room. On the agents screen, s stops the selected agent's turn and x asks, then removes a
+stopped one (Engine.RemoveAgent, its conversation kept); a working agent is not removable. Help
+lists both. Tests cover each, including a second x after another key not removing. Mutation-checked.
+Still open from U-12: per-agent cost on pane borders, and kind labels in panes.
+
+`verify: claude [x] 2026-09-26   codex [ ]`
+
+### Z-X08 Canopy as an ACP agent: `canopy acp` (D-62)
+`status: review | owner: Claude | branch: feat/acp-server`
+
+`internal/acpserver` serves the Agent Client Protocol over stdio: initialize, session/new with
+Canopy's modes, session/set_mode, session/prompt streamed as thought, message, tool call and tool
+result updates, session/cancel, and permission questions sent to the editor as
+session/request_permission. Tests drive it with a scripted client: each chunk is sent once across
+several passes, cancel ends a prompt as cancelled, only an explicit allow approves, an unanswered
+question refuses when its call is cancelled and is forgotten, unknown methods are errors and unknown
+notifications get no reply. Smoke-tested as a binary with an isolated HOME: initialize and
+session/new answer, and a session in another directory is refused.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-X10 `canopy serve` and `canopy attach`: agents that outlive their client (D-63, part of F-07)
+`status: review | owner: Claude | branch: feat/acp-server`
+
+The ACP server became a hub: many connections to one engine, each conversation held by one client.
+`canopy serve` serves it on a private unix socket; `canopy attach` lists, picks up (session/load
+replays finished turns and streams a running one), starts, prompts and answers. Tests: a client
+leaving does not cancel its turn; a question with no client waits, is announced once, is listed as
+waiting, and reaches the client that loads the conversation; a question open to a client that
+leaves moves to the next one; a client that has left is never given a conversation (a race the
+smoke run found); attach end to end over a real socket, y allows and anything else refuses, listed
+titles are stripped of escapes; the socket is 0600, its directory must be 0700 and the user's, a
+path too long for a socket is refused, and a second server beside a running one is refused. Still
+open: the interface as a client of the server, and a notification when an agent is waiting.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
+### Z-T1 Outside content taints a conversation (D-57)
+`status: review | owner: Claude | branch: feat/taint`
+
+A fetched page, a provider web search or an MCP result, once returned, taints the conversation; the
+taint is saved with it, inherited by agents it starts and passed back from agents that report to it.
+Once tainted, shell commands run with the network limited to registries where the sandbox can, and
+network tools, MCP tools, git network operations and shell commands whose command word is a network
+program are asked about even at broad trust and past standing approvals. Tests: the permission
+matrix, including false positives this repository would hit; an engine run where the same curl runs
+unasked before a fetch and is asked about after it; a search taints and a child inherits; the taint
+survives a restart; a child taints its parent; a tainted curl is refused by the proxy.
+
+`verify: claude [x] 2026-09-25   codex [ ]`
+
 ---
 
 ## Appendix: change log for this file
@@ -8014,3 +8289,80 @@ status or verification updates.
 | 2026-07-29 | Claude | Added phase K, one key many models, and U-16 to U-19, from six asks by Walid: keys that hold several models over a dated catalog, dispatch that understands model words, a picker screen, other agents' permission prompts surfacing on the conversation you are on, the header naming the agent instead of the brand, a tasks block with state colours, and btw history that survives the screen. Recorded as D-46 and D-47. Claimed on feat/one-key-many-models and tui/ambient-attention, stacked in that order on tui/mode-settle. |
 | 2026-07-30 | Claude | Added phase S after phase K, signing in with a subscription instead of pasting a key. Eight tasks and a gate, written from research into what each vendor actually permits rather than what is technically reachable: Copilot through its official Go SDK, Claude through the user's own Claude Code over ACP, OpenAI through the Codex app server with an existing `auth.json` login as the degraded fallback. claude.ai OAuth is refused as prohibited and server-enforced, and Gemini consumer sign-in is recorded as closed so neither is proposed again. Recorded as D-51, which takes that number because D-50 is reserved by work in flight. New questions Q-22, the paused Anthropic credit change, and Q-23, what Canopy's tools, permissions and verification mean in a delegated turn. Claimed on feat/subscription-sign-in, ledger pushed before any code. Nothing renumbered. |
 | 2026-07-30 | Claude | Added U-26 from Walid using the built program: U-16's summaries become bounded approval surfaces, answered with enter and backspace where they are seen, and the accept key is enter on every prompt. Built the same day on tui/answer-where-you-are. Recorded as D-50, superseding the enter-refuses reflex and the focus-step half of D-47; the once-only and typing-answers-nothing guards stay. |
+
+### Z-Z03 Release supply chain (part of Z-03)
+`status: review | owner: Claude | branch: feat/release-supply-chain`
+
+GoReleaser now writes an SBOM per archive (syft) and signs checksums.txt with cosign's keyless flow;
+the release workflow installs both tools, has `id-token: write` and `attestations: write`, and
+records SLSA build provenance for the archives and the checksum file with
+actions/attest-build-provenance. RELEASING.md says how to verify a download, and README points to
+it. `goreleaser check` validates the configuration and a snapshot release (signing and SBOM
+skipped, since neither tool is installed locally) builds all four archives. Not done, and not the
+pipeline's to do: macOS notarisation (an Apple Developer account) and the tag itself, which is the
+owner's call. The `go install` path was already documented.
+### Z-V09 The mouse can be handed back (part of V-09)
+`status: review | owner: Claude | branch: feat/mouse-toggle`
+
+In-app drag selection with OSC 52 copy came with #99. What V-09 still asked for was a toggle that
+releases the mouse entirely: `/mouse` (a reserved built-in) switches the frame's mouse mode between
+cell motion and none, with a notice each way, so the terminal's own selection works without a
+modifier. An app test drives /mouse twice and reads the view's mouse mode and the notice.
+LIMITATIONS says what the wheel does meanwhile.
+### Z-Z02 Demo images from the golden fixtures (part of Z-02)
+`status: review | owner: Claude | branch: feat/demo-screens`
+
+The golden screen tests (chat, agents, and the app's first screen, help and keys, at three sizes)
+now also keep each frame with its colour when CANOPY_SCREENS_DIR is set (internal/tui/screens).
+scripts/screens.sh runs them and renders every frame to SVG with freeze, or keeps the ANSI frames
+where freeze is missing; .github/workflows/screens.yml does the same on request and on every tag and
+uploads the images as an artifact. Nothing reaches a model: the frames come from the tests' fakes,
+so the images are reproducible and show only what the program draws. Not done: an animated
+recording (VHS) of a whole session, which needs a scripted provider the product does not ship, and
+choosing which image the README leads with, which is an editorial call for the owner.
+
+`verify: claude [x] 2026-09-26   codex [ ]`
+
+### Z-Z04 Windows builds, and stops a command's whole tree (part of Z-04)
+`status: review | owner: Claude | branch: feat/windows-build`
+
+cmd/canopy compiles for Windows: the note file's no-follow open and one-name check, and serve's
+ownership check and lock, moved behind platform_unix.go and platform_other.go (serve refuses to
+start where ownership cannot be checked). internal/exec gives a started command a job object on
+Windows and Stop terminates the job, so a command's children go with it; the handle is released at
+reap without ending the job, matching D-37 on unix. Unix-only tests are tagged. CI gains a
+windows-latest job that builds, vets, and runs a test there in which a batch file started with
+`start /b` stops writing once its parent is stopped. `GOOS=windows go vet ./...` is clean locally;
+the Windows test itself runs only in CI. Not done, and not claimed: a sandbox, ConPTY, releases,
+serve, and any use of the interface on Windows. README still says Windows is not supported.
+
+`verify: claude [ ]   codex [ ]`
+### Z-F07 The interface attached to canopy serve (F-07 client half, X-10)
+`status: review | owner: Claude | branch: feat/attach-tui`
+
+`canopy attach CODE|new` on a terminal opens the interface with a remote engine
+(cmd/canopy/remote.go) implementing tui.Engine over the serve socket. Conversations are fetched
+whole with a new `_canopy/session` request and fetched again on every session/update, coalesced so a
+streaming turn is fetched as often as a fetch takes. A question arrives with the engine's exact
+permission.Request and Decision in `_meta.canopy`, so it is drawn as asked; answers go back as
+allow or reject ("always" cannot cross the protocol and is answered as once, stated in LIMITATIONS).
+Send reports the server's refusal: the server registers a turn before reading the next request, so
+the conversation fetched right after holds it or the refusal has already arrived. Mode switching
+and ctrl+n work; everything the protocol cannot ask for returns errAttached in words. `-lines`, or a
+non-terminal, keeps the line client. Tests: a remote engine against a hub runs a prompt, receives
+the exact question, answers it, and sees the turn end; a refused prompt says why; the interface
+draws the attached question. Race-clean; mutants on the meta, the answered question and the refusal
+are killed.
+### Z-V12 The agent tree and branch labels (part of V-12)
+`status: review | owner: Claude | branch: feat/agent-tree`
+
+AgentStatus carries Parent, the agent whose conversation dispatched it (from dispatchParents). The
+agents list nests each dispatched agent under its orchestrator with tree lines (├─, └─, │), keeping
+the engine's attention order among roots and among siblings; an agent whose orchestrator is gone,
+or that sits in a loop of parents, is still listed once, at the top. An isolated agent's row leads
+with "on <branch>", since that is where its work is reviewed and landed. Tests: the engine fills
+Parent for a dispatched agent and not for a started one; the list draws children under their
+orchestrator in any given order, with the lines and the branch, and keeps an orphan and a loop.
+Still open from V-12: the rest of the look (accent family, gutters, border rules, motion, icons).
+
+`verify: claude [x] 2026-09-26   codex [ ]`

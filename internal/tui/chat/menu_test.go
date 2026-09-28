@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -111,7 +111,7 @@ func TestOnlyFourAreShownAndTheRestAreCounted(t *testing.T) {
 func TestTheListScrollsToKeepTheSelectionOnScreen(t *testing.T) {
 	m := typeText(withCommands(core.Session{ID: "s1"}), "/")
 	for range 5 {
-		m = press(m, tea.KeyDown)
+		m = press(m, keyCode(tea.KeyDown))
 	}
 
 	lines := rowsOf(m)
@@ -183,7 +183,7 @@ func TestTheListKnowsWhenItIsNotWanted(t *testing.T) {
 // Escape closes it and leaves what was typed, so dismissing the list is not the same as abandoning
 // the command.
 func TestEscapeClosesTheListAndKeepsWhatWasTyped(t *testing.T) {
-	m := press(typeText(withCommands(core.Session{ID: "s1"}), "/co"), tea.KeyEsc)
+	m := press(typeText(withCommands(core.Session{ID: "s1"}), "/co"), keyCode(tea.KeyEsc))
 
 	if rowIndex(rowsOf(m), "/commands") >= 0 {
 		t.Errorf("the list is still up after escape:\n%s", plain(m.Body()))
@@ -201,10 +201,10 @@ func TestEscapeClosesTheListAndKeepsWhatWasTyped(t *testing.T) {
 func TestTheHighlightFollowsTheCommandNotTheRow(t *testing.T) {
 	m := typeText(withCommands(core.Session{ID: "s1"}), "/c")
 	// Matches are alphabetical: changelog, commands, compact, cost. Move to compact.
-	m = press(press(m, tea.KeyDown), tea.KeyDown)
+	m = press(press(m, keyCode(tea.KeyDown)), keyCode(tea.KeyDown))
 	m = typeText(m, "o") // "/co" drops changelog, so compact moves up a row
 
-	m = press(m, tea.KeyTab)
+	m = press(m, keyCode(tea.KeyTab))
 	if m.InputValue() != "/compact " {
 		t.Errorf("the highlight slid to %q when the list narrowed", m.InputValue())
 	}

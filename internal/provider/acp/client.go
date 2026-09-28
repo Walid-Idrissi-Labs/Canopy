@@ -155,6 +155,9 @@ func validate(req core.Request) error {
 	if !req.Effort.Valid() {
 		return fail("unknown effort %q", req.Effort)
 	}
+	if req.HasImages() {
+		return fail("%s", core.ErrNoImages)
+	}
 	if len(req.Messages) == 0 {
 		return fail("at least one message is required")
 	}

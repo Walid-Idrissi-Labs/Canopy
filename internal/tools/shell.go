@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/egress"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
+	"os"
 	"strings"
 	"time"
 
@@ -15,11 +19,10 @@ import (
 //
 // The broadest tool there is, by a distance. Structured path tools can refuse what
 // `Workspace.Resolve` will not resolve. A shell command is an opaque string that can do anything the
-// user can, and no amount of inspecting it changes that. The permission model controls whether this
-// process may start; it does not contain the process after that. This distinction is why its kind is
-// `execute` and why A4-04 treats that kind differently from every other.
-//
-// Canopy does not sandbox and must never imply that it does.
+// user can when no operating-system sandbox is available or sandboxing is disabled. The permission
+// model controls whether the process may start; the operating-system sandbox limits what it can do
+// where one is available. This distinction is why its kind is `execute` and why A4-04 treats that
+// kind differently from every other.
 type shellTool struct {
 	w       *Workspace
 	outputs *OutputStore
@@ -38,9 +41,11 @@ func (t *shellTool) Name() string        { return "run_command" }
 func (t *shellTool) Kind() core.ToolKind { return core.ToolExecute }
 
 func (t *shellTool) Description() string {
-	return "Run a shell command starting in the workspace. It is not sandboxed and can reach " +
-		"anything the user's account can reach. Use this for building, testing and anything there " +
-		"is no dedicated tool for. Output is truncated in the middle if it is very long."
+	return "Run a shell command starting in the workspace. Where available, an OS sandbox limits " +
+		"writes to the workspace, temporary directories and toolchain caches; network access is open " +
+		"by default. The result says when the sandbox was unavailable or switched off. Use this for " +
+		"building, testing and anything there is no dedicated tool for. Output is truncated in the " +
+		"middle if it is very long."
 }
 
 func (t *shellTool) Schema() json.RawMessage {
@@ -82,6 +87,44 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	// something subtly different from what was asked for and approved, which is worse than running
 	// what was asked for.
 	options := exec.Options{Dir: t.w.Root(), Timeout: timeout}
+	var unconfined string
+	var proxy *egress.Proxy
+	var networkNote string
+	started := time.Now()
+	switch err := sandbox.Available(); {
+	case sandbox.Disabled():
+		unconfined = "sandboxing is switched off (" + sandbox.DisableEnvVar + "=off)"
+	case err != nil:
+		unconfined = err.Error()
+	default:
+		policy := t.sandboxPolicy()
+		mode, err := egress.ParseMode(os.Getenv(egress.ModeEnvVar))
+		if err != nil {
+			return failure("%v", err), nil
+		}
+		// A conversation that has read outside content may be following instructions from it, so
+		// its commands reach package registries and nothing else, whatever they are (D-57). Only
+		// where the loopback address stays reachable: on Linux the limit is by port, and forcing it
+		// would break every test that starts a local server.
+		if mode == egress.ModeOpen && core.TaintedFrom(ctx) && sandbox.LoopbackKept() {
+			mode = egress.ModeRegistries
+		}
+		if mode != egress.ModeOpen && !sandbox.NetworkEnforced() {
+			networkNote = "\n(The network was not limited: this kernel cannot, so " + egress.ModeEnvVar +
+				" has no effect here. Files were still confined.)"
+		}
+		switch mode {
+		case egress.ModeOff:
+			policy.Network = sandbox.NetworkNone
+		case egress.ModeRegistries:
+			if proxy, err = egress.Shared(egress.ExtraHosts(os.Getenv(egress.AllowEnvVar))); err != nil {
+				return failure("starting the network proxy: %v", err), nil
+			}
+			policy.Network, policy.ProxyPort = sandbox.NetworkProxy, proxy.Port()
+			options.Env = append(childenv.Inherited(), proxy.Env()...)
+		}
+		options.Sandbox = &policy
+	}
 	if t.outputs != nil {
 		options.MaxOutput = capturedOutputBytes
 	}
@@ -94,6 +137,19 @@ func (t *shellTool) Run(ctx context.Context, input json.RawMessage) (core.ToolRe
 	if t.outputs != nil {
 		content = strings.TrimSpace(offload(t.outputs, strings.TrimRight(result.Output, "\n")) +
 			"\n" + outcome(args.Command, result))
+	}
+	if proxy != nil {
+		if hosts := proxy.RefusedSince(started); len(hosts) > 0 {
+			// Said in the result, so the model neither retries blindly nor reports the network as down.
+			content += "\n(The sandbox's network allow list refused: " + strings.Join(hosts, ", ") +
+				". Only package registries and hosts in " + egress.AllowEnvVar + " can be reached.)"
+		}
+	}
+	content += networkNote
+	if unconfined != "" {
+		// Said on every result, because neither the model nor a person reading the transcript
+		// should assume a boundary that was not there for this command.
+		content += "\n(This ran without a sandbox: " + unconfined + ".)"
 	}
 	return core.ToolResult{Content: content, IsError: !result.Succeeded()}, nil
 }
@@ -134,3 +190,6 @@ func outcome(command string, result exec.Result) string {
 	}
 	return strings.TrimSpace(b.String())
 }
+
+// sandboxPolicy is the workspace's confinement.
+func (t *shellTool) sandboxPolicy() sandbox.Policy { return t.w.SandboxPolicy() }

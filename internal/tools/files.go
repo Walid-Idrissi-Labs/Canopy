@@ -292,7 +292,7 @@ func (t *editTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *editTool) Run(_ context.Context, input json.RawMessage) (core.ToolResult, error) {
+func (t *editTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResult, error) {
 	var args struct {
 		Path    string `json:"path"`
 		OldText string `json:"old_text"`
@@ -351,7 +351,7 @@ func (t *editTool) Run(_ context.Context, input json.RawMessage) (core.ToolResul
 	// not have to re read it between each of them. It has just been told exactly what changed.
 	t.ledger.record(path, digestOf([]byte(updated)))
 
-	return core.ToolResult{Content: fmt.Sprintf("Edited %s.", args.Path)}, nil
+	return core.ToolResult{Content: fmt.Sprintf("Edited %s.", args.Path) + t.w.diagnose(ctx, path, updated)}, nil
 }
 
 // writeTool creates or overwrites a file.
@@ -379,7 +379,7 @@ func (t *writeTool) Schema() json.RawMessage {
 	}`)
 }
 
-func (t *writeTool) Run(_ context.Context, input json.RawMessage) (core.ToolResult, error) {
+func (t *writeTool) Run(ctx context.Context, input json.RawMessage) (core.ToolResult, error) {
 	var args struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -425,7 +425,7 @@ func (t *writeTool) Run(_ context.Context, input json.RawMessage) (core.ToolResu
 	t.ledger.record(path, digestOf([]byte(args.Content)))
 
 	return core.ToolResult{Content: fmt.Sprintf("Wrote %s, %d bytes.",
-		args.Path, len(args.Content))}, nil
+		args.Path, len(args.Content)) + t.w.diagnose(ctx, path, args.Content)}, nil
 }
 
 // writeFilePreservingMode writes a file without changing its permissions if it already exists.

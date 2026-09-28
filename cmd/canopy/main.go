@@ -10,6 +10,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"io"
 	"os"
 )
@@ -24,8 +25,15 @@ usage:
   canopy ask           send one message to a provider and stream the reply
   canopy search        find a message across every saved conversation
   canopy report        run this repository's checks and print a markdown summary
+  canopy land BRANCH   merge an agent's branch into yours only if the merged result passes the tests
+  canopy init          write a canopy.json with the tests this project's build files suggest
+  canopy doctor        check git, keys, the sandbox, this project and the terminal
   canopy trust         review what this repository's canopy.json runs, and allow it (revoke, list)
   canopy worktree      list the agent worktrees Canopy made here; gc removes the clean ones
+  canopy serve         keep this project's agents running with no client attached
+  canopy attach [CODE] list what canopy serve is running, or pick a conversation up (new starts one)
+  canopy acp           serve this project to an editor over the Agent Client Protocol (stdio)
+  canopy bench         measure cost and pass rate on built-in tasks (calls the model; billed)
   canopy snapshot      print the current project snapshot as JSON
   canopy watch         stream events as JSON lines until interrupted
   canopy demo          drive the stale flip and show it happening
@@ -46,6 +54,17 @@ func main() {
 }
 
 func run(args []string) error {
+	// Canopy re-run as the sandbox trampoline: confine this process, then become the command. The
+	// sandbox package's own init does this before main runs (see internal/sandbox/trampoline.go);
+	// kept here for a call to run from anywhere else.
+	if len(args) > 0 && args[0] == sandbox.TrampolineArg {
+		if err := sandbox.RunTrampoline(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "canopy sandbox: %v\n", err)
+			os.Exit(126)
+		}
+		return nil
+	}
+
 	// No arguments opens the dashboard, since that is what someone typing "canopy" wants.
 	//
 	// Unless there is no terminal to open it in. Piped output, CI and cron all end up here, and
@@ -86,8 +105,29 @@ func run(args []string) error {
 	if command == "run" {
 		os.Exit(runHeadless(args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	if command == "serve" {
+		os.Exit(runServe(args[1:], os.Stderr))
+	}
+	if command == "attach" {
+		os.Exit(runAttach(args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if command == "acp" {
+		os.Exit(runACP(args[1:], os.Stdin, os.Stdout, os.Stderr))
+	}
+	if command == "bench" {
+		os.Exit(runBench(args[1:], os.Stdout, os.Stderr))
+	}
 	if command == "worktree" || command == "worktrees" {
 		return runWorktree(args[1:], os.Stdout)
+	}
+	if command == "land" {
+		return runLand(args[1:], os.Stdin, os.Stdout)
+	}
+	if command == "init" {
+		return runInit(args[1:], os.Stdout)
+	}
+	if command == "doctor" {
+		os.Exit(runDoctor(os.Stdout))
 	}
 	if command == "trust" {
 		return runTrust(args[1:], os.Stdout)

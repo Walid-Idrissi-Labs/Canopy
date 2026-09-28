@@ -188,3 +188,16 @@ func TestA401FromALiveTokenIsStillTerminalAndIsNotAnsweredByRenewing(t *testing.
 		t.Error("a rejection replaced the stored token")
 	}
 }
+
+// The Responses API is used for OpenAI's own endpoint only, and only when switched on.
+func TestResponsesOnlyForOpenAIAndOnlyWhenAsked(t *testing.T) {
+	t.Setenv("CANOPY_OPENAI_RESPONSES", "on")
+	if !useResponses("https://api.openai.com/v1") || useResponses("https://api.openai.com.evil.test/v1") ||
+		useResponses("https://openrouter.ai/api/v1") {
+		t.Fatal("the endpoint gate is wrong")
+	}
+	t.Setenv("CANOPY_OPENAI_RESPONSES", "")
+	if useResponses("https://api.openai.com/v1") {
+		t.Fatal("used without being switched on")
+	}
+}

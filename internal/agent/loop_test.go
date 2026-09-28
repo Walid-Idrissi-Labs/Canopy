@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -937,6 +938,113 @@ func TestACallCutOffByTheLengthCapIsNotRecorded(t *testing.T) {
 	for _, m := range outcome.Messages {
 		if len(m.ToolCalls) > 0 {
 			t.Fatalf("a cut-off call was recorded without a result: %+v", m)
+		}
+	}
+}
+
+// A model that repeats the same call and gets the same answer is told so on the third time and
+// stopped on the fifth, instead of spending the whole step budget.
+func TestRepeatingTheSameCallWithoutProgressIsStopped(t *testing.T) {
+	var turns [][]core.StreamEvent
+	for i := 0; i < 10; i++ {
+		turns = append(turns, []core.StreamEvent{
+			{Kind: core.EventToolCall, ToolCall: &core.ToolCall{ID: fmt.Sprintf("c%d", i), Name: "count", Input: []byte(`{}`)}},
+			{Kind: core.EventDone, StopReason: core.StopToolUse},
+		})
+	}
+	client := &scriptedClient{turns: turns}
+	tools := core.NewToolRegistry()
+	tools.MustRegister(&sameAnswer{})
+	loop := &Loop{Client: client, Tools: tools, Trust: core.TrustStandard}
+	outcome, err := loop.Run(context.Background(), core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "go"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.LimitHit == "" || outcome.Steps != 5 {
+		t.Fatalf("stopped after %d steps with %q; want a no-progress stop at 5", outcome.Steps, outcome.LimitHit)
+	}
+	warned := false
+	for _, m := range outcome.Messages {
+		for _, r := range m.ToolResults {
+			if strings.Contains(r.Content, "this exact call has now returned") {
+				warned = true
+			}
+		}
+	}
+	if !warned {
+		t.Fatal("the model was never told it was repeating itself")
+	}
+}
+
+type sameAnswer struct{}
+
+func (*sameAnswer) Name() string            { return "count" }
+func (*sameAnswer) Description() string     { return "always the same" }
+func (*sameAnswer) Kind() core.ToolKind     { return core.ToolRead }
+func (*sameAnswer) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (*sameAnswer) Run(context.Context, json.RawMessage) (core.ToolResult, error) {
+	return core.ToolResult{Content: "3 files"}, nil
+}
+
+// Edit, build, edit, build: the build answers "ok" every time, but each edit is different, so the
+// turn is making progress and must not be stopped as a circle.
+func TestTheSameCheckAfterDifferentEditsIsNotACircle(t *testing.T) {
+	var turns [][]core.StreamEvent
+	for i := 0; i < 8; i++ {
+		turns = append(turns,
+			asksFor("edit", fmt.Sprintf(`{"n":%d}`, i)),
+			asksFor("build", `{}`))
+	}
+	turns = append(turns, says("done"))
+	client := &scriptedClient{turns: turns}
+	edit := &countingTool{name: "edit", kind: core.ToolWrite, answer: "edited"}
+	build := &countingTool{name: "build", kind: core.ToolExecute, answer: "ok"}
+	l := loop(client, registryWith(edit, build), core.TrustBroad)
+	l.MaxSteps = 100
+	outcome, err := l.Run(context.Background(), ask("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.LimitHit != "" || build.count() != 8 {
+		t.Fatalf("stopped with %q after %d builds; eight edit-and-build rounds are progress", outcome.LimitHit, build.count())
+	}
+}
+
+// A paused reply holding only provider-side work is kept, so the continuation does not run it again.
+func TestAPausedReplyWithOnlyProviderWorkIsKept(t *testing.T) {
+	native := &core.Native{Provider: "p", Data: []byte(`{"role":"assistant","content":[{"type":"server_tool_use"}]}`)}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		{{Kind: core.EventDone, StopReason: core.StopPauseTurn, Native: native}},
+		{{Kind: core.EventText, Text: "done"}, {Kind: core.EventDone, StopReason: core.StopEndTurn}},
+	}}
+	loop := &Loop{Client: client, Tools: core.NewToolRegistry(), Trust: core.TrustStandard}
+	outcome, err := loop.Run(context.Background(), core.Request{Model: "m",
+		Messages: []core.Message{{Role: core.RoleUser, Text: "search"}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := client.seen[1].Messages
+	if len(second) < 2 || second[len(second)-1].Native != native {
+		t.Fatalf("the continuation did not carry the paused reply: %+v", second)
+	}
+	_ = outcome
+}
+
+// A reply cut off by the length cap before it said anything is not recorded: what it holds is at
+// best an unsigned half-thought, and replaying that has every later request refused.
+func TestABareReplyCutOffIsNotKept(t *testing.T) {
+	native := &core.Native{Provider: "p", Data: []byte(`{"role":"assistant","content":[{"type":"thinking"}]}`)}
+	client := &scriptedClient{turns: [][]core.StreamEvent{
+		{{Kind: core.EventDone, StopReason: core.StopMaxTokens, Native: native}},
+	}}
+	outcome, err := loop(client, registryWith(), core.TrustStandard).Run(context.Background(), ask("go"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range outcome.Messages {
+		if m.Native != nil {
+			t.Fatal("a bare cut-off reply was kept and will be replayed")
 		}
 	}
 }

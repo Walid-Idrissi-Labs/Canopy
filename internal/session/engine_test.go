@@ -29,6 +29,7 @@ type scriptedClient struct {
 	mu      sync.Mutex
 	history []core.Message
 	system  string
+	tools   []core.ToolDefinition
 }
 
 func (c *scriptedClient) Name() string { return c.name }
@@ -37,6 +38,7 @@ func (c *scriptedClient) Stream(ctx context.Context, req core.Request) (core.Str
 	c.mu.Lock()
 	c.history = req.Messages
 	c.system = req.System
+	c.tools = req.Tools
 	c.mu.Unlock()
 
 	if c.openErr != nil {
@@ -634,5 +636,66 @@ func TestUndoWithoutACheckpointSaysSoRatherThanFailingQuietly(t *testing.T) {
 
 	if err := e.Undo(context.Background(), "nope", turnID); err == nil {
 		t.Error("undoing a session that does not exist should be an error")
+	}
+}
+
+// The first message after a compaction carries the agent's task list again, since the summary
+// replaced the turns where the model wrote it; later messages do not repeat it.
+func TestTheTaskListIsCarriedPastACompaction(t *testing.T) {
+	at := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)
+	s := core.Session{
+		Turns: []core.Turn{
+			{ID: "a", StartedAt: at.Add(-time.Hour)},
+			{ID: "b", StartedAt: at.Add(-time.Minute)},
+			{ID: "new", StartedAt: at.Add(time.Minute)},
+		},
+		Compactions: []core.Compaction{{Through: 1, At: at, Summary: "earlier"}},
+		Tasks: []core.Task{{Text: "fix the parser", State: core.TaskDone, Outcome: "off by one"},
+			{Text: "update the docs", State: core.TaskPending}},
+	}
+	note := pendingTaskNote(s)
+	if !strings.Contains(note, "- [x] fix the parser (off by one)") || !strings.Contains(note, "- [ ] update the docs") {
+		t.Fatalf("note = %q", note)
+	}
+	s.Turns = append(s.Turns, core.Turn{ID: "later", StartedAt: at.Add(2 * time.Minute)})
+	if note := pendingTaskNote(s); note != "" {
+		t.Fatalf("the list was repeated on a later message: %q", note)
+	}
+	s.Compactions = nil
+	if note := pendingTaskNote(s); note != "" {
+		t.Fatalf("a conversation never compacted got the list: %q", note)
+	}
+}
+
+// An agent definition's standing instructions go with the first message and again with the first
+// message after a compaction, which replaces the turn that carried them.
+func TestStandingInstructionsSurviveACompaction(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("ok")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	s := e.Create("claude", "claude-opus-5")
+	e.mu.Lock()
+	e.agentNotes = map[string]string{s.ID: "Report bugs only."}
+	e.mu.Unlock()
+	send := func(text string) core.Turn {
+		id, err := e.Send(s.ID, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return waitForTurn(t, e, s.ID, id)
+	}
+	if note := send("first").Request.Note; !strings.Contains(note, "Report bugs only.") {
+		t.Fatalf("the first message lacks the instructions: %q", note)
+	}
+	if note := send("second").Request.Note; strings.Contains(note, "Report bugs only.") {
+		t.Fatalf("an ordinary later message repeated them: %q", note)
+	}
+	e.mu.Lock()
+	e.sessions[s.ID].Compactions = append(e.sessions[s.ID].Compactions,
+		core.Compaction{Through: 2, At: time.Now(), Summary: "two turns"})
+	e.mu.Unlock()
+	time.Sleep(10 * time.Millisecond)
+	if note := send("third").Request.Note; !strings.Contains(note, "Report bugs only.") {
+		t.Fatalf("the first message after a compaction lacks them: %q", note)
 	}
 }

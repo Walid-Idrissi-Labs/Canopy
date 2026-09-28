@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -36,7 +36,7 @@ func TestANewConversationDrawsTheNameOnlyInTheCorner(t *testing.T) {
 
 	app := launch(store, withOneKey()).(tui.App)
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
-	view := plain(next.(tui.App).View())
+	view := plain(next.(tui.App).View().Content)
 
 	if !strings.Contains(view, cornerName) {
 		t.Errorf("the opening screen has no name in the header corner:\n%s", view)
@@ -55,7 +55,7 @@ func TestTheOpeningScreenDoesNotRepeatTheNameInWords(t *testing.T) {
 
 	app := launch(store, withOneKey()).(tui.App)
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
-	view := plain(next.(tui.App).View())
+	view := plain(next.(tui.App).View().Content)
 
 	if strings.Contains(view, "a terminal coding agent for running several at once") {
 		t.Errorf("the tagline is on the opening screen:\n%s", view)
@@ -83,7 +83,7 @@ func TestAStartedConversationDrawsTheNameOnlyInTheCorner(t *testing.T) {
 
 	app := launchWith(store, withOneKey(), engine).(tui.App)
 	next, _ := app.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
-	view := plain(next.(tui.App).View())
+	view := plain(next.(tui.App).View().Content)
 
 	if strings.Contains(view, largeName) {
 		t.Errorf("the large name is drawn over a conversation:\n%s", view)
@@ -111,7 +111,7 @@ func TestTheNameIsInTheCornerWhateverIsOnScreen(t *testing.T) {
 	} {
 		app := launchWith(store, withOneKey(), tc.engine).(tui.App)
 		next, _ := app.Update(tea.WindowSizeMsg{Width: 110, Height: 40})
-		view := plain(next.(tui.App).View())
+		view := plain(next.(tui.App).View().Content)
 
 		if !strings.Contains(view, cornerName) {
 			t.Errorf("%s: the name is not drawn in the corner:\n%s", tc.name, view)

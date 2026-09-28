@@ -199,3 +199,19 @@ func TestAForkDropsCompactionsItDoesNotCover(t *testing.T) {
 		t.Errorf("kept = %+v", kept[0])
 	}
 }
+
+// A conversation opens here when it was recorded in this project or in none, as pickup decides.
+func TestAConversationBelongsWhereItWasRecorded(t *testing.T) {
+	e := New(nil)
+	defer e.Close()
+	e.SetProjectID("here")
+	e.mu.Lock()
+	e.projects["mine"], e.projects["theirs"] = "here", "there"
+	e.mu.Unlock()
+	if !e.InThisProject("mine") || e.InThisProject("theirs") || !e.InThisProject("unrecorded") {
+		t.Fatal("the project rule is not pickup's")
+	}
+	if e.SearchHistory("anything", 5) != nil {
+		t.Fatal("a search without storage found something")
+	}
+}

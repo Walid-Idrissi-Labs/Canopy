@@ -9,11 +9,12 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -48,6 +49,9 @@ type Store interface {
 	// whichever key the alphabet has moved into its place.
 	Rename(ref core.KeyRef, to string) (core.KeyMetadata, error)
 
+	// SetRate records the owner's own price for a credential, the zero rate forgetting it.
+	SetRate(ref core.KeyRef, rate core.KeyRate) error
+
 	BackendName() string
 	UsingInsecureBackend() bool
 }
@@ -71,6 +75,8 @@ const (
 
 	modeConfirmRemove
 	modeRename
+	// modeRate is the price field for a credential Canopy has no rate for.
+	modeRate
 )
 
 // Model is the credential screen.
@@ -89,6 +95,15 @@ type Model struct {
 	// identities is who each credential is signed in as, read once per reload rather than per frame.
 	// Keyed by credential name, which is what the list has in hand while it draws.
 	identities map[string]Identity
+
+	// check asks a provider whether it takes a credential, and checking is the one being asked
+	// about. See check.go.
+	check    Check
+	checking string
+
+	// ratingKey is the credential whose price is being typed, into draftRate.
+	ratingKey core.KeyRef
+	draftRate string
 
 	// draft holds the credential being added.
 	draftName     string
@@ -300,9 +315,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		cmd := m.handleKey(msg)
 		return m, cmd
+
+	case tea.PasteMsg:
+		// A pasted key arrives whole, as its own message, in a terminal that brackets pastes, which
+		// is how almost everyone enters a secret. One line: a trailing newline copied with it is not
+		// part of the key.
+		m.paste(paste.Line(msg.Content))
+		return m, nil
 
 	// A sign-in waits on a browser, a device code or another process, which is minutes rather than
 	// milliseconds. Bubble Tea runs one goroutine, so waiting for any of that inside a handler would
@@ -312,14 +334,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.signInStarted(msg)
 	case signInDoneMsg:
 		return m, m.signInDone(msg)
+	case checkDoneMsg:
+		m.checkDone(msg)
+		return m, nil
 	}
 	return m, nil
 }
 
-func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
+func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch m.mode {
 	case modeList:
-		m.handleListKey(msg)
+		return m.handleListKey(msg)
+	case modeRate:
+		m.handleTextKey(msg, &m.draftRate, (*Model).afterRate)
 	case modeName:
 		m.handleTextKey(msg, &m.draftName, (*Model).afterName)
 	case modeBaseURL:
@@ -330,6 +357,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 		m.handleTextKey(msg, &m.draftName, (*Model).afterRename)
 	case modeSecret:
 		m.handleTextKey(msg, &m.draftSecret, (*Model).afterSecret)
+		// Stored: asked about at once, so a typo is found before the first message rather than by it.
+		if m.mode == modeList && m.storedChoice && m.err == nil {
+			return m.startCheck(m.chosen)
+		}
 	case modeProvider:
 		return m.handleProviderKey(msg)
 	case modeSignIn:
@@ -342,8 +373,31 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) handleListKey(msg tea.KeyMsg) {
+// paste adds pasted text to whichever field is being typed into, if any.
+func (m *Model) paste(text string) {
+	switch m.mode {
+	case modeName, modeRename:
+		m.draftName += text
+	case modeBaseURL:
+		m.draftBaseURL += text
+	case modeModel:
+		m.draftModel += text
+	case modeSecret:
+		m.draftSecret += text
+	}
+}
+
+func (m *Model) handleListKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
+	case "t":
+		if len(m.keys) > 0 && m.check != nil {
+			m.status, m.err = "Checking "+m.keys[m.cursor].Ref.Name+"...", nil
+			return m.startCheck(m.keys[m.cursor].Ref.Name)
+		}
+	case "p":
+		if len(m.keys) > 0 {
+			m.startRate(m.keys[m.cursor])
+		}
 	case "a", "n":
 		m.mode = modeName
 		m.draftName, m.draftBaseURL, m.draftModel, m.draftSecret = "", "", "", ""
@@ -391,6 +445,7 @@ func (m *Model) handleListKey(msg tea.KeyMsg) {
 			m.err = nil
 		}
 	}
+	return nil
 }
 
 // startRename opens the name field on a credential that already exists.
@@ -539,7 +594,7 @@ func Offered(store Store, key core.KeyMetadata) ([]catalog.Model, error) {
 }
 
 // handleModelPickKey moves through the offered models and takes one.
-func (m *Model) handleModelPickKey(msg tea.KeyMsg) {
+func (m *Model) handleModelPickKey(msg tea.KeyPressMsg) {
 	// One row past the end is the way out of the list. It is a row rather than a separate key
 	// because a key that is not on screen is a key nobody finds, and this is the escape the whole
 	// catalog depends on being there.
@@ -593,20 +648,18 @@ func (m *Model) selectModel(model string, remember bool) {
 
 // handleTextKey edits a text field, shared by every prompt including the secret one, so typed
 // input is handled in one place rather than once per field.
-func (m *Model) handleTextKey(msg tea.KeyMsg, field *string, commit func(*Model)) {
-	switch msg.Type {
-	case tea.KeyEnter:
+func (m *Model) handleTextKey(msg tea.KeyPressMsg, field *string, commit func(*Model)) {
+	switch {
+	case msg.Code == tea.KeyEnter:
 		commit(m)
-	case tea.KeyEsc:
+	case msg.Code == tea.KeyEsc:
 		m.cancelDraft()
-	case tea.KeyBackspace:
+	case msg.Code == tea.KeyBackspace:
 		if runes := []rune(*field); len(runes) > 0 {
 			*field = string(runes[:len(runes)-1])
 		}
-	case tea.KeyRunes:
-		*field += string(msg.Runes)
-	case tea.KeySpace:
-		*field += " "
+	case msg.Text != "" && msg.Mod&(tea.ModCtrl|tea.ModAlt) == 0:
+		*field += msg.Text
 	}
 }
 
@@ -746,7 +799,7 @@ func (m Model) providerRows() []providerRow {
 	return rows
 }
 
-func (m *Model) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
+func (m *Model) handleProviderKey(msg tea.KeyPressMsg) tea.Cmd {
 	rows := m.providerRows()
 	switch msg.String() {
 	case "j", "down":
@@ -784,7 +837,7 @@ func (m *Model) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) handleConfirmKey(msg tea.KeyMsg) {
+func (m *Model) handleConfirmKey(msg tea.KeyPressMsg) {
 	switch msg.String() {
 	case "y", "enter":
 		if m.cursor < len(m.keys) {

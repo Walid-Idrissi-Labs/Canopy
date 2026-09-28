@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -21,8 +21,8 @@ func stuck(name, subject string) session.AgentStatus {
 	return s
 }
 
-func press(m agents.Model, key tea.KeyType) (agents.Model, tea.Cmd) {
-	return m.Update(tea.KeyMsg{Type: key})
+func press(m agents.Model, key tea.KeyPressMsg) (agents.Model, tea.Cmd) {
+	return m.Update(key)
 }
 
 // Enter on a selected waiting agent answers yes, once. Never remembered: the pane shows a summary,
@@ -31,7 +31,7 @@ func TestEnterApprovesTheSelectedWaitingAgentOnce(t *testing.T) {
 	e := engine(stuck("blocked", "run_command: npm test"), status("docs", core.AgentIdle, ""))
 	m := model(e)
 
-	m, cmd := press(m, tea.KeyEnter)
+	m, cmd := press(m, keyCode(tea.KeyEnter))
 
 	if len(e.answered) != 1 {
 		t.Fatalf("enter gave %d answers, want one", len(e.answered))
@@ -48,7 +48,7 @@ func TestEnterApprovesTheSelectedWaitingAgentOnce(t *testing.T) {
 
 	// With nothing waiting any more, enter goes back to meaning open, on the same keystroke a
 	// person is already resting on.
-	m, cmd = press(m, tea.KeyEnter)
+	m, cmd = press(m, keyCode(tea.KeyEnter))
 	_ = m
 	if cmd == nil {
 		t.Fatal("enter did not open the agent once its question was answered")
@@ -67,7 +67,7 @@ func TestBackspaceDeclinesTheSelectedWaitingAgent(t *testing.T) {
 	e := engine(stuck("blocked", "run_command: rm -rf build"))
 	m := model(e)
 
-	m, _ = press(m, tea.KeyBackspace)
+	m, _ = press(m, keyCode(tea.KeyBackspace))
 
 	if len(e.answered) != 1 {
 		t.Fatalf("backspace gave %d answers, want one", len(e.answered))
@@ -77,7 +77,7 @@ func TestBackspaceDeclinesTheSelectedWaitingAgent(t *testing.T) {
 	}
 
 	// On an agent with no question, backspace decides nothing.
-	if _, _ = press(m, tea.KeyBackspace); len(e.answered) != 1 {
+	if _, _ = press(m, keyCode(tea.KeyBackspace)); len(e.answered) != 1 {
 		t.Errorf("backspace answered an agent that asked nothing: %+v", e.answered)
 	}
 }
@@ -87,10 +87,10 @@ func TestBackspaceDeclinesTheSelectedWaitingAgent(t *testing.T) {
 func TestASelectedAgentThatStoppedWaitingIsNotClaimedAsAnswered(t *testing.T) {
 	for _, tc := range []struct {
 		name string
-		key  tea.KeyType
+		key  tea.KeyPressMsg
 	}{
-		{name: "approve", key: tea.KeyEnter},
-		{name: "decline", key: tea.KeyBackspace},
+		{name: "approve", key: keyCode(tea.KeyEnter)},
+		{name: "decline", key: keyCode(tea.KeyBackspace)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := engine(stuck("blocked", "run_command: npm test"))
@@ -118,7 +118,7 @@ func TestTheAnswerFollowsTheCursorNotTheQueue(t *testing.T) {
 	m := model(e)
 	m = key(m, "j")
 
-	if _, _ = press(m, tea.KeyEnter); len(e.answered) != 1 {
+	if _, _ = press(m, keyCode(tea.KeyEnter)); len(e.answered) != 1 {
 		t.Fatal("enter did not answer the selected agent")
 	}
 	if e.answered[0].session != "s-second" {
@@ -157,7 +157,7 @@ func TestTheListAnswersWithTheSameKeys(t *testing.T) {
 		t.Fatalf("mode = %v, want the list", m.Mode())
 	}
 
-	if _, _ = press(m, tea.KeyEnter); len(e.answered) != 1 || !e.answered[0].approved {
+	if _, _ = press(m, keyCode(tea.KeyEnter)); len(e.answered) != 1 || !e.answered[0].approved {
 		t.Errorf("enter on the list did not approve: %+v", e.answered)
 	}
 }

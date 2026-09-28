@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core/fake"
@@ -168,8 +168,8 @@ func TestRenderedFramesNeverCarryTheSecret(t *testing.T) {
 
 	var model tea.Model = tui.New(store)
 	for _, key := range []string{"j", "k", "G", "g"} {
-		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
-		assertClean(t, "dashboard frame after "+key, model.View())
+		model, _ = model.Update(keyText(key))
+		assertClean(t, "dashboard frame after "+key, model.View().Content)
 	}
 }
 
@@ -199,7 +199,7 @@ func TestFreeTextFieldsAreNotScrubbed(t *testing.T) {
 		t.Fatalf("SetRevisionUnknown: %v", err)
 	}
 
-	frame := ansiCodes.ReplaceAllString(tui.New(store).View(), "")
+	frame := ansiCodes.ReplaceAllString(tui.New(store).View().Content, "")
 	if !strings.Contains(frame, "CANARY-VALUE") {
 		t.Fatal("a credential placed into a free text field is no longer reaching the screen. " +
 			"That is an improvement, but D-20 and LIMITATIONS.md both describe the current " +

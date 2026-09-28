@@ -71,3 +71,10 @@ type ReadyForReview struct {
 	// Why says what makes this worth looking at, in the same terms the ranking uses.
 	Why string
 }
+
+// JudgeCandidate is one agent's attempt as a reviewer reads it: its test result in words and its diff.
+type JudgeCandidate struct {
+	Agent string
+	Tests string
+	Diff  string
+}

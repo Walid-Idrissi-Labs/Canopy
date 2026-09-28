@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -17,14 +17,14 @@ func TestUpRecallsWhatWasSentBefore(t *testing.T) {
 	engine := &fakeEngine{}
 	m := model(engine)
 
-	m = press(typeText(m, "first"), tea.KeyEnter)
-	m = press(typeText(m, "second"), tea.KeyEnter)
+	m = press(typeText(m, "first"), keyCode(tea.KeyEnter))
+	m = press(typeText(m, "second"), keyCode(tea.KeyEnter))
 
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "second" {
 		t.Errorf("one press of up gave %q, want the message just sent", got)
 	}
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "first" {
 		t.Errorf("two presses gave %q, want the one before that", got)
 	}
@@ -34,10 +34,10 @@ func TestUpRecallsWhatWasSentBefore(t *testing.T) {
 // key somebody is holding down to get to the oldest, which is how the wrong prompt gets sent.
 func TestWalkingPastTheOldestStops(t *testing.T) {
 	engine := &fakeEngine{}
-	m := press(typeText(model(engine), "only one"), tea.KeyEnter)
+	m := press(typeText(model(engine), "only one"), keyCode(tea.KeyEnter))
 
 	for range 5 {
-		m = press(m, tea.KeyUp)
+		m = press(m, keyCode(tea.KeyUp))
 	}
 	if got := m.InputValue(); got != "only one" {
 		t.Errorf("holding up gave %q", got)
@@ -49,15 +49,15 @@ func TestWalkingPastTheOldestStops(t *testing.T) {
 // arrow keys.
 func TestAHalfTypedMessageComesBack(t *testing.T) {
 	engine := &fakeEngine{}
-	m := press(typeText(model(engine), "sent earlier"), tea.KeyEnter)
+	m := press(typeText(model(engine), "sent earlier"), keyCode(tea.KeyEnter))
 	m = typeText(m, "half written")
 
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "sent earlier" {
 		t.Fatalf("up gave %q", got)
 	}
 
-	m = press(m, tea.KeyDown)
+	m = press(m, keyCode(tea.KeyDown))
 	if got := m.InputValue(); got != "half written" {
 		t.Errorf("coming back down gave %q, want what was being written", got)
 	}
@@ -69,7 +69,7 @@ func TestDownWithNothingRecalledLeavesTheBoxAlone(t *testing.T) {
 	engine := &fakeEngine{}
 	m := typeText(model(engine), "still writing")
 
-	m = press(m, tea.KeyDown)
+	m = press(m, keyCode(tea.KeyDown))
 	if got := m.InputValue(); got != "still writing" {
 		t.Errorf("down emptied the box, leaving %q", got)
 	}
@@ -79,15 +79,15 @@ func TestDownWithNothingRecalledLeavesTheBoxAlone(t *testing.T) {
 // next time an arrow key is pressed, which looks like the program losing your work.
 func TestEditingARecalledMessageKeepsTheEdit(t *testing.T) {
 	engine := &fakeEngine{}
-	m := press(typeText(model(engine), "run the tests"), tea.KeyEnter)
+	m := press(typeText(model(engine), "run the tests"), keyCode(tea.KeyEnter))
 
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	m = typeText(m, " again")
 	if got := m.InputValue(); got != "run the tests again" {
 		t.Fatalf("input = %q", got)
 	}
 
-	m = press(m, tea.KeyDown)
+	m = press(m, keyCode(tea.KeyDown))
 	if got := m.InputValue(); got != "run the tests again" {
 		t.Errorf("down threw the edit away, leaving %q", got)
 	}
@@ -97,12 +97,12 @@ func TestEditingARecalledMessageKeepsTheEdit(t *testing.T) {
 // the history at once, so the next press of up offers a message that was never sent.
 func TestARefusedMessageIsNotFiled(t *testing.T) {
 	engine := &fakeEngine{sendErr: errBusy{}}
-	m := press(typeText(model(engine), "went nowhere"), tea.KeyEnter)
+	m := press(typeText(model(engine), "went nowhere"), keyCode(tea.KeyEnter))
 
 	if got := m.InputValue(); got != "went nowhere" {
 		t.Fatalf("the refused message left the box, leaving %q", got)
 	}
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "went nowhere" {
 		t.Errorf("up changed the box to %q, so the refused message was filed", got)
 	}
@@ -115,12 +115,12 @@ func TestHistoryStopsAtItsLimit(t *testing.T) {
 	m := model(engine)
 
 	for i := range chat.HistoryLimit + 10 {
-		m = press(typeText(m, fmt.Sprintf("message %d", i)), tea.KeyEnter)
+		m = press(typeText(m, fmt.Sprintf("message %d", i)), keyCode(tea.KeyEnter))
 	}
 
 	// Walking all the way back reaches the oldest that survived, and no further.
 	for range chat.HistoryLimit + 20 {
-		m = press(m, tea.KeyUp)
+		m = press(m, keyCode(tea.KeyUp))
 	}
 	want := fmt.Sprintf("message %d", 10)
 	if got := m.InputValue(); got != want {
@@ -134,16 +134,16 @@ func TestTheSameMessageTwiceIsFiledOnce(t *testing.T) {
 	engine := &fakeEngine{}
 	m := model(engine)
 
-	m = press(typeText(m, "retry"), tea.KeyEnter)
-	m = press(typeText(m, "retry"), tea.KeyEnter)
-	m = press(typeText(m, "different"), tea.KeyEnter)
+	m = press(typeText(m, "retry"), keyCode(tea.KeyEnter))
+	m = press(typeText(m, "retry"), keyCode(tea.KeyEnter))
+	m = press(typeText(m, "different"), keyCode(tea.KeyEnter))
 
-	m = press(m, tea.KeyUp)
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "retry" {
 		t.Fatalf("input = %q", got)
 	}
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "retry" {
 		t.Errorf("the duplicate was filed twice, so a third press gave %q", got)
 	}
@@ -153,12 +153,12 @@ func TestTheSameMessageTwiceIsFiledOnce(t *testing.T) {
 // offers the message you sent to a different agent, which is at best noise and at worst sent.
 func TestHistoryDoesNotFollowYouIntoAnotherConversation(t *testing.T) {
 	engine := &fakeEngine{}
-	m := press(typeText(model(engine), "for the first agent"), tea.KeyEnter)
+	m := press(typeText(model(engine), "for the first agent"), keyCode(tea.KeyEnter))
 
 	engine.session = core.Session{ID: "s2"}
 	m.SetSession("s2", "other")
 
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "" {
 		t.Errorf("up in a fresh conversation offered %q", got)
 	}
@@ -176,11 +176,11 @@ func TestAnOldConversationCanRecallItsOwnMessages(t *testing.T) {
 	}}
 
 	m := model(engine)
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "add a test for it" {
 		t.Errorf("up in a resumed conversation gave %q", got)
 	}
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "what does this package do" {
 		t.Errorf("the second press gave %q", got)
 	}
@@ -189,9 +189,9 @@ func TestAnOldConversationCanRecallItsOwnMessages(t *testing.T) {
 // The keys have to be findable. A binding nobody knows about is a binding nobody uses.
 func TestTheFooterAndTheBoxAgreeThatUpIsHistory(t *testing.T) {
 	engine := &fakeEngine{}
-	m := press(typeText(model(engine), "something"), tea.KeyEnter)
+	m := press(typeText(model(engine), "something"), keyCode(tea.KeyEnter))
 
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if !strings.Contains(plain(m.Body()), "something") {
 		t.Error("the recalled message is not visible in the box")
 	}
@@ -206,11 +206,11 @@ func TestTheFooterAndTheBoxAgreeThatUpIsHistory(t *testing.T) {
 // that says the two never went back to being the same thing.
 func TestTheWheelScrollsAndDoesNotRecallHistory(t *testing.T) {
 	engine := &fakeEngine{}
-	m := press(typeText(model(engine), "an earlier prompt"), tea.KeyEnter)
+	m := press(typeText(model(engine), "an earlier prompt"), keyCode(tea.KeyEnter))
 	m = typeText(m, "half written")
 
-	m = wheel(m, tea.MouseButtonWheelUp)
-	m = wheel(m, tea.MouseButtonWheelUp)
+	m = wheel(m, tea.MouseWheelUp)
+	m = wheel(m, tea.MouseWheelUp)
 
 	if got := m.InputValue(); got != "half written" {
 		t.Errorf("scrolling changed the message box to %q", got)
@@ -227,7 +227,7 @@ func TestTheArrowKeysDoNotScrollTheConversation(t *testing.T) {
 		t.Fatal("the view does not start at the tail, so this test proves nothing")
 	}
 
-	m = press(m, tea.KeyUp)
+	m = press(m, keyCode(tea.KeyUp))
 	if got := m.InputValue(); got != "question 29" {
 		t.Fatalf("up recalled %q, so the keys are not doing what this test assumes", got)
 	}
@@ -242,7 +242,7 @@ func TestTheWheelScrollsTheConversation(t *testing.T) {
 	m := model(engine)
 
 	atTail := plain(m.Body())
-	scrolled := wheel(m, tea.MouseButtonWheelUp)
+	scrolled := wheel(m, tea.MouseWheelUp)
 	if plain(scrolled.Body()) == atTail {
 		t.Error("a notch of the wheel did not move the conversation")
 	}
@@ -258,10 +258,10 @@ func TestScrollingPastTheTopComesStraightBack(t *testing.T) {
 	m := model(engine)
 
 	for range 50 {
-		m = wheel(m, tea.MouseButtonWheelUp)
+		m = wheel(m, tea.MouseWheelUp)
 	}
 	for range 20 {
-		m = wheel(m, tea.MouseButtonWheelDown)
+		m = wheel(m, tea.MouseWheelDown)
 	}
 
 	if strings.Contains(plain(m.Body()), "more below") {
@@ -275,14 +275,18 @@ func TestAClickDoesNothing(t *testing.T) {
 	m := model(engine)
 
 	before := plain(m.Body())
-	m = wheel(m, tea.MouseButtonLeft)
+	m = wheel(m, tea.MouseLeft)
 	if plain(m.Body()) != before {
 		t.Error("a click moved the conversation")
 	}
 }
 
 func wheel(m chat.Model, button tea.MouseButton) chat.Model {
-	m, _ = m.Update(tea.MouseMsg{Action: tea.MouseActionPress, Button: button})
+	var msg tea.Msg = tea.MouseClickMsg{Button: button}
+	if button == tea.MouseWheelUp || button == tea.MouseWheelDown {
+		msg = tea.MouseWheelMsg{Button: button}
+	}
+	m, _ = m.Update(msg)
 	return m
 }
 

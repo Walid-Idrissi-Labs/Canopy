@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/chat"
@@ -26,7 +26,7 @@ func scrolledModel(t *testing.T) chat.Model {
 func TestControlDownReturnsToTheTail(t *testing.T) {
 	m := scrolledModel(t)
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	m, _ = m.Update(keyCode(tea.KeyPgUp))
 	body := plain(m.Body())
 	if !strings.Contains(body, "more below") {
 		t.Fatalf("the view did not leave the tail:\n%s", body)
@@ -36,7 +36,7 @@ func TestControlDownReturnsToTheTail(t *testing.T) {
 		t.Errorf("the marker does not name the key it is telling somebody to press:\n%s", body)
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlDown})
+	m, _ = m.Update(keyCode(tea.KeyDown, tea.ModCtrl))
 	if strings.Contains(plain(m.Body()), "more below") {
 		t.Error("ctrl+down did not return to the tail, so the marker is telling people to press a " +
 			"key that does nothing")
@@ -54,7 +54,7 @@ func TestTheMarkerDoesNotPushTheMessageBoxOffScreen(t *testing.T) {
 
 		settled := strings.Count(m.Body(), "\n") + 1
 
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+		m, _ = m.Update(keyCode(tea.KeyPgUp))
 		scrolled := strings.Count(m.Body(), "\n") + 1
 
 		if scrolled > settled {

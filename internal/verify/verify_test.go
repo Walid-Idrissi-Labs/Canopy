@@ -12,6 +12,7 @@ import (
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	canopyexec "github.com/Walid-Idrissi-Labs/Canopy/internal/exec"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/git"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 )
 
 // The whole package is exercised against a real repository, real worktrees and real shell commands.
@@ -760,5 +761,43 @@ func TestTheReviewQueueExcludesSharedWorkspaces(t *testing.T) {
 
 	if queue := verifier.ReadyToReview(); len(queue) != 0 {
 		t.Errorf("a shared workspace was offered for review: %+v", queue)
+	}
+}
+
+// The verification runway runs after every turn goes through the sandbox: a test command that
+// writes outside its worktree is refused, whatever the checkout's location, since the policy here
+// allows the worktree alone.
+func TestVerificationRunsInTheSandbox(t *testing.T) {
+	if err := sandbox.Available(); err != nil {
+		t.Skipf("no sandbox here: %v", err)
+	}
+	dir := repository(t)
+	repo, err := git.OpenRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	verifier := New(repo, "main", []canopyexec.Test{{Name: "unit", Required: true,
+		Command: canopyexec.ShellLine("echo leaked > " + filepath.Join(outside, "leak") + "; true")}}, nil)
+	var confined []string
+	verifier.confine = func(dir string) (*sandbox.Policy, []string) {
+		confined = append(confined, dir)
+		resolved, _ := filepath.EvalSymlinks(dir)
+		return &sandbox.Policy{Writable: []string{resolved}, Devices: []string{"/dev/null"},
+			Network: sandbox.NetworkOpen}, nil
+	}
+	workspace, err := repo.Create(context.Background(), "one", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject := Subject{Agent: "one", WorkspaceID: workspace.ID, Dir: workspace.Path, Branch: workspace.Branch}
+	verifier.Watch([]Subject{subject})
+	look(t, verifier, map[string]Subject{"one": subject})
+	verified(t, verifier, "one")
+	if len(confined) != 1 {
+		t.Fatalf("the test ran without asking for its sandbox: %v", confined)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "leak")); err == nil {
+		t.Fatal("the verification's test wrote outside its worktree")
 	}
 }

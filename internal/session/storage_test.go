@@ -3,6 +3,7 @@ package session
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -610,7 +611,9 @@ func TestAFileAtTheOlderSchemaMigratesForward(t *testing.T) {
 	}
 	if _, err := storage.db.Exec(
 		`ALTER TABLE turns DROP COLUMN steps; ALTER TABLE turns DROP COLUMN context_tokens;
-		DROP TABLE asides; PRAGMA user_version = 7`); err != nil {
+		ALTER TABLE sessions DROP COLUMN tainted; DROP TABLE asides;
+		ALTER TABLE turns DROP COLUMN error_kind; ALTER TABLE turns DROP COLUMN retried;
+		ALTER TABLE turns DROP COLUMN retry_after_ms; PRAGMA user_version = 7`); err != nil {
 		t.Fatalf("winding the file back: %v", err)
 	}
 	if err := storage.Close(); err != nil {
@@ -712,5 +715,89 @@ func TestDeletingAConversationTakesItsAsidesWithIt(t *testing.T) {
 	}
 	if len(kept) != 0 {
 		t.Errorf("a deleted conversation left %+v behind", kept)
+	}
+}
+
+// How a turn failed, how long the provider asked for, and whether it was retried come back after a
+// restart, so a retried turn is not offered again and a refusal is still refused.
+func TestAFailuresKindAndRetryComeBack(t *testing.T) {
+	storage := testStorage(t)
+	session := core.Session{ID: "s1", KeyName: "claude", Model: "claude-opus-5", CreatedAt: storedAt, UpdatedAt: storedAt}
+	turn := storedTurn("t1", "go", "", core.TurnFailed)
+	turn.ErrorKind, turn.RetryAfter, turn.Retried = core.ErrRateLimited, 90*time.Second, true
+	if err := storage.SaveSession(session); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.SaveTurn("s1", 0, turn); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := storage.Load("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := loaded.Turns[0]
+	if got.ErrorKind != core.ErrRateLimited || got.RetryAfter != 90*time.Second || !got.Retried {
+		t.Fatalf("came back as %q, %s, retried %v", got.ErrorKind, got.RetryAfter, got.Retried)
+	}
+}
+
+// A file an earlier build left at version eleven, with the failure columns but not the wait, is
+// brought forward rather than read as current.
+func TestAFileAtVersionElevenGetsTheWait(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.db")
+	storage, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.db.Exec(`ALTER TABLE turns DROP COLUMN retry_after_ms; PRAGMA user_version = 11`); err != nil {
+		t.Fatal(err)
+	}
+	_ = storage.Close()
+	forward, err := OpenStorage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = forward.Close() }()
+	if err := forward.SaveSession(core.Session{ID: "s1", CreatedAt: storedAt, UpdatedAt: storedAt}); err != nil {
+		t.Fatal(err)
+	}
+	turn := storedTurn("t1", "go", "", core.TurnFailed)
+	turn.RetryAfter = time.Minute
+	if err := forward.SaveTurn("s1", 0, turn); err != nil {
+		t.Fatalf("saving on a migrated version eleven file: %v", err)
+	}
+}
+
+// A project's search finds a word from its first letters, only in that project's conversations and
+// those recorded with none, and counts its limit among those alone.
+func TestAProjectSearchFindsPrefixesInItsOwnConversations(t *testing.T) {
+	storage := testStorage(t)
+	save := func(id, project, ask string) {
+		if err := storage.SaveSessionForProject(core.Session{ID: id, Title: id, CreatedAt: storedAt, UpdatedAt: storedAt}, project); err != nil {
+			t.Fatal(err)
+		}
+		if err := storage.SaveTurn(id, 0, storedTurn(id+"-t1", ask, "ok", core.TurnComplete)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		save(fmt.Sprintf("theirs-%d", i), "other", "rewrite the parser")
+	}
+	save("mine", "here", "rewrite the parser")
+	save("old", "", "the parser from before projects")
+
+	hits, err := storage.SearchProject("pars", "here", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := map[string]bool{}
+	for _, hit := range hits {
+		found[hit.SessionID] = true
+	}
+	if len(hits) != 2 || !found["mine"] || !found["old"] {
+		t.Fatalf("found %v", found)
+	}
+	if hits, _ := storage.Search("pars", 10); len(hits) != 0 {
+		t.Fatal("the plain search matched a prefix")
 	}
 }

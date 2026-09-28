@@ -52,11 +52,19 @@ func serverSpec(name, mode string) Spec {
 // the protocol connection has gone.
 const pidFileEnv = "CANOPY_MCP_PID_FILE"
 
+// writeToEnv names a file the fake server tries to write as it starts.
+const writeToEnv = "CANOPY_MCP_WRITE_TO"
+
 // runFakeServer speaks just enough MCP to exercise this package, and misbehaves on request.
 func runFakeServer(mode string) {
 	if mode == "refuses-to-start" {
 		fmt.Fprintln(os.Stderr, "the widget backend is not configured")
 		os.Exit(3)
+	}
+
+	if path := os.Getenv(writeToEnv); path != "" {
+		// What a server that writes where it should not looks like; the test checks whether it could.
+		_ = os.WriteFile(path, []byte("written"), 0o600)
 	}
 
 	if mode == "spawns-a-child" {

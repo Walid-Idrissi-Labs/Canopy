@@ -3,9 +3,11 @@ package chat
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -38,6 +40,7 @@ const (
 	ActionGreen  = "green"
 	ActionKeys   = "keys"
 	ActionModel  = "model"
+	ActionMouse  = "mouse"
 )
 
 // builtinInvocation reads a slash invocation, and whether it names a built-in.
@@ -100,6 +103,12 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 
 	case "trail":
 		m.notice = m.toolTrail()
+
+	case "grants":
+		m.notice, m.err = m.grants(arguments)
+
+	case "budget":
+		m.notice, m.err = m.budget(arguments)
 
 	case "tasks":
 		m.notice = m.taskSummary()
@@ -183,6 +192,19 @@ func (m *Model) describeOrSetMode(name string) {
 // tool calls in and has just read the wrong file is told at the next place where being told is
 // possible, rather than being made to start again and rebuild the reasoning that got it there.
 func (m *Model) steer(guidance string) {
+	// Taken back before delivery, and put in the box, since it is still something somebody wrote.
+	if strings.TrimSpace(guidance) == "undo" {
+		taken := m.engine.ClearSteering(m.sessionID)
+		if len(taken) == 0 {
+			m.notice = "there is no guidance waiting to take back"
+			return
+		}
+		// One line each, as they were queued, rather than run together into one.
+		m.input.SetValue("/steer " + strings.Join(taken, "\n"))
+		m.notice = "took back what was waiting; it is in the box to change or send again"
+		m.refresh()
+		return
+	}
 	if guidance == "" {
 		m.err = "what should it do differently? For example `/steer use the existing parser`"
 		return
@@ -244,10 +266,65 @@ func (m Model) contextUse() string {
 	if len(m.session.Turns) == 0 {
 		return "nothing said yet, so the whole window is free"
 	}
+	verdict := "with room to keep going"
 	if use.NeedsCompaction() {
-		return use.String() + " used, worth running /compact before the next long turn"
+		verdict = "worth running /compact before the next long turn"
 	}
-	return use.String() + " used, with room to keep going"
+	lines := []string{use.String() + " used, " + verdict, "", "the next request, estimated:"}
+
+	inv := m.engine.Inventory(m.sessionID)
+	parts := []struct {
+		name   string
+		tokens int
+		note   string
+	}{
+		{"system prompt", inv.System, ""},
+		{"instructions", inv.Instructions, "AGENTS.md, CLAUDE.md and the like"},
+		{"tool definitions", inv.Tools, fmt.Sprintf("%d tools", inv.ToolCount)},
+		{"summary", inv.Summary, "of the compacted part"},
+		{"your messages", inv.Asked, ""},
+		{"replies", inv.Answered, ""},
+		{"reasoning", inv.Reasoning, "replayed thinking"},
+		{"tool calls", inv.Calls, ""},
+		{"tool results", inv.Results, ""},
+	}
+	total := inv.Total()
+	for _, part := range parts {
+		if part.tokens == 0 {
+			continue
+		}
+		line := fmt.Sprintf("  %-17s %7s  %3d%%", part.name, tokenCount(part.tokens), percent(part.tokens, total))
+		if part.note != "" {
+			line += "  " + part.note
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, fmt.Sprintf("  %-17s %7s  in %d messages", "total", tokenCount(total), inv.Messages))
+
+	// The last request as the provider measured it, which is what was actually paid for.
+	for i := len(m.session.Turns) - 1; i >= 0; i-- {
+		usage := m.session.Turns[i].Usage
+		if in := usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens; in > 0 {
+			lines = append(lines, "", fmt.Sprintf("the last turn read %s, %d%% of it from the cache, and wrote %s to it",
+				tokenCount(in), percent(usage.CacheReadTokens, in), tokenCount(usage.CacheWriteTokens)))
+			if usage.CacheReadTokens == 0 && i > 0 {
+				// Words, not a number to interpret: a conversation that stopped hitting the cache
+				// costs several times more per turn, and the usual cause is something that changed.
+				lines = append(lines, "nothing came from the cache: the start of the conversation changed, "+
+					"or it sat idle longer than the cache keeps it")
+			}
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// percent is part of whole, rounded down, and zero of nothing.
+func percent(part, whole int) int {
+	if whole <= 0 {
+		return 0
+	}
+	return part * 100 / whole
 }
 
 // toolTrail is what this agent actually did, and what it was not allowed to do.
@@ -315,8 +392,19 @@ func (m Model) taskSummary() string {
 // and a theme nobody can try is a theme that goes unmaintained.
 func (m Model) switchTheme(name string) string {
 	if name == "" {
-		return "the palette is " + theme.Current().Palette.Name +
-			", and /theme takes one of: " + strings.Join(theme.Names(), ", ")
+		// Read again, so a theme file written or fixed since the start is on the list.
+		theme.Reload()
+		current := theme.Current().Palette
+		said := "the palette is " + current.Name
+		if current.About != "" {
+			said += " (" + current.About + ")"
+		}
+		said += ", and /theme takes one of: " + strings.Join(theme.Names(), ", ")
+		// A theme file somebody wrote that did not load is said here, where they will look for it.
+		if problems := theme.Problems(); len(problems) > 0 {
+			said += ". Not loaded: " + strings.Join(problems, "; ")
+		}
+		return said
 	}
 	palette, ok := theme.ByName(strings.ToLower(name))
 	if !ok {
@@ -359,6 +447,10 @@ func (m *Model) forkHere() {
 // Done off the update loop, like compaction, because restoring a checkpoint runs git against a
 // whole worktree. It is usually quick and it is not guaranteed to be, and the frame that must never
 // block is the one somebody is looking at while it happens.
+//
+// Two steps. The first lists what the restore would change, including files that would be removed
+// because they did not exist before the turn, which covers anything a person created since; the
+// second, within a minute and for the same turn, does it. Nothing is overwritten on one keystroke.
 func (m *Model) undoLastTurn() tea.Cmd {
 	if len(m.session.Turns) == 0 {
 		m.err = "there is nothing to undo in this conversation yet"
@@ -367,15 +459,62 @@ func (m *Model) undoLastTurn() tea.Cmd {
 
 	engine, sessionID := m.engine, m.sessionID
 	turnID := m.session.Turns[len(m.session.Turns)-1].ID
-	m.notice = "putting the workspace back"
 
+	if m.undoArmed == turnID && time.Since(m.undoArmedAt) < time.Minute {
+		m.undoArmed = ""
+		m.notice = "putting the workspace back"
+		shown := m.undoShown
+		return func() tea.Msg {
+			// Taken again first: anything edited between the preview and the confirmation would be
+			// undone without having been listed, so a different list is shown and asked about anew.
+			plan, err := engine.UndoPreview(context.Background(), sessionID, turnID)
+			switch {
+			case err != nil:
+				// Unable to see what it would do now, so it does nothing.
+				return undoneMsg{err: fmt.Errorf("nothing was undone: %w", err)}
+			case plan.State != shown:
+				return undoPreviewMsg{turnID: turnID, changes: plan.Changes, state: plan.State, moved: true}
+			}
+			return undoneMsg{err: engine.Undo(context.Background(), sessionID, turnID)}
+		}
+	}
+	m.notice = "working out what undo would change"
 	return func() tea.Msg {
-		return undoneMsg{err: engine.Undo(context.Background(), sessionID, turnID)}
+		plan, err := engine.UndoPreview(context.Background(), sessionID, turnID)
+		return undoPreviewMsg{turnID: turnID, changes: plan.Changes, state: plan.State, err: err}
 	}
 }
 
 // undoneMsg carries the outcome of an undo back into the update loop.
 type undoneMsg struct{ err error }
+
+// undoPreviewMsg carries what an undo would change.
+type undoPreviewMsg struct {
+	turnID  string
+	changes []string
+	err     error
+	// state identifies the workspace the preview was made from.
+	state string
+	// moved is set when a confirmation found the workspace changed since the preview it confirmed.
+	moved bool
+}
+
+// describeUndo is the preview shown before an undo is confirmed.
+func describeUndo(changes []string) string {
+	if len(changes) == 0 {
+		return "the workspace already matches how it was before the last turn, so there is nothing to undo"
+	}
+	shown := changes
+	if len(shown) > 12 {
+		shown = shown[:12]
+	}
+	text := fmt.Sprintf("undo would change %d paths, including any you edited or created since:\n  %s",
+		len(changes), strings.Join(shown, "\n  "))
+	if len(changes) > len(shown) {
+		text += fmt.Sprintf("\n  and %d more", len(changes)-len(shown))
+	}
+	return text + "\ntype /undo again within a minute to do it"
+}
 
 // builtinItems are the built-ins as menu entries.
 func builtinItems() []menuItem {
@@ -401,4 +540,70 @@ func commandListing(commands config.CommandSet) string {
 			command.Name, command.Description, command.Scope))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// tokenCount is a token figure short enough for a column: 812, 4.3k, 1.2M.
+func tokenCount(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+// budget shows or sets a spending cap: this agent's, or with "all" the one across every agent. A
+// cap of 0 removes it. The cap is checked between steps, so a long turn stops at it too.
+func (m Model) budget(arguments string) (string, string) {
+	fields := strings.Fields(arguments)
+	overall := len(fields) > 0 && fields[0] == "all"
+	if overall {
+		fields = fields[1:]
+	}
+	if len(fields) == 0 {
+		return "this agent: " + m.engine.Budget(m.sessionID).Status() +
+			"\nevery agent: " + m.engine.OverallBudget().Status(), ""
+	}
+	limit, err := strconv.ParseFloat(strings.TrimPrefix(fields[0], "$"), 64)
+	if err != nil || limit < 0 {
+		return "", "a cap is an amount in dollars, such as /budget 2.50, or 0 to remove it"
+	}
+	if overall {
+		if err := m.engine.SetOverallBudget(limit); err != nil {
+			return "", err.Error()
+		}
+		return "every agent: " + m.engine.OverallBudget().Status(), ""
+	}
+	if err := m.engine.SetBudget(m.sessionID, limit); err != nil {
+		return "", err.Error()
+	}
+	return "this agent: " + m.engine.Budget(m.sessionID).Status(), ""
+}
+
+// grants lists what this conversation may do without asking, numbered, or with "revoke N" takes one
+// back. In the words the prompt used when it was granted, since those are what was agreed to.
+func (m *Model) grants(arguments string) (string, string) {
+	granted := m.engine.Grants(m.sessionID)
+	if n, ok := strings.CutPrefix(strings.TrimSpace(arguments), "revoke"); ok {
+		index := 0
+		if _, err := fmt.Sscanf(strings.TrimSpace(n), "%d", &index); err != nil || index < 1 || index > len(granted) {
+			return "", "revoke which? /grants shows them numbered"
+		}
+		scope := granted[index-1]
+		m.engine.Revoke(m.sessionID, scope)
+		return "taken back: " + scope.String() + "; it is asked about again from the next call", ""
+	}
+	if strings.TrimSpace(arguments) != "" {
+		return "", "/grants lists them, and /grants revoke 2 takes the second back"
+	}
+	if len(granted) == 0 {
+		return "no standing permissions: everything the mode asks about is still asked about", ""
+	}
+	lines := []string{"allowed without asking, in this conversation:"}
+	for i, scope := range granted {
+		lines = append(lines, fmt.Sprintf("  %d  %s", i+1, scope.String()))
+	}
+	lines = append(lines, "/grants revoke N takes one back")
+	return strings.Join(lines, "\n"), ""
 }

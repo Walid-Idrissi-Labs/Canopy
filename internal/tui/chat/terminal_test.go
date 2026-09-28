@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -59,3 +60,81 @@ func TestARenderedTurnCarriesNoRawEscapeSequence(t *testing.T) {
 		}
 	}
 }
+
+// A finished turn says which model answered, how much it read and wrote, and how much came from
+// the cache.
+func TestAFinishedTurnHasAFooter(t *testing.T) {
+	turn := core.Turn{ID: "t", State: core.TurnComplete, Model: "claude-opus-5", Text: "ok",
+		Request: core.Message{Text: "q"},
+		Usage:   core.Usage{InputTokens: 100, CacheReadTokens: 900, OutputTokens: 50, CostUSD: 0.0123, CostKnown: true}}
+	joined := stripStyles(strings.Join(renderTurn(turn, 100, "", nil, Detail{}), "\n"))
+	for _, want := range []string{"claude-opus-5", "1.0k in, 50 out", "90% cached", "$0.0123"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the footer lacks %q:\n%s", want, joined)
+		}
+	}
+}
+
+// A finished turn is drawn in the order it happened: the conclusion written after reading a file
+// appears after the read, not above it.
+func TestAFinishedTurnIsDrawnInTheOrderItHappened(t *testing.T) {
+	call := core.ToolCall{ID: "c1", Name: "read_file", Input: []byte(`{"path":"main.go"}`)}
+	turn := core.Turn{
+		ID: "t1", State: core.TurnComplete,
+		Request:     core.Message{Role: core.RoleUser, Text: "read it"},
+		Text:        "Looking first.Concluded after reading.",
+		ToolCalls:   []core.ToolCall{call},
+		ToolResults: []core.ToolResult{{CallID: "c1", Content: "package main"}},
+		Steps: []core.Message{
+			{Role: core.RoleAssistant, Text: "Looking first.", ToolCalls: []core.ToolCall{call}},
+			{Role: core.RoleUser, ToolResults: []core.ToolResult{{CallID: "c1", Content: "package main"}}},
+			{Role: core.RoleAssistant, Text: "Concluded after reading."},
+		},
+	}
+	joined := stripStyles(strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n"))
+	first, read, last := strings.Index(joined, "Looking first."), strings.Index(joined, "main.go"), strings.Index(joined, "Concluded after reading.")
+	if first < 0 || read < 0 || last < 0 || first >= read || read >= last {
+		t.Fatalf("the turn is not in the order it happened:\n%s", joined)
+	}
+}
+
+// A turn stopped part way through keeps what streamed after its last recorded step: the partial
+// answer is drawn after the steps rather than lost.
+func TestAnInterruptedTurnKeepsItsPartialReply(t *testing.T) {
+	call := core.ToolCall{ID: "c1", Name: "read_file", Input: []byte(`{"path":"main.go"}`)}
+	turn := core.Turn{
+		ID: "t1", State: core.TurnInterrupted,
+		Request:     core.Message{Role: core.RoleUser, Text: "read it"},
+		Text:        "Looking first.The answer was half",
+		ToolCalls:   []core.ToolCall{call},
+		ToolResults: []core.ToolResult{{CallID: "c1", Content: "package main"}},
+		Steps: []core.Message{
+			{Role: core.RoleAssistant, Text: "Looking first.", ToolCalls: []core.ToolCall{call}},
+			{Role: core.RoleUser, ToolResults: []core.ToolResult{{CallID: "c1", Content: "package main"}}},
+		},
+	}
+	joined := stripStyles(strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n"))
+	read, partial := strings.Index(joined, "main.go"), strings.Index(joined, "The answer was half")
+	if partial < 0 || read < 0 || partial < read || strings.Count(joined, "Looking first.") != 1 {
+		t.Fatalf("the partial reply is missing, misplaced or doubled:\n%s", joined)
+	}
+}
+
+// When the running text does not begin with the recorded steps' text, the ordered view steps aside
+// rather than drawing the reply twice.
+func TestStepsThatDoNotMatchTheTextAreNotDrawnTwice(t *testing.T) {
+	turn := core.Turn{
+		ID: "t1", State: core.TurnComplete,
+		Request: core.Message{Role: core.RoleUser, Text: "q"},
+		Text:    "Rewritten reply.",
+		Steps:   []core.Message{{Role: core.RoleAssistant, Text: "Original reply."}},
+	}
+	joined := stripStyles(strings.Join(renderTurn(turn, 80, "", nil, Detail{}), "\n"))
+	if strings.Contains(joined, "Original reply.") || strings.Count(joined, "Rewritten reply.") != 1 {
+		t.Fatalf("mismatched steps were drawn:\n%s", joined)
+	}
+}
+
+// stripStyles removes the colour codes a style puts in, which lipgloss now always writes, so a test
+// reads the text a person would.
+func stripStyles(s string) string { return ansi.Strip(s) }

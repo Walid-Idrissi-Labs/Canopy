@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -178,13 +178,13 @@ func signInWizard(t *testing.T, m Model, name string) (Model, tea.Cmd) {
 	t.Helper()
 	m = key(m, "a")
 	m = typeRunes(m, name)
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	// Down past the two providers a credential can be pasted for, onto the first route.
 	m = key(m, "j")
 	m = key(m, "j")
 	var cmd tea.Cmd
-	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = m.Update(keyCode(tea.KeyEnter))
 	if m.mode != modeSignIn {
 		t.Fatalf("choosing a route landed on mode %v, want the sign-in step", m.mode)
 	}
@@ -297,7 +297,7 @@ func TestTheScreenStaysAnswerableWhileASignInIsWaiting(t *testing.T) {
 		t.Errorf("the screen stopped drawing while waiting:\n%s", view)
 	}
 
-	m, cancel := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, cancel := m.Update(keyCode(tea.KeyEsc))
 	if m.mode != modeList {
 		t.Fatalf("escape during a wait landed on mode %v, want the list", m.mode)
 	}
@@ -335,7 +335,7 @@ func TestCancellingAtTheSignInStepStoresNothingAndLeavesNoPartialRecord(t *testi
 	m, cmd := signInWizard(t, NewWithSignIn(store, service), "copilot-seat")
 	m, _ = runCmd(t, m, cmd)
 
-	m, cancel := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, cancel := m.Update(keyCode(tea.KeyEsc))
 	collect(t, cancel)
 
 	if len(store.keys) != 0 {
@@ -376,7 +376,7 @@ func TestCancellingASignInThatHadAlreadySucceededTakesTheCredentialBackOut(t *te
 		t.Fatal("the fake never stored anything, so there is nothing to take back out")
 	}
 
-	m, cancel := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, cancel := m.Update(keyCode(tea.KeyEsc))
 	collect(t, cancel)
 
 	if len(store.keys) != 0 {
@@ -405,7 +405,7 @@ func TestAnAnswerFromACancelledSignInIsNotTakenForTheNextOne(t *testing.T) {
 	m, waitCmd := runCmd(t, m, cmd)
 	_ = waitCmd
 
-	m, cancel := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, cancel := m.Update(keyCode(tea.KeyEsc))
 	collect(t, cancel)
 
 	// A second sign-in, under a different name, which completes.
@@ -544,12 +544,12 @@ func TestAWizardWithNoRoutesOffersExactlyWhatItOfferedBefore(t *testing.T) {
 
 	m = key(m, "a")
 	m = typeRunes(m, "claude")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	if got := len(m.providerRows()); got != len(core.AllProviders()) {
 		t.Fatalf("the provider step offers %d rows with no routes available", got)
 	}
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 	if m.mode != modeSecret {
 		t.Fatalf("anthropic landed on mode %v, want the secret prompt it has always used", m.mode)
 	}
@@ -564,7 +564,7 @@ func TestTheRouteRowsComeAfterTheProvidersAndSayWhatTheyNeed(t *testing.T) {
 	m := NewWithSignIn(store, service)
 	m = key(m, "a")
 	m = typeRunes(m, "seat")
-	m = press(m, tea.KeyEnter)
+	m = press(m, keyCode(tea.KeyEnter))
 
 	view := plain(m.View())
 	anthropic := strings.Index(view, string(core.ProviderAnthropic))
@@ -646,7 +646,7 @@ func TestASignInThatArrivesAfterEscapeIsStoppedRatherThanLeftPolling(t *testing.
 	_ = cmd
 
 	// Escape first, so the attempt number moves on before the vendor has answered Begin.
-	m, cancel := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, cancel := m.Update(keyCode(tea.KeyEsc))
 	if cancel != nil {
 		collect(t, cancel)
 	}

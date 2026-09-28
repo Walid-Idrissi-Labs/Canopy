@@ -4,9 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -135,13 +133,9 @@ func TestNoTasksMeansNoPane(t *testing.T) {
 // that all read the same and the colour is decoration.
 //
 // Asserted on what a terminal would actually receive rather than on the style values, because the
-// question is whether the rows differ on screen. Under go test lipgloss finds no terminal and
-// strips every colour, which is why the profile is forced here and put back afterwards.
+// question is whether the rows differ on screen. Styles always render in full colour; the terminal
+// program downsamples on the way out.
 func TestTheThreeTaskStatesAreThreeDifferentRows(t *testing.T) {
-	saved := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	defer lipgloss.SetColorProfile(saved)
-
 	engine := &fakeEngine{session: withTasks(
 		core.Task{Text: "finished thing", State: core.TaskDone},
 		core.Task{Text: "current thing", State: core.TaskInProgress},
@@ -235,7 +229,7 @@ func TestTheBtwPanelStandsInTheTaskBlocksPlace(t *testing.T) {
 		t.Errorf("both blocks are up at once:\n%s", opened)
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = m.Update(keyCode(tea.KeyEsc))
 	closed := plain(m.Body())
 	if !strings.Contains(closed, "the task item") {
 		t.Errorf("closing the btw did not bring the tasks back:\n%s", closed)

@@ -320,3 +320,32 @@ func TestAQuestionFromAnUnnamedConversationIsStillNamed(t *testing.T) {
 	}
 	_ = e.Answer("session-orphan", false, false)
 }
+
+// Grants come back in the same order however they were given, so /grants revoke N names the grant
+// the listing showed as N.
+func TestGrantsAreListedInAFixedOrder(t *testing.T) {
+	e := New(nil)
+	defer e.Close()
+	scopes := []permission.Scope{{Tool: "write_file", Path: "b/"}, {Tool: "run_command", Command: "make"},
+		{Tool: "write_file", Path: "a/"}}
+	for _, scope := range scopes {
+		e.grantsFor("s1").Grant(scope)
+	}
+	first := e.Grants("s1")
+	other := New(nil)
+	defer other.Close()
+	for i := len(scopes) - 1; i >= 0; i-- {
+		other.grantsFor("s1").Grant(scopes[i])
+	}
+	second := other.Grants("s1")
+	for i := range first {
+		if first[i] != second[i] {
+			t.Fatalf("the order depends on how they were given: %v and %v", first, second)
+		}
+	}
+	for i := 1; i < len(first); i++ {
+		if first[i-1].String() > first[i].String() {
+			t.Fatalf("not in the order they read: %v", first)
+		}
+	}
+}

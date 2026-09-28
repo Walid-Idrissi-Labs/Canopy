@@ -1,10 +1,13 @@
 package chat_test
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/config"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
@@ -18,11 +21,11 @@ import (
 
 // run types a command and sends it, returning the model and whatever command came back.
 func run(m chat.Model, typed string) (chat.Model, tea.Cmd) {
-	return press2(typeText(m, typed), tea.KeyEnter)
+	return press2(typeText(m, typed), keyCode(tea.KeyEnter))
 }
 
-func press2(m chat.Model, key tea.KeyType) (chat.Model, tea.Cmd) {
-	return m.Update(tea.KeyMsg{Type: key})
+func press2(m chat.Model, key tea.KeyPressMsg) (chat.Model, tea.Cmd) {
+	return m.Update(key)
 }
 
 // None of them reach a provider. They are answered before anything is expanded or sent, so they
@@ -54,8 +57,18 @@ func TestUndoRestoresTheWorkspaceAndKeepsTheConversation(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("/undo did nothing at all")
 	}
-	// Done off the update loop, like compaction, because restoring a checkpoint runs git over a
-	// whole worktree and the frame somebody is looking at must not block on it.
+	// Done off the update loop, like compaction, because working out and restoring a checkpoint
+	// runs git over a whole worktree and the frame somebody is looking at must not block on it.
+	next, _ = next.Update(cmd())
+
+	// The first /undo only shows what would change; nothing is restored on one command.
+	if len(engine.undone) != 0 {
+		t.Fatal("the first /undo restored the workspace without showing what it would change")
+	}
+	if !strings.Contains(plain(next.Body()), "main.go") {
+		t.Fatalf("the preview does not list what would change:\n%s", plain(next.Body()))
+	}
+	next, cmd = run(next, "/undo")
 	next, _ = next.Update(cmd())
 
 	if len(engine.undone) != 1 || engine.undone[0] != "turn-2" {
@@ -206,10 +219,45 @@ func TestTheThemeCommandChangesThePaletteAndListsTheChoices(t *testing.T) {
 	// With no name it says what is on and what else there is, rather than doing nothing.
 	next, _ = run(next, "/theme")
 	view := plain(next.Body())
-	for _, want := range []string{"mono", "canopy"} {
+	for _, want := range []string{"mono", "canopy", "nord", "catppuccin"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the bare command does not mention %q:\n%s", want, view)
 		}
+	}
+}
+
+// A theme file somebody wrote is picked up by a bare /theme, without restarting, and one that does not
+// load is named there with the reason.
+func TestABareThemeCommandReadsThemeFilesAgain(t *testing.T) {
+	defer theme.Set(theme.Default)
+	// Registered before the variable is set, so it runs after it is restored and reads the files the
+	// rest of the tests expect.
+	t.Cleanup(theme.Reload)
+	dir := t.TempDir()
+	t.Setenv(theme.ThemesDirEnv, dir)
+	m := chat.New(&fakeEngine{session: core.Session{ID: "s1"}}, "s1", "canopy", "claude")
+	m.SetSize(200, 28)
+
+	data, err := os.ReadFile("../theme/themes/nord.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mine := strings.Replace(string(data), `"name": "nord"`, `"name": "mine"`, 1)
+	if err := os.WriteFile(filepath.Join(dir, "mine.json"), []byte(mine), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{"name": "broken"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next, _ := run(m, "/theme")
+	view := plain(next.Body())
+	if !strings.Contains(view, "mine") || !strings.Contains(view, "broken.json") ||
+		!strings.Contains(view, "Canopy's own") {
+		t.Fatalf("the new theme file, or the broken one, is not mentioned:\n%s", view)
+	}
+	_, _ = run(next, "/theme mine")
+	if got := theme.Current().Palette.Name; got != "mine" {
+		t.Fatalf("the palette is %q after asking for a theme written since the start", got)
 	}
 }
 
@@ -360,7 +408,7 @@ func TestPreviousBtwsAreKeptAndABareBtwReopensThem(t *testing.T) {
 	}
 
 	// Esc folds it away and the questions leave the screen with it.
-	closed, _ := press2(next, tea.KeyEsc)
+	closed, _ := press2(next, keyCode(tea.KeyEsc))
 	if strings.Contains(plain(closed.Body()), "where is the parser") {
 		t.Errorf("esc did not close the panel:\n%s", plain(closed.Body()))
 	}
@@ -396,13 +444,13 @@ func TestTheBtwPanelScrollsAndStopsAtItsEnds(t *testing.T) {
 		t.Fatalf("the panel shows more than its window:\n%s", view)
 	}
 	for range 20 {
-		next, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+		next, _ = next.Update(keyCode(tea.KeyPgUp))
 	}
 	if view := plain(next.Body()); !strings.Contains(view, "? one") {
 		t.Errorf("scrolling up never reaches the first aside:\n%s", view)
 	}
 	for range 40 {
-		next, _ = next.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		next, _ = next.Update(keyCode(tea.KeyPgDown))
 	}
 	if view := plain(next.Body()); !strings.Contains(view, "? six") {
 		t.Errorf("scrolling back down never returns to the newest aside:\n%s", view)
@@ -474,5 +522,134 @@ func TestABareBtwWithNoHistoryStillSaysWhatItWants(t *testing.T) {
 
 	if view := plain(next.Body()); !strings.Contains(view, "like to know") {
 		t.Errorf("a bare /btw with no history does not say what it wants:\n%s", view)
+	}
+}
+
+// /context says where the tokens go, part by part, and what the last turn took from the cache,
+// and says in words when the cache stopped working.
+func TestContextShowsWhereTheTokensGo(t *testing.T) {
+	engine := &fakeEngine{
+		session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: []core.Turn{
+			{ID: "a", State: core.TurnComplete, Usage: core.Usage{InputTokens: 900, CacheReadTokens: 9000}},
+			{ID: "b", State: core.TurnComplete, Usage: core.Usage{InputTokens: 12000, CacheWriteTokens: 500}},
+		}},
+		inventory: core.Inventory{System: 2000, Tools: 3000, ToolCount: 14, Results: 15000, Messages: 6},
+	}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(120, 40)
+	next, _ := run(m, "/context")
+	view := plain(next.Body())
+	for _, want := range []string{"system prompt", "2.0k", "14 tools", "tool results", "15.0k", "75%",
+		"20.0k", "6 messages", "0% of it from the cache", "nothing came from the cache"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("/context lacks %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "reasoning") {
+		t.Errorf("an empty part was listed:\n%s", view)
+	}
+}
+
+// /budget sets this agent's cap, or with all the cap across every agent, and shows both when asked.
+func TestBudgetSetsAndShowsTheCaps(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(100, 30)
+	next, _ := run(m, "/budget 2.50")
+	if engine.budget.Limit != 2.50 {
+		t.Fatalf("the agent's cap is %v", engine.budget.Limit)
+	}
+	next, _ = run(next, "/budget all $10")
+	if engine.overall.Limit != 10 {
+		t.Fatalf("the overall cap is %v", engine.overall.Limit)
+	}
+	next, _ = run(next, "/budget")
+	if view := plain(next.Body()); !strings.Contains(view, "$0.00 of $2.50") || !strings.Contains(view, "$0.00 of $10.00") {
+		t.Fatalf("/budget does not show both caps:\n%s", view)
+	}
+	next, _ = run(next, "/budget lots")
+	if view := plain(next.Body()); !strings.Contains(view, "amount in dollars") {
+		t.Fatalf("a bad amount was not explained:\n%s", view)
+	}
+}
+
+// Confirming takes the preview again: a file edited between the two /undo commands would be undone
+// without having been listed, so the new list is shown and nothing is restored until it is confirmed.
+func TestUndoAsksAgainWhenTheWorkspaceMovedSinceThePreview(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "first"}, State: core.TurnComplete},
+	}}, undoChanges: []string{"restore main.go"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+	next, cmd := run(m, "/undo")
+	next, _ = next.Update(cmd())
+
+	engine.undoChanges = []string{"restore main.go", "remove notes.txt"}
+	engine.undoState = "moved"
+	next, cmd = run(next, "/undo")
+	next, _ = next.Update(cmd())
+	if len(engine.undone) != 0 {
+		t.Fatal("the workspace was restored over a change the preview never listed")
+	}
+	if view := plain(next.Body()); !strings.Contains(view, "changed since that preview") || !strings.Contains(view, "notes.txt") {
+		t.Fatalf("the new list was not shown:\n%s", view)
+	}
+	next, cmd = run(next, "/undo")
+	_, _ = next.Update(cmd())
+	if len(engine.undone) != 1 {
+		t.Fatal("confirming the new list did not restore")
+	}
+}
+
+// The same list is not the same workspace: a file already listed and edited again is caught by the
+// snapshot, and a confirmation that cannot take the preview again undoes nothing.
+func TestUndoComparesTheWorkspaceNotTheList(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		{ID: "turn-1", Request: core.Message{Text: "first"}, State: core.TurnComplete},
+	}}, undoChanges: []string{"restore main.go"}, undoState: "a"}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(96, 28)
+	next, cmd := run(m, "/undo")
+	next, _ = next.Update(cmd())
+	engine.undoState = "b" // main.go edited again: same list, different content
+	next, cmd = run(next, "/undo")
+	next, _ = next.Update(cmd())
+	if len(engine.undone) != 0 || !strings.Contains(plain(next.Body()), "changed since that preview") {
+		t.Fatalf("an edit to a listed file went unnoticed: undone %v\n%s", engine.undone, plain(next.Body()))
+	}
+	// Armed again with the new list. Only the preview fails now: the restore itself would succeed,
+	// so nothing undone means the confirmation refused to go ahead blind.
+	engine.previewErr = errors.New("git is not answering")
+	next, cmd = run(next, "/undo")
+	_, _ = next.Update(cmd())
+	if len(engine.undone) != 0 {
+		t.Fatal("undone although the preview could not be taken again")
+	}
+}
+
+// What a conversation may do without asking is listed in the prompt's own words, and taken back by
+// number; an empty list says so.
+func TestGrantsAreListedAndTakenBack(t *testing.T) {
+	engine := &fakeEngine{session: core.Session{ID: "s1"}}
+	m := chat.New(engine, "s1", "canopy", "claude")
+	m.SetSize(120, 30)
+	next, _ := run(m, "/grants")
+	if !strings.Contains(next.Notice(), "no standing permissions") {
+		t.Fatalf("an empty list said %q", next.Notice())
+	}
+	engine.granted = []permission.Scope{{Tool: "run_command", Command: "go test ./..."}, {Tool: "write_file", Path: "internal/"}}
+	next, _ = run(next, "/grants")
+	if !strings.Contains(next.Notice(), `1  running "go test ./..."`) || !strings.Contains(next.Notice(), "2  write_file on internal/") {
+		t.Fatalf("listed %q", next.Notice())
+	}
+	next, _ = run(next, "/grants revoke 1")
+	if len(engine.granted) != 1 || engine.granted[0].Tool != "write_file" || !strings.Contains(next.Notice(), "taken back") {
+		t.Fatalf("granted %v, notice %q", engine.granted, next.Notice())
+	}
+	for _, bad := range []string{"9", "0", "-1"} {
+		next, _ = run(next, "/grants revoke "+bad)
+		if !strings.Contains(next.Error(), "revoke which") || len(engine.granted) != 1 {
+			t.Fatalf("revoke %s: error %q, granted %v", bad, next.Error(), engine.granted)
+		}
 	}
 }

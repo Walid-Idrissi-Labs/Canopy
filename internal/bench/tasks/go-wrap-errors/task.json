@@ -1,0 +1,1 @@
+{"prompt": "Callers of Load cannot tell a missing file from other failures. Make the tests pass.", "check": ["go", "test", "-v", "./..."], "kind": "bug fix"}

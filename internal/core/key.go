@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -163,7 +164,16 @@ type KeyRate struct {
 func (r KeyRate) IsZero() bool { return r == KeyRate{} }
 
 // Validate checks that a rate is usable.
+// maxRatePerMTok is more than any model has cost per million tokens, by a wide margin.
+const maxRatePerMTok = 10000
+
 func (r KeyRate) Validate() error {
+	for _, v := range []float64{r.InputPerMTok, r.OutputPerMTok, r.CacheReadPerMTok} {
+		// Not a number, or no price anybody charges: refused here rather than stored as nonsense.
+		if math.IsNaN(v) || math.IsInf(v, 0) || v > maxRatePerMTok {
+			return fmt.Errorf("a rate is dollars per million tokens, between 0 and %g", float64(maxRatePerMTok))
+		}
+	}
 	switch {
 	case r.InputPerMTok < 0 || r.OutputPerMTok < 0 || r.CacheReadPerMTok < 0:
 		return fmt.Errorf("a rate cannot be negative")

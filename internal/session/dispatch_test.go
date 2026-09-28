@@ -581,6 +581,11 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 	client := &scriptedClient{name: "claude", events: reply("the migration works; tests pass")}
 	e := New(fixedResolver{client: client, id: anthropicID()})
 	t.Cleanup(e.Close)
+	var askedAbout []string
+	e.SetStanding(func(agent string) string {
+		askedAbout = append(askedAbout, agent)
+		return "stale at abc1234: tests were not run since its last edit"
+	})
 	main, err := e.AddAgent(context.Background(), Agent{
 		Name: "main", KeyName: "claude", Model: "claude-opus-5",
 		Dir: t.TempDir(), Trust: core.TrustStandard,
@@ -594,6 +599,22 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 		t.Fatal(err)
 	}
 	child, _ := e.Session(created[0].SessionID)
+	// The agents list knows who dispatched it.
+	listed := false
+	for _, status := range e.AgentStatuses() {
+		if status.Agent.SessionID == child.ID {
+			listed = true
+			if status.Parent != "main" {
+				t.Fatalf("the dispatched agent's parent reads %q", status.Parent)
+			}
+		}
+		if status.Agent.Name == "main" && status.Parent != "" {
+			t.Fatalf("the agent a person started has a parent: %q", status.Parent)
+		}
+	}
+	if !listed {
+		t.Fatal("the dispatched agent is not in the list")
+	}
 	waitForTurn(t, e, child.ID, child.Turns[0].ID)
 	deadline := time.Now().Add(3 * time.Second)
 	for e.PendingJoins(parent.ID) == 0 && time.Now().Before(deadline) {
@@ -616,10 +637,95 @@ func TestADispatchedAgentReportsBackToItsOrchestrator(t *testing.T) {
 	if len(last.Reports) != 1 || !strings.Contains(last.Reports[0], "the migration works") {
 		t.Fatalf("the report did not travel with the next message: %+v", last.Reports)
 	}
+	// The verifier's word on its work, not the agent's, goes with it, asked about that agent.
+	if !strings.Contains(last.Reports[0], "verification: stale at abc1234") {
+		t.Fatalf("the report carries no verdict: %q", last.Reports[0])
+	}
+	if agent, _ := e.AgentFor(created[0].SessionID); len(askedAbout) == 0 || askedAbout[0] != agent.Name {
+		t.Fatalf("the standing was asked about %v", askedAbout)
+	}
 	if strings.Contains(last.Note, "the migration works") {
 		t.Fatal("an agent's report went out on Canopy's own instruction channel")
 	}
 	if e.PendingJoins(parent.ID) != 0 {
 		t.Fatal("a delivered report stayed pending")
+	}
+}
+
+// An agent started from a definition gets the definition's instructions with its first message, in
+// Canopy's note, since the person chose it.
+func TestADefinitionsInstructionsReachItsAgent(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	if _, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", KeyName: "claude", Model: "claude-opus-5", Dir: t.TempDir(), Trust: core.TrustStandard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := e.Spawn(context.Background(), Dispatch{Count: 1, Profile: "claude", Task: "review it",
+		Instructions: "Report bugs only.", Definition: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := e.Session(created[0].SessionID)
+	waitForTurn(t, e, child.ID, child.Turns[0].ID)
+	child, _ = e.Session(created[0].SessionID)
+	if note := child.Turns[0].Request.Note; !strings.Contains(note, "Report bugs only.") {
+		t.Fatalf("the definition's instructions did not reach the agent: %q", note)
+	}
+}
+
+// A definition limited to reading tools starts agents that cannot write, whatever the profile
+// allows, and the question the person answers says so.
+func TestADefinitionsCeilingLowersTheAgent(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: reply("done")}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	if _, err := e.AddAgent(context.Background(), Agent{
+		Name: "main", KeyName: "claude", Model: "claude-opus-5", Dir: t.TempDir(), Trust: core.TrustBroad,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := Dispatch{Count: 1, Profile: "claude", Task: "review it", Definition: "reviewer",
+		Ceiling: core.TrustReadOnly}
+	if q := (Confirmation{Dispatch: request}).Question(); !strings.Contains(q, "as reviewer (read-only)") {
+		t.Errorf("the question hides the definition: %q", q)
+	}
+	created, err := e.Spawn(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created[0].Trust != core.TrustReadOnly {
+		t.Fatalf("the reviewer runs at %q", created[0].Trust)
+	}
+}
+
+// An agent that finishes having said nothing reports that, rather than an empty report that reads
+// as one lost on the way.
+func TestAnAgentThatSaidNothingSaysSo(t *testing.T) {
+	client := &scriptedClient{name: "claude", events: []core.StreamEvent{{Kind: core.EventDone, StopReason: core.StopEndTurn}}}
+	e := New(fixedResolver{client: client, id: anthropicID()})
+	t.Cleanup(e.Close)
+	main, err := e.AddAgent(context.Background(), Agent{Name: "main", KeyName: "claude", Model: "claude-opus-5",
+		Dir: t.TempDir(), Trust: core.TrustStandard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := e.Spawn(context.Background(), Dispatch{Count: 1, Profile: "claude", Task: "try it", Parent: main.SessionID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, _ := e.Session(created[0].SessionID)
+	waitForTurn(t, e, child.ID, child.Turns[0].ID)
+	deadline := time.Now().Add(3 * time.Second)
+	for e.PendingJoins(main.SessionID) == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	e.mu.Lock()
+	notes := append([]string(nil), e.joinNotes[main.SessionID]...)
+	e.mu.Unlock()
+	if len(notes) != 1 || !strings.Contains(notes[0], "without saying anything") {
+		t.Fatalf("reports %q", notes)
 	}
 }

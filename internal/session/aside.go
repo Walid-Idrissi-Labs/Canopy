@@ -70,7 +70,7 @@ func (e *Engine) Aside(ctx context.Context, sessionID, question string) (string,
 		return "", err
 	}
 
-	messages := append(snapshot.History(), core.Message{Role: core.RoleUser, Text: question})
+	messages := append(core.KeepRecentPictures(snapshot.History()), core.Message{Role: core.RoleUser, Text: question})
 
 	stream, err := client.Stream(ctx, core.Request{
 		Model:    snapshot.Model,

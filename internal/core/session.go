@@ -187,6 +187,10 @@ type Turn struct {
 	// before it existed, which History rebuilds the old way.
 	Steps []Message
 
+	// Notices are things said about the turn rather than in it, a search the provider ran for it,
+	// the statement a delegated route opens with. Shown, not sent.
+	Notices []string
+
 	// Context is the size of the last request this turn sent, cached and uncached input together,
 	// plus what came back. It is what the conversation measures on the provider's own count, which
 	// the turn's Usage cannot say: Usage adds up every step, so a ten step turn reports roughly ten
@@ -204,6 +208,15 @@ type Turn struct {
 
 	// Error explains a failed turn in words a user can act on.
 	Error string
+
+	// ErrorKind classifies a provider failure, and RetryAfter is how long the provider asked for
+	// before trying again; both empty when the failure was not the provider's or it did not say.
+	ErrorKind  ProviderErrorKind `json:",omitempty"`
+	RetryAfter time.Duration     `json:",omitempty"`
+
+	// Retried marks a failed turn that has been tried again. It stays in the transcript and in what
+	// the model is sent, and the retry asks the model to carry on from it.
+	Retried bool `json:",omitempty"`
 
 	// Checkpoint is the worktree state captured before this turn ran, empty when nothing was
 	// captured. Undoing a turn restores it.
@@ -413,7 +426,7 @@ func (s Session) History() []Message {
 	if compaction, ok := s.Compacted(); ok && compaction.Through <= len(turns) {
 		messages = append(messages, Message{
 			Role: RoleUser,
-			Text: "Summary of the earlier part of this conversation:\n\n" + compaction.Summary,
+			Text: SummaryHeading + compaction.Summary,
 		})
 		turns = turns[compaction.Through:]
 		compactedAt = compaction.At

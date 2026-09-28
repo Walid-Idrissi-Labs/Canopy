@@ -19,6 +19,11 @@ import (
 // is safe to use one is Child's problem, and every signal below goes through Child.alive so that the
 // answer cannot go stale between the check and the signal.
 
+// tree is nothing more on unix: the process group Contain made is what holds a command's children.
+type tree struct{}
+
+func holdTree(*exec.Cmd) tree { return tree{} }
+
 // setProcessGroup puts the command in a new process group of its own.
 func setProcessGroup(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {

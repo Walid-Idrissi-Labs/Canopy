@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/keys"
@@ -223,16 +223,16 @@ type wizardRoutes struct{ *fakeRoutes }
 func wizardSignIn(t *testing.T, m keysui.Model, name string) keysui.Model {
 	t.Helper()
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m, _ = m.Update(keyText("a"))
 	for _, r := range name {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m, _ = m.Update(keyCode(tea.KeyEnter))
+	m, _ = m.Update(keyText("j"))
+	m, _ = m.Update(keyText("j"))
 
 	var cmd tea.Cmd
-	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = m.Update(keyCode(tea.KeyEnter))
 	for range 2 {
 		if cmd == nil {
 			t.Fatal("the wizard stopped before the sign-in finished")

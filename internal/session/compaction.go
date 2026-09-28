@@ -137,7 +137,7 @@ func (e *Engine) summarise(
 	// The earlier summary and the turns since it, not the whole conversation again: a second
 	// compaction that resent everything from the first turn would overflow the very window it is
 	// meant to make room in.
-	history := core.Session{Turns: older, Compactions: session.Compactions}.History()
+	history := core.KeepRecentPictures(core.Session{Turns: older, Compactions: session.Compactions}.History())
 	history = append(history, core.Message{Role: core.RoleUser, Text: compactionPrompt})
 
 	// The same system prompt and tool list as the conversation, so the request starts with exactly
@@ -149,6 +149,7 @@ func (e *Engine) summarise(
 		System:    e.systemPrompt(),
 		Messages:  history,
 		MaxTokens: summaryMaxTokens,
+		WebSearch: e.webSearchOn(),
 	}
 	if tools != nil {
 		request.Tools = tools.Definitions()

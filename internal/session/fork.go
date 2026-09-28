@@ -113,6 +113,10 @@ func (e *Engine) Fork(sessionID, throughTurnID string) (core.Session, error) {
 	for i, turn := range out.Turns {
 		e.persistTurn(out.ID, i, turn)
 	}
+	// A fork carries everything its source read, so it carries the taint too.
+	if e.tainted(source.ID) {
+		e.markTainted(out.ID)
+	}
 
 	e.events.Publish(core.Event{Kind: core.EventSessionsChanged, SessionID: forked.ID})
 	e.events.Publish(core.Event{Kind: core.EventSessionUpdated, SessionID: source.ID})

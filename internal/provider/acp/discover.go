@@ -265,6 +265,9 @@ func (d Discovery) account(ctx context.Context, cli string) (Account, error) {
 	}, nil
 }
 
+// Bridge finds the ACP bridge the Claude route talks through, as Find does.
+func (d Discovery) Bridge() (string, error) { return d.bridge() }
+
 // bridge finds the program that speaks ACP to Claude Code.
 func (d Discovery) bridge() (string, error) {
 	if override := strings.TrimSpace(d.getenv(BridgeEnv)); override != "" {

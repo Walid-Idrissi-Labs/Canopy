@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -352,8 +352,29 @@ func (m Model) paneBottom(status session.AgentStatus, border lipgloss.Style, inn
 	if status.State == core.AgentWorking {
 		fire = emberLit()
 	}
-	rule := strings.Repeat("─", inner-brand.EmberWidth-2)
-	return border.Render("╰"+rule) + " " + fire + " " + border.Render("╯")
+	// What the agent has cost so far and how much of it came from the cache, riding the border,
+	// so eight panes are eight receipts without a screen of their own.
+	receipt := ""
+	if r := receiptFor(status.Usage); r != "" && lipgloss.Width(r)+4 <= inner-brand.EmberWidth-2 {
+		receipt = " " + theme.Current().Muted.Render(r) + " "
+	}
+	rule := strings.Repeat("─", inner-brand.EmberWidth-2-lipgloss.Width(receipt)-1)
+	return border.Render("╰─") + receipt + border.Render(rule) + " " + fire + " " + border.Render("╯")
+}
+
+// receiptFor is an agent's spend in a few characters: cost where the price is known, then the share
+// of what it read that came from the provider's cache.
+func receiptFor(u core.Usage) string {
+	read := u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens
+	if read == 0 {
+		return ""
+	}
+	parts := []string{}
+	if u.CostKnown {
+		parts = append(parts, fmt.Sprintf("$%.2f", u.CostUSD))
+	}
+	parts = append(parts, fmt.Sprintf("%d%% cached", u.CacheReadTokens*100/read))
+	return strings.Join(parts, " · ")
 }
 
 // paneBody is what a pane shows: the agent's conversation, drawn by the same renderer the chat
@@ -378,13 +399,12 @@ func (m Model) paneBody(status session.AgentStatus, width, height int, focused b
 			t.Muted.Render("nothing said yet")}
 	} else {
 		// Only the turns whose tail can fit are rendered, because rendering a long transcript to
-		// throw most of it away is markdown work done per pane per frame. The tool kinds are not
-		// threaded through here, so a pane draws tool calls without their kind labels; the full
-		// labels are one keystroke away in the view this pane is a miniature of.
+		// throw most of it away is markdown work done per pane per frame. Tool calls carry their
+		// kind labels, from the same registry the chat asks, so a call reads the same in a pane.
 		if keep := 3; len(s.Turns) > keep {
 			s.Turns = s.Turns[len(s.Turns)-keep:]
 		}
-		conversation = chat.Transcript(s, width, spinnerFrames[m.step%len(spinnerFrames)], nil)
+		conversation = chat.Transcript(s, width, spinnerFrames[m.step%len(spinnerFrames)], m.toolKinds())
 	}
 
 	lines := append(top, conversation...)
@@ -511,4 +531,23 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// toolKinds names the kind of a tool, for the labels a pane draws, with the registry looked up
+// once per pane rather than once per call drawn.
+func (m Model) toolKinds() func(name string) (core.ToolKind, bool) {
+	if m.engine == nil {
+		return nil
+	}
+	registry, ok := m.engine.Tools()
+	if !ok || registry == nil {
+		return nil
+	}
+	return func(name string) (core.ToolKind, bool) {
+		tool, found := registry.Get(name)
+		if !found {
+			return "", false
+		}
+		return tool.Kind(), true
+	}
 }

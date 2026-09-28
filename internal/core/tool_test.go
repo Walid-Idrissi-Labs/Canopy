@@ -197,3 +197,27 @@ func TestToolKindVocabulary(t *testing.T) {
 		t.Error("the vocabulary is closed")
 	}
 }
+
+type externalTool struct{ fakeNamed }
+
+func (externalTool) External() bool { return true }
+
+type fakeNamed struct{ name string }
+
+func (f fakeNamed) Name() string                                           { return f.name }
+func (fakeNamed) Description() string                                      { return "d" }
+func (fakeNamed) Kind() ToolKind                                           { return ToolExecute }
+func (fakeNamed) Schema() json.RawMessage                                  { return json.RawMessage(`{"type":"object"}`) }
+func (fakeNamed) Run(context.Context, json.RawMessage) (ToolResult, error) { return ToolResult{}, nil }
+
+// A tool reached over MCP is marked external in its definition, so a provider can hold it back; a
+// tool of Canopy's own is not.
+func TestDefinitionsMarkExternalTools(t *testing.T) {
+	r := NewToolRegistry()
+	r.MustRegister(fakeNamed{name: "own"})
+	r.MustRegister(externalTool{fakeNamed{name: "mcp__srv__x"}})
+	defs := r.Definitions()
+	if defs[0].External || !defs[1].External {
+		t.Fatalf("definitions = %+v", defs)
+	}
+}

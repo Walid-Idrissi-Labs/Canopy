@@ -170,6 +170,7 @@ func turnKey(sessionID string, turn core.Turn, width int, kinds KindOf, detail D
 	write(turn.ID)
 	write(string(turn.State))
 	write(turn.Request.Text)
+	write(strconv.Itoa(len(turn.Request.Images)))
 	write(turn.Text)
 	write(turn.Thinking)
 	write(turn.Error)

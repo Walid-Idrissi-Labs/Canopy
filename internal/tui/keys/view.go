@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/catalog"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 )
@@ -41,6 +43,8 @@ func (m Model) Body() string {
 		b.WriteString(m.viewSignIn())
 	case modeRename:
 		b.WriteString(m.viewRename())
+	case modeRate:
+		b.WriteString(m.viewRate())
 	default:
 		b.WriteString(m.viewAdd())
 	}
@@ -100,8 +104,10 @@ func (m Model) viewList() string {
 			chosen = "*"
 		}
 
-		line := fmt.Sprintf("%-1s %-14s %-18s %-34s %s",
-			chosen, key.Ref.Name, key.Ref.Provider, model, key.Fingerprint)
+		// Padded by what shows rather than by bytes: the model is styled, and fmt would count its
+		// colour codes as width and leave the next column crooked.
+		line := fmt.Sprintf("%-1s %-14s %-18s %s %s",
+			chosen, key.Ref.Name, key.Ref.Provider, padTo(model, 34), key.Fingerprint)
 		if i == m.cursor {
 			marker = "> "
 			line = styleSelect.Render(line)
@@ -279,6 +285,20 @@ func (m Model) viewModelPick() string {
 // shows the fields ahead as well as the one being filled, and here there are none. What it shows
 // instead is what is not changing, since the question somebody has before pressing enter on this is
 // whether they are about to have to find their API key again.
+// viewRate is the price field: the owner's own rate, which Canopy shows as theirs, never as checked.
+func (m Model) viewRate() string {
+	var b strings.Builder
+	b.WriteString(styleMuted.Render("  Price for " + m.ratingKey.Name))
+	b.WriteString("\n\n")
+	b.WriteString(m.field("rate", m.draftRate, true))
+	b.WriteString("\n\n")
+	b.WriteString(styleMuted.Render("  dollars per million tokens: input output [cached]"))
+	b.WriteString("\n")
+	b.WriteString(styleMuted.Render("  for example 0.6 2.5; empty forgets it"))
+	b.WriteString("\n")
+	return b.String()
+}
+
 func (m Model) viewRename() string {
 	var b strings.Builder
 	b.WriteString(styleMuted.Render("  Renaming " + m.renamingFrom))
@@ -407,7 +427,7 @@ func (m Model) footer() string {
 			// here too rather than discovered.
 			return "a add   esc back   q quit"
 		}
-		return "enter use   m model   e rename   a add   d remove   j/k move   esc back"
+		return "enter use   t test   p price   m model   e rename   a add   d remove   esc back"
 	case modeConfirmRemove:
 		// The confirmation line in the body already says y or n, beside the name of the thing being
 		// removed. A footer repeating it is a second list to keep agreeing with the first.
@@ -418,9 +438,17 @@ func (m Model) footer() string {
 		// One key, because there is one thing to do. A footer offering enter here would be offering
 		// to hurry a vendor that is not listening.
 		return "esc cancel"
-	case modeModel, modeRename:
+	case modeModel, modeRename, modeRate:
 		return "enter save   esc cancel"
 	default:
 		return "enter continue   esc cancel"
 	}
+}
+
+// padTo pads a possibly styled string to width columns, measured as displayed.
+func padTo(s string, width int) string {
+	if gap := width - lipgloss.Width(s); gap > 0 {
+		return s + strings.Repeat(" ", gap)
+	}
+	return s
 }

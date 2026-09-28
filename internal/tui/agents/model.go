@@ -21,11 +21,12 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/paste"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
 )
 
@@ -94,6 +95,13 @@ type Engine interface {
 	// once: remember stays false from here, because a pane summarises the request and a standing
 	// approval must come from the full canonical prompt, which is D-35's line unmoved.
 	Answer(sessionID string, approved, remember bool) bool
+
+	// Cancel stops a conversation's turn in flight, keeping what has arrived; RemoveAgent forgets an
+	// agent, keeping its conversation on record.
+	Cancel(sessionID string)
+	RemoveAgent(name string) error
+	// Tools is the registry the agents were given, for labelling a tool call by its kind.
+	Tools() (*core.ToolRegistry, bool)
 }
 
 // SwitchMsg asks the application to open an agent's conversation.
@@ -123,6 +131,9 @@ type Model struct {
 	height int
 
 	statuses []session.AgentStatus
+	// branches are the tree glyphs drawn before each agent's name, one per status: empty for an
+	// agent a person started, the line to its orchestrator for one that was dispatched.
+	branches []string
 
 	// step is where the pane fires have got to, and the three fields after it are the machinery
 	// that keeps them moving only while there is something to move for. The animation runs while
@@ -139,8 +150,11 @@ type Model struct {
 	// with the same enter key that finished typing.
 	naming           bool
 	confirmingDirect bool
-	draft            string
-	err              string
+
+	// removing names the agent a first x asked about removing; a second x on it removes it.
+	removing string
+	draft    string
+	err      string
 	// notice is a one-keystroke outcome from the grid, such as a request disappearing before an
 	// answer arrived. The application draws it in the footer, where it cannot disturb pane geometry.
 	notice string
@@ -190,7 +204,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, flameTick(m.generation)
 	}
 
-	key, ok := msg.(tea.KeyMsg)
+	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		m.refresh()
 		// Work may have started since the last look, and the ticker only exists while there is
@@ -210,7 +224,41 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.typeName(key)
 	}
 
+	// A removal asked about lasts one keystroke, like every confirmation here.
+	asked := m.removing
+	m.removing = ""
+
 	switch pressed := key.String(); pressed {
+	case "s":
+		// Stops the selected agent's turn where it is; what it has done so far stays. One waiting on
+		// a question has a turn in flight too, and stopping it ends that turn.
+		if status, ok := m.Selected(); ok && (status.State == core.AgentWorking ||
+			status.State == core.AgentAwaitingPermission) && status.Agent.SessionID != "" {
+			m.engine.Cancel(status.Agent.SessionID)
+			m.notice = "stopped " + status.Agent.Name
+			m.refresh()
+		} else if ok {
+			m.notice = status.Agent.Name + " is not working, so there is nothing to stop"
+		}
+		return m, nil
+	case "x":
+		status, ok := m.Selected()
+		switch {
+		case !ok:
+		case status.State == core.AgentWorking || status.State == core.AgentAwaitingPermission:
+			m.notice = status.Agent.Name + " is working; stop it with s before removing it"
+		case asked != status.Agent.Name:
+			m.removing = status.Agent.Name
+			m.notice = "x again removes " + status.Agent.Name + "; its conversation stays on record"
+		default:
+			if err := m.engine.RemoveAgent(status.Agent.Name); err != nil {
+				m.err = err.Error()
+				return m, nil
+			}
+			m.notice = "removed " + status.Agent.Name
+			m.refresh()
+		}
+		return m, nil
 	case "enter":
 		// With the selected agent waiting on a person, enter answers rather than opens: yes, once,
 		// which is what somebody hovering a pane that names its request almost always means (D-50).
@@ -371,15 +419,23 @@ func (m *Model) SetVisible(visible bool) tea.Cmd {
 	return m.ensureFlame()
 }
 
+// Paste types pasted text into a new agent's name, while one is being named.
+func (m Model) Paste(text string) Model {
+	if m.naming {
+		m.draft += paste.Line(text)
+	}
+	return m
+}
+
 // typeName handles the keys while a new agent is being named.
-func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
-	switch key.Type {
-	case tea.KeyEsc:
+func (m Model) typeName(key tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch {
+	case key.Code == tea.KeyEsc:
 		m.naming = false
 		m.draft = ""
 		return m, nil
 
-	case tea.KeyEnter:
+	case key.Code == tea.KeyEnter:
 		// Guarded as well as constructed properly, because a screen that cannot create agents should
 		// say so rather than take the program down. This is what the nil engine did before the
 		// application was made to supply one.
@@ -399,25 +455,21 @@ func (m Model) typeName(key tea.KeyMsg) (Model, tea.Cmd) {
 		m.err = ""
 		return m, nil
 
-	case tea.KeyBackspace:
+	case key.Code == tea.KeyBackspace:
 		if runes := []rune(m.draft); len(runes) > 0 {
 			m.draft = string(runes[:len(runes)-1])
 		}
 		return m, nil
 
-	case tea.KeyRunes:
-		m.draft += string(key.Runes)
-		return m, nil
-
-	case tea.KeySpace:
-		m.draft += " "
+	case key.Text != "" && key.Mod&(tea.ModCtrl|tea.ModAlt) == 0:
+		m.draft += key.Text
 		return m, nil
 	}
 	return m, nil
 }
 
 // confirmDirect owns the second, deliberately separate step of agent creation.
-func (m Model) confirmDirect(key tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) confirmDirect(key tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch key.String() {
 	case "esc":
 		m.confirmingDirect = false
@@ -479,7 +531,7 @@ func (m *Model) refresh() {
 		m.statuses = nil
 		return
 	}
-	m.statuses = m.engine.AgentStatuses()
+	m.statuses, m.branches = nest(m.engine.AgentStatuses())
 
 	if m.anchored == "" {
 		if len(m.statuses) > 0 {
@@ -683,6 +735,9 @@ func (m Model) list() string {
 		}
 
 		b.WriteString(marker)
+		if i < len(m.branches) && m.branches[i] != "" {
+			name = t.Muted.Render(m.branches[i]) + name
+		}
 		b.WriteString(pad(name, 18))
 		b.WriteString(stateBadge(status.State))
 		b.WriteString("  ")
@@ -697,6 +752,16 @@ func (m Model) list() string {
 // What it says depends on the state, because a blocked agent's most useful fact is what it is
 // blocked on, and an idle one's is what it was last doing.
 func (m Model) detail(status session.AgentStatus) string {
+	// The branch first for an agent on one of its own, since that is where its work is to be
+	// found, reviewed and landed.
+	if status.Agent.Isolated && status.Agent.Branch != "" {
+		rest := m.plainDetail(status)
+		return "on " + status.Agent.Branch + " · " + rest
+	}
+	return m.plainDetail(status)
+}
+
+func (m Model) plainDetail(status session.AgentStatus) string {
 	switch {
 	case status.Waiting != "":
 		return "waiting: " + status.Waiting
@@ -740,6 +805,11 @@ func (m Model) summary(status session.AgentStatus) string {
 	if status.Usage.TotalTokens() > 0 {
 		parts = append(parts, fmt.Sprintf("%d tokens", status.Usage.TotalTokens()))
 	}
+	// How much of what it read came from the provider's cache, which decides most of what an agent
+	// costs: one sitting far below the others is resending its conversation fresh.
+	if read := status.Usage.InputTokens + status.Usage.CacheReadTokens + status.Usage.CacheWriteTokens; read > 0 {
+		parts = append(parts, fmt.Sprintf("%d%% cached", status.Usage.CacheReadTokens*100/read))
+	}
 	if status.Usage.CostKnown && status.Usage.CostUSD > 0 {
 		parts = append(parts, fmt.Sprintf("$%.4f", status.Usage.CostUSD))
 	}
@@ -772,3 +842,52 @@ func (m Model) Context() string {
 // Notice is the last grid-level outcome the frame should say. It is separate from err, which belongs
 // to the new-agent form and is rendered inside that form.
 func (m Model) Notice() string { return m.notice }
+
+// nest orders agents so each dispatched one sits under the agent that dispatched it, keeping the
+// order it was given among its siblings, and returns the tree glyph for each. An agent whose
+// orchestrator is not in the list stands at the top, as does any caught in a loop of parents.
+func nest(statuses []session.AgentStatus) ([]session.AgentStatus, []string) {
+	present := map[string]bool{}
+	for _, s := range statuses {
+		present[s.Agent.Name] = true
+	}
+	children := map[string][]session.AgentStatus{}
+	var roots []session.AgentStatus
+	for _, s := range statuses {
+		if s.Parent != "" && s.Parent != s.Agent.Name && present[s.Parent] {
+			children[s.Parent] = append(children[s.Parent], s)
+			continue
+		}
+		roots = append(roots, s)
+	}
+	out := make([]session.AgentStatus, 0, len(statuses))
+	glyphs := make([]string, 0, len(statuses))
+	placed := map[string]bool{}
+	var walk func(s session.AgentStatus, lead, glyph string)
+	walk = func(s session.AgentStatus, lead, glyph string) {
+		if placed[s.Agent.Name] {
+			return
+		}
+		placed[s.Agent.Name] = true
+		out = append(out, s)
+		glyphs = append(glyphs, glyph)
+		kids := children[s.Agent.Name]
+		for i, kid := range kids {
+			if i == len(kids)-1 {
+				walk(kid, lead+"   ", lead+"└─ ")
+			} else {
+				walk(kid, lead+"│  ", lead+"├─ ")
+			}
+		}
+	}
+	for _, root := range roots {
+		walk(root, "", "")
+	}
+	// Anything a loop of parents kept from being reached is still listed.
+	for _, s := range statuses {
+		if !placed[s.Agent.Name] {
+			walk(s, "", "")
+		}
+	}
+	return out, glyphs
+}

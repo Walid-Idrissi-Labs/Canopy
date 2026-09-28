@@ -136,6 +136,9 @@ func validate(req core.Request) error {
 		}
 	}
 
+	if req.HasImages() {
+		return fail("%s", core.ErrNoImages)
+	}
 	if !req.Effort.Valid() {
 		return fail("unknown effort %q", req.Effort)
 	}

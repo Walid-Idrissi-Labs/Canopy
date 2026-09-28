@@ -1,0 +1,24 @@
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ▲ canopy  help                                                               │
+╰──────────────────────────────────────────────────────────────────────────────╯
+anywhere
+  ?                     this screen, except while a message is half typed
+  ctrl+c                quit, asked twice in a conversation
+
+chat
+  enter                 send
+  shift+tab             plan or build, which is what the agent may change
+  /                     the command list, which narrows as you type
+  up / down             move the command list, or otherwise your sent history
+  tab                   take the highlighted command
+  //                    send a literal prompt beginning with slash
+  esc                   interrupt the turn, or clear a half written message
+  ctrl+c                stop the turn, then twice to quit
+  ctrl+n                a new conversation, keeping this one
+  ctrl+d                agents, and it works with a question waiting here
+  ctrl+k                credentials
+  ctrl+r                compact the conversation, asked twice because it spends
+  ctrl+o                show tool output and diffs in full, and fold them back
+  pgup / pgdown         scroll the conversation, or the btw panel while it is up
+  mouse drag            select conversation text, copied when you let go
+  j/k scroll   any other key back

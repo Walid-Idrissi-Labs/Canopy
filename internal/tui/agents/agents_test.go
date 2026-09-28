@@ -2,11 +2,12 @@ package agents_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/core"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/session"
@@ -23,6 +24,9 @@ type fakeEngine struct {
 	answered []answeredCall
 	// staleAnswer makes Answer report that a pane's request disappeared before the key arrived.
 	staleAnswer bool
+	cancelled   []string
+	removed     []string
+	tools       *core.ToolRegistry
 }
 
 // answeredCall is one reply the view sent through Answer, and on whose behalf.
@@ -60,6 +64,28 @@ func (e *fakeEngine) Session(id string) (core.Session, bool) {
 	s, ok := e.sessions[id]
 	return s, ok
 }
+
+func (e *fakeEngine) Cancel(id string) {
+	e.cancelled = append(e.cancelled, id)
+	for i := range e.statuses {
+		if e.statuses[i].Agent.SessionID == id {
+			e.statuses[i].State = core.AgentIdle
+		}
+	}
+}
+
+func (e *fakeEngine) RemoveAgent(name string) error {
+	e.removed = append(e.removed, name)
+	kept := e.statuses[:0]
+	for _, s := range e.statuses {
+		if s.Agent.Name != name {
+			kept = append(kept, s)
+		}
+	}
+	e.statuses = kept
+	return nil
+}
+func (e *fakeEngine) Tools() (*core.ToolRegistry, bool) { return e.tools, e.tools != nil }
 
 func (e *fakeEngine) AddAgent(_ context.Context, agent session.Agent) (session.Agent, error) {
 	if e.addErr != nil {
@@ -122,7 +148,7 @@ func plain(s string) string {
 }
 
 func key(m agents.Model, s string) agents.Model {
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)})
+	m, _ = m.Update(keyText(s))
 	return m
 }
 
@@ -371,7 +397,7 @@ func TestOpeningAnAgentAsksRatherThanActs(t *testing.T) {
 	))
 	m = key(m, "j")
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	_, cmd := m.Update(keyCode(tea.KeyEnter))
 	if cmd == nil {
 		t.Fatal("enter on an agent should ask to open it")
 	}
@@ -402,9 +428,9 @@ func TestCreatingAnAgent(t *testing.T) {
 	}
 
 	for _, r := range "parser" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 
 	if len(e.added) != 0 {
 		t.Fatal("enter on the name created a direct agent before showing its workspace warning")
@@ -445,9 +471,9 @@ func TestAFailedCreationKeepsTheName(t *testing.T) {
 
 	m = key(m, "n")
 	for _, r := range "main" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 	m = key(m, "y")
 
 	if !m.Naming() {
@@ -469,7 +495,7 @@ func TestEscFromDirectConfirmationReturnsToTheName(t *testing.T) {
 
 	m = key(m, "n")
 	for _, r := range "parser" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
 	m = key(m, "enter")
 	m = key(m, "esc")
@@ -492,7 +518,7 @@ func TestNamingTakesTheKeyboard(t *testing.T) {
 
 	m = key(m, "n")
 	for _, r := range "v2w" {
-		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m, _ = m.Update(keyText(string([]rune{r})))
 	}
 
 	if m.Mode() != agents.ModeList {
@@ -502,7 +528,7 @@ func TestNamingTakesTheKeyboard(t *testing.T) {
 		t.Errorf("the keystrokes did not reach the name:\n%s", plain(m.Body()))
 	}
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, _ = m.Update(keyCode(tea.KeyEsc))
 	if m.Naming() {
 		t.Error("esc should cancel naming")
 	}
@@ -514,12 +540,12 @@ func TestNamingTakesTheKeyboard(t *testing.T) {
 func TestCreatingAnAgentWithoutAnEngineSaysSoRatherThanCrashing(t *testing.T) {
 	var m agents.Model
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m, _ = m.Update(keyText("n"))
 	if !m.Naming() {
 		t.Fatal("n did not open the name field")
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("worker")})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyText("worker"))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 
 	if !strings.Contains(m.Body(), "no engine") {
 		t.Errorf("the failure is not on screen:\n%s", m.Body())
@@ -529,13 +555,143 @@ func TestCreatingAnAgentWithoutAnEngineSaysSoRatherThanCrashing(t *testing.T) {
 func TestAnAgentNeedsAName(t *testing.T) {
 	m := agents.New(&fakeEngine{})
 
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = m.Update(keyText("n"))
+	m, _ = m.Update(keyCode(tea.KeyEnter))
 
 	if !m.Naming() {
 		t.Error("an empty name was accepted and the field closed")
 	}
 	if !strings.Contains(m.Body(), "needs a name") {
 		t.Errorf("nothing says why:\n%s", m.Body())
+	}
+}
+
+// An agent's summary says how much of what it read came from the cache.
+func TestTheSummarySaysTheCacheShare(t *testing.T) {
+	s := status("idle-one", core.AgentIdle, "nothing yet")
+	s.Usage = core.Usage{InputTokens: 250, CacheReadTokens: 750}
+	e := engine(s)
+	e.sessions[s.Agent.SessionID] = core.Session{}
+	m := mosaic(e, 120, 30)
+	if view := plain(m.Body()); !strings.Contains(view, "1000 tokens  75% cached") {
+		t.Fatalf("the summary lacks the cache share:\n%s", view)
+	}
+}
+
+// A runaway agent is stopped from where it is seen, and a stopped one removed after asking twice;
+// one still working is never removed.
+func TestAnAgentIsStoppedAndRemovedFromTheList(t *testing.T) {
+	e := engine(status("worker", core.AgentWorking, "refactoring"))
+	e.statuses[0].Agent.SessionID = "s-worker"
+	m := model(e)
+	m = key(m, "x")
+	if len(e.removed) != 0 || !strings.Contains(m.Notice(), "stop it with s") {
+		t.Fatalf("a working agent was offered for removal: removed %v, notice %q", e.removed, m.Notice())
+	}
+	m = key(m, "s")
+	if len(e.cancelled) != 1 || e.cancelled[0] != "s-worker" {
+		t.Fatalf("stop cancelled %v", e.cancelled)
+	}
+	m = key(m, "x")
+	if len(e.removed) != 0 || !strings.Contains(m.Notice(), "x again removes worker") {
+		t.Fatalf("one x removed, or did not ask: %v %q", e.removed, m.Notice())
+	}
+	m = key(m, "j")
+	m = key(m, "x")
+	if len(e.removed) != 0 {
+		t.Fatal("an x after another key removed without asking again")
+	}
+	_ = key(m, "x")
+	if len(e.removed) != 1 || e.removed[0] != "worker" {
+		t.Fatalf("removed %v", e.removed)
+	}
+
+	// One waiting on a question has a turn in flight: it is stopped, and not removed.
+	asking := engine(status("asker", core.AgentAwaitingPermission, "waiting"))
+	asking.statuses[0].Agent.SessionID = "s-asker"
+	m = model(asking)
+	m = key(key(m, "x"), "x")
+	if len(asking.removed) != 0 {
+		t.Fatal("an agent waiting on a question was removed")
+	}
+	_ = key(m, "s")
+	if len(asking.cancelled) != 1 || asking.cancelled[0] != "s-asker" {
+		t.Fatalf("stop cancelled %v", asking.cancelled)
+	}
+}
+
+type labelledTool struct{ name string }
+
+func (l labelledTool) Name() string            { return l.name }
+func (l labelledTool) Description() string     { return l.name }
+func (l labelledTool) Kind() core.ToolKind     { return core.ToolExecute }
+func (l labelledTool) Schema() json.RawMessage { return json.RawMessage(`{"type":"object"}`) }
+func (l labelledTool) Run(context.Context, json.RawMessage) (core.ToolResult, error) {
+	return core.ToolResult{}, nil
+}
+
+// A tool call in a pane carries the kind label it has in the chat.
+func TestAPaneLabelsToolCallsByKind(t *testing.T) {
+	e := engine(status("one", core.AgentWorking, "task one"))
+	e.sessions["s-one"] = core.Session{ID: "s-one", Turns: []core.Turn{{ID: "t1", State: core.TurnComplete,
+		Request:     core.Message{Text: "go"},
+		ToolCalls:   []core.ToolCall{{ID: "c1", Name: "run_command", Input: []byte(`{"command":"make"}`)}},
+		ToolResults: []core.ToolResult{{CallID: "c1", Content: "ok"}}}}}
+	registry := core.NewToolRegistry()
+	registry.MustRegister(labelledTool{"run_command"})
+	e.tools = registry
+	m := key(model(e), "v")
+	if !strings.Contains(plain(m.Body()), "run ") {
+		t.Fatalf("the pane's tool call has no kind label:\n%s", plain(m.Body()))
+	}
+}
+
+// A dispatched agent is drawn under the agent that dispatched it, with the tree's lines, and one on
+// its own branch says which; an agent whose orchestrator is gone stands at the top.
+func TestDispatchedAgentsSitUnderTheirOrchestrator(t *testing.T) {
+	main := status("main", core.AgentIdle, "plan the work")
+	first := status("lexer", core.AgentWorking, "split the lexer")
+	first.Parent = "main"
+	first.Agent.Isolated, first.Agent.Branch = true, "canopy/lexer"
+	second := status("tests", core.AgentWorking, "write the tests")
+	second.Parent = "main"
+	orphan := status("stray", core.AgentFailed, "left behind")
+	orphan.Parent = "gone"
+	// Given in attention order, children before their parent, as the engine may.
+	m := model(engine(orphan, first, main, second))
+	body := plain(m.Body())
+	lines := strings.Split(body, "\n")
+	index := func(word string) int {
+		for i, l := range lines {
+			if strings.Contains(l, word) {
+				return i
+			}
+		}
+		t.Fatalf("%s is not listed:\n%s", word, body)
+		return -1
+	}
+	if index("main") >= index("lexer") || index("lexer") >= index("tests") {
+		t.Fatalf("children are not under their orchestrator:\n%s", body)
+	}
+	if !strings.Contains(lines[index("lexer")], "├─ lexer") || !strings.Contains(lines[index("tests")], "└─ tests") {
+		t.Fatalf("no tree lines:\n%s", body)
+	}
+	if !strings.Contains(lines[index("lexer")], "on canopy/lexer") {
+		t.Fatalf("the branch is not named:\n%s", body)
+	}
+	if strings.Contains(lines[index("stray")], "─") {
+		t.Fatalf("an agent whose orchestrator is gone is drawn as a child:\n%s", body)
+	}
+}
+
+// Agents whose parents name each other are still all listed, once each.
+func TestALoopOfParentsLosesNobody(t *testing.T) {
+	a := status("a", core.AgentIdle, "")
+	a.Parent = "b"
+	b := status("b", core.AgentIdle, "")
+	b.Parent = "a"
+	body := plain(model(engine(a, b)).Body())
+	if strings.Count(body, " a ")+strings.Count(body, "─ a")+strings.Count(body, "> a") == 0 || !strings.Contains(body, "b") {
+		t.Fatalf("an agent was lost:\n%s", body)
 	}
 }

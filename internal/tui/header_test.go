@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/tui/theme"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // The invariant the rest of the layout depends on. BodyHeight is computed from HeaderHeight, so a

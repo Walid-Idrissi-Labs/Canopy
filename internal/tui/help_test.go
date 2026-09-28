@@ -80,7 +80,7 @@ func TestAThemeCanBeLookedUpByNameAndAnUnknownOneSaysWhatExists(t *testing.T) {
 	if _, ok := theme.ByName("mono"); !ok {
 		t.Error("the monochrome theme cannot be found by name")
 	}
-	if _, ok := theme.ByName("solarized"); ok {
+	if _, ok := theme.ByName("no-such-theme"); ok {
 		t.Error("a theme that does not exist was found")
 	}
 	if names := theme.Names(); len(names) != len(theme.All()) {

@@ -342,3 +342,59 @@ func TestShuttingDownStopsEveryRun(t *testing.T) {
 		}
 	}
 }
+
+// With one slot, a second run waits queued until the first is done, and a queued run stopped
+// before its turn ends cancelled without having run.
+func TestRunsWaitForASlot(t *testing.T) {
+	t.Setenv(MaxTestsEnvVar, "1")
+	var mu sync.Mutex
+	states := map[string][]core.TestState{}
+	runner := NewRunner(func(run core.TestRun) {
+		mu.Lock()
+		states[run.ID] = append(states[run.ID], run.State)
+		mu.Unlock()
+	})
+	ctx := context.Background()
+	first, err := runner.Start(ctx, Test{Name: "slow", Command: ShellLine("sleep 1")}, target(t, "abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	second, err := runner.Start(ctx, Test{Name: "next", Command: ShellLine("true")}, target(t, "abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	waiting := states[second]
+	mu.Unlock()
+	if len(waiting) != 1 || waiting[0] != core.TestQueued {
+		t.Fatalf("the second run did not wait for the slot: %v", waiting)
+	}
+	third, err := runner.Start(ctx, Test{Name: "never", Command: ShellLine("true")}, target(t, "abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Cancel(third); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		mu.Lock()
+		f, s, th := states[first], states[second], states[third]
+		mu.Unlock()
+		if len(f) > 0 && f[len(f)-1] == core.TestPassing && len(s) > 0 && s[len(s)-1] == core.TestPassing &&
+			len(th) > 0 && th[len(th)-1] == core.TestCancelled {
+			for _, st := range th {
+				if st == core.TestRunning {
+					t.Fatal("a run stopped while queued ran anyway")
+				}
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("runs did not finish: first %v second %v third %v", f, s, th)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}

@@ -105,3 +105,77 @@ func TestARenderFromTheOldPaletteIsNotStoredAfterAThemeChange(t *testing.T) {
 		t.Error("a render made after the theme change was refused, so the cache never refills")
 	}
 }
+
+// The first frame is drawn before the terminal says what its background is, on the dark
+// assumption, so learning it is light has to throw away what was drawn: otherwise a picked up
+// conversation stays in the dark palette on a light terminal. Setting the same background again is
+// not a change and keeps the cache.
+func TestLearningTheBackgroundEmptiesTheRenderCaches(t *testing.T) {
+	defer theme.SetDark(true)
+	theme.SetDark(true)
+	session := core.Session{ID: "s1", Turns: []core.Turn{{
+		ID: "turn-1", State: core.TurnComplete, Request: core.Message{Text: "ask"}, Text: "answer",
+	}}}
+	filled := func() int {
+		Transcript(session, 60, ".", nil)
+		renderedTurns.Lock()
+		defer renderedTurns.Unlock()
+		return len(renderedTurns.lines)
+	}
+	if filled() == 0 {
+		t.Fatal("a finished turn was not cached, so this test proves nothing")
+	}
+	theme.SetDark(true)
+	renderedTurns.Lock()
+	kept := len(renderedTurns.lines)
+	renderedTurns.Unlock()
+	if kept == 0 {
+		t.Fatal("the same background again emptied the cache")
+	}
+	theme.SetDark(false)
+	renderedTurns.Lock()
+	left := len(renderedTurns.lines)
+	renderedTurns.Unlock()
+	if left != 0 {
+		t.Fatalf("%d renders in the dark palette survived learning the background is light", left)
+	}
+
+	// Highlighted code is cached apart, by its own key, which has to say which background it is for.
+	// Emptied first, so a run of this test after another finds neither entry already there.
+	chromaCache.Lock()
+	chromaCache.entries, chromaCache.order = map[uint64][]string{}, nil
+	chromaCache.Unlock()
+	code := []string{"func main() {}"}
+	cachedChromaBlock("go", code, 40)
+	theme.SetDark(true)
+	chromaCache.Lock()
+	before := len(chromaCache.entries)
+	chromaCache.Unlock()
+	cachedChromaBlock("go", code, 40)
+	chromaCache.Lock()
+	after := len(chromaCache.entries)
+	chromaCache.Unlock()
+	if after != before+1 {
+		t.Fatal("a block highlighted for a light background was reused on a dark one")
+	}
+}
+
+// A reply still streaming keeps the lines it has drawn so far; learning the background drops them
+// too, or the rest of that reply would be drawn under a head in the other palette.
+func TestLearningTheBackgroundEmptiesTheStreamingRenders(t *testing.T) {
+	defer theme.SetDark(true)
+	theme.SetDark(true)
+	streamingMarkdown("s1|t1", "first paragraph\n\nsecond", 60)
+	streaming.Lock()
+	filled := len(streaming.byTurn)
+	streaming.Unlock()
+	if filled == 0 {
+		t.Fatal("nothing was kept for the streaming reply, so this test proves nothing")
+	}
+	theme.SetDark(false)
+	streaming.Lock()
+	defer streaming.Unlock()
+	if len(streaming.byTurn) != 0 {
+		t.Fatal("lines drawn for a dark background survived learning it is light")
+	}
+}

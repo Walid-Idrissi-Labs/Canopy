@@ -1,0 +1,1 @@
+{"prompt": "ParseSpan in span.go is wrong for some inputs; the tests show which. Fix it without changing the tests.", "check": ["go", "test", "-v", "./..."], "kind": "bug fix"}

@@ -31,3 +31,17 @@ func SessionFrom(ctx context.Context) string {
 	id, _ := ctx.Value(sessionKey{}).(string)
 	return id
 }
+
+type taintedKey struct{}
+
+// WithTainted marks a tool call as made in a conversation that has taken in outside content, so a
+// tool that can reach the network confines it (D-57).
+func WithTainted(ctx context.Context) context.Context {
+	return context.WithValue(ctx, taintedKey{}, true)
+}
+
+// TaintedFrom reports whether a context was marked with WithTainted.
+func TaintedFrom(ctx context.Context) bool {
+	tainted, _ := ctx.Value(taintedKey{}).(bool)
+	return tainted
+}

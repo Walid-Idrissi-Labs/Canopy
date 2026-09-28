@@ -7,11 +7,18 @@
 package tools
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/childenv"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/egress"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/gitsafe"
+	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ErrOutsideWorkspace is returned for a path that resolves outside the agent's directory.
@@ -38,6 +45,33 @@ type Workspace struct {
 	// swapped underneath between the check and the use would change what "inside" means, which is
 	// the classic shape of this bug.
 	root string
+
+	policyOnce sync.Once
+	policy     sandbox.Policy
+
+	// diagnoser, when set, checks each file the edit and write tools change and its report is
+	// added to their result.
+	diagnoser Diagnoser
+}
+
+// Diagnoser checks a file just written and says what is wrong with it, or "" when it has nothing
+// to add. A language server behind it is the usual case.
+type Diagnoser interface {
+	Check(ctx context.Context, path, content string) string
+}
+
+// SetDiagnoser has the edit and write tools report problems in what they wrote.
+func (w *Workspace) SetDiagnoser(d Diagnoser) { w.diagnoser = d }
+
+// diagnose is what the diagnoser says about a file, set off from the tool's own result.
+func (w *Workspace) diagnose(ctx context.Context, path, content string) string {
+	if w.diagnoser == nil {
+		return ""
+	}
+	if report := w.diagnoser.Check(ctx, path, content); report != "" {
+		return "\n\n" + report
+	}
+	return ""
 }
 
 // OpenWorkspace resolves a directory and returns a workspace confined to it.
@@ -186,4 +220,66 @@ func (w *Workspace) Relative(path string) string {
 		return path
 	}
 	return rel
+}
+
+// SandboxPolicy is the confinement for commands run in this workspace, worked out once: the
+// workspace, the git directory it shares with its repository when it is a worktree, temporary
+// directories and toolchain caches, with the git directories themselves kept unwritable.
+func (w *Workspace) SandboxPolicy() sandbox.Policy {
+	w.policyOnce.Do(func() {
+		gitPath := func(flag string) string {
+			cmd := osexec.Command("git", "rev-parse", "--path-format=absolute", flag)
+			cmd.Dir = w.Root()
+			cmd.Env = gitsafe.InheritedFor(w.Root())
+			out, err := cmd.Output()
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(string(out))
+		}
+		gitDir, common := gitPath("--git-dir"), gitPath("--git-common-dir")
+		var extra []string
+		if common != "" {
+			extra = append(extra, common)
+		}
+		// The workspace's own .git is named whether or not it exists yet, so a repository the agent
+		// creates is covered from its first command.
+		w.policy = sandbox.ForWorkspace(w.Root(), extra...).
+			WithGitDirs(gitDir, common, filepath.Join(w.Root(), ".git"))
+	})
+	return w.policy
+}
+
+// Confinement is the sandbox for commands run in dir other than the agent's own, the project's tests
+// first, with the network narrowed as CANOPY_SANDBOX_NETWORK narrows the shell's and the environment
+// that needs: nil where there is no sandbox or it was switched off, so the caller runs them as before.
+func Confinement(dir string) (*sandbox.Policy, []string) {
+	if sandbox.Disabled() || sandbox.Available() != nil {
+		return nil, nil
+	}
+	w, err := OpenWorkspace(dir)
+	if err != nil {
+		return nil, nil
+	}
+	policy := w.SandboxPolicy()
+	var env []string
+	mode, err := egress.ParseMode(os.Getenv(egress.ModeEnvVar))
+	if err != nil {
+		// A setting that cannot be read is taken as the strictest, never as open.
+		mode = egress.ModeOff
+	}
+	switch mode {
+	case egress.ModeOff:
+		policy.Network = sandbox.NetworkNone
+	case egress.ModeRegistries:
+		proxy, err := egress.Shared(egress.ExtraHosts(os.Getenv(egress.AllowEnvVar)))
+		if err != nil {
+			// No proxy to go through, so no network, rather than all of it.
+			policy.Network = sandbox.NetworkNone
+			break
+		}
+		policy.Network, policy.ProxyPort = sandbox.NetworkProxy, proxy.Port()
+		env = append(childenv.Inherited(), proxy.Env()...)
+	}
+	return &policy, env
 }
