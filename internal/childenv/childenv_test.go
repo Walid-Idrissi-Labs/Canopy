@@ -36,8 +36,10 @@ func TestAProjectCanKeepANamedVariable(t *testing.T) {
 // The general credentials are recognised across clouds, CI, registries and services, and a
 // project's own token is not.
 func TestWellKnownCredentials(t *testing.T) {
-	for _, name := range []string{"ANTHROPIC_API_KEY", "GITHUB_TOKEN", "AWS_ACCESS_KEY_ID", "AZURE_STORAGE_KEY", "ARM_ACCESS_KEY",
-		"CLOUDFLARE_API_TOKEN", "VAULT_TOKEN", "DATABASE_URL", "CI_JOB_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"} {
+	for _, name := range []string{"ANTHROPIC_API_KEY", "GITHUB_TOKEN", "GITHUB_PAT", "GITLAB_API_KEY",
+		"BITBUCKET_APP_PASSWORD", "AWS_ACCESS_KEY_ID", "AZURE_STORAGE_KEY", "ARM_ACCESS_KEY",
+		"CLOUDFLARE_API_TOKEN", "VAULT_TOKEN", "DATABASE_URL", "CI_JOB_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS",
+		"NPM_READ_TOKEN", "PYPI_UPLOAD_TOKEN"} {
 		if !WellKnown(name) {
 			t.Errorf("%s is not recognised as a general credential", name)
 		}

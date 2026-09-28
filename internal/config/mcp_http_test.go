@@ -48,12 +48,14 @@ func TestHeadersComeFromTheEnvironment(t *testing.T) {
 func TestAGeneralCredentialIsNeverSent(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-real")
 	t.Setenv("GITHUB_TOKEN", "ghp-real")
-	server := MCPServer{Headers: map[string]string{"X-Key": "${ANTHROPIC_API_KEY}", "Authorization": "token ${GITHUB_TOKEN}"}}
+	t.Setenv("GITLAB_API_KEY", "gl-real")
+	server := MCPServer{Headers: map[string]string{"X-Key": "${ANTHROPIC_API_KEY}",
+		"Authorization": "token ${GITHUB_TOKEN}", "X-GitLab": "${GITLAB_API_KEY}"}}
 	headers, _, refused := server.ExpandedHeaders()
-	if len(refused) != 2 || strings.Contains(headers["X-Key"]+headers["Authorization"], "real") {
+	if len(refused) != 3 || strings.Contains(headers["X-Key"]+headers["Authorization"]+headers["X-GitLab"], "real") {
 		t.Fatalf("a general credential went into a header: %v, refused %v", headers, refused)
 	}
-	if vars := server.HeaderVariables(); strings.Join(vars, ",") != "ANTHROPIC_API_KEY,GITHUB_TOKEN" {
+	if vars := server.HeaderVariables(); strings.Join(vars, ",") != "ANTHROPIC_API_KEY,GITHUB_TOKEN,GITLAB_API_KEY" {
 		t.Fatalf("variables = %v", vars)
 	}
 }

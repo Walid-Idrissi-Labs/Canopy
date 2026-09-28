@@ -6,10 +6,9 @@
 // wrote. Different threat model, different answers, and reusing one for the other would be the kind
 // of mistake that only looks obvious afterwards.
 //
-// **Canopy does not sandbox and this package must never imply that it does.** A shell command runs
-// as the user, with the user's filesystem and the user's network and the user's credentials. What
-// this provides is a decision about whether to run it and a record of having run it. Those are worth
-// a great deal and they are not isolation.
+// This package decides whether a shell command may start and records that decision. The operating-
+// system sandbox, where available, separately limits what a started command can access; its
+// platform-specific boundaries are described in the sandbox package and LIMITATIONS.md.
 package permission
 
 import (

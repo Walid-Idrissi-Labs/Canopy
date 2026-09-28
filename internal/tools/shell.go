@@ -19,11 +19,10 @@ import (
 //
 // The broadest tool there is, by a distance. Structured path tools can refuse what
 // `Workspace.Resolve` will not resolve. A shell command is an opaque string that can do anything the
-// user can, and no amount of inspecting it changes that. The permission model controls whether this
-// process may start; it does not contain the process after that. This distinction is why its kind is
-// `execute` and why A4-04 treats that kind differently from every other.
-//
-// Canopy does not sandbox and must never imply that it does.
+// user can when no operating-system sandbox is available or sandboxing is disabled. The permission
+// model controls whether the process may start; the operating-system sandbox limits what it can do
+// where one is available. This distinction is why its kind is `execute` and why A4-04 treats that
+// kind differently from every other.
 type shellTool struct {
 	w       *Workspace
 	outputs *OutputStore
@@ -42,9 +41,11 @@ func (t *shellTool) Name() string        { return "run_command" }
 func (t *shellTool) Kind() core.ToolKind { return core.ToolExecute }
 
 func (t *shellTool) Description() string {
-	return "Run a shell command starting in the workspace. It is not sandboxed and can reach " +
-		"anything the user's account can reach. Use this for building, testing and anything there " +
-		"is no dedicated tool for. Output is truncated in the middle if it is very long."
+	return "Run a shell command starting in the workspace. Where available, an OS sandbox limits " +
+		"writes to the workspace, temporary directories and toolchain caches; network access is open " +
+		"by default. The result says when the sandbox was unavailable or switched off. Use this for " +
+		"building, testing and anything there is no dedicated tool for. Output is truncated in the " +
+		"middle if it is very long."
 }
 
 func (t *shellTool) Schema() json.RawMessage {

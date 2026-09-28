@@ -125,8 +125,10 @@ be rediscovered by getting burned by it.
   shell a containment boundary: an allowed shell command can invoke Git anywhere the user's account
   can reach (D-33).
 
-- The sandbox covers shell commands an agent runs and nothing else yet (D-56). On macOS it confines
-  writes to the workspace, temporary directories and toolchain download caches, keeps git hooks and
+- The sandbox covers shell commands an agent runs, the project's tests, hooks, worktree setup and
+  local MCP servers unless a server is explicitly marked `"unconfined": true` (D-56, D-61, D-65).
+  On macOS it confines writes to the workspace, temporary directories and toolchain download caches,
+  keeps git hooks and
   git config unwritable, and hides credential locations; on Linux it confines writes the same way
   but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since
   Landlock cannot carve a path out of an allowed tree. On macOS no `.git` can be made, moved or
@@ -152,10 +154,10 @@ be rediscovered by getting burned by it.
   area and the caches fails there: Gradle (its wrapper and daemon directories, and its properties
   file, which is unreadable), SwiftPM's package cache, and browser downloads for Playwright or
   Cypress among them. In runway such a suite fails its gate and the turn is put back.
-  `CANOPY_SANDBOX=off` is the way out. Hooks run in the sandbox as well, and so does the setup
-  `canopy land` runs on an agent's merged changes. Setup for a new agent worktree, MCP servers and
-  delegated vendor agents still run unconfined. A command that runs without the sandbox says so,
-  and `CANOPY_SANDBOX=off` switches it off.
+  `CANOPY_SANDBOX=off` is the way out. Setup for `canopy land` runs in the same sandbox. A local MCP
+  server marked `"unconfined": true`, a remote MCP server, and delegated vendor agents do not run
+  inside Canopy's sandbox. When no OS sandbox is available, local commands run unconfined; shell
+  results say so, and `CANOPY_SANDBOX=off` switches confinement off.
 
 - A freshly prepared worktree gets no isolated database, queue, cache, or OAuth callback. A named
   port is templated in, but a port does not isolate the service listening behind it. Only small,

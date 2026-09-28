@@ -28,17 +28,25 @@ There is no bug bounty.
 
 This is the part worth reading before deciding whether something is a vulnerability.
 
-**The sandbox covers exactly this, and nothing more (D-56).** Shell commands an agent runs go
-through an operating-system sandbox where one is available. On macOS a Seatbelt profile lets them
-write only beneath the workspace, the repository's shared git directory, temporary directories and
-toolchain caches, and denies reading credential locations (`~/.ssh`, `~/.aws`, `~/.gnupg`,
-keychains, `gh` and cloud CLI configuration, Canopy's own keys, browser profiles). On Linux,
-Landlock confines writes the same way; it cannot deny reads beneath a readable tree, so credential
-files remain readable there. Network is not restricted by default on either. Test commands, setup,
-hooks, MCP servers and delegated vendor agents do not run in the sandbox yet. A bypass of the
-confinement described here is in scope; a command doing what the list above permits is not.
-Commands run under your own account, and a worktree on its own is file isolation, not a security
-boundary. "Confined" is also the name of a trust level whose tool surface excludes shell.
+**The sandbox covers exactly this, and nothing more (D-56, D-60, D-61, D-65).** Shell commands an
+agent runs, the project's tests, hooks, worktree setup and local MCP servers run through an
+operating-system sandbox where one is available. A local MCP server can explicitly opt out in the
+trusted project configuration. Remote MCP servers are reached over HTTP, not started as sandboxed
+processes. Delegated vendor agents run under their own permission systems, outside Canopy's
+sandbox. On macOS a Seatbelt profile lets confined commands write only beneath the workspace, the
+repository's shared git directory, temporary directories and toolchain caches, and denies reading
+credential locations (`~/.ssh`, `~/.aws`, `~/.gnupg`, keychains, `gh` and cloud CLI configuration,
+Canopy's own keys, browser profiles). It also keeps git hooks and config unwritable. On Linux,
+Landlock confines writes to those directories but cannot carve hooks and config out of a writable
+tree or deny reading credential files. The writable caches are shared with your own builds, so
+sandboxed code can alter content a later build uses. Network access is open by default;
+`CANOPY_SANDBOX_NETWORK=registries` narrows it through a proxy, and `off` cuts it off where the OS
+can enforce that setting. The allowed hosts include general-purpose hosts, and Linux limits by
+port rather than destination address. `CANOPY_SANDBOX=off` disables confinement; where no sandbox
+is available, local commands run unconfined. A bypass of an enforced boundary is in scope; an
+action the stated boundary permits is not. Commands run under your own account, and a worktree on
+its own is file isolation, not a security boundary. "Confined" is also the name of a trust level
+whose tool surface excludes shell.
 
 **A credential is one of three things now, and they are not equally exposed.** Canopy used to hold
 only pasted secrets. Since subscription sign-in it holds three shapes, and it is worth knowing which
@@ -89,10 +97,13 @@ refresh tokens and signing out a login Canopy does not own is a surprise nobody 
 
 So the following are known and documented behaviour rather than vulnerabilities:
 
-- A shell command an agent ran, and you approved, read or wrote files outside its workspace. The
-  shell starts in the assigned workspace. That is a starting directory, not a fence.
-- An agent used git through the shell to reach a repository other than its own. The structured git
-  tools resolve paths inside the assigned workspace; an approved shell string does not.
+- A shell command an agent ran read files outside its workspace where the sandbox permits reading,
+  or wrote to a permitted temporary directory, shared git directory or toolchain cache. If the
+  sandbox was unavailable or switched off, an approved command could also write elsewhere under
+  your account. Its starting directory alone does not confine it.
+- An agent used git through the shell to read a repository other than its own, or to write where
+  the operating-system sandbox permits it. The structured git tools resolve paths inside the
+  assigned workspace; a shell command does not use that path resolver.
 - A model was persuaded by the contents of a file, a web page fetched with `fetch_url`, or a tool
   result to attempt something you did not intend. Prompt injection is real and Canopy's answer to
   it is the permission model plus a human, not a filter that claims to detect it.

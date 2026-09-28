@@ -140,8 +140,8 @@ func usableURL(raw string) bool {
 
 // ExpandedHeaders is Headers with ${NAME} replaced from the environment. It also returns the names
 // that were not set, so a missing token is said rather than sent empty, and the names it refused:
-// a general credential (a code host's, a cloud's, a model provider's) is never sent to a server a
-// repository names, whatever the file says.
+// recognised general credentials (code hosts, clouds and model providers) are refused, whatever
+// the repository's file says. The trust prompt shows the other variable names before connection.
 func (s MCPServer) ExpandedHeaders() (headers map[string]string, missing, refused []string) {
 	headers = make(map[string]string, len(s.Headers))
 	for name, value := range s.Headers {

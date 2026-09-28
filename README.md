@@ -386,8 +386,9 @@ An MCP server is a local program started over stdio, or a remote one reached ove
 A remote server's url must be https, or http to this machine, and a redirect is never followed. A
 header names its token as `${NAME}`, read from the environment Canopy starts in, so the committed
 file never holds it; the trust prompt shows which variables go to which url, a server whose variable
-is not set is not connected, and a general credential (a model provider's key, `GITHUB_TOKEN`, a
-cloud's) is never sent to a server a repository names.
+is not set is not connected. Canopy refuses known general credential names, including model
+provider keys, code host tokens and cloud credentials. Review every other variable shown in the
+trust prompt before allowing the server to receive it.
 
 A hook runs on something that happened: `tests-passed`, `tests-failed`, `verified`, `agent-idle` and
 `agent-blocked` for the project's state, and `pre-tool`, `post-tool` and `turn-end` around an agent's

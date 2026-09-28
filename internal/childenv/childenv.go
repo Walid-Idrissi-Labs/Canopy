@@ -64,11 +64,15 @@ var general = map[string]bool{
 }
 
 // generalPrefixes are families of cloud and platform credentials.
-var generalPrefixes = []string{"AWS_", "AZURE_", "ARM_", "GOOGLE_", "GCLOUD_", "CLOUDSDK_", "DIGITALOCEAN_"}
+var generalPrefixes = []string{
+	"AWS_", "AZURE_", "ARM_", "GOOGLE_", "GCLOUD_", "CLOUDSDK_", "DIGITALOCEAN_",
+	"GITHUB_", "GH_", "GITLAB_", "BITBUCKET_", "ATLASSIAN_",
+	"DOCKER_", "DOCKERHUB_", "NPM_", "PYPI_", "TWINE_", "CARGO_",
+}
 
-// WellKnown reports whether a variable is one of the general credentials: a code host's, a cloud's,
-// a CI system's, a registry's or a model provider's. Unlike a project's own token, such a key opens
-// far more than any one server needs, and a repository must never be able to direct it anywhere.
+// WellKnown reports whether a variable has a recognised general credential name: a code host's,
+// a cloud's, a CI system's, a registry's or a model provider's. Unlike a project's own token, such
+// a key opens far more than any one server needs, and a repository cannot direct it elsewhere.
 func WellKnown(name string) bool {
 	upper := strings.ToUpper(name)
 	if exact[upper] || general[upper] {
