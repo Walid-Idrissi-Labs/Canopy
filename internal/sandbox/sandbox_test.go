@@ -216,3 +216,41 @@ func TestProxyModeReachesOnlyTheLoopback(t *testing.T) {
 		t.Fatalf("a datagram left the machine in proxy mode: %s", out)
 	}
 }
+
+// A workspace inside a directory the sandbox denies, as an agent's worktree sits inside Canopy's
+// data directory, is still the command's to read and write; the rest of that directory stays
+// closed, and a guard inside the workspace still holds.
+func TestAWorkspaceInsideADeniedDirectoryIsStillUsable(t *testing.T) {
+	requireSandbox(t)
+	data := t.TempDir()
+	if resolved, err := filepath.EvalSymlinks(data); err == nil {
+		data = resolved
+	}
+	workspace := filepath.Join(data, "worktrees", "repo")
+	hooks := filepath.Join(workspace, ".git", "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(data, "trust.json")
+	if err := os.WriteFile(secret, []byte("SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := Policy{Writable: []string{workspace, "/dev"}, DenyRead: []string{data}, DenyWrite: []string{data, hooks},
+		Network: NetworkOpen}
+	out, err := run(t, p, "cd "+workspace+" && pwd && ls >/dev/null && echo ok > made && cat made")
+	if err != nil || !strings.Contains(out, "ok") {
+		t.Fatalf("the workspace could not be used: %v\n%s", err, out)
+	}
+	_, _ = run(t, p, "echo armed > "+filepath.Join(hooks, "pre-commit"))
+	if _, err := os.Stat(filepath.Join(hooks, "pre-commit")); err == nil {
+		t.Fatal("a guard inside the workspace gave way when the workspace was allowed again")
+	}
+	if runtime.GOOS == "darwin" {
+		if out, _ := run(t, p, "cat "+secret); strings.Contains(out, "SECRET") {
+			t.Fatal("the rest of the denied directory became readable")
+		}
+		if out, _ := run(t, p, "ls "+data); strings.Contains(out, "trust.json") {
+			t.Fatal("the denied directory can be listed on the way to the workspace")
+		}
+	}
+}
