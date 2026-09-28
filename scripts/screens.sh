@@ -22,6 +22,8 @@ if ! command -v freeze >/dev/null 2>&1; then
 fi
 for frame in "$frames"/*.ansi; do
   name=$(basename "$frame" .ansi)
-  freeze --execute "cat $frame" --window --padding 20 --output "$out/$name.svg" >/dev/null
+  # From standard input as ANSI: --execute runs the frame through a terminal of its own, which
+  # failed in CI and hung locally.
+  freeze --language ansi --window --padding 20 --output "$out/$name.svg" <"$frame" >/dev/null
 done
 ls "$out"
