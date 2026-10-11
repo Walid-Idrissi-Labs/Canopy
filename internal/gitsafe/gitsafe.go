@@ -15,8 +15,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 )
 
 // overrides are applied as command line configuration through the environment, which git gives
@@ -45,30 +43,13 @@ func EnvFor(dir string, base []string) []string {
 // InheritedFor is EnvFor applied to the current environment with secrets removed.
 func InheritedFor(dir string) []string { return EnvFor(dir, childenv.Inherited()) }
 
-type cached struct {
-	at      time.Time
-	filters [][2]string
-}
-
-var (
-	filterMu    sync.Mutex
-	filterCache = map[string]cached{}
-)
-
 // localFilters lists overrides for every filter driver configured in dir's local or worktree
-// config. Reading configuration runs nothing. Cached briefly, because the revision poller calls git
-// in the same directory every two seconds.
+// config. Reading configuration runs nothing. Read on every call, never cached: a filter the
+// repository adds between two calls would otherwise run on the second, until the cache lapsed.
 func localFilters(dir string) [][2]string {
 	if dir == "" {
 		return nil
 	}
-	filterMu.Lock()
-	if c, ok := filterCache[dir]; ok && time.Since(c.at) < 5*time.Second {
-		filterMu.Unlock()
-		return c.filters
-	}
-	filterMu.Unlock()
-
 	cmd := exec.Command("git", "config", "--show-scope", "--get-regexp", `^filter\.`)
 	cmd.Dir = dir
 	cmd.Env = Env(childenv.Inherited())
@@ -95,9 +76,6 @@ func localFilters(dir string) [][2]string {
 			[2]string{"filter." + name + ".smudge", "cat"},
 			[2]string{"filter." + name + ".process", ""})
 	}
-	filterMu.Lock()
-	filterCache[dir] = cached{at: time.Now(), filters: filters}
-	filterMu.Unlock()
 	return filters
 }
 

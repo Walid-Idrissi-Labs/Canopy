@@ -236,7 +236,7 @@ func TestAWorkspaceInsideADeniedDirectoryIsStillUsable(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := Policy{Writable: []string{workspace, "/dev"}, DenyRead: []string{data}, DenyWrite: []string{data, hooks},
-		Network: NetworkOpen}
+		Reopen: []string{data}, Network: NetworkOpen}
 	out, err := run(t, p, "cd "+workspace+" && pwd && ls >/dev/null && echo ok > made && cat made")
 	if err != nil || !strings.Contains(out, "ok") {
 		t.Fatalf("the workspace could not be used: %v\n%s", err, out)

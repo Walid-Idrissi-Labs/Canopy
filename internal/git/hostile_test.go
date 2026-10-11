@@ -89,6 +89,37 @@ func TestACleanFilterFromTheRepositoryDoesNotRun(t *testing.T) {
 	}
 }
 
+// A filter the repository adds after Canopy has already called git there runs no sooner than one
+// that was there from the start: nothing about the earlier call is remembered and trusted.
+func TestAFilterAddedAfterAnEarlierCallDoesNotRun(t *testing.T) {
+	dir := repo(t)
+	if _, reason := NewRevisions(0).Key(context.Background(), dir); reason != "" {
+		t.Fatalf("revision key: %s", reason)
+	}
+	marker := filepath.Join(t.TempDir(), "filter-ran")
+	script := filepath.Join(dir, "filter.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\ntouch "+marker+"\ncat\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "config", "filter.late.clean", script)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git config: %v %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("* filter=late\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "changed.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, reason := NewRevisions(0).Key(context.Background(), dir); reason != "" {
+		t.Fatalf("revision key: %s", reason)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a filter added after an earlier call ran when Canopy called git again")
+	}
+}
+
 // The user's own global filters, Git LFS being the common one, must keep working: neutralising
 // every filter would store raw content in each checkpoint and show LFS files as modified after a
 // restore.

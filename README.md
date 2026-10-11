@@ -395,7 +395,8 @@ A hook runs on something that happened: `tests-passed`, `tests-failed`, `verifie
 work. The last three are given what happened as JSON on stdin. A `pre-tool` hook can refuse a call,
 by answering `{"decision": "deny", "reason": "..."}` or exiting 2 with the reason on stderr, and the
 model is told why; it can never approve one, since it runs only after the permission layer has said
-yes. One that cannot answer, by crashing, timing out or saying something else, refuses the call too.
+yes. Exiting 0 with nothing printed, or printing `{"decision": "allow"}`, lets the call run; one that
+cannot answer, by crashing, timing out, or printing anything but allow or deny, refuses it too.
 A `post-tool` hook can answer `{"note": "..."}`, which is added to what the model is told of the
 result. `"tools": ["run_command"]` narrows either to some tools. Every hook runs in the sandbox, in
 the directory of the agent the call belongs to, which its input names as `workspace`.

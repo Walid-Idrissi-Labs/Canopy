@@ -45,6 +45,15 @@ func (p Policy) profile() string {
 	// directories inside it are allowed again after, and every other deny comes last, so a guard
 	// inside the workspace (a nested repository's hooks) still holds over the re-allowed workspace.
 	covering := func(path string) bool {
+		reopenable := false
+		for _, root := range p.Reopen {
+			if root == path {
+				reopenable = true
+			}
+		}
+		if !reopenable {
+			return false
+		}
 		for _, dir := range p.Writable {
 			if within(dir, path) {
 				return true
