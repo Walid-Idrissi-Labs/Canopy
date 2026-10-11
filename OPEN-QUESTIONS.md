@@ -487,6 +487,9 @@ answering before 0.1 has many of them.
 **Who decides:** both supervisors, ideally by watching one person with strong shell habits use
 the product for ten minutes.
 
+**Answered 2026-10-11 (D-67):** ctrl+r searches what was sent, and compacting moved to `/compact`
+typed twice; ctrl+k and ctrl+d keep their meanings.
+
 ## Q-22 What happens to the Claude route when the paused credit change lands?
 
 **Added 2026-07-30 by the phase S planning.**

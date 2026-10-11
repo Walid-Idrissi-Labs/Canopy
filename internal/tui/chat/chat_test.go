@@ -787,12 +787,12 @@ func TestCompactionCanBeAskedForByHand(t *testing.T) {
 	engine := &fakeEngine{session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: turns}}
 
 	m := model(engine)
-	// Twice, because the first press offers and the second pays. See the compaction tests for what
-	// the offer says.
-	m, _ = m.Update(keyCode('r', tea.ModCtrl))
-	m, cmd := m.Update(keyCode('r', tea.ModCtrl))
+	// Twice, because the first /compact offers and the second pays. See the compaction tests for
+	// what the offer says.
+	m, _ = run(m, "/compact")
+	m, cmd := run(m, "/compact")
 	if cmd == nil {
-		t.Fatal("a confirmed ctrl+r should start a compaction")
+		t.Fatal("a confirmed /compact should start a compaction")
 	}
 	if !strings.Contains(plain(m.Body()), "summarising") {
 		t.Errorf("a compaction in progress should say so, since it is a model call and takes as "+
@@ -829,8 +829,8 @@ func TestAFailedCompactionIsReported(t *testing.T) {
 	}
 
 	m := model(engine)
-	m, _ = m.Update(keyCode('r', tea.ModCtrl))
-	m, cmd := m.Update(keyCode('r', tea.ModCtrl))
+	m, _ = run(m, "/compact")
+	m, cmd := run(m, "/compact")
 	m, _ = m.Update(cmd())
 
 	if len(engine.applied) != 0 {

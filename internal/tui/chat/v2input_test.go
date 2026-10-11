@@ -73,10 +73,11 @@ func TestAPasteEndsAnOfferAndAComplaint(t *testing.T) {
 	}
 	engine := &fakeEngine{session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: turns}}
 	m := model(engine)
-	m, _ = m.Update(keyCode('r', tea.ModCtrl))
+	m, _ = run(m, "/compact")
 	m, _ = m.Update(tea.PasteMsg{Content: "x"})
-	if _, cmd := m.Update(keyCode('r', tea.ModCtrl)); cmd != nil {
-		t.Fatal("an offer to compact survived a paste and was taken up by the next ctrl+r")
+	m, _ = m.Update(keyCode('u', tea.ModCtrl))
+	if _, cmd := run(m, "/compact"); cmd != nil {
+		t.Fatal("an offer to compact survived a paste and was taken up by the next /compact")
 	}
 
 	short := &fakeEngine{session: core.Session{ID: "s1", Model: "claude-opus-5", Turns: []core.Turn{
@@ -84,7 +85,7 @@ func TestAPasteEndsAnOfferAndAComplaint(t *testing.T) {
 	}}}
 	m = model(short)
 	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
-	m, _ = m.Update(keyCode('r', tea.ModCtrl))
+	m, _ = run(m, "/compact")
 	if !strings.Contains(plain(m.Body()), "not enough of this conversation") {
 		t.Fatal("no complaint is up, so this test proves nothing")
 	}

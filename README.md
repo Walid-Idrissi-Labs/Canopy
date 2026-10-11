@@ -560,7 +560,10 @@ and OpenAI-compatible keys take pictures; the subscription routes refuse them wi
 than dropping them.
 ## Writing a message
 
-ctrl+p opens a palette of every command, mode, theme, agent, conversation and file, narrowed as you
+ctrl+r searches what you have sent in this conversation, the way a shell does (ctrl+r again for
+older, enter to edit it). Compacting a long conversation is `/compact`, typed twice since it calls
+the model: the first says what it would summarise, and the second goes ahead only while that offer
+is still on screen in the same conversation. ctrl+p opens a palette of every command, mode, theme, agent, conversation and file, narrowed as you
 type (letters in order are enough: `thn` finds `theme nord`); enter runs a built-in, puts one of the
 project's own commands in the box to be sent, opens an agent's conversation or an earlier one of
 this project (with its pickup code, cost and what it was forked from), and mentions a file. Three

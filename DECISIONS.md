@@ -1515,6 +1515,16 @@ They are now denied for writing too. An agent's worktree lives inside Canopy's d
 macOS that worktree alone is opened again beneath the deny, with the names of the directories on
 the way down visible and nothing else. On Linux, Landlock cannot carve these out of a writable
 workspace, as LIMITATIONS says.
+## D-67 ctrl+r searches what was sent; compacting is /compact typed twice. Decided 2026-10-11.
+
+Answers Q-21, which Walid handed over to be decided. ctrl+r is where forty years of shell habit put
+history search, and it held the one paid action in the chat, so the key people press by reflex
+spent money (U-09 had already put a confirmation in front of it). It now searches the messages sent
+in this conversation: typed letters narrow it, ctrl+r again goes older, enter puts the message in
+the box without sending, esc leaves the box as it was. Compacting is `/compact`: the first time
+says what it would summarise and roughly what that costs, and typing it again goes ahead; sending
+anything else, another command, a paste or esc withdraws the offer. ctrl+k (credentials) and ctrl+d
+(agents) keep their meanings: kill to end of line is alt+k, and end of file means nothing in a chat.
 
 ## D-66 Always on starting agents means starting agents, in that conversation. Decided 2026-09-26.
 
