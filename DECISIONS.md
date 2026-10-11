@@ -1515,6 +1515,7 @@ They are now denied for writing too. An agent's worktree lives inside Canopy's d
 macOS that worktree alone is opened again beneath the deny, with the names of the directories on
 the way down visible and nothing else. On Linux, Landlock cannot carve these out of a writable
 workspace, as LIMITATIONS says.
+
 ## D-67 ctrl+r searches what was sent; compacting is /compact typed twice. Decided 2026-10-11.
 
 Answers Q-21, which Walid handed over to be decided. ctrl+r is where forty years of shell habit put
@@ -1534,6 +1535,7 @@ conversation", and the confirmation checks that grant before asking, so always m
 The grant covers that tool in that conversation only: no other tool, and no other conversation. A
 scope naming only a tool now renders in those words everywhere, so no prompt can offer an always
 with nothing after it.
+
 ## D-65 A new worktree's setup and local MCP servers run in the sandbox too. Decided 2026-09-26.
 
 Completes D-61, which left both unconfined. The setup a new agent's worktree runs is the project's
