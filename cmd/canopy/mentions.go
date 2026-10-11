@@ -85,6 +85,10 @@ func rememberIn(dir string, project config.Project) func(note string) (string, e
 		// the note cannot be steered into a file somewhere else.
 		// Appended, so an append made by anything else between reading and writing is kept, and
 		// then shows up as a difference from what was expected below.
+		// Whether it was there before the open below could create it: an empty file that was there
+		// is as trusted as a full one, and one the note creates is a change to what was trusted.
+		_, statErr := os.Lstat(path)
+		existed := statErr == nil
 		file, err := openNoFollow(path)
 		if err != nil {
 			return "", errors.New("AGENTS.md could not be opened as a plain file here, so nothing was written")
@@ -116,7 +120,6 @@ func rememberIn(dir string, project config.Project) func(note string) (string, e
 		}
 		snapshot["AGENTS.md"] = before
 		store, storeErr := trust.Open()
-		existed := len(before) > 0 || info.Size() > 0
 		trusted := storeErr == nil && project.Trusted && existed &&
 			store.Trusted(trust.DescribeWith(dir, project, snapshot))
 		snapshot["AGENTS.md"] = append(append([]byte(nil), before...), line...)

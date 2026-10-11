@@ -304,16 +304,21 @@ func (e *remoteEngine) Send(sessionID, prompt string) (string, error) {
 	reply := e.client.start("session/prompt", map[string]any{"sessionId": sessionID,
 		"prompt": []any{map[string]any{"type": "text", "text": prompt}}})
 	e.refresh(sessionID)
-	after, _ := e.Session(sessionID)
-	if len(after.Turns) > len(before.Turns) {
-		return after.Turns[len(after.Turns)-1].ID, nil
-	}
+	// The refusal first: it is written before the server reads the next request, so it is here by
+	// now if there was one, and a turn some other client started meanwhile must not be taken for
+	// this one.
 	select {
 	case r := <-reply:
 		if r.Error != nil {
 			return "", errors.New(r.Error.Message)
 		}
 	default:
+	}
+	after, _ := e.Session(sessionID)
+	for i := len(after.Turns) - 1; i >= len(before.Turns); i-- {
+		if after.Turns[i].Request.Text == prompt {
+			return after.Turns[i].ID, nil
+		}
 	}
 	return "", errors.New("canopy serve did not start the turn")
 }

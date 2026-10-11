@@ -149,6 +149,10 @@ func (s Scope) String() string {
 		// sentence has to be one somebody can act on: what they are agreeing to is this call again,
 		// not this tool again.
 		return fmt.Sprintf("%s with exactly these arguments", s.Tool)
+	case s.Tool == "":
+		// Covers nothing anybody could name, so it is offered as nothing: a prompt checks for an
+		// empty scope and does not offer always with it.
+		return ""
 	default:
 		// A whole tool, which is what an approval outside the tool loop covers: every call of it in
 		// this conversation, said in those words so "always" is never a blank.

@@ -65,11 +65,16 @@ func TestOnlyCanopysDataDirectoryIsOpenedAgain(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(inSSH, "f")); err == nil {
 		t.Fatal("a workspace inside ~/.ssh was written")
 	}
-	worktree := filepath.Join(home, "Library", "Application Support", "canopy", "worktrees", "repo")
-	if err := os.MkdirAll(worktree, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := run(t, ForWorkspace(worktree), "cd '"+worktree+"' && echo ok > made && cat made"); err != nil || !strings.Contains(out, "ok") {
-		t.Fatalf("a worktree in Canopy's data directory is not usable: %v %s", err, out)
+	// Both of Canopy's data directories: the platform one, and ~/.config/canopy where
+	// XDG_DATA_HOME points worktrees there.
+	for _, base := range []string{filepath.Join(home, "Library", "Application Support", "canopy"),
+		filepath.Join(home, ".config", "canopy")} {
+		worktree := filepath.Join(base, "worktrees", "repo")
+		if err := os.MkdirAll(worktree, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := run(t, ForWorkspace(worktree), "cd '"+worktree+"' && echo ok > made && cat made"); err != nil || !strings.Contains(out, "ok") {
+			t.Fatalf("a worktree in %s is not usable: %v %s", base, err, out)
+		}
 	}
 }

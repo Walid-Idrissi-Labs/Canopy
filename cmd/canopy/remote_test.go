@@ -107,6 +107,14 @@ func TestAnAttachedPromptTheServerRefusesSaysWhy(t *testing.T) {
 	if _, err := e.Send("session-7", "hello"); err == nil || !strings.Contains(err.Error(), "over its spending cap") {
 		t.Fatalf("a refused prompt answered %v", err)
 	}
+	// A turn another client started meanwhile is not taken for this one's.
+	served.mu.Lock()
+	served.turns = append(served.turns, core.Turn{ID: "t-other", State: core.TurnStreaming,
+		Request: core.Message{Text: "someone else's"}})
+	served.mu.Unlock()
+	if turn, err := e.Send("session-7", "hello"); err == nil {
+		t.Fatalf("a refused prompt was reported as started, as turn %q", turn)
+	}
 }
 
 // The interface itself draws an attached conversation: its question, and after the answer, the reply.
