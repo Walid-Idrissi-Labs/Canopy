@@ -130,7 +130,10 @@ be rediscovered by getting burned by it.
   On macOS it confines writes to the workspace, temporary directories and toolchain download caches,
   keeps git hooks and
   git config unwritable, and keeps credential locations and Canopy's own data directory unreadable
-  and unwritable, even when the workspace holds them (canopy run in the home directory). An agent's
+  and unwritable, even when the workspace holds them (canopy run in the home directory). Tools that
+  keep their own state there cannot write it from a sandboxed command: ssh's known_hosts, gpg
+  signing, kubectl's cache, gcloud, `docker`, `gh`, `npm` and `cargo` logins, and a canopy run
+  inside an agent's shell. Run those outside the sandbox, or work in a directory other than home. An agent's
   worktree lives inside that directory, so it alone is opened again, with the names of the
   directories on the way to it visible but not their contents; on Linux it confines writes the same way
   but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since
