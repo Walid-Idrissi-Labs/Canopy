@@ -198,25 +198,31 @@ func (p *palette) refresh() {
 	type ranked struct {
 		item paletteItem
 		rank int
+		// starts is how many of the query's letters begin a word of the label, for letters in
+		// order: "thn" is theme nord, whose n starts a word, before theme mono, whose n does not.
+		starts int
 	}
 	var found []ranked
 	for i, item := range p.items {
 		label := strings.ToLower(item.label)
 		switch {
 		case query == "":
-			found = append(found, ranked{item, i})
+			found = append(found, ranked{item: item, rank: i})
 		case strings.HasPrefix(label, query), strings.HasPrefix(strings.TrimLeft(label, "/@"), query):
-			found = append(found, ranked{item, 0})
+			found = append(found, ranked{item: item})
 		case strings.Contains(label, query):
-			found = append(found, ranked{item, 1})
+			found = append(found, ranked{item: item, rank: 1})
 		case inOrder(label, query):
-			found = append(found, ranked{item, 2})
+			found = append(found, ranked{item: item, rank: 2, starts: wordStarts(label, query)})
 		}
 	}
 	if query != "" {
 		sort.SliceStable(found, func(i, j int) bool {
 			if found[i].rank != found[j].rank {
 				return found[i].rank < found[j].rank
+			}
+			if found[i].starts != found[j].starts {
+				return found[i].starts > found[j].starts
 			}
 			return len(found[i].item.label) < len(found[j].item.label)
 		})
@@ -324,4 +330,34 @@ func (m Model) paletteFound(msg paletteFoundMsg) Model {
 	}
 	m.palette.matches = append(m.palette.matches, msg.items...)
 	return m
+}
+
+// wordStarts matches the query's letters in order, taking a letter where it begins a word when
+// there is one ahead, and counts how many it took that way.
+func wordStarts(label, query string) int {
+	rest := []rune(label)
+	count, at := 0, 0
+	for _, r := range query {
+		found := -1
+		for i := at; i < len(rest); i++ {
+			if rest[i] == r && (i == 0 || rest[i-1] == ' ' || rest[i-1] == '/' || rest[i-1] == '-') {
+				found = i
+				count++
+				break
+			}
+		}
+		if found < 0 {
+			for i := at; i < len(rest); i++ {
+				if rest[i] == r {
+					found = i
+					break
+				}
+			}
+		}
+		if found < 0 {
+			return count
+		}
+		at = found + 1
+	}
+	return count
 }

@@ -187,3 +187,26 @@ func TestThePaletteSearchesWhatWasSaidWhenTypingPauses(t *testing.T) {
 		t.Fatalf("found:\n%s", body)
 	}
 }
+
+// Letters in order prefer an entry where they begin words: thn is theme nord before theme mono.
+func TestLettersThatBeginWordsRankFirst(t *testing.T) {
+	m := palette(t, &fakeEngine{session: core.Session{ID: "s1"}})
+	m = typePalette(m, "thn")
+	lines := strings.Split(plain(m.Body()), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "theme ") {
+			if !strings.Contains(line, "theme nord") {
+				t.Fatalf("the first theme offered for thn is %q", strings.TrimSpace(line))
+			}
+			return
+		}
+	}
+	t.Fatal("no theme offered for thn")
+}
+
+// A letter after a slash or a hyphen begins a word too.
+func TestASlashOrHyphenBeginsAWord(t *testing.T) {
+	if wordsAfterSlash, wordsInside := chat.WordStarts("/compact-two", "ct"), chat.WordStarts("/cart", "ct"); wordsAfterSlash <= wordsInside {
+		t.Fatalf("ct counts %d word starts in /compact-two and %d in /cart", wordsAfterSlash, wordsInside)
+	}
+}
