@@ -203,3 +203,10 @@ func TestLettersThatBeginWordsRankFirst(t *testing.T) {
 	}
 	t.Fatal("no theme offered for thn")
 }
+
+// A letter after a slash or a hyphen begins a word too.
+func TestASlashOrHyphenBeginsAWord(t *testing.T) {
+	if wordsAfterSlash, wordsInside := chat.WordStarts("/compact-two", "ct"), chat.WordStarts("/cart", "ct"); wordsAfterSlash <= wordsInside {
+		t.Fatalf("ct counts %d word starts in /compact-two and %d in /cart", wordsAfterSlash, wordsInside)
+	}
+}
