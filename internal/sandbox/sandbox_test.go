@@ -241,11 +241,13 @@ func TestAWorkspaceInsideADeniedDirectoryIsStillUsable(t *testing.T) {
 	if err != nil || !strings.Contains(out, "ok") {
 		t.Fatalf("the workspace could not be used: %v\n%s", err, out)
 	}
-	_, _ = run(t, p, "echo armed > "+filepath.Join(hooks, "pre-commit"))
-	if _, err := os.Stat(filepath.Join(hooks, "pre-commit")); err == nil {
-		t.Fatal("a guard inside the workspace gave way when the workspace was allowed again")
-	}
+	// Landlock cannot carve a path out of a writable tree, so the guards inside the workspace and
+	// the read denies hold only on macOS, as LIMITATIONS says.
 	if runtime.GOOS == "darwin" {
+		_, _ = run(t, p, "echo armed > "+filepath.Join(hooks, "pre-commit"))
+		if _, err := os.Stat(filepath.Join(hooks, "pre-commit")); err == nil {
+			t.Fatal("a guard inside the workspace gave way when the workspace was allowed again")
+		}
 		if out, _ := run(t, p, "cat "+secret); strings.Contains(out, "SECRET") {
 			t.Fatal("the rest of the denied directory became readable")
 		}
