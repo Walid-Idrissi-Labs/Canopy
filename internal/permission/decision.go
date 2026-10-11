@@ -150,8 +150,8 @@ func (s Scope) String() string {
 		// not this tool again.
 		return fmt.Sprintf("%s with exactly these arguments", s.Tool)
 	case s.Tool == "":
-		// Covers nothing anybody could name, so it is offered as nothing: a prompt checks for an
-		// empty scope and does not offer always with it.
+		// Covers nothing anybody could name, so it is offered as nothing: the chat does not offer
+		// always for it, and the engine answers always on it as this once.
 		return ""
 	default:
 		// A whole tool, which is what an approval outside the tool loop covers: every call of it in

@@ -849,6 +849,11 @@ func (m Model) answerPrompt(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case "enter", "y":
 		m.engine.Answer(m.sessionID, true, false)
 	case "a":
+		if m.prompt.Scope().String() == "" {
+			// Not offered, so it is any other key: no.
+			m.engine.Answer(m.sessionID, false, false)
+			break
+		}
 		m.engine.Answer(m.sessionID, true, true)
 	default:
 		m.engine.Answer(m.sessionID, false, false)
@@ -903,9 +908,13 @@ func (m Model) promptLines() []string {
 	body = append(body, "")
 	body = append(body, t.Muted.Render(m.prompt.Decision.Reason))
 	body = append(body, "")
+	// Always is offered only where it covers something nameable.
+	always := ""
+	if scope := m.prompt.Scope().String(); scope != "" {
+		always = t.Key.Render("a") + t.Muted.Render(" always, "+scope+"   ")
+	}
 	body = append(body,
-		t.Key.Render("enter")+t.Muted.Render(" yes, once   ")+
-			t.Key.Render("a")+t.Muted.Render(" always, "+m.prompt.Scope().String()+"   ")+
+		t.Key.Render("enter")+t.Muted.Render(" yes, once   ")+always+
 			t.Key.Render("any other key")+t.Muted.Render(" no"))
 
 	// The keys that read rather than decide, named here because the footer goes quiet while a

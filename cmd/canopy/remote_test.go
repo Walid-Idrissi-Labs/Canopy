@@ -261,3 +261,21 @@ func TestAWithdrawnQuestionAndAClosedConnection(t *testing.T) {
 		}
 	}
 }
+
+// A sent prompt is matched to the turn that carries it, not to whichever turn is newest: another
+// client's turn arriving after it is not taken for this one's.
+func TestAnAttachedSendFindsItsOwnTurn(t *testing.T) {
+	e, _ := scripted(t, func(method string, _ json.RawMessage) any {
+		if method == "_canopy/session" {
+			return map[string]any{"session": core.Session{ID: "s1", Turns: []core.Turn{
+				{ID: "mine", State: core.TurnStreaming, Request: core.Message{Text: "fix the parser"}},
+				{ID: "theirs", State: core.TurnStreaming, Request: core.Message{Text: "something else"}},
+			}}, "from": 0, "turnCount": 2}
+		}
+		return map[string]any{}
+	})
+	turn, err := e.Send("s1", "fix the parser ")
+	if err != nil || turn != "mine" {
+		t.Fatalf("the send came back as %q, %v", turn, err)
+	}
+}

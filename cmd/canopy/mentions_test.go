@@ -202,3 +202,24 @@ func TestANoteInAnEmptyTrustedAgentsFileKeepsTrust(t *testing.T) {
 		t.Fatal("a note in an empty, trusted AGENTS.md cost the repository its trust")
 	}
 }
+
+// A note that creates AGENTS.md changes what was trusted, so trust does not follow it.
+func TestANoteThatCreatesTheAgentsFileDoesNotCarryTrust(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CANOPY_TRUST_FILE", filepath.Join(t.TempDir(), "trust.json"))
+	project := config.Project{Trusted: true}
+	store, err := trust.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Grant(trust.Describe(dir, project)); err != nil {
+		t.Fatal(err)
+	}
+	where, err := rememberIn(dir, project)("run gofmt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Trusted(trust.Describe(dir, project)) || !strings.Contains(where, "asks to trust it again") {
+		t.Fatalf("a note that created AGENTS.md carried trust over: %q", where)
+	}
+}

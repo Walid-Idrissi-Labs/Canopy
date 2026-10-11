@@ -349,3 +349,28 @@ func TestGrantsAreListedInAFixedOrder(t *testing.T) {
 		}
 	}
 }
+
+// Always on a question whose scope names nothing is answered as this once, never recorded as a
+// grant that every other nameless scope would match.
+func TestAlwaysOnANamelessScopeIsThisOnce(t *testing.T) {
+	e := New(nil)
+	defer e.Close()
+	req := permission.Request{SessionID: "s1", Tool: "x"}
+	done := make(chan bool, 1)
+	go func() {
+		done <- e.Approve(context.Background(), req, permission.Decision{Outcome: permission.Ask})
+	}()
+	for {
+		if _, ok := e.Pending("s1"); ok {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	e.Answer("s1", true, true)
+	if !<-done {
+		t.Fatal("the answer was lost")
+	}
+	if granted := e.Grants("s1"); len(granted) != 0 {
+		t.Fatalf("always on a nameless scope was recorded as %+v", granted)
+	}
+}

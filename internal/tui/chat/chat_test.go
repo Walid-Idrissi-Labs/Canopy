@@ -1117,3 +1117,21 @@ func TestACallWaitingOnAQuestionIsNotCalledRunning(t *testing.T) {
 		t.Fatalf("the call held up by the question:\n%s", view)
 	}
 }
+
+// A question whose scope names nothing offers no always, and a for always is then a no.
+func TestNoAlwaysIsOfferedForAScopeThatNamesNothing(t *testing.T) {
+	prompt := pendingPrompt("make test")
+	prompt.Decision.Scope = permission.Scope{}
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{
+		turn("t1", "test", "", core.TurnAwaitingTools)}}, prompt: prompt}
+	m := model(engine)
+	m.SetSize(100, 40)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	if strings.Contains(plain(m.Body()), "always") {
+		t.Fatalf("always was offered with nothing to cover:\n%s", plain(m.Body()))
+	}
+	_, _ = m.Update(keyText("a"))
+	if len(engine.answers) != 1 || engine.answers[0] != [2]bool{false, false} {
+		t.Fatalf("a was answered as %+v", engine.answers)
+	}
+}
