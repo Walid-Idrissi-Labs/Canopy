@@ -442,13 +442,29 @@ var networkSubcommands = map[string][]string{
 // named mail or grepping for curl is not mistaken for sending anything.
 func networkish(command string) bool {
 	for _, stage := range stages(command) {
-		words := strings.Fields(stage)
-		// Leading assignments and wrappers that run the command after them.
-		for len(words) > 0 && (strings.Contains(words[0], "=") || wrapper[words[0]]) {
-			words = words[1:]
-			// A wrapper's own options and numbers, as in timeout 10 or nice -n 5.
-			for len(words) > 0 && (strings.HasPrefix(words[0], "-") || strings.Trim(words[0], "0123456789.smh") == "") {
+		words := shellWords(stage)
+		// Leading assignments and wrappers that run the command after them, with each wrapper's
+		// options, including the value an option takes, as in env -u TOKEN or sudo -u root.
+		for len(words) > 0 {
+			if assignment(words[0]) {
 				words = words[1:]
+				continue
+			}
+			if !wrapper[words[0]] {
+				break
+			}
+			name := words[0]
+			words = words[1:]
+			for len(words) > 0 && (strings.HasPrefix(words[0], "-") || strings.Trim(words[0], "0123456789.smh") == "") {
+				option := words[0]
+				words = words[1:]
+				// env -S runs a string the command line does not show as a command.
+				if name == "env" && (option == "-S" || strings.HasPrefix(option, "--split-string")) {
+					return true
+				}
+				if wrapperValues[name][option] && len(words) > 0 {
+					words = words[1:]
+				}
 			}
 		}
 		if len(words) == 0 {
@@ -470,11 +486,10 @@ func networkish(command string) bool {
 			}
 		}
 		// A shell given its commands as a string or on its input runs text the command line does
-		// not show; one given a script file is the script's own business.
-		if name == "sh" || name == "bash" || name == "zsh" {
-			if len(words) == 1 || words[1] == "-c" || words[1] == "-s" {
-				return true
-			}
+		// not show, flags combined or not (sh -lc); one given a script file is the script's own
+		// business.
+		if shells[name] && shellRunsText(words[1:]) {
+			return true
 		}
 		if subs, ok := networkSubcommands[name]; ok {
 			if sub := subcommand(words[1:]); sub != "" {
@@ -487,6 +502,94 @@ func networkish(command string) bool {
 		}
 	}
 	return false
+}
+
+// shells are the programs that run commands given to them as text.
+var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true}
+
+// shellRunsText reports whether a shell's arguments make it run text rather than a script file:
+// none at all (it reads its input), or an option carrying c or s before the first non-option.
+func shellRunsText(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	for _, a := range args {
+		switch {
+		case a == "--command" || a == "--":
+			return a == "--command"
+		case strings.HasPrefix(a, "--"):
+		case strings.HasPrefix(a, "-"):
+			if strings.ContainsAny(a[1:], "cs") {
+				return true
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// wrapperValues are the options of each wrapper that take the word after them as their value.
+var wrapperValues = map[string]map[string]bool{
+	"sudo": {"-u": true, "-g": true, "-C": true, "-D": true, "-h": true, "-p": true, "-U": true, "-r": true,
+		"-t": true, "-T": true, "--user": true, "--group": true, "--chdir": true, "--prompt": true},
+	"env":     {"-u": true, "-C": true, "--unset": true, "--chdir": true},
+	"timeout": {"-s": true, "-k": true, "--signal": true, "--kill-after": true},
+	"nice":    {"-n": true, "--adjustment": true},
+	"stdbuf":  {"-i": true, "-o": true, "-e": true},
+	"xargs": {"-I": true, "-n": true, "-P": true, "-L": true, "-s": true, "-d": true, "-E": true, "-a": true,
+		"--arg-file": true, "--delimiter": true, "--max-args": true, "--max-procs": true, "--max-lines": true},
+}
+
+// assignment reports whether a word is a variable assignment, NAME=value, as the shell sees one.
+func assignment(word string) bool {
+	eq := strings.IndexByte(word, '=')
+	if eq <= 0 {
+		return false
+	}
+	for i, r := range word[:eq] {
+		letter := r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z'
+		digit := i > 0 && r >= '0' && r <= '9'
+		if !letter && !digit {
+			return false
+		}
+	}
+	return true
+}
+
+// shellWords splits a command stage into words the way the shell does for quoting: spaces outside
+// quotes separate words, quotes group and are removed, a backslash escapes the next character
+// outside single quotes. A quote left open runs to the end, as a stage cut from a longer line can.
+func shellWords(stage string) []string {
+	var words []string
+	var word strings.Builder
+	inWord, single, double, escaped := false, false, false, false
+	for _, r := range stage {
+		switch {
+		case escaped:
+			word.WriteRune(r)
+			escaped, inWord = false, true
+		case r == '\\' && !single:
+			escaped, inWord = true, true
+		case r == '\'' && !double:
+			single, inWord = !single, true
+		case r == '"' && !single:
+			double, inWord = !double, true
+		case (r == ' ' || r == '\t' || r == '\n') && !single && !double:
+			if inWord {
+				words = append(words, word.String())
+				word.Reset()
+				inWord = false
+			}
+		default:
+			word.WriteRune(r)
+			inWord = true
+		}
+	}
+	if inWord {
+		words = append(words, word.String())
+	}
+	return words
 }
 
 // commandName is a command word as the shell will run it: quotes and backslashes removed, since

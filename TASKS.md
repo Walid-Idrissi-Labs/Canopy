@@ -8383,3 +8383,21 @@ its neighbours stay unreadable and unlistable, guards inside it hold, a prefix-s
 not opened, and ~/.ssh inside a home-directory workspace stays unwritable.
 
 `verify: claude [x] 2026-10-11   codex [ ]`
+
+### Z-CX1 Fixes from Codex's verification of the security tasks (2026-10-11)
+`status: review | owner: Claude | branch: fix/codex-security-findings`
+
+Codex verified Z-H, Z-X11, Z-S65, Z-V05, Z-X08, Z-X10, Z-T1, Z-Z03, Z-F07, Z-D68, U-02, U-13 and
+Z-V10 independently and found four defects, fixed here. Z-H: the repository's filter list was cached
+for five seconds, so a filter added after an earlier call ran; it is now read on every call, and a
+test adds one after a call. Z-D68: a workspace inside any denied directory was opened again, one in
+~/.ssh included; only Canopy's own data directories are (Policy.Reopen), tested with a real
+sandbox. Z-T1: the tainted-conversation check split commands on spaces, so a quoted assignment, a
+wrapper option's value (env -u, sudo -u), combined shell flags (sh -lc) and a quoted git path hid
+the network command; it now reads words as the shell quotes them, with each wrapper's
+value-taking options, and env -S counts as opaque. Z-X11: a pre-tool hook's JSON without allow or
+deny ({}, null, no decision, "approve") let the call run; it refuses now, and D-64 says so. Codex's
+other findings (attached Send, a test that skips, the snapshot variable, an empty AGENTS.md, a blank
+scope) are fixed in fix/codex-correctness-findings.
+
+`verify: claude [x] 2026-10-11   codex [ ]`

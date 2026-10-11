@@ -30,6 +30,10 @@ func TestAPreToolAnswerIsReadStrictly(t *testing.T) {
 		{"no answer", Answer{Failed: "it timed out"}, true, "could not give an answer (it timed out)"},
 		{"not JSON", Answer{Stdout: "ok!"}, true, "not JSON"},
 		{"a word it does not know", Answer{Stdout: `{"decision": "maybe"}`}, true, "not allow or deny"},
+		{"an empty object", Answer{Stdout: `{}`}, true, "no decision"},
+		{"null", Answer{Stdout: `null`}, true, "no decision"},
+		{"a reason without a decision", Answer{Stdout: `{"reason": "hm"}`}, true, "no decision"},
+		{"approve", Answer{Stdout: `{"decision": "approve"}`}, true, "not allow or deny"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			refusal, _ := preToolVerdict(tc.answer)

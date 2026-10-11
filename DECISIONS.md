@@ -1496,6 +1496,9 @@ it runs after the permission layer has decided and after a person has answered, 
 call that was refused or not approved, and nothing it answers can approve anything. It fails closed,
 refusing the call when it crashes, times out, exits with anything but 0 or 2, or answers something
 other than allow or deny, because a guard that fails open stops guarding without anybody noticing.
+Exiting 0 without printing anything is no objection, as it is for hooks generally; once a hook
+prints JSON, only a decision of allow or deny counts, so `{}`, `null`, a missing decision or
+"approve" refuse (clarified 2026-10-11).
 A refusal is returned to the model with its reason and audited as a denial. A post-tool hook can add
 a note to the result the model is told; a turn-end hook changes nothing and nothing waits on it.
 Their failures are reported the way the other hooks' are. They arrive through canopy.json, so they

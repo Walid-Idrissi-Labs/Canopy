@@ -234,8 +234,8 @@ func preToolVerdict(a Answer) (refusal, failed string) {
 		return "the pre-tool hook's answer is not JSON, so the call was not run", "its answer is not JSON"
 	}
 	switch strings.ToLower(said.Decision) {
-	case "", "allow", "approve":
-		// No objection. "allow" takes nothing further: the permission layer has already decided.
+	case "allow":
+		// No objection. It takes nothing further: the permission layer has already decided.
 		return "", ""
 	case "deny", "block", "refuse":
 		reason := strings.TrimSpace(said.Reason)
@@ -243,7 +243,11 @@ func preToolVerdict(a Answer) (refusal, failed string) {
 			reason = "a pre-tool hook refused it"
 		}
 		return short(reason), ""
+	case "":
+		// JSON with no decision in it, {} or null: an answer that is neither allow nor deny.
+		return "the pre-tool hook's answer has no decision, so the call was not run", "its answer has no decision"
 	default:
+		// "approve" among them: a hook cannot approve, only take a yes away (D-64).
 		return "the pre-tool hook answered " + short(said.Decision) + ", which is not allow or deny, " +
 			"so the call was not run", "it answered " + short(said.Decision)
 	}

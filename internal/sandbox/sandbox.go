@@ -42,6 +42,10 @@ type Policy struct {
 	Writable []string
 	// DenyRead are paths the command may not read at all, where the platform can say so.
 	DenyRead []string
+	// Reopen are the denied directories under which a writable directory is opened again: Canopy's
+	// own data directories, where its agents' worktrees live. Beneath any other denied path, a
+	// workspace inside ~/.ssh for one, the deny holds over the workspace.
+	Reopen []string
 	// DenyWrite are trees inside writable directories that still may not be written, where the
 	// platform can say so.
 	DenyWrite []string
@@ -132,8 +136,12 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 	// Denied for writing as well as reading: a workspace that holds one of them, canopy run in the
 	// home directory for one, would otherwise leave ~/.ssh/authorized_keys or Canopy's own trust
 	// records writable to whatever the agent runs.
+	var reopen []string
+	if home != "" {
+		reopen = []string{filepath.Join(home, "Library/Application Support/canopy"), filepath.Join(home, ".config/canopy")}
+	}
 	return Policy{Workspace: resolved, Writable: clean(writable), DenyRead: clean(deny), DenyWrite: clean(deny),
-		Network: NetworkOpen,
+		Reopen: clean(reopen), Network: NetworkOpen,
 		Devices: []string{"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"}}
 }
 
