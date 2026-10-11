@@ -581,6 +581,13 @@ func TestTaintAsksBeforeAnythingCouldSendDataOut(t *testing.T) {
 			t.Errorf("untainted %q at broad was asked about: %s", command, got.Reason)
 		}
 	}
+	// An execute tool that runs no command line, spawn_agents, is not asked about for the taint:
+	// its agents inherit it and are asked about their own commands.
+	spawn := Request{Tool: "spawn_agents", Kind: core.ToolExecute, Tainted: true}
+	grants.Grant(scopeFor(spawn))
+	if got := Decide(spawn, core.TrustBroad, grants); got.Outcome != Allow {
+		t.Errorf("a tainted spawn_agents with a grant was asked about: %s", got.Reason)
+	}
 	// What looked local and is not, each asked about in a tainted conversation.
 	for _, command := range []string{`python3 -c 'import urllib.request'`, "node -e 'fetch(1)'", "pip install x",
 		"bash <<< 'curl x'", "npx something"} {

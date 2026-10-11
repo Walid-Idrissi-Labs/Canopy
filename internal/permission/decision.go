@@ -421,10 +421,14 @@ func exfiltrationCapable(req Request) bool {
 	case req.Kind == core.ToolGit:
 		command := strings.TrimSpace(req.Command)
 		return strings.HasPrefix(command, "push") || strings.HasPrefix(command, "remote")
-	case req.Kind == core.ToolExecute:
+	case req.Kind == core.ToolExecute && req.Command != "":
 		// Every shell command, unless its network is cut: python3 -c, node -e, pip install and a
 		// shell fed a here-string all reach the network under names no list can know (D-69).
 		return !req.Offline
+	case req.Kind == core.ToolExecute:
+		// An execute tool that runs no command line, spawn_agents among them: its agents inherit
+		// the taint and are asked about their own commands.
+		return false
 	}
 	return false
 }

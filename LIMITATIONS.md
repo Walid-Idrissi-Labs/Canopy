@@ -856,9 +856,11 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - Once a conversation has read a fetched page, a provider search or an MCP result (D-57), its shell
   commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
   also cut off the local servers tests start), and anything whose purpose is to send data out is
-  asked about, even in runway and cruise: every shell command among it, unless
-  `CANOPY_SANDBOX_NETWORK=off` cuts the network (D-69), because an interpreter or a package manager
-  reaches the network under any name. The registries a tainted agent's commands can reach include
+  asked about, even in runway and cruise: every shell command among it, unless on macOS
+  `CANOPY_SANDBOX_NETWORK=off` cuts the network, name lookups included (D-69), because an interpreter
+  or a package manager reaches the network under any name. On Linux, Landlock limits TCP only, so
+  with the network off a command can still send UDP, name lookups among them, and every tainted
+  shell command is asked about. The registries a tainted agent's commands can reach include
   github.com, which can take a pushed repository. The project's tests run in the sandbox but a taint
   does not limit their network, so a test a tainted agent writes can still reach the network when
   runway runs it. Files in the workspace do not taint a conversation, though they can carry

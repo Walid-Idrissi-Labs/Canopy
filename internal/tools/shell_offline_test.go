@@ -9,8 +9,17 @@ import (
 // A command is offline only with the sandbox on, able to limit the network, and the network set
 // to off; anything less leaves it able to reach out, whatever it runs.
 func TestAShellCommandIsOfflineOnlyWhenTheNetworkIsCut(t *testing.T) {
-	if sandbox.Available() != nil || !sandbox.NetworkEnforced() {
-		t.Skip("no sandbox that limits the network here")
+	if sandbox.Available() != nil || !sandbox.NetworkSealed() {
+		// Linux included: Landlock leaves UDP and name lookups open, so nothing there is offline.
+		w, err := OpenWorkspace(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("CANOPY_SANDBOX_NETWORK", "off")
+		if ShellTool(w).(interface{ Offline() bool }).Offline() {
+			t.Fatal("a sandbox that cannot seal the network reads as offline")
+		}
+		return
 	}
 	w, err := OpenWorkspace(t.TempDir())
 	if err != nil {

@@ -132,7 +132,12 @@ func (p Policy) profile() string {
 	subpaths("deny file-read*", otherRead)
 	switch p.Network {
 	case NetworkNone:
-		b.WriteString("(deny network-outbound (remote ip))\n(deny network-bind)\n")
+		// Names too: a lookup goes to mDNSResponder over a local socket, which then asks the
+		// network on the command's behalf, so a name like <secret>.example.com would carry data
+		// out of a command that can reach no address itself.
+		b.WriteString("(deny network-outbound (remote ip))\n(deny network-bind)\n" +
+			"(deny network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))\n" +
+			"(deny network-outbound (remote unix-socket (path-literal \"/var/run/mDNSResponder\")))\n")
 	case NetworkProxy:
 		// The loopback address only, where the proxy is and where a test's own servers listen.
 		b.WriteString("(deny network-outbound (remote ip))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
@@ -155,6 +160,10 @@ func RunTrampoline([]string) error { return ErrUnavailable }
 
 // NetworkEnforced reports whether this machine can limit a command's network; Seatbelt always can.
 func NetworkEnforced() bool { return true }
+
+// NetworkSealed reports whether a command can be cut off from the network entirely, name lookups
+// included, so that nothing it does reaches another machine. On macOS, yes.
+func NetworkSealed() bool { return true }
 
 // LoopbackKept reports whether a network limited to the proxy still reaches the loopback address;
 // Seatbelt limits by address, so it does.

@@ -40,11 +40,11 @@ func ShellToolWithOutputs(w *Workspace, store *OutputStore) core.Tool {
 func (t *shellTool) Name() string        { return "run_command" }
 func (t *shellTool) Kind() core.ToolKind { return core.ToolExecute }
 
-// Offline reports whether a command would run with no network at all: the sandbox on, able to
-// enforce a network limit, and CANOPY_SANDBOX_NETWORK set to off. In a conversation that has read
+// Offline reports whether a command would run with no network at all: the sandbox on, able to cut
+// every way out including name lookups (macOS only), and CANOPY_SANDBOX_NETWORK set to off. In a conversation that has read
 // outside content only such a command runs without being asked about (D-69).
 func (t *shellTool) Offline() bool {
-	if sandbox.Disabled() || sandbox.Available() != nil || !sandbox.NetworkEnforced() {
+	if sandbox.Disabled() || sandbox.Available() != nil || !sandbox.NetworkSealed() {
 		return false
 	}
 	mode, err := egress.ParseMode(os.Getenv(egress.ModeEnvVar))
