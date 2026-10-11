@@ -1188,11 +1188,11 @@ func (a App) render() string {
 		// product named for it.
 		footer := Keys(a.dim.Width, "enter", "send", "esc", escMeans, "ctrl+d", "agents",
 			"shift+tab", "mode", "ctrl+c", "quit", "↑", "history", "ctrl+k", "keys",
-			"ctrl+n", "new", "ctrl+o", "full output", "ctrl+r", "compact")
+			"ctrl+n", "new", "ctrl+o", "full output", "ctrl+r", "history")
 		if a.chat.InputEmpty() {
 			footer = Keys(a.dim.Width, "enter", "send", "?", "help", "ctrl+d", "agents",
 				"shift+tab", "mode", "ctrl+k", "keys", "ctrl+n", "new", "↑", "history",
-				"ctrl+o", "full output", "ctrl+r", "compact", "ctrl+c", "quit")
+				"ctrl+o", "full output", "ctrl+r", "history", "ctrl+c", "quit")
 		}
 		if a.chat.Awaiting() {
 			// The question's own panel names the keys, with the scope of "always" spelled out,

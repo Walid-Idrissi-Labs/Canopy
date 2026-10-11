@@ -97,16 +97,16 @@ func TestAnExplicitSendStillSendsAndAConfirmedCompactionStillRuns(t *testing.T) 
 		t.Fatalf("enter with a message in the box sent %+v", engine.sent)
 	}
 
-	offered, _ := sent.(tui.App).Update(keyCode('r', tea.ModCtrl))
-	if view := plain(offered.(tui.App).View().Content); !strings.Contains(view, "ctrl+r again") {
-		t.Fatalf("the first press did not offer anything:\n%s", view)
+	offered, _ := typeCommand(sent, "/compact")
+	if view := plain(offered.(tui.App).View().Content); !strings.Contains(view, "/compact again") {
+		t.Fatalf("the first /compact did not offer anything:\n%s", view)
 	}
 
-	// The command that goes with the second press runs off the update loop, so the call is made by
-	// running it rather than by pressing the key.
-	_, cmd := offered.(tui.App).Update(keyCode('r', tea.ModCtrl))
+	// The command that goes with the second /compact runs off the update loop, so the call is made
+	// by running it.
+	_, cmd := typeCommand(offered, "/compact")
 	if cmd == nil {
-		t.Fatal("the second press asked for nothing")
+		t.Fatal("the second /compact asked for nothing")
 	}
 	cmd()
 
@@ -124,19 +124,19 @@ func TestAnUnansweredCompactionOfferLapses(t *testing.T) {
 	engine := &stubEngine{session: manyTurns(12)}
 	app := launchWith(store, withOneKey(), engine)
 
-	offered, _ := app.(tui.App).Update(keyCode('r', tea.ModCtrl))
-	elsewhere, _ := offered.(tui.App).Update(keyText("x"))
-	again, cmd := elsewhere.(tui.App).Update(keyCode('r', tea.ModCtrl))
+	offered, _ := typeCommand(app, "/compact")
+	elsewhere, _ := offered.(tui.App).Update(keyCode(tea.KeyEscape))
+	again, cmd := typeCommand(elsewhere, "/compact")
 	if cmd != nil {
 		cmd()
 	}
 
 	if engine.compacted != 0 {
-		t.Errorf("a lapsed offer was taken up by the next ctrl+r, which spent %d times",
+		t.Errorf("a lapsed offer was taken up by the next /compact, which spent %d times",
 			engine.compacted)
 	}
-	if view := plain(again.(tui.App).View().Content); !strings.Contains(view, "ctrl+r again") {
-		t.Errorf("the fresh press did not offer again:\n%s", view)
+	if view := plain(again.(tui.App).View().Content); !strings.Contains(view, "/compact again") {
+		t.Errorf("the fresh /compact did not offer again:\n%s", view)
 	}
 }
 
@@ -178,4 +178,12 @@ func runCmd(t *testing.T, cmd tea.Cmd) {
 		// A command still running is one that is waiting rather than spending, and the counters
 		// below are read either way.
 	}
+}
+
+// typeCommand types a line and presses enter, returning the command enter produced.
+func typeCommand(app tea.Model, line string) (tea.Model, tea.Cmd) {
+	for _, r := range line {
+		app, _ = app.Update(keyText(string(r)))
+	}
+	return app.Update(keyCode(tea.KeyEnter))
 }
