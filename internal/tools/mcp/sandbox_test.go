@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/Walid-Idrissi-Labs/Canopy/internal/sandbox"
@@ -19,20 +18,20 @@ func TestAConfinedServerCannotWriteOutsideItsWorkspace(t *testing.T) {
 		}
 		t.Skip(err)
 	}
-	// Outside the temporary area too, which the sandbox leaves writable.
+	// Outside everything the sandbox lets a command write: the user's cache directory is not, only
+	// some toolchains' folders inside it are. Wherever the checkout is, this is outside.
 	workspace := t.TempDir()
-	outside, err := os.MkdirTemp(".", "outside-")
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside, err := os.MkdirTemp(cache, "canopy-sandbox-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(outside) })
-	outside, _ = filepath.Abs(outside)
-	// A checkout inside the temporary area is writable to the sandbox, so there is no outside here.
-	for _, temp := range []string{os.TempDir(), "/tmp", "/private/tmp"} {
-		if resolved, err := filepath.EvalSymlinks(temp); err == nil && strings.HasPrefix(outside, resolved) ||
-			strings.HasPrefix(outside, temp) {
-			t.Skip("the checkout is in the temporary area, which the sandbox lets anything write")
-		}
+	if resolved, err := filepath.EvalSymlinks(outside); err == nil {
+		outside = resolved
 	}
 	target := filepath.Join(outside, "escaped.txt")
 

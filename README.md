@@ -594,8 +594,10 @@ stopped, which is the only kind of instruction worth relying on.
 
 One exception holds in every mode: once a conversation has read a fetched page, a web search or an
 MCP tool's result, which can carry instructions aimed at the model, anything that could send data
-out (a network tool, an MCP tool, a git push, a shell command such as curl, ssh or `base64`) is
-asked about from then on. Reading, editing, building and testing are not.
+out is asked about from then on, every time: a network tool, an MCP tool, a git push, and every
+shell command, since `python3 -c`, `pip install` or `node -e` reach the network under names no list
+can know. Set `CANOPY_SANDBOX_NETWORK=off` and shell commands run without asking again, since with
+no network they cannot send anything. Reading and editing files are not asked about.
 
 `shift+tab` cycles them, and it works while a turn is running: tightening takes hold on the next
 tool call rather than on the next message.

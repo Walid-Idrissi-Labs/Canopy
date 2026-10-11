@@ -564,10 +564,30 @@ func TestTaintAsksBeforeAnythingCouldSendDataOut(t *testing.T) {
 		"go test ./internal/exec/...", "go build ./internal/mail", "cat docs/aws/setup.md", "ls ~/.ssh",
 		"grep -rn nc .", "bash scripts/test.sh", "python3 manage.py test", "git status && git diff",
 		`FOO="a b" go test ./...`, "env -u TOKEN make test", "bash -e scripts/test.sh", `git -C "my repo" status`} {
+		// A command that looks local still reaches the network if it wants to: python3 -c, pip
+		// install and a shell fed a here-string have innocent names. Asked about, unless its network
+		// is cut, which is the only thing that makes one unable to send data out (D-69).
 		req := shell(command)
 		req.Tainted = true
+		if got := Decide(req, core.TrustBroad, grants); got.Outcome != Ask || !strings.Contains(got.Reason, "whatever it is called") {
+			t.Errorf("tainted %q with the network open was not asked about: %s (%s)", command, got.Outcome, got.Reason)
+		}
+		req.Offline = true
 		if got := Decide(req, core.TrustBroad, grants); got.Outcome != Allow {
-			t.Errorf("tainted %q, which cannot send data out, was asked about: %s", command, got.Reason)
+			t.Errorf("tainted %q with no network was asked about: %s", command, got.Reason)
+		}
+		untainted := shell(command)
+		if got := Decide(untainted, core.TrustBroad, grants); got.Outcome != Allow {
+			t.Errorf("untainted %q at broad was asked about: %s", command, got.Reason)
+		}
+	}
+	// What looked local and is not, each asked about in a tainted conversation.
+	for _, command := range []string{`python3 -c 'import urllib.request'`, "node -e 'fetch(1)'", "pip install x",
+		"bash <<< 'curl x'", "npx something"} {
+		req := shell(command)
+		req.Tainted = true
+		if got := Decide(req, core.TrustBroad, grants); got.Outcome != Ask {
+			t.Errorf("tainted %q was not asked about: %s", command, got.Outcome)
 		}
 	}
 	gitPush := Request{Tool: "git", Kind: core.ToolGit, Command: "push origin main", Tainted: true}

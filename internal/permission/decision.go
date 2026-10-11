@@ -97,6 +97,10 @@ type Request struct {
 	//	{"path": "project-1", "operation": "delete"}
 	Opaque bool
 
+	// Offline is a shell command that will run with no network at all: the sandbox is on and its
+	// network is off. Only such a command cannot carry data out whatever it runs (D-69).
+	Offline bool
+
 	// Tainted says the conversation has taken in content from outside, a fetched page, a web search
 	// or an MCP tool's result, which may carry instructions nobody here wrote. From then on an action
 	// that could send data out is asked about whatever the level or earlier approvals say.
@@ -192,9 +196,16 @@ func Decide(req Request, level core.TrustLevel, granted *Grants) Decision {
 	// given to the conversation as it was then, and injected instructions aim precisely at the
 	// actions a broad level runs unasked.
 	if req.Tainted && exfiltrationCapable(req) {
-		return Decision{Outcome: Ask, Scope: scope, Reason: "this conversation has read content from " +
-			"outside (a fetched page, a web search or an MCP tool), which can carry instructions, and " +
-			"this could send data out; it is asked about every time from here on"}
+		reason := "this conversation has read content from outside (a fetched page, a web search or an " +
+			"MCP tool), which can carry instructions, and this could send data out; it is asked about " +
+			"every time from here on"
+		if req.Kind == core.ToolExecute && !req.Opaque && !networkish(req.Command) {
+			// Said, since the command may look local: an interpreter or a package manager reaches
+			// the network under any name, so no reading of the words can clear one.
+			reason += ". Any shell command can reach the network, whatever it is called, unless " +
+				"CANOPY_SANDBOX_NETWORK=off cuts it"
+		}
+		return Decision{Outcome: Ask, Scope: scope, Reason: reason}
 	}
 	if granted != nil && granted.Covers(req, scope) {
 		return Decision{Outcome: Allow, Reason: "already approved", Scope: scope}
@@ -401,8 +412,8 @@ func PathScope(tool, dir string) Scope {
 func KindScope(kind core.ToolKind) Scope { return Scope{Kind: kind} }
 
 // exfiltrationCapable reports whether a call could carry data out of the machine: anything on the
-// network, any MCP tool, a shell command that reaches the network or hides what it runs, and a git
-// push or a change of remote.
+// network, any MCP tool, any shell command whose network is not cut, and a git push or a change of
+// remote.
 func exfiltrationCapable(req Request) bool {
 	switch {
 	case req.Kind == core.ToolNetwork, req.Opaque:
@@ -411,7 +422,9 @@ func exfiltrationCapable(req Request) bool {
 		command := strings.TrimSpace(req.Command)
 		return strings.HasPrefix(command, "push") || strings.HasPrefix(command, "remote")
 	case req.Kind == core.ToolExecute:
-		return networkish(req.Command)
+		// Every shell command, unless its network is cut: python3 -c, node -e, pip install and a
+		// shell fed a here-string all reach the network under names no list can know (D-69).
+		return !req.Offline
 	}
 	return false
 }
@@ -437,7 +450,8 @@ var networkSubcommands = map[string][]string{
 	"docker": {"push", "login"},
 }
 
-// networkish reports whether a shell command runs, as the command of any of its stages, a program
+// networkish reports, for the wording of a reason, whether a shell command visibly runs, as the
+// command of any of its stages, a program
 // that reaches the network. Only command words count, not paths or arguments, so building a package
 // named mail or grepping for curl is not mistaken for sending anything.
 func networkish(command string) bool {

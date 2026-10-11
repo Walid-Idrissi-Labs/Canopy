@@ -856,13 +856,13 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
 - Once a conversation has read a fetched page, a provider search or an MCP result (D-57), its shell
   commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
   also cut off the local servers tests start), and anything whose purpose is to send data out is
-  asked about, even in runway and cruise. The project's tests run in the sandbox but a taint does
-  not limit their network, so a test a tainted agent writes can still reach the network when runway
-  runs it. Which commands are asked about is decided by the command word of each stage: curl, ssh,
-  `gh`, `nslookup`, `base64`, `eval`, `sh -c` and the like. A registry is still a server on the
-  internet, and where the network cannot be limited the word list is the only guard, which a
-  determined script can get around. Files in the workspace do not taint a conversation, though they
-  can carry instructions too.
+  asked about, even in runway and cruise: every shell command among it, unless
+  `CANOPY_SANDBOX_NETWORK=off` cuts the network (D-69), because an interpreter or a package manager
+  reaches the network under any name. The registries a tainted agent's commands can reach include
+  github.com, which can take a pushed repository. The project's tests run in the sandbox but a taint
+  does not limit their network, so a test a tainted agent writes can still reach the network when
+  runway runs it. Files in the workspace do not taint a conversation, though they can carry
+  instructions too.
 - At most half the machine's CPUs worth of test runs execute at once, across every agent; the rest
   wait, shown as queued. `CANOPY_MAX_TESTS` changes the number. Agents' own shell commands are not
   limited this way.
