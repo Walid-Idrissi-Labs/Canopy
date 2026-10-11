@@ -129,7 +129,8 @@ be rediscovered by getting burned by it.
   local MCP servers unless a server is explicitly marked `"unconfined": true` (D-56, D-61, D-65).
   On macOS it confines writes to the workspace, temporary directories and toolchain download caches,
   keeps git hooks and
-  git config unwritable, and hides credential locations and Canopy's own data directory. An agent's
+  git config unwritable, and keeps credential locations and Canopy's own data directory unreadable
+  and unwritable, even when the workspace holds them (canopy run in the home directory). An agent's
   worktree lives inside that directory, so it alone is opened again, with the names of the
   directories on the way to it visible but not their contents; on Linux it confines writes the same way
   but cannot keep hooks or config unwritable inside the workspace, or hide files from reading, since

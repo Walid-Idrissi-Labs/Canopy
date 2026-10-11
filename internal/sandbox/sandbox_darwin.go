@@ -46,7 +46,7 @@ func (p Policy) profile() string {
 	// inside the workspace (a nested repository's hooks) still holds over the re-allowed workspace.
 	covering := func(path string) bool {
 		for _, dir := range p.Writable {
-			if dir == path || strings.HasPrefix(dir, strings.TrimSuffix(path, "/")+"/") {
+			if within(dir, path) {
 				return true
 			}
 		}
@@ -83,7 +83,7 @@ func (p Policy) profile() string {
 		var inside []string
 		for _, dir := range p.Writable {
 			for _, path := range append(append([]string(nil), coverWrite...), coverRead...) {
-				if dir == path || strings.HasPrefix(dir, strings.TrimSuffix(path, "/")+"/") {
+				if within(dir, path) {
 					inside = append(inside, dir)
 					break
 				}
@@ -129,6 +129,12 @@ func (p Policy) profile() string {
 		b.WriteString("(deny network-outbound (remote ip))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
 	}
 	return b.String()
+}
+
+// within reports whether dir is path or lies beneath it, as a path and not merely as a string, so
+// /x/canopy-other is not within /x/canopy.
+func within(dir, path string) bool {
+	return dir == path || strings.HasPrefix(dir, strings.TrimSuffix(path, "/")+"/")
 }
 
 func quote(s string) string {
