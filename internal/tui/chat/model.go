@@ -334,8 +334,9 @@ type Model struct {
 	shellContext []shellRun
 	// shellAsked is a "!command" waiting for the second enter that runs it.
 	shellAsked string
-	// search is the find bar, on ctrl+f.
+	// search is the find bar, on ctrl+f, and sent the search through what was sent, on ctrl+r.
 	search search
+	sent   historySearch
 	// destinations lists the agents the palette can open, and history the conversations.
 	destinations func() []Destination
 	history      History
@@ -1135,7 +1136,7 @@ func (m Model) compact() (Model, tea.Cmd) {
 // between the conversation and the message box: a confirmation that wraps and pushes what somebody
 // is typing down the screen is one they answer without reading.
 func (m Model) compactionOffer(plan session.CompactionPlan) string {
-	return fmt.Sprintf("summarise %d of %d turns, about %s tokens, last %d kept? ctrl+r again",
+	return fmt.Sprintf("summarise %d of %d turns, about %s tokens, last %d kept? /compact again goes ahead",
 		plan.Turns, len(m.session.Turns), roughTokens(plan.Tokens), plan.Kept)
 }
 
@@ -1163,9 +1164,20 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.planAsked && msg.String() != "enter" {
 		m.planAsked = false
 	}
-	if m.compactAsked && msg.String() != "ctrl+r" {
+	// The offer to compact is taken up by typing /compact again, so typing does not withdraw it;
+	// esc does, as sending anything else does (see send).
+	if m.compactAsked && msg.String() == "esc" {
 		m.compactAsked = false
 		m.notice = ""
+	}
+
+	// The search through what was sent takes every key while it is up, as the find bar does,
+	// unless a question has arrived.
+	if m.sent.open {
+		if !m.awaiting {
+			return m.historyKey(msg)
+		}
+		m.sent = historySearch{}
 	}
 
 	// The find bar takes every key while it is up, unless a question has arrived, which takes the
@@ -1367,8 +1379,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case "ctrl+r":
-		// Offers on the first press and pays on the second. See compact.
-		return m.compact()
+		// What a shell's fingers expect: searching what was sent. It costs nothing; compacting,
+		// which spends, is /compact, typed twice (Q-21, D-67).
+		if !m.awaiting {
+			m.openHistorySearch()
+		}
+		return m, nil
 
 	case "ctrl+o":
 		// The reading view and the checking view, on one key. Scroll is held rather than reset,
@@ -1480,6 +1496,10 @@ func (m Model) send() (Model, tea.Cmd) {
 	// What Canopy answers itself, before anything is expanded or sent. These never reach a provider
 	// and never cost anything, so they are decided before the path that does either.
 	if name, arguments, ok := builtinInvocation(trimmed); ok {
+		// Anything but /compact again is a change of mind about the compaction on offer.
+		if name != "compact" {
+			m.compactAsked = false
+		}
 		m.err = ""
 		if handled, cmd := m.runBuiltin(name, arguments); handled {
 			m.input.Remember(typed)
@@ -1511,6 +1531,8 @@ func (m Model) send() (Model, tea.Cmd) {
 	// A mode the key stopped on governs the message about to be sent, rather than arriving two
 	// seconds into it. Pressing shift+tab and then enter is somebody who has chosen.
 	m.applyPendingMode()
+	// A message is a change of mind about a compaction on offer.
+	m.compactAsked = false
 
 	// A picture named in the message, a screenshot dropped on the terminal for one, goes with it.
 	// Read off the update loop, since a large one takes a moment; the message is sent once it is.
@@ -2007,6 +2029,7 @@ func (m Model) transcriptHeight() int {
 	h -= m.menu.height()
 	h -= len(m.planCard())
 	h -= m.search.height()
+	h -= len(m.historyLine())
 	h -= m.palette.height()
 	h -= len(m.retryCard())
 
@@ -2105,6 +2128,7 @@ func (m Model) Body() string {
 	rows = append(rows, m.menu.lines(m.width, m.menuFilter())...)
 	rows = append(rows, m.planCard()...)
 	rows = append(rows, m.search.line()...)
+	rows = append(rows, m.historyLine()...)
 	rows = append(rows, m.palette.lines(m.width)...)
 	rows = append(rows, m.retryCard()...)
 	// Last before the status row and the box, which puts it directly on top of the thing somebody
@@ -2905,7 +2929,7 @@ func (m Model) contextMeter() string {
 		t.Border.Render(strings.Repeat("─", meterWidth-filled)) +
 		" " + tone.Render(use.String())
 	if use.NeedsCompaction() {
-		out += t.Warning.Render(", ctrl+r to compact")
+		out += t.Warning.Render(", /compact to summarise")
 	}
 	return out
 }

@@ -8191,7 +8191,9 @@ trusted. Tests: ranking, completion by tab and enter, no menu inside a word or w
 chord, notes kept not sent and a failed note kept in the box, trust kept for your own note and not
 for an unreviewed edit, the link refused, git's file list with ignored files left out.
 Mutation-checked. Still open from V-05: ctrl+r history search (ctrl+r is compaction, Q-21), `!`
-shell passthrough, large paste chips, vim mode.
+shell passthrough, large paste chips, vim mode. 2026-10-11: ctrl+r history search is in
+(feat/history-search, D-67); `!` shipped in #110 and large paste summaries in #115; vim mode is
+not planned.
 
 `verify: claude [x] 2026-09-25   codex [ ]`
 

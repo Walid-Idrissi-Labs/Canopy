@@ -1506,6 +1506,17 @@ names: an agent allowed to write files can edit a guard script in its workspace,
 the name lives outside the repository or in a path the agent cannot write. The subscription routes
 of D-51 run their vendor's own tools, which these hooks never see.
 
+## D-67 ctrl+r searches what was sent; compacting is /compact typed twice. Decided 2026-10-11.
+
+Answers Q-21, which Walid handed over to be decided. ctrl+r is where forty years of shell habit put
+history search, and it held the one paid action in the chat, so the key people press by reflex
+spent money (U-09 had already put a confirmation in front of it). It now searches the messages sent
+in this conversation: typed letters narrow it, ctrl+r again goes older, enter puts the message in
+the box without sending, esc leaves the box as it was. Compacting is `/compact`: the first time
+says what it would summarise and roughly what that costs, and typing it again goes ahead; sending
+anything else, another command, a paste or esc withdraws the offer. ctrl+k (credentials) and ctrl+d
+(agents) keep their meanings: kill to end of line is alt+k, and end of file means nothing in a chat.
+
 ## D-66 Always on starting agents means starting agents, in that conversation. Decided 2026-09-26.
 
 The confirmation before spawn_agents offered "always" with an empty scope, which recorded a grant

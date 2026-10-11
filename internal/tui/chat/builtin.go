@@ -78,10 +78,9 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 		m.notice = commandListing(m.commands)
 
 	case "compact":
-		// The same two steps the key takes, deliberately. A command that spent on being typed while
-		// the key it shadows asked first would be the cheaper path to the more expensive outcome,
-		// and somebody who had learned that ctrl+r asks would have no reason to expect this one not
-		// to. The offer names ctrl+r either way, since that is the key that goes ahead with it.
+		// Two steps, deliberately: the first says what it would summarise and roughly what that
+		// costs, and only /compact typed again goes ahead. It was on ctrl+r until Q-21 gave that
+		// key to history search, where a shell's habits put it (D-67).
 		updated, cmd := m.compact()
 		*m = updated
 		return true, cmd
