@@ -594,8 +594,11 @@ stopped, which is the only kind of instruction worth relying on.
 
 One exception holds in every mode: once a conversation has read a fetched page, a web search or an
 MCP tool's result, which can carry instructions aimed at the model, anything that could send data
-out (a network tool, an MCP tool, a git push, a shell command such as curl, ssh or `base64`) is
-asked about from then on. Reading, editing, building and testing are not.
+out is asked about from then on, every time: a network tool, an MCP tool, a git push, and every
+shell command, since `python3 -c`, `pip install` or `node -e` reach the network under names no list
+can know. On macOS, set `CANOPY_SANDBOX_NETWORK=off` and shell commands run without asking again,
+since with no network, name lookups included, they cannot send anything; on Linux the sandbox
+cannot cut UDP or name lookups, so they are always asked. Reading and editing files are not asked about.
 
 `shift+tab` cycles them, and it works while a turn is running: tightening takes hold on the next
 tool call rather than on the next message.
@@ -649,7 +652,7 @@ the pass.
   cannot hide files from reading, or keep a credential inside the workspace unwritable. Network access
   is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
   package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
-  `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. The project's test commands run in the same
+  `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely on macOS (TCP only on Linux). The project's test commands run in the same
   sandbox, and so do hooks, the setup a new worktree runs, and local MCP servers (a server that
   needs what the sandbox withholds, a container runtime's socket for one, can be marked
   `"unconfined": true`, which the trust prompt shows); a worktree on its own is file isolation, not a

@@ -284,7 +284,8 @@ const (
 	ModeOpen Mode = "open"
 	// ModeRegistries allows package registries and the hosts added, through the proxy.
 	ModeRegistries Mode = "registries"
-	// ModeOff allows no connections at all.
+	// ModeOff allows no connections at all: on macOS no name lookups either, on Linux no TCP (Landlock
+	// cannot limit UDP).
 	ModeOff Mode = "off"
 )
 

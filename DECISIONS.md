@@ -1509,6 +1509,23 @@ names: an agent allowed to write files can edit a guard script in its workspace,
 the name lives outside the repository or in a path the agent cannot write. The subscription routes
 of D-51 run their vendor's own tools, which these hooks never see.
 
+## D-69 In a tainted conversation every shell command is asked about, unless its network is cut. Decided 2026-10-11.
+
+Supersedes D-57's word list for shell commands. D-57 asked about a shell command in a conversation
+that had read outside content only when a stage's command word reached the network (curl, ssh, sh
+-c and the like). Codex's verification and the review that followed showed no list can do that:
+`python3 -c`, `node -e`, `pip install`, `npx`, `bash <<<`, an alias or a copied binary reach the
+network under innocent names, and the registries such a conversation's commands may still reach
+include github.com, which accepts a pushed repository. So from the first outside content on, every
+shell command is asked about, every time, at every trust level, unless the command will run with no
+network at all: the sandbox on, able to cut every way out, and `CANOPY_SANDBOX_NETWORK=off`. That is
+macOS only, where the network-off profile also denies the socket to mDNSResponder, since a name
+lookup is a way out; Landlock leaves UDP and lookups open, so on Linux nothing counts as offline.
+Execute tools that run no command line, spawn_agents among them, are not caught by this: their
+agents inherit the taint and are asked about their own commands. The word list stays, to say in the
+question when a command visibly reaches out. Network tools, MCP tools and
+git pushes are asked about as before.
+
 ## D-68 Credential locations are unwritable as well as unreadable in the sandbox. Decided 2026-10-11.
 
 Extends D-56. The sandbox kept `~/.ssh`, `~/.aws`, keychains, Canopy's own data directory and the

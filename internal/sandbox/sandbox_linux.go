@@ -162,6 +162,11 @@ type landlockNetPortAttr struct {
 // landlockRuleNetPort is LANDLOCK_RULE_NET_PORT.
 const landlockRuleNetPort = 2
 
+// NetworkSealed reports whether a command can be cut off from the network entirely, name lookups
+// included. Landlock limits TCP connections and binding only: UDP, name lookups among them, and
+// local sockets stay open, so a command with the network "off" can still reach out.
+func NetworkSealed() bool { return false }
+
 // NetworkEnforced reports whether this machine can limit a command's network: Landlock ABI 4,
 // Linux 6.7 and later.
 func NetworkEnforced() bool { return abi() >= 4 }

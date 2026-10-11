@@ -4,6 +4,7 @@ package sandbox
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -71,5 +72,19 @@ func TestOnlyCanopysDataDirectoryIsOpenedAgain(t *testing.T) {
 	}
 	if out, err := run(t, ForWorkspace(worktree), "cd '"+worktree+"' && echo ok > made && cat made"); err != nil || !strings.Contains(out, "ok") {
 		t.Fatalf("a worktree in Canopy's data directory is not usable: %v %s", err, out)
+	}
+}
+
+// With the network off, a name does not resolve either: a lookup goes through mDNSResponder, which
+// would otherwise ask the network for the command, and a name can carry data out.
+func TestNoNameResolvesWithTheNetworkOff(t *testing.T) {
+	requireSandbox(t)
+	lookup := "dscacheutil -q host -a name example.com"
+	if out, err := exec.Command("/bin/sh", "-c", lookup).Output(); err != nil || !strings.Contains(string(out), "address") {
+		t.Skip("example.com does not resolve here even outside the sandbox")
+	}
+	p := Policy{Writable: []string{t.TempDir()}, Network: NetworkNone}
+	if out, _ := run(t, p, lookup); strings.Contains(out, "address") {
+		t.Fatalf("a name resolved with the network off:\n%s", out)
 	}
 }
