@@ -11,10 +11,6 @@ func (p Policy) Wrap(string, []string) (string, []string, error) { return "", ni
 // RunTrampoline is only used on Linux.
 func RunTrampoline([]string) error { return ErrUnavailable }
 
-// NetworkSealed reports whether a command can be cut off from the network entirely, name lookups
-// included. There is no sandbox here.
-func NetworkSealed() bool { return false }
-
 // NetworkEnforced reports whether this machine can limit a command's network.
 func NetworkEnforced() bool { return false }
 

@@ -471,7 +471,6 @@ func (l *Loop) invoke(
 		Command:   commandIn(call.Input),
 		Arguments: canonicalArguments(call.Input),
 		Opaque:    externalArguments(tool),
-		Offline:   offline(tool),
 		Tainted:   l.Tainted != nil && l.Tainted(),
 	}
 
@@ -672,12 +671,6 @@ func duplicateIn(decoder *json.Decoder) (string, bool, error) {
 //
 // Asked of the tool rather than inferred from its name, so a tool added later answers for itself
 // instead of matching a prefix somebody has to remember to update.
-// offline reports whether a tool's commands will run with no network at all, for a tool that can say.
-func offline(tool core.Tool) bool {
-	cut, ok := tool.(interface{ Offline() bool })
-	return ok && cut.Offline()
-}
-
 func externalArguments(tool core.Tool) bool {
 	external, ok := tool.(core.ExternalTool)
 	return ok && external.External()

@@ -8402,16 +8402,19 @@ scope) are fixed in fix/codex-correctness-findings.
 
 `verify: claude [x] 2026-10-11   codex [ ]`
 
-### Z-D69 Every tainted shell command asks unless its network is cut (D-69)
+### Z-D69 Every tainted shell command is asked about (D-69)
 `status: review | owner: Claude | branch: feat/tainted-shell-asks`
 
 From the review of Codex's Z-T1 finding: no reading of a command's words can tell whether it reaches
 the network (python3 -c, node -e, pip install, a here-string, an alias). exfiltrationCapable now
-counts every shell command in a tainted conversation, unless permission.Request.Offline says it
-runs with no network, which the shell tool reports when the sandbox is on, can limit the network,
-and CANOPY_SANDBOX_NETWORK=off. The word list only words the question. Tests: the permission matrix
-(local-looking commands ask when tainted, pass when offline or untainted; interpreter forms ask),
-the shell tool's Offline across settings, and the loop asking or not by the tool's Offline; mutants
-on the rule and the wiring are killed.
+counts every shell command in a tainted conversation; the word list only words the question. An
+exemption for macOS with the network off was withdrawn after the review showed trustd, unix sockets
+and writable caches still carry data out. The network-off profile is hardened anyway: the
+mDNSResponder socket, AppleEvents, and the LaunchServices, nsurlsessiond and trustd services are
+denied. Tests: the permission matrix (local-looking and interpreter commands ask when tainted, pass
+untainted), the loop asking a tainted shell command at broad trust, and sandbox probes that no name
+resolves, LaunchServices does not answer, and trustd fetches no certificate URL with the network off;
+mutants on the rule, the lsd and trustd denies are killed. AppleEvents and nsurlsessiond are checked
+in the profile text only, since probing them would raise a system prompt.
 
 `verify: claude [x] 2026-10-11   codex [ ]`

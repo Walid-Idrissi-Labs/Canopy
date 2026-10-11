@@ -3,11 +3,22 @@
 package sandbox
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // A writable directory that only shares a name's beginning with a denied one is not inside it, so
@@ -101,5 +112,74 @@ func TestNoURLIsHandedOnWithTheNetworkOff(t *testing.T) {
 	p := Policy{Writable: []string{t.TempDir()}, Network: NetworkNone}
 	if out, _ := run(t, p, probe); strings.Contains(out, "-10814") {
 		t.Fatalf("LaunchServices answered a command with the network off:\n%s", out)
+	}
+}
+
+// With the network off, trustd, which runs outside the sandbox, does not fetch the URLs a
+// certificate names for a command: a certificate's issuer address could carry anything to anyone.
+func TestNoCertificateURLIsFetchedWithTheNetworkOff(t *testing.T) {
+	requireSandbox(t)
+	if _, err := exec.LookPath("security"); err != nil {
+		t.Skip(err)
+	}
+	var mu sync.Mutex
+	fetched := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		fetched[r.URL.Path] = true
+		mu.Unlock()
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	was := func(path string) bool { mu.Lock(); defer mu.Unlock(); return fetched[path] }
+	// A URL of its own for each run: trustd remembers one it has tried.
+	verify := func(path string) string {
+		leaf := filepath.Join(t.TempDir(), "leaf.pem")
+		writeLeafNaming(t, leaf, server.URL+path)
+		return "security verify-cert -c " + leaf + " -p ssl -s probe.invalid >/dev/null 2>&1; true"
+	}
+	if out, err := exec.Command("/bin/sh", "-c", verify("/outside")).CombinedOutput(); err != nil || !was("/outside") {
+		t.Skipf("trustd does not fetch the issuer here even outside the sandbox: %v %s", err, out)
+	}
+	p := ForWorkspace(t.TempDir())
+	p.Network = NetworkNone
+	_, _ = run(t, p, verify("/inside"))
+	if was("/inside") {
+		t.Fatal("trustd fetched a certificate's URL for a command with the network off")
+	}
+}
+
+// The rules no test above can exercise without a system prompt or a real fetch are at least in
+// the network-off profile: AppleEvents, which can drive any application, and nsurlsessiond.
+func TestTheNetworkOffProfileDeniesOtherProgramsReachingOut(t *testing.T) {
+	profile := Policy{Network: NetworkNone}.profile()
+	for _, rule := range []string{"(deny appleevent-send)", `(global-name "com.apple.nsurlsessiond")`,
+		`(global-name "com.apple.coreservices.launchservicesd")`} {
+		if !strings.Contains(profile, rule) {
+			t.Errorf("the network-off profile lacks %s", rule)
+		}
+	}
+}
+
+// writeLeafNaming writes a certificate whose issuer is not at hand, naming where to fetch it.
+func writeLeafNaming(t *testing.T, path, issuerURL string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "canopy probe CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true,
+		BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, SubjectKeyId: []byte{1, 2, 3, 4}}
+	template := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "canopy probe"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IssuingCertificateURL: []string{issuerURL}, KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: []string{"probe.invalid"}}
+	der, err := x509.CreateCertificate(rand.Reader, template, issuer, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -143,7 +143,10 @@ func (p Policy) profile() string {
 			// any application; nsurlsessiond downloads for its caller.
 			"(deny appleevent-send)\n" +
 			"(deny mach-lookup (global-name \"com.apple.coreservices.launchservicesd\") " +
-			"(global-name-regex #\"^com\\.apple\\.lsd\\.\") (global-name \"com.apple.nsurlsessiond\"))\n")
+			"(global-name-regex #\"^com\\.apple\\.lsd\\.\") (global-name \"com.apple.nsurlsessiond\") " +
+			// trustd fetches the certificate and revocation URLs a certificate names.
+			"(global-name \"com.apple.trustd\") (global-name \"com.apple.trustd.agent\") " +
+			"(global-name \"com.apple.ocspd\"))\n")
 	case NetworkProxy:
 		// The loopback address only, where the proxy is and where a test's own servers listen.
 		b.WriteString("(deny network-outbound (remote ip))\n(allow network-outbound (remote ip \"localhost:*\"))\n")
@@ -166,10 +169,6 @@ func RunTrampoline([]string) error { return ErrUnavailable }
 
 // NetworkEnforced reports whether this machine can limit a command's network; Seatbelt always can.
 func NetworkEnforced() bool { return true }
-
-// NetworkSealed reports whether a command can be cut off from the network entirely, name lookups
-// included, so that nothing it does reaches another machine. On macOS, yes.
-func NetworkSealed() bool { return true }
 
 // LoopbackKept reports whether a network limited to the proxy still reaches the loopback address;
 // Seatbelt limits by address, so it does.

@@ -1049,28 +1049,16 @@ func TestABareReplyCutOffIsNotKept(t *testing.T) {
 	}
 }
 
-// offlineTool is a shell tool whose commands run with no network.
-type offlineTool struct{ *countingTool }
-
-func (offlineTool) Offline() bool { return true }
-
 // In a conversation that has read outside content, a shell command is asked about at broad trust,
-// unless the tool says its commands run with no network (D-69).
-func TestATaintedShellCommandIsAskedAboutUnlessItsNetworkIsCut(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		tool  core.Tool
-		asked bool
-	}{
-		{"network open", &countingTool{name: "run_command", kind: core.ToolExecute, answer: "ok"}, true},
-		{"network cut", offlineTool{&countingTool{name: "run_command", kind: core.ToolExecute, answer: "ok"}}, false},
-	} {
+// however local it looks (D-69); outside such a conversation it is not.
+func TestATaintedShellCommandIsAskedAbout(t *testing.T) {
+	for _, tainted := range []bool{true, false} {
 		client := &scriptedClient{turns: [][]core.StreamEvent{
 			asksFor("run_command", `{"command":"go test ./..."}`),
 			says("done"),
 		}}
-		l := loop(client, registryWith(tc.tool), core.TrustBroad)
-		l.Tainted = func() bool { return true }
+		l := loop(client, registryWith(&countingTool{name: "run_command", kind: core.ToolExecute, answer: "ok"}), core.TrustBroad)
+		l.Tainted = func() bool { return tainted }
 		asked := false
 		l.Approver = ApproverFunc(func(context.Context, permission.Request, permission.Decision) bool {
 			asked = true
@@ -1079,8 +1067,8 @@ func TestATaintedShellCommandIsAskedAboutUnlessItsNetworkIsCut(t *testing.T) {
 		if _, err := l.Run(context.Background(), ask("go"), nil); err != nil {
 			t.Fatal(err)
 		}
-		if asked != tc.asked {
-			t.Errorf("%s: asked %v, want %v", tc.name, asked, tc.asked)
+		if asked != tainted {
+			t.Errorf("tainted %v: asked %v", tainted, asked)
 		}
 	}
 }

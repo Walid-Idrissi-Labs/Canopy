@@ -97,10 +97,6 @@ type Request struct {
 	//	{"path": "project-1", "operation": "delete"}
 	Opaque bool
 
-	// Offline is a shell command that will run with no network at all: the sandbox is on and its
-	// network is off. Only such a command cannot carry data out whatever it runs (D-69).
-	Offline bool
-
 	// Tainted says the conversation has taken in content from outside, a fetched page, a web search
 	// or an MCP tool's result, which may carry instructions nobody here wrote. From then on an action
 	// that could send data out is asked about whatever the level or earlier approvals say.
@@ -202,8 +198,7 @@ func Decide(req Request, level core.TrustLevel, granted *Grants) Decision {
 		if req.Kind == core.ToolExecute && !req.Opaque && !networkish(req.Command) {
 			// Said, since the command may look local: an interpreter or a package manager reaches
 			// the network under any name, so no reading of the words can clear one.
-			reason += ". Any shell command can reach the network, whatever it is called, unless " +
-				"CANOPY_SANDBOX_NETWORK=off cuts it"
+			reason += ". Any shell command can reach the network, whatever it is called"
 		}
 		return Decision{Outcome: Ask, Scope: scope, Reason: reason}
 	}
@@ -412,8 +407,7 @@ func PathScope(tool, dir string) Scope {
 func KindScope(kind core.ToolKind) Scope { return Scope{Kind: kind} }
 
 // exfiltrationCapable reports whether a call could carry data out of the machine: anything on the
-// network, any MCP tool, any shell command whose network is not cut, and a git push or a change of
-// remote.
+// network, any MCP tool, any shell command, and a git push or a change of remote.
 func exfiltrationCapable(req Request) bool {
 	switch {
 	case req.Kind == core.ToolNetwork, req.Opaque:
@@ -422,9 +416,10 @@ func exfiltrationCapable(req Request) bool {
 		command := strings.TrimSpace(req.Command)
 		return strings.HasPrefix(command, "push") || strings.HasPrefix(command, "remote")
 	case req.Kind == core.ToolExecute && req.Command != "":
-		// Every shell command, unless its network is cut: python3 -c, node -e, pip install and a
-		// shell fed a here-string all reach the network under names no list can know (D-69).
-		return !req.Offline
+		// Every shell command: python3 -c, node -e, pip install and a shell fed a here-string all
+		// reach the network under names no list can know, and not even CANOPY_SANDBOX_NETWORK=off
+		// closes every way out (D-69).
+		return true
 	case req.Kind == core.ToolExecute:
 		// An execute tool that runs no command line, spawn_agents among them: its agents inherit
 		// the taint and are asked about their own commands.
