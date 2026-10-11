@@ -1506,6 +1506,15 @@ names: an agent allowed to write files can edit a guard script in its workspace,
 the name lives outside the repository or in a path the agent cannot write. The subscription routes
 of D-51 run their vendor's own tools, which these hooks never see.
 
+## D-68 Credential locations are unwritable as well as unreadable in the sandbox. Decided 2026-10-11.
+
+Extends D-56. The sandbox kept `~/.ssh`, `~/.aws`, keychains, Canopy's own data directory and the
+rest unreadable but left them writable whenever the workspace held them, canopy run in the home
+directory for one, so a command could overwrite `~/.ssh/authorized_keys` or Canopy's trust records.
+They are now denied for writing too. An agent's worktree lives inside Canopy's data directory, so on
+macOS that worktree alone is opened again beneath the deny, with the names of the directories on
+the way down visible and nothing else. On Linux, Landlock cannot carve these out of a writable
+workspace, as LIMITATIONS says.
 ## D-67 ctrl+r searches what was sent; compacting is /compact typed twice. Decided 2026-10-11.
 
 Answers Q-21, which Walid handed over to be decided. ctrl+r is where forty years of shell habit put

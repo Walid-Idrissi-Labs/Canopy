@@ -8368,3 +8368,18 @@ orchestrator in any given order, with the lines and the branch, and keeps an orp
 Still open from V-12: the rest of the look (accent family, gutters, border rules, motion, icons).
 
 `verify: claude [x] 2026-09-26   codex [ ]`
+
+### Z-D68 Worktrees inside the data directory, and credentials unwritable (D-68)
+`status: review | owner: Claude | branch: fix/worktrees-inside-the-data-dir`
+
+Found running v0.2.0-beta.1: on macOS every command in an agent's worktree, and every test
+`canopy land` ran, failed to read its own directory, since the worktrees sit inside Canopy's data
+directory, which the sandbox denied, and Seatbelt applies the last matching rule. The profile now
+writes covering denies first, re-allows the workspace with metadata lookups on its ancestors, and
+writes every other deny last. The review found the older hole beside it: credential locations were
+denied for reading only, so a workspace holding them (the home directory) left them writable; they
+are denied for writing too. Real sandbox-exec tests: a workspace inside a denied directory works,
+its neighbours stay unreadable and unlistable, guards inside it hold, a prefix-sharing sibling is
+not opened, and ~/.ssh inside a home-directory workspace stays unwritable.
+
+`verify: claude [x] 2026-10-11   codex [ ]`

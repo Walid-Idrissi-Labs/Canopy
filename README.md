@@ -643,8 +643,9 @@ the pass.
 - No unattended merging. A human stays in the loop on anything destructive.
 - **No sandboxing claims beyond what the sandbox does.** Shell commands an agent runs are confined
   by the operating system where it can: on macOS they can write only in the workspace, temporary
-  directories and toolchain caches, and cannot read `~/.ssh`, `~/.aws`, keychains and the like; on
-  Linux, Landlock confines writes the same way but cannot hide files from reading. Network access
+  directories and toolchain caches, and cannot read or write `~/.ssh`, `~/.aws`, keychains and
+  the like even when the workspace holds them; on Linux, Landlock confines writes the same way but
+  cannot hide files from reading, or keep a credential inside the workspace unwritable. Network access
   is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
   package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
   `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. The project's test commands run in the same
