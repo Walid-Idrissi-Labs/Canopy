@@ -652,7 +652,7 @@ the pass.
   cannot hide files from reading, or keep a credential inside the workspace unwritable. Network access
   is not restricted by default; `CANOPY_SANDBOX_NETWORK=registries` lets commands reach only
   package registries (and hosts added in `CANOPY_SANDBOX_ALLOW`) through a proxy Canopy runs, and
-  `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely. The project's test commands run in the same
+  `CANOPY_SANDBOX_NETWORK=off` cuts them off entirely on macOS (TCP only on Linux). The project's test commands run in the same
   sandbox, and so do hooks, the setup a new worktree runs, and local MCP servers (a server that
   needs what the sandbox withholds, a container runtime's socket for one, can be marked
   `"unconfined": true`, which the trust prompt shows); a worktree on its own is file isolation, not a

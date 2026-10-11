@@ -153,7 +153,8 @@ be rediscovered by getting burned by it.
   connections by port, not address, so a program that ignores the proxy variables can reach any
   address on the proxy's port, a test that starts a local server on another port cannot reach it,
   and a kernel older than 6.7 cannot limit the network at all. `CANOPY_SANDBOX_NETWORK=off` allows
-  no connections. Commands that install into your home break inside it: `pip install --user`, `gem
+  no connections and, on macOS, no name lookups; on Linux it blocks TCP only, so UDP, name lookups
+  among them, still get out. Commands that install into your home break inside it: `pip install --user`, `gem
   install`, global npm installs, version managers (nvm, pyenv, rbenv), Homebrew, and anything
   writing `~/.local/bin` or most of `~/.config`, and so do test commands that do: the project's
   tests run in the same sandbox (D-61), so a suite that writes outside the workspace, the temporary
