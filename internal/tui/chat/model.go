@@ -307,6 +307,15 @@ type Model struct {
 	// used to reach a provider on the first press, and it is the key half the world's fingers press
 	// expecting to search their history.
 	compactAsked bool
+	// compactFor is what the offer was made about: the conversation, how many turns it had, and the
+	// words that stated it. The second /compact goes ahead only while all three still hold, so an
+	// offer never pays in another conversation, after the conversation moved on, or once the notice
+	// that stated it has been replaced by something else.
+	compactFor struct {
+		session string
+		turns   int
+		offer   string
+	}
 
 	// prompt is the tool call waiting on an answer, when there is one.
 	prompt   session.Prompt
@@ -1095,6 +1104,9 @@ func (m Model) compact() (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.compactAsked && (m.compactFor.session != m.sessionID || m.compactFor.turns != len(m.session.Turns)) {
+		m.compactAsked = false
+	}
 	if !m.compactAsked {
 		plan := session.PlanCompaction(m.session)
 		if !plan.Possible() {
@@ -1107,6 +1119,7 @@ func (m Model) compact() (Model, tea.Cmd) {
 		}
 		m.compactAsked = true
 		m.notice = m.compactionOffer(plan)
+		m.compactFor.session, m.compactFor.turns, m.compactFor.offer = m.sessionID, len(m.session.Turns), m.notice
 		m.err = ""
 		return m, nil
 	}
@@ -1690,6 +1703,8 @@ func (m *Model) SetSession(sessionID, label string) tea.Cmd {
 	// than carried across or thrown away. Somebody who pressed the key and then walked away still
 	// pressed the key.
 	m.applyPendingMode()
+	// An offer to compact belongs to the conversation it was made in.
+	m.compactAsked = false
 	m.sessionID = sessionID
 	m.agentName = label
 	m.scroll = 0

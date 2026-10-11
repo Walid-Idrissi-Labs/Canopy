@@ -191,3 +191,37 @@ func TestControlRSearchesWhatWasSent(t *testing.T) {
 		t.Fatalf("esc did not put the box back: %q", m.InputValue())
 	}
 }
+
+// An offer pays only in the conversation it was made in, while that conversation is as it was and
+// the offer is still on screen: switching away, a new turn, or another notice replacing it each
+// make the next /compact a fresh offer.
+func TestAnOfferPaysOnlyWhereAndWhileItWasMade(t *testing.T) {
+	for name, change := range map[string]func(chat.Model, *fakeEngine) chat.Model{
+		"another conversation": func(m chat.Model, _ *fakeEngine) chat.Model {
+			m.SetSession("s2", "other")
+			m.SetSession("s1", "main")
+			return m
+		},
+		"a new turn": func(m chat.Model, e *fakeEngine) chat.Model {
+			e.session.Turns = append(e.session.Turns, turn("t", "more", "more", core.TurnComplete))
+			m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+			return m
+		},
+		"another notice": func(m chat.Model, _ *fakeEngine) chat.Model {
+			m.SetNotice("something else happened")
+			return m
+		},
+	} {
+		engine := worthCompacting()
+		m := model(engine)
+		m, _ = run(m, "/compact")
+		m = change(m, engine)
+		_, cmd := run(m, "/compact")
+		if cmd != nil {
+			cmd()
+		}
+		if engine.compacted != 0 {
+			t.Errorf("%s: one visible /compact paid for an offer made elsewhere: %d calls", name, engine.compacted)
+		}
+	}
+}

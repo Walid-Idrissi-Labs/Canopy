@@ -70,6 +70,11 @@ func (m *Model) runBuiltin(name, arguments string) (bool, tea.Cmd) {
 		return false, nil
 	}
 
+	// An offer to compact is taken up only while the notice that stated it is still the one on
+	// screen; looked at here, before this command clears it.
+	if name == "compact" && m.compactAsked && m.notice != m.compactFor.offer {
+		m.compactAsked = false
+	}
 	m.err = ""
 	m.notice = ""
 
