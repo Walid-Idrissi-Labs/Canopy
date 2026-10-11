@@ -1506,6 +1506,16 @@ names: an agent allowed to write files can edit a guard script in its workspace,
 the name lives outside the repository or in a path the agent cannot write. The subscription routes
 of D-51 run their vendor's own tools, which these hooks never see.
 
+## D-68 Credential locations are unwritable as well as unreadable in the sandbox. Decided 2026-10-11.
+
+Extends D-56. The sandbox kept `~/.ssh`, `~/.aws`, keychains, Canopy's own data directory and the
+rest unreadable but left them writable whenever the workspace held them, canopy run in the home
+directory for one, so a command could overwrite `~/.ssh/authorized_keys` or Canopy's trust records.
+They are now denied for writing too. An agent's worktree lives inside Canopy's data directory, so on
+macOS that worktree alone is opened again beneath the deny, with the names of the directories on
+the way down visible and nothing else. On Linux, Landlock cannot carve these out of a writable
+workspace, as LIMITATIONS says.
+
 ## D-66 Always on starting agents means starting agents, in that conversation. Decided 2026-09-26.
 
 The confirmation before spawn_agents offered "always" with an empty scope, which recorded a grant

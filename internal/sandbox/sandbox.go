@@ -129,7 +129,11 @@ func ForWorkspace(workspace string, extra ...string) Policy {
 	if r, err := filepath.EvalSymlinks(workspace); err == nil {
 		resolved = r
 	}
-	return Policy{Workspace: resolved, Writable: clean(writable), DenyRead: clean(deny), Network: NetworkOpen,
+	// Denied for writing as well as reading: a workspace that holds one of them, canopy run in the
+	// home directory for one, would otherwise leave ~/.ssh/authorized_keys or Canopy's own trust
+	// records writable to whatever the agent runs.
+	return Policy{Workspace: resolved, Writable: clean(writable), DenyRead: clean(deny), DenyWrite: clean(deny),
+		Network: NetworkOpen,
 		Devices: []string{"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"}}
 }
 
