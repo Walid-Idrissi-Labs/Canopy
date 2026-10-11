@@ -597,7 +597,7 @@ MCP tool's result, which can carry instructions aimed at the model, anything tha
 out is asked about from then on, every time: a network tool, an MCP tool, a git push, and every
 shell command, since `python3 -c`, `pip install` or `node -e` reach the network under names no list
 can know. On macOS, set `CANOPY_SANDBOX_NETWORK=off` and shell commands run without asking again,
-since with no network, name lookups included, they cannot send anything; on Linux the sandbox
+since with no network, name lookups and `open` of a URL included, they cannot send anything; on Linux the sandbox
 cannot cut UDP or name lookups, so they are always asked. Reading and editing files are not asked about.
 
 `shift+tab` cycles them, and it works while a turn is running: tightening takes hold on the next

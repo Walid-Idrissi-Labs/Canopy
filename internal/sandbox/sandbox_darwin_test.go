@@ -88,3 +88,18 @@ func TestNoNameResolvesWithTheNetworkOff(t *testing.T) {
 		t.Fatalf("a name resolved with the network off:\n%s", out)
 	}
 }
+
+// With the network off, a URL cannot be handed to another application, which would fetch it
+// outside the sandbox: LaunchServices does not answer. The scheme belongs to no application, so
+// nothing is opened either way; what matters is whether LaunchServices was reached.
+func TestNoURLIsHandedOnWithTheNetworkOff(t *testing.T) {
+	requireSandbox(t)
+	probe := "open -g 'x-canopy-probe-nonexistent://probe' 2>&1"
+	if out, _ := exec.Command("/bin/sh", "-c", probe).CombinedOutput(); !strings.Contains(string(out), "-10814") {
+		t.Skip("LaunchServices does not answer as expected here even outside the sandbox")
+	}
+	p := Policy{Writable: []string{t.TempDir()}, Network: NetworkNone}
+	if out, _ := run(t, p, probe); strings.Contains(out, "-10814") {
+		t.Fatalf("LaunchServices answered a command with the network off:\n%s", out)
+	}
+}

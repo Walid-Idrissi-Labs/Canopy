@@ -137,7 +137,13 @@ func (p Policy) profile() string {
 		// out of a command that can reach no address itself.
 		b.WriteString("(deny network-outbound (remote ip))\n(deny network-bind)\n" +
 			"(deny network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))\n" +
-			"(deny network-outbound (remote unix-socket (path-literal \"/var/run/mDNSResponder\")))\n")
+			"(deny network-outbound (remote unix-socket (path-literal \"/var/run/mDNSResponder\")))\n" +
+			// And other programs that would reach the network for it: a URL handed to
+			// LaunchServices opens in the browser, outside the sandbox; an AppleEvent can drive
+			// any application; nsurlsessiond downloads for its caller.
+			"(deny appleevent-send)\n" +
+			"(deny mach-lookup (global-name \"com.apple.coreservices.launchservicesd\") " +
+			"(global-name-regex #\"^com\\.apple\\.lsd\\.\") (global-name \"com.apple.nsurlsessiond\"))\n")
 	case NetworkProxy:
 		// The loopback address only, where the proxy is and where a test's own servers listen.
 		b.WriteString("(deny network-outbound (remote ip))\n(allow network-outbound (remote ip \"localhost:*\"))\n")

@@ -153,7 +153,8 @@ be rediscovered by getting burned by it.
   connections by port, not address, so a program that ignores the proxy variables can reach any
   address on the proxy's port, a test that starts a local server on another port cannot reach it,
   and a kernel older than 6.7 cannot limit the network at all. `CANOPY_SANDBOX_NETWORK=off` allows
-  no connections and, on macOS, no name lookups; on Linux it blocks TCP only, so UDP, name lookups
+  no connections and, on macOS, no name lookups and no URL handed to another application (`open`,
+AppleEvents); on Linux it blocks TCP only, so UDP, name lookups
   among them, still get out. Commands that install into your home break inside it: `pip install --user`, `gem
   install`, global npm installs, version managers (nvm, pyenv, rbenv), Homebrew, and anything
   writing `~/.local/bin` or most of `~/.config`, and so do test commands that do: the project's
@@ -858,7 +859,8 @@ loopback port, talks to OpenAI, and keeps the grant in `$CODEX_HOME` afterwards.
   commands reach only package registries on macOS (on Linux this is not forced, since Landlock would
   also cut off the local servers tests start), and anything whose purpose is to send data out is
   asked about, even in runway and cruise: every shell command among it, unless on macOS
-  `CANOPY_SANDBOX_NETWORK=off` cuts the network, name lookups included (D-69), because an interpreter
+  `CANOPY_SANDBOX_NETWORK=off` cuts the network, name lookups and handing a URL to another
+  application included (D-69), because an interpreter
   or a package manager reaches the network under any name. On Linux, Landlock limits TCP only, so
   with the network off a command can still send UDP, name lookups among them, and every tainted
   shell command is asked about. The registries a tainted agent's commands can reach include

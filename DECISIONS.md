@@ -1520,7 +1520,8 @@ include github.com, which accepts a pushed repository. So from the first outside
 shell command is asked about, every time, at every trust level, unless the command will run with no
 network at all: the sandbox on, able to cut every way out, and `CANOPY_SANDBOX_NETWORK=off`. That is
 macOS only, where the network-off profile also denies the socket to mDNSResponder, since a name
-lookup is a way out; Landlock leaves UDP and lookups open, so on Linux nothing counts as offline.
+lookup is a way out, and denies AppleEvents and the LaunchServices and nsurlsessiond services, since
+`open https://...` hands a URL to a browser that fetches it outside the sandbox; Landlock leaves UDP and lookups open, so on Linux nothing counts as offline.
 Execute tools that run no command line, spawn_agents among them, are not caught by this: their
 agents inherit the taint and are asked about their own commands. The word list stays, to say in the
 question when a command visibly reaches out. Network tools, MCP tools and
