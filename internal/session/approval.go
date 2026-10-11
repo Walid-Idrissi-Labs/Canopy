@@ -234,6 +234,11 @@ func (e *Engine) Answer(sessionID string, approved, remember bool) bool {
 	if !ok {
 		return false
 	}
+	// Always needs something to cover: a scope that names nothing is answered as this once, rather
+	// than recorded as a grant that would match every other scope that names nothing.
+	if remember && prompt.Decision.Scope.String() == "" {
+		remember = false
+	}
 	select {
 	case prompt.answer <- answer{approved: approved, remember: remember}:
 		return true

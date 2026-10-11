@@ -107,6 +107,14 @@ func TestAnAttachedPromptTheServerRefusesSaysWhy(t *testing.T) {
 	if _, err := e.Send("session-7", "hello"); err == nil || !strings.Contains(err.Error(), "over its spending cap") {
 		t.Fatalf("a refused prompt answered %v", err)
 	}
+	// A turn another client started meanwhile is not taken for this one's.
+	served.mu.Lock()
+	served.turns = append(served.turns, core.Turn{ID: "t-other", State: core.TurnStreaming,
+		Request: core.Message{Text: "someone else's"}})
+	served.mu.Unlock()
+	if turn, err := e.Send("session-7", "hello"); err == nil {
+		t.Fatalf("a refused prompt was reported as started, as turn %q", turn)
+	}
 }
 
 // The interface itself draws an attached conversation: its question, and after the answer, the reply.
@@ -251,5 +259,23 @@ func TestAWithdrawnQuestionAndAClosedConnection(t *testing.T) {
 		case <-deadline:
 			t.Fatal("the events never ended after the connection closed")
 		}
+	}
+}
+
+// A sent prompt is matched to the turn that carries it, not to whichever turn is newest: another
+// client's turn arriving after it is not taken for this one's.
+func TestAnAttachedSendFindsItsOwnTurn(t *testing.T) {
+	e, _ := scripted(t, func(method string, _ json.RawMessage) any {
+		if method == "_canopy/session" {
+			return map[string]any{"session": core.Session{ID: "s1", Turns: []core.Turn{
+				{ID: "mine", State: core.TurnStreaming, Request: core.Message{Text: "fix the parser"}},
+				{ID: "theirs", State: core.TurnStreaming, Request: core.Message{Text: "something else"}},
+			}}, "from": 0, "turnCount": 2}
+		}
+		return map[string]any{}
+	})
+	turn, err := e.Send("s1", "fix the parser ")
+	if err != nil || turn != "mine" {
+		t.Fatalf("the send came back as %q, %v", turn, err)
 	}
 }

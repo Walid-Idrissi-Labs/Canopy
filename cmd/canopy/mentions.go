@@ -116,8 +116,10 @@ func rememberIn(dir string, project config.Project) func(note string) (string, e
 		}
 		snapshot["AGENTS.md"] = before
 		store, storeErr := trust.Open()
-		existed := len(before) > 0 || info.Size() > 0
-		trusted := storeErr == nil && project.Trusted && existed &&
+		// Trusted as it was: an empty AGENTS.md that was there is as trusted as a full one, and one
+		// the open just created describes differently from a repository without it, so a note that
+		// creates the file does not carry trust over.
+		trusted := storeErr == nil && project.Trusted &&
 			store.Trusted(trust.DescribeWith(dir, project, snapshot))
 		snapshot["AGENTS.md"] = append(append([]byte(nil), before...), line...)
 		expected := trust.DescribeWith(dir, project, snapshot)

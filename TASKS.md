@@ -8401,3 +8401,18 @@ other findings (attached Send, a test that skips, the snapshot variable, an empt
 scope) are fixed in fix/codex-correctness-findings.
 
 `verify: claude [x] 2026-10-11   codex [ ]`
+
+### Z-CX2 Correctness fixes from Codex's verification (2026-10-11)
+`status: review | owner: Claude | branch: fix/codex-correctness-findings`
+
+The rest of Codex's findings. Z-F07: an attached Send took a turn another client started for its
+own, before checking its own prompt's refusal; the refusal is read first and the turn must carry
+the prompt sent. Z-S65: the confined-MCP test skipped in a checkout inside the temporary area even
+with CANOPY_REQUIRE_SANDBOX=1; its outside directory is now in the user's cache directory, which
+nothing confined may write. Z-Z03: a local snapshot failed without CANOPY_GITHUB_CLIENT_ID; it
+defaults to empty. Z-V05: a note in an empty, trusted AGENTS.md cost trust, since emptiness was taken
+for absence; existence is checked before the open. U-02: an empty scope rendered as "every  call",
+passing the check that an always names something; it renders as nothing. With tests for each, plus
+#140's surviving mutants (a single-quoted command word, the second data directory).
+
+`verify: claude [x] 2026-10-11   codex [ ]`

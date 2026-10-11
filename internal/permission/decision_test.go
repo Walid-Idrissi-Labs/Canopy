@@ -15,3 +15,10 @@ func TestNoScopeRendersEmpty(t *testing.T) {
 		}
 	}
 }
+
+// A scope that names nothing renders as nothing, so no prompt can dress it up as an always.
+func TestAnEmptyScopeRendersAsNothing(t *testing.T) {
+	if s := (Scope{}).String(); s != "" {
+		t.Fatalf("an empty scope renders as %q", s)
+	}
+}

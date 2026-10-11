@@ -176,3 +176,50 @@ func TestANoteKeepsAnAppendMadeMeanwhile(t *testing.T) {
 		t.Fatal("an append made meanwhile was trusted with the note")
 	}
 }
+
+// A trusted repository whose AGENTS.md is there but empty keeps its trust after a note, as one
+// with something in it does.
+func TestANoteInAnEmptyTrustedAgentsFileKeepsTrust(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CANOPY_TRUST_FILE", filepath.Join(t.TempDir(), "trust.json"))
+	agents := filepath.Join(dir, "AGENTS.md")
+	if err := os.WriteFile(agents, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	project := config.Project{Trusted: true}
+	store, err := trust.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Grant(trust.Describe(dir, project)); err != nil {
+		t.Fatal(err)
+	}
+	where, err := rememberIn(dir, project)("run gofmt before committing")
+	if err != nil || where != "AGENTS.md" {
+		t.Fatalf("wrote to %q: %v", where, err)
+	}
+	if !store.Trusted(trust.Describe(dir, project)) {
+		t.Fatal("a note in an empty, trusted AGENTS.md cost the repository its trust")
+	}
+}
+
+// A note that creates AGENTS.md changes what was trusted, so trust does not follow it.
+func TestANoteThatCreatesTheAgentsFileDoesNotCarryTrust(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CANOPY_TRUST_FILE", filepath.Join(t.TempDir(), "trust.json"))
+	project := config.Project{Trusted: true}
+	store, err := trust.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Grant(trust.Describe(dir, project)); err != nil {
+		t.Fatal(err)
+	}
+	where, err := rememberIn(dir, project)("run gofmt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Trusted(trust.Describe(dir, project)) || !strings.Contains(where, "asks to trust it again") {
+		t.Fatalf("a note that created AGENTS.md carried trust over: %q", where)
+	}
+}
