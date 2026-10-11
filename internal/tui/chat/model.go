@@ -1835,10 +1835,17 @@ func (m Model) blank() bool {
 func (m Model) transcript() []string {
 	var lines []string
 	if len(m.session.Turns) > 0 {
+		var asking string
+		if m.awaiting {
+			if prompt, ok := m.engine.Pending(m.sessionID); ok {
+				asking = prompt.Request.CallID
+			}
+		}
 		lines = TranscriptWith(m.session, m.width, m.spinnerFrame(), m.toolKind, Detail{
 			Expanded: m.expanded,
 			Now:      time.Now(),
 			Started:  m.callSeen,
+			Asking:   asking,
 		})
 	}
 	if m.awaiting {

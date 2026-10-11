@@ -187,3 +187,19 @@ func TestThePaletteSearchesWhatWasSaidWhenTypingPauses(t *testing.T) {
 		t.Fatalf("found:\n%s", body)
 	}
 }
+
+// Letters in order prefer an entry where they begin words: thn is theme nord before theme mono.
+func TestLettersThatBeginWordsRankFirst(t *testing.T) {
+	m := palette(t, &fakeEngine{session: core.Session{ID: "s1"}})
+	m = typePalette(m, "thn")
+	lines := strings.Split(plain(m.Body()), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "theme ") {
+			if !strings.Contains(line, "theme nord") {
+				t.Fatalf("the first theme offered for thn is %q", strings.TrimSpace(line))
+			}
+			return
+		}
+	}
+	t.Fatal("no theme offered for thn")
+}

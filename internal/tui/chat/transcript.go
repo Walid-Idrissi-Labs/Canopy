@@ -55,6 +55,10 @@ type Detail struct {
 	Now     time.Time
 	Started map[string]time.Time
 
+	// Asking is the call a question is waiting on, which has not started: it reads as waiting for
+	// an answer rather than as running.
+	Asking string
+
 	// streamKey identifies a turn still being streamed, so its finished blocks are rendered once;
 	// see streamingMarkdown. Empty for anything else.
 	streamKey string
@@ -334,6 +338,9 @@ const (
 
 // runningFor is the label on a call that has not come back.
 func runningFor(id string, detail Detail) string {
+	if id != "" && id == detail.Asking {
+		return "waiting for your answer"
+	}
 	started, ok := detail.Started[id]
 	if !ok || detail.Now.IsZero() || !detail.Now.After(started) {
 		return "running"

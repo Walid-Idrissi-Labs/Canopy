@@ -1100,3 +1100,20 @@ func (e *fakeEngine) Budget(string) session.Budget            { return e.budget 
 func (e *fakeEngine) SetBudget(_ string, limit float64) error { e.budget.Limit = limit; return nil }
 func (e *fakeEngine) OverallBudget() session.Budget           { return e.overall }
 func (e *fakeEngine) SetOverallBudget(limit float64) error    { e.overall.Limit = limit; return nil }
+
+// A call held up by a question reads as waiting for the answer, not as running: nothing runs until
+// it is answered.
+func TestACallWaitingOnAQuestionIsNotCalledRunning(t *testing.T) {
+	waiting := turn("t1", "test it", "", core.TurnAwaitingTools)
+	waiting.ToolCalls = []core.ToolCall{{ID: "call-7", Name: "run_command", Input: []byte(`{"command":"go test ./..."}`)}}
+	prompt := pendingPrompt("go test ./...")
+	prompt.Request.CallID = "call-7"
+	engine := &fakeEngine{session: core.Session{ID: "s1", Turns: []core.Turn{waiting}}, prompt: prompt}
+	m := model(engine)
+	m.SetSize(100, 40)
+	m, _ = m.Update(chat.EventMsg{Event: core.Event{}})
+	view := plain(m.Body())
+	if !strings.Contains(view, "waiting for your answer") || strings.Contains(view, "running for") {
+		t.Fatalf("the call held up by the question:\n%s", view)
+	}
+}
